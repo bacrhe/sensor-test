@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>МИР 13×13 — Сліпий Бій</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#010d1f;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
+  #root{min-height:100vh;min-height:100dvh}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────
+const G=13,TICK=130,STRENGTH=4;
+const STRIKE_THR=14, STRIKE_DEB=600, BEACON_FR=90, BEACON_STILL=18;
+const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+const DNAM=['N','NE','E','SE','S','SW','W','NW'];
+const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let EID=0;
+
+const WPN={
+  sword: {w:5,reach:2,arc:1,label:'Меч'},
+  dagger:{w:2,reach:1,arc:1,label:'Кинджал'},
+  axe:   {w:8,reach:1,arc:2,label:'Сокира'},
+};
+const ET={
+  shadow: {hp:3,spd:7, dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
+  warden: {hp:8,spd:11,dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
+  berserk:{hp:5,spd:8, dmg:30,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
+};
+const WAVES=[
+  [{t:'shadow',n:1}],
+  [{t:'shadow',n:2}],
+  [{t:'shadow',n:2},{t:'warden',n:1}],
+  [{t:'shadow',n:3},{t:'warden',n:1}],
+  [{t:'shadow',n:2},{t:'berserk',n:1}],
+  [{t:'shadow',n:2},{t:'warden',n:1},{t:'berserk',n:1}],
+];
+const TUT=[
+  {msg:null,                                                                   req:'auto'},
+  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.',req:'auto'},
+  {msg:'Зроби крок. Свайп по сітці або WASD.',                                req:'move'},
+  {msg:'Добре. Поверни мене — оберни смартфон горизонтально.',                req:'rotate'},
+  {msg:'Опусти руку — я відпочиваю. Підніми — я заряджуюсь.',                req:'pitch'},
+  {msg:'Я готовий. Ціль попереду. Підніми і різко махни або натисни ⚔.',     req:'attack',spawnDummy:true},
+  {msg:'Дрейфую. Опусти мене вниз і замри 1.5 секунди.',                     req:'beacon'},
+  {msg:'Calibrated. Ти вмієш все що треба.',                                  req:'done'},
+];
+
+// ── HELPERS ───────────────────────────────────────────────────────
+function getWCells(px,py,yi,wk){
+  const w=WPN[wk];const cells=[];
+  const [dx,dy]=DIR[yi];
+  for(let r=1;r<=w.reach;r++){
+    const nx=px+dx*r,ny=py+dy*r;
+    if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});
+  }
+  for(let s=-w.arc;s<=w.arc;s++){
+    if(s===0)continue;
+    const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];
+    const nx=px+ax,ny=py+ay;
+    if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});
+  }
+  return cells;
+}
+function spawn(type,occupied){
+  const edges=[];
+  for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}
+  for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
+  const free=edges.filter(c=>!occupied.some(o=>o.x===c.x&&o.y===c.y));
+  if(!free.length)return null;
+  const p=free[Math.floor(Math.random()*free.length)];
+  return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,ticks:0};
+}
+function betaToPitch(b){return clamp((b-45)/40,-1,1);}
+
+// ── BUTTON ────────────────────────────────────────────────────────
+function Btn({children,onClick,onMD,onMU,onTS,onTE,active=false,col='#4a6a9f',w=36,h=36,fs=13,style={}}){
+  return(
+    <button onClick={onClick} onMouseDown={onMD} onMouseUp={onMU}
+      onTouchStart={onTS} onTouchEnd={onTE}
+      style={{width:`${w}px`,height:`${h}px`,
+        background:active?col+'33':'#060f1e',
+        border:`1px solid ${active?col:'#1e3a5f'}`,
+        color:active?col:'#4a6a9f',
+        borderRadius:'4px',cursor:'pointer',fontSize:`${fs}px`,
+        fontFamily:"'Courier New',monospace",
+        display:'flex',alignItems:'center',justifyContent:'center',
+        WebkitTapHighlightColor:'transparent',...style}}>
+      {children}
+    </button>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────────
+function App(){
+  const[mode,    setMode]   =useState('menu');
+  const[sPhase,  setSPhase] =useState('idle');
+  const[player,  setPlayer] =useState({x:6,y:6,hp:100,maxHp:100});
+  const[wpnKey]             =useState('sword');
+  const[yawIdx,  setYawIdx] =useState(0);
+  const[vYaw,    setVYaw]   =useState(0);
+  const[pitch,   setPitch]  =useState(0);
+  const[sta,     setSta]    =useState(100);
+  const[fingers, setFingers]=useState(5);
+  const[enemies, setEnemies]=useState([]);
+  const[wave,    setWave]   =useState(0);
+  const[score,   setScore]  =useState(0);
+  const[div,     setDiv]    =useState(0);
+  const[flash,   setFlash]  =useState([]);
+  const[msg,     setMsg]    =useState('');
+  const[msgK,    setMsgK]   =useState(0);
+  const[tutStep, setTutStep]=useState(0);
+  const[tutDone, setTutDone]=useState({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false});
+  const[beaconT, setBeaconT]=useState(0);
+  const[highD,   setHighD]  =useState(0);
+  const[wMsg,    setWMsg]   =useState('');
+  const[dropped, setDropped]=useState(false);
+  const[raw,     setRaw]    =useState({beta:0,mag:9.8});
+
+  const R=useRef({});
+  const waveSpawning=useRef(false);
+  const beaconRef=useRef(null);
+  const beaconCount=useRef(0);
+  const prevAccMag=useRef(9.8);
+  const lastStrikeT=useRef(0);
+  const doAttackRef=useRef(null);
+  const doBeaconCompleteRef=useRef(null);
+
+  useEffect(()=>{
+    R.current={mode,sPhase,player,wpnKey,yawIdx,vYaw,pitch,sta,fingers,
+               enemies,wave,score,div,tutStep,tutDone,beaconT,highD,dropped};
+  });
+
+  const sensorsOn=sPhase==='active';
+  const showMsg=useCallback((t)=>{setMsg(t);setMsgK(k=>k+1);},[]);
+  const flashCell=useCallback((cells,col)=>{
+    setFlash(cells.map(c=>({...c,col,fid:Math.random()})));
+    setTimeout(()=>setFlash([]),400);
+  },[]);
+
+  // BEACON COMPLETE
+  const doBeaconComplete=useCallback(()=>{
+    setSta(s=>Math.min(100,s+50));
+    setDiv(0);setHighD(0);setDropped(false);
+    setBeaconT(0);beaconCount.current=0;
+    const r=R.current;
+    if(r.mode==='tutorial'&&!r.tutDone.beaconed){
+      setTutDone(d=>({...d,beaconed:true}));
+      if(r.tutStep===6){
+        setTutStep(7);showMsg(TUT[7].msg);
+        setTimeout(()=>setMode('menu'),4000);
+      }
+    }
+  },[showMsg]);
+  useEffect(()=>{doBeaconCompleteRef.current=doBeaconComplete;},[doBeaconComplete]);
+
+  // ATTACK
+  const doAttack=useCallback(()=>{
+    const r=R.current;
+    if(r.mode!=='tutorial'&&r.mode!=='survival')return;
+    if(r.dropped||r.sta<6)return;
+    const cells=getWCells(r.player.x,r.player.y,r.yawIdx,r.wpnKey);
+    const C=STRENGTH/WPN[r.wpnKey].w;
+    const chargeMult=1+Math.max(0,r.pitch)*1.8;
+    const baseDmg=Math.round(12*chargeMult*C);
+    let hits=0;
+    setEnemies(es=>es.map(e=>{
+      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);
+      if(!cell)return e;
+      hits++;
+      const dmg=cell.main?baseDmg:Math.round(baseDmg*0.5);
+      if(e.hp-dmg<=0){setScore(s=>s+10);return null;}
+      return{...e,hp:e.hp-dmg};
+    }).filter(Boolean));
+    setSta(s=>Math.max(0,s-12));
+    flashCell(cells,hits>0?'#22c55e':'#ef4444');
+    if(r.mode==='tutorial'&&!r.tutDone.attacked&&hits>0){
+      setTutDone(d=>({...d,attacked:true}));
+      if(r.tutStep===5){
+        setTimeout(()=>setEnemies([]),300);
+        setTutStep(6);setTimeout(()=>showMsg(TUT[6].msg),900);
+      }
+    }
+  },[flashCell,showMsg]);
+  useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
+
+  // SENSOR REQUEST
+  const requestSensors=useCallback(async()=>{
+    setSPhase('req');
+    try{
+      if(typeof DeviceOrientationEvent!=='undefined'&&
+         typeof DeviceOrientationEvent.requestPermission==='function'){
+        const r=await DeviceOrientationEvent.requestPermission();
+        if(r!=='granted')throw new Error('denied');
+      }
+      if(typeof DeviceMotionEvent!=='undefined'&&
+         typeof DeviceMotionEvent.requestPermission==='function'){
+        const r=await DeviceMotionEvent.requestPermission();
+        if(r!=='granted')throw new Error('denied');
+      }
+      setSPhase('active');
+    }catch(e){setSPhase('denied');}
+  },[]);
+
+  // SENSOR LISTENERS
+  useEffect(()=>{
+    if(!sensorsOn)return;
+    const onOrient=(e)=>{
+      const beta=e.beta??0;
+      setPitch(betaToPitch(beta));
+      setRaw(p=>({...p,beta}));
+      if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){
+        setYawIdx(Math.round(e.webkitCompassHeading/45)%8);
+        const r=R.current;
+        if(r.mode==='tutorial'&&!r.tutDone.rotated){
+          setTutDone(d=>({...d,rotated:true}));
+          if(r.tutStep===3){setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
+        }
+      }
+      const r=R.current;
+      const p=betaToPitch(beta);
+      if(r.mode==='tutorial'&&!r.tutDone.pitched&&(p<-0.4||p>0.4)){
+        setTutDone(d=>({...d,pitched:true}));
+        if(r.tutStep===4){
+          const[dx,dy]=DIR[r.yawIdx];
+          const tx=clamp(r.player.x+dx*2,0,G-1),ty=clamp(r.player.y+dy*2,0,G-1);
+          setEnemies([{id:EID++,type:'shadow',x:tx,y:ty,hp:3,maxHp:3,ticks:0,dummy:true}]);
+          setTutStep(5);setTimeout(()=>showMsg(TUT[5].msg),600);
+        }
+      }
+    };
+    const onOrientAbs=(e)=>{
+      if(e.alpha!=null&&!isNaN(e.alpha)){
+        const hdg=(360-e.alpha)%360;
+        const ni=Math.round(hdg/45)%8;
+        setYawIdx(ni);
+        const r=R.current;
+        if(r.mode==='tutorial'&&!r.tutDone.rotated){
+          setTutDone(d=>({...d,rotated:true}));
+          if(r.tutStep===3){setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
+        }
+      }
+    };
+    const onMotion=(e)=>{
+      const g=e.accelerationIncludingGravity;
+      if(!g)return;
+      const mag=Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2);
+      setRaw(p=>({...p,mag}));
+      const delta=Math.abs(mag-prevAccMag.current);
+      const now=Date.now();
+      if(delta>STRIKE_THR&&now-lastStrikeT.current>STRIKE_DEB){
+        lastStrikeT.current=now;
+        doAttackRef.current?.();
+      }
+      prevAccMag.current=mag;
+      const rr=e.rotationRate;
+      const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
+      const r=R.current;
+      if(r.pitch<-0.4&&still<BEACON_STILL&&(r.mode==='tutorial'||r.mode==='survival')){
+        beaconCount.current++;
+        setBeaconT(Math.round(clamp(beaconCount.current/BEACON_FR,0,1)*16));
+        if(beaconCount.current>=BEACON_FR)doBeaconCompleteRef.current?.();
+      }else{
+        beaconCount.current=0;
+        setBeaconT(0);
+      }
+    };
+    window.addEventListener('deviceorientation',onOrient,true);
+    window.addEventListener('deviceorientationabsolute',onOrientAbs,true);
+    window.addEventListener('devicemotion',onMotion);
+    return()=>{
+      window.removeEventListener('deviceorientation',onOrient,true);
+      window.removeEventListener('deviceorientationabsolute',onOrientAbs,true);
+      window.removeEventListener('devicemotion',onMotion);
+    };
+  },[sensorsOn,showMsg]);
+
+  // MOVE / ROTATE / PITCH
+  const doMove=useCallback((dx,dy)=>{
+    const r=R.current;
+    if(r.mode!=='tutorial'&&r.mode!=='survival')return;
+    if(r.dropped||r.sta<5)return;
+    const nx=clamp(r.player.x+dx,0,G-1),ny=clamp(r.player.y+dy,0,G-1);
+    if(nx===r.player.x&&ny===r.player.y)return;
+    if(r.enemies.some(e=>e.x===nx&&e.y===ny))return;
+    setPlayer(p=>({...p,x:nx,y:ny}));
+    const cost=Math.max(0,r.pitch)*10;
+    if(cost>0)setSta(s=>Math.max(0,s-cost));
+    if(r.mode==='tutorial'&&!r.tutDone.moved){
+      setTutDone(d=>({...d,moved:true}));
+      if(r.tutStep===2){setTutStep(3);setTimeout(()=>showMsg(TUT[3].msg),600);}
+    }
+  },[showMsg]);
+
+  const doRotate=useCallback((dir)=>{
+    const r=R.current;
+    setYawIdx(y=>(y+dir+8)%8);
+    if(r.mode==='tutorial'&&!r.tutDone.rotated){
+      setTutDone(d=>({...d,rotated:true}));
+      if(r.tutStep===3){setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
+    }
+  },[showMsg]);
+
+  const doPitch=useCallback((v)=>{
+    const r=R.current;
+    setPitch(v);
+    if(r.mode==='tutorial'&&!r.tutDone.pitched&&v!==0){
+      setTutDone(d=>({...d,pitched:true}));
+      if(r.tutStep===4){
+        const[dx,dy]=DIR[r.yawIdx];
+        const tx=clamp(r.player.x+dx*2,0,G-1),ty=clamp(r.player.y+dy*2,0,G-1);
+        setEnemies([{id:EID++,type:'shadow',x:tx,y:ty,hp:3,maxHp:3,ticks:0,dummy:true}]);
+        setTutStep(5);setTimeout(()=>showMsg(TUT[5].msg),600);
+      }
+    }
+  },[showMsg]);
+
+  // MANUAL BEACON
+  const doBeaconStart=useCallback(()=>{
+    if(beaconRef.current||sensorsOn)return;
+    setBeaconT(0);
+    beaconRef.current=setInterval(()=>{
+      setBeaconT(t=>{
+        const n=t+1;
+        if(n>=16){clearInterval(beaconRef.current);beaconRef.current=null;doBeaconComplete();return 0;}
+        return n;
+      });
+    },TICK);
+  },[doBeaconComplete,sensorsOn]);
+  const doBeaconEnd=useCallback(()=>{
+    if(!beaconRef.current)return;
+    clearInterval(beaconRef.current);beaconRef.current=null;setBeaconT(0);
+  },[]);
+
+  // START MODES
+  const startTut=useCallback(()=>{
+    EID=0;
+    setMode('tutorial');setPlayer({x:6,y:6,hp:100,maxHp:100});
+    setYawIdx(0);setVYaw(0);setPitch(0);
+    setSta(100);setFingers(5);setEnemies([]);setWave(0);setScore(0);
+    setDiv(0);setHighD(0);setDropped(false);setBeaconT(0);
+    setTutStep(0);setTutDone({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false});
+    setTimeout(()=>showMsg('...'),1500);
+    setTimeout(()=>showMsg(TUT[1].msg),4500);
+    setTimeout(()=>{setTutStep(2);showMsg(TUT[2].msg);},8000);
+  },[showMsg]);
+
+  const startSurvival=useCallback(()=>{
+    EID=0;
+    setMode('survival');setPlayer({x:6,y:6,hp:100,maxHp:100});
+    setYawIdx(0);setVYaw(0);setPitch(0);
+    setSta(100);setFingers(5);setScore(0);setDiv(0);setHighD(0);
+    setDropped(false);setBeaconT(0);setWave(1);waveSpawning.current=false;
+    setWMsg('Хвиля 1');
+    setTimeout(()=>{
+      setWMsg('');
+      const spawned=[];
+      WAVES[0].forEach(({t,n})=>{
+        for(let i=0;i<n;i++){const e=spawn(t,[{x:6,y:6},...spawned]);if(e)spawned.push(e);}
+      });
+      setEnemies(spawned);
+      showMsg(`Хвиля 1 · ${spawned.length} ворогів`);
+    },2000);
+  },[showMsg]);
+
+  // KEYBOARD
+  useEffect(()=>{
+    const held={};
+    const kd=e=>{
+      if(held[e.key])return;held[e.key]=true;
+      if(e.key==='ArrowUp'   ||e.key==='w')doMove(0,-1);
+      if(e.key==='ArrowDown' ||e.key==='s')doMove(0,1);
+      if(e.key==='ArrowLeft' ||e.key==='a')doMove(-1,0);
+      if(e.key==='ArrowRight'||e.key==='d')doMove(1,0);
+      if(e.key==='q'||e.key==='Q')doRotate(-1);
+      if(e.key==='e'||e.key==='E')doRotate(1);
+      if(!sensorsOn){
+        if(e.key==='z'||e.key==='Z')doPitch(-1);
+        if(e.key==='c'||e.key==='C')doPitch(1);
+        if(e.key==='b'||e.key==='B')doBeaconStart();
+      }
+      if(e.key===' '){e.preventDefault();doAttack();}
+    };
+    const ku=e=>{
+      delete held[e.key];
+      if(!sensorsOn){
+        if((e.key==='z'||e.key==='Z')&&R.current.pitch===-1)setPitch(0);
+        if((e.key==='c'||e.key==='C')&&R.current.pitch===1)setPitch(0);
+        if(e.key==='b'||e.key==='B')doBeaconEnd();
+      }
+    };
+    window.addEventListener('keydown',kd);
+    window.addEventListener('keyup',ku);
+    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);};
+  },[doMove,doRotate,doPitch,doAttack,doBeaconStart,doBeaconEnd,sensorsOn]);
+
+  // SWIPE
+  const swipe=useRef(null);
+  const onTS=useCallback(e=>{if(e.target.closest('button'))return;swipe.current={x:e.touches[0].clientX,y:e.touches[0].clientY};},[]);
+  const onTE=useCallback(e=>{
+    if(!swipe.current)return;
+    const dx=e.changedTouches[0].clientX-swipe.current.x;
+    const dy=e.changedTouches[0].clientY-swipe.current.y;
+    swipe.current=null;
+    if(Math.abs(dx)<18&&Math.abs(dy)<18){doAttack();return;}
+    if(Math.abs(dx)>Math.abs(dy))doMove(Math.sign(dx),0);
+    else doMove(0,Math.sign(dy));
+  },[doMove,doAttack]);
+
+  // GAME TICK
+  useEffect(()=>{
+    if(mode!=='tutorial'&&mode!=='survival')return;
+    const id=setInterval(()=>{
+      const r=R.current;
+      const targetDeg=r.yawIdx*45;
+      const C=STRENGTH/WPN[r.wpnKey].w;
+      let diff=targetDeg-r.vYaw;
+      if(diff>180)diff-=360;if(diff<-180)diff+=360;
+      const nv=r.vYaw+diff*(C*0.09);setVYaw(nv);
+      const D=Math.min(100,Math.abs(diff)*(1/C));setDiv(D);
+      if(D>65){
+        setHighD(h=>{
+          if(h>18){
+            setSta(s=>{
+              if(s<=0){
+                setDropped(true);
+                setFingers(f=>{const nf=f-1;if(nf<=0)setMode('dead');return Math.max(0,nf);});
+                setTimeout(()=>setDropped(false),5000);
+              }
+              return Math.max(0,s-25);
+            });
+            return 0;
+          }
+          return h+1;
+        });
+      }else setHighD(0);
+      const regen=(1-(r.pitch+1)/2)*1.8;
+      const drain=D>65?1.2:D>40?0.3:0;
+      setSta(s=>clamp(s+regen-drain,0,100));
+      if(!r.dropped){
+        setEnemies(es=>{
+          if(!es.length)return es;
+          return es.map(e=>{
+            if(e.dummy)return e;
+            const et=ET[e.type];
+            const nt=e.ticks+1;
+            if(nt<et.spd)return{...e,ticks:nt};
+            const dx=r.player.x-e.x,dy=r.player.y-e.y;
+            if(Math.abs(dx)+Math.abs(dy)<=1){
+              setPlayer(p=>{const nh=Math.max(0,p.hp-et.dmg);if(nh<=0)setMode('dead');return{...p,hp:nh};});
+              setFlash([{x:r.player.x,y:r.player.y,col:'#ef4444',fid:Math.random()}]);
+              setTimeout(()=>setFlash([]),300);
+              return{...e,ticks:0};
+            }
+            let mx=0,my=0;
+            if(Math.abs(dx)>Math.abs(dy))mx=Math.sign(dx);else my=Math.sign(dy);
+            const nx2=e.x+mx,ny2=e.y+my;
+            if(nx2>=0&&nx2<G&&ny2>=0&&ny2<G&&
+               !(nx2===r.player.x&&ny2===r.player.y)&&
+               !es.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))
+              return{...e,x:nx2,y:ny2,ticks:0};
+            return{...e,ticks:0};
+          });
+        });
+      }
+    },TICK);
+    return()=>clearInterval(id);
+  },[mode]);
+
+  // WAVE PROGRESSION
+  useEffect(()=>{
+    if(mode!=='survival'||wave===0||enemies.length>0||waveSpawning.current)return;
+    waveSpawning.current=true;
+    const next=wave+1;
+    setWMsg(`Хвиля ${next}`);
+    setTimeout(()=>{
+      setWave(next);setWMsg('');
+      const wi=Math.min(next-1,WAVES.length-1);
+      const extra=Math.max(0,next-WAVES.length);
+      const spawned=[];
+      WAVES[wi].forEach(({t,n})=>{
+        const total=n+(t==='shadow'?extra:0);
+        for(let i=0;i<total;i++){
+          const e=spawn(t,[{x:player.x,y:player.y},...spawned]);
+          if(e)spawned.push(e);
+        }
+      });
+      setEnemies(spawned);
+      showMsg(`Хвиля ${next} · ${spawned.length} ворогів`);
+      waveSpawning.current=false;
+    },2500);
+  },[enemies.length,mode,wave,player.x,player.y,showMsg]);
+
+  // DERIVED
+  const wCells=getWCells(player.x,player.y,yawIdx,wpnKey);
+  const cellSz=Math.min(30,Math.floor((Math.min(window.innerWidth,480)-28)/G));
+  const pitchCol=pitch<-0.3?'#22c55e':pitch>0.3?'#ef4444':'#f59e0b';
+  const pitchLbl=pitch<-0.3?'REST':pitch>0.3?'CHARGE':'HOLD';
+  const divCol=div>70?'#ef4444':div>40?'#f59e0b':'#22c55e';
+
+  // MENU
+  if(mode==='menu')return(
+    <div style={{background:'#010d1f',minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
+      <div style={{color:'#1e3a5f',fontSize:'10px',letterSpacing:'.25em'}}>МИР 13×13</div>
+      <div style={{color:'#3a6a9f',fontSize:'28px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
+      <div style={{color:'#334155',fontSize:'10px',textAlign:'center',lineHeight:1.8}}>Телефон = меч · Вібрація = мова світу</div>
+
+      <div style={{padding:'12px',background:'#060f1e',border:`1px solid ${sensorsOn?'#16a34a':sPhase==='denied'?'#7f1d1d':'#1e3a5f'}`,borderRadius:'8px',width:'100%',maxWidth:'280px'}}>
+        <div style={{fontSize:'9px',color:'#1e3a5f',marginBottom:'6px',letterSpacing:'.12em'}}>ДАТЧИКИ</div>
+        {sPhase==='idle'&&(<>
+          <div style={{fontSize:'10px',color:'#4a6a9f',marginBottom:'8px',lineHeight:1.7}}>
+            Компас · Гіроскоп · Акселерометр<br/>
+            <span style={{color:'#1e3a5f',fontSize:'9px'}}>Потрібен HTTPS (GitHub Pages)</span>
+          </div>
+          <button onClick={requestSensors} style={{width:'100%',padding:'10px',background:'#0c2a1f',border:'1px solid #16a34a',color:'#22c55e',borderRadius:'6px',cursor:'pointer',fontSize:'11px',fontFamily:'inherit',letterSpacing:'.06em'}}>
+            ▷ ПІДКЛЮЧИТИ
+          </button>
+        </>)}
+        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую дозволу...</div>}
+        {sPhase==='active'&&<div style={{fontSize:'10px',color:'#22c55e',lineHeight:1.8}}>
+          ◉ АКТИВНІ<br/>
+          <span style={{fontSize:'9px',color:'#16a34a'}}>
+            Оберт → напрямок меча<br/>
+            Нахил вгору/вниз → заряд/відпочинок<br/>
+            Різкий мах → удар<br/>
+            Рука вниз + нерухомо → Маяк
+          </span>
+        </div>}
+        {sPhase==='denied'&&<div style={{fontSize:'9px',color:'#ef4444'}}>⚠ Відхилено · Гра працює з кнопками</div>}
+      </div>
+
+      <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'280px'}}>
+        <button onClick={startTut} style={{padding:'13px',background:'#0c2a1f',border:'1px solid #16a34a',color:'#22c55e',borderRadius:'8px',cursor:'pointer',fontSize:'13px',fontFamily:'inherit',letterSpacing:'.06em'}}>
+          ▷ ТУТОРІАЛ
+        </button>
+        <button onClick={startSurvival} style={{padding:'13px',background:'#0f1f35',border:'1px solid #1e3a5f',color:'#60a5fa',borderRadius:'8px',cursor:'pointer',fontSize:'13px',fontFamily:'inherit',letterSpacing:'.06em'}}>
+          ◈ ВИЖИВАННЯ
+        </button>
+      </div>
+
+      <div style={{fontSize:'9px',color:'#1e3a5f',textAlign:'center',lineHeight:2,marginTop:'4px'}}>
+        {sensorsOn
+          ?'Свайп = рух · Оберт = напрямок · Мах = удар'
+          :'WASD = рух · Q/E = поворот · Z/C = нахил · Пробіл = удар · B = Маяк'}
+      </div>
+    </div>
+  );
+
+  // DEAD
+  if(mode==='dead')return(
+    <div style={{background:'#010d1f',minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px'}}>
+      <div style={{color:'#ef4444',fontSize:'36px',fontWeight:'bold'}}>ВПАВ</div>
+      <div style={{color:'#334155',fontSize:'12px'}}>Рахунок: <span style={{color:'#f59e0b'}}>{score}</span></div>
+      <div style={{color:'#334155',fontSize:'12px'}}>Хвиля: <span style={{color:'#60a5fa'}}>{wave}</span></div>
+      <button onClick={()=>setMode('menu')} style={{marginTop:'12px',padding:'12px 28px',background:'#060f1e',border:'1px solid #334155',color:'#94a3b8',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:'inherit'}}>
+        ← Меню
+      </button>
+    </div>
+  );
+
+  // GAME
+  return(
+    <div style={{background:'#010d1f',minHeight:'100vh',fontFamily:"'Courier New',monospace",display:'flex',flexDirection:'column',alignItems:'center',touchAction:'none'}}
+      onTouchStart={onTS} onTouchEnd={onTE}>
+
+      {/* HUD */}
+      <div style={{width:'100%',maxWidth:'480px',padding:'6px 10px 2px',display:'flex',gap:'6px',alignItems:'center'}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',marginBottom:'2px'}}>HP</div>
+          <div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${(player.hp/player.maxHp)*100}%`,background:player.hp>50?'#22c55e':player.hp>25?'#f59e0b':'#ef4444',transition:'width .2s'}}/>
+          </div>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',marginBottom:'2px'}}>STA</div>
+          <div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${sta}%`,background:'#60a5fa',transition:'width .1s'}}/>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:'2px'}}>
+          {Array.from({length:5},(_,i)=>(
+            <div key={i} style={{width:'5px',height:'12px',borderRadius:'2px',background:i<fingers?(dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>
+          ))}
+        </div>
+        {sensorsOn&&<div style={{fontSize:'8px',color:'#22c55e'}}>◉</div>}
+        <div style={{fontSize:'10px',color:'#60a5fa',minWidth:'30px',textAlign:'right'}}>{mode==='survival'?`W${wave}`:'TUT'}</div>
+        {mode==='survival'&&<div style={{fontSize:'10px',color:'#f59e0b',minWidth:'24px',textAlign:'right'}}>{score}</div>}
+      </div>
+
+      {/* DIV BAR */}
+      <div style={{width:'100%',maxWidth:'480px',padding:'0 10px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
+        <div style={{fontSize:'8px',color:'#1e3a5f',width:'22px'}}>DIV</div>
+        <div style={{flex:1,height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${div}%`,background:divCol,transition:'width .08s'}}/>
+        </div>
+        <div style={{fontSize:'8px',color:divCol,width:'28px',textAlign:'right'}}>{Math.round(div)}%</div>
+        {dropped&&<div style={{fontSize:'8px',color:'#f59e0b'}}>⚠DROP</div>}
+      </div>
+
+      {/* SENSOR READOUT */}
+      {sensorsOn&&<div style={{width:'100%',maxWidth:'480px',padding:'0 10px 2px',display:'flex',gap:'10px',fontSize:'8px',color:'#1e3a5f'}}>
+        <span>β<span style={{color:pitchCol}}>{raw.beta.toFixed(0)}°</span></span>
+        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[yawIdx]}</span></span>
+        <span>|a|<span style={{color:raw.mag>15?'#ef4444':'#334155'}}>{raw.mag.toFixed(1)}</span></span>
+      </div>}
+
+      {wMsg&&<div style={{fontSize:'18px',color:'#f59e0b',fontWeight:'bold',padding:'2px',letterSpacing:'.1em'}}>{wMsg}</div>}
+
+      {/* GRID */}
+      <div onTouchStart={e=>e.stopPropagation()} onTouchEnd={e=>e.stopPropagation()}
+        style={{padding:'3px',background:'#020c1a',border:'1px solid #1e3a5f',borderRadius:'5px',margin:'2px 0',touchAction:'none'}}
+        onTouchMove={e=>e.preventDefault()}>
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+          {Array.from({length:G*G},(_,i)=>{
+            const x=i%G,y=Math.floor(i/G);
+            const isP=x===player.x&&y===player.y;
+            const en=enemies.find(e=>e.x===x&&e.y===y);
+            const wc=wCells.find(c=>c.x===x&&c.y===y);
+            const fl=flash.find(c=>c.x===x&&c.y===y);
+            let bg='#020c1a',bdr='1px solid #091c30';
+            if(fl)bg=fl.col+'55';
+            else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
+            else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
+            else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
+            return(
+              <div key={i} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .08s'}}>
+                {isP?(<>
+                  <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:dropped?'#f59e0b':'#22c55e',boxShadow:`0 0 6px ${dropped?'#f59e0b':'#22c55e'}`}}/>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>
+                    {DSYM[yawIdx]}
+                  </div>
+                </>):en?(
+                  <span style={{color:ET[en.type].col,fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>
+                ):null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* BEACON BAR */}
+      {beaconT>0&&<div style={{width:'100%',maxWidth:'480px',padding:'3px 10px',display:'flex',alignItems:'center',gap:'6px'}}>
+        <div style={{fontSize:'8px',color:'#22c55e'}}>⬇МАЯК</div>
+        <div style={{flex:1,height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${(beaconT/16)*100}%`,background:'#22c55e',transition:'width .1s'}}/>
+        </div>
+      </div>}
+
+      {/* COMPANION */}
+      {msg&&<div key={msgK} style={{margin:'3px 8px',padding:'7px 10px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'11px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>
+        {msg}
+      </div>}
+
+      {/* CONTROLS */}
+      <div style={{display:'flex',gap:'5px',padding:'3px 8px',width:'100%',maxWidth:'480px',marginTop:'auto',alignItems:'center'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,34px)',gridTemplateRows:'repeat(3,34px)',gap:'3px',flexShrink:0}}>
+          <div/><Btn onClick={()=>doMove(0,-1)} w={34} h={34}>↑</Btn><div/>
+          <Btn onClick={()=>doMove(-1,0)} w={34} h={34}>←</Btn>
+          <div style={{width:'34px',height:'34px',background:'#020c1a',borderRadius:'4px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'8px',color:'#1e3a5f'}}>✦</div>
+          <Btn onClick={()=>doMove(1,0)} w={34} h={34}>→</Btn>
+          <div/><Btn onClick={()=>doMove(0,1)} w={34} h={34}>↓</Btn><div/>
+        </div>
+        <div style={{flex:1,display:'flex',flexDirection:'column',gap:'4px'}}>
+          <div style={{display:'flex',gap:'4px'}}>
+            <Btn onClick={()=>doRotate(-1)} w={0} h={32} style={{flex:1,fontSize:'10px'}}>Q◀</Btn>
+            <Btn onClick={()=>doRotate(1)}  w={0} h={32} style={{flex:1,fontSize:'10px'}}>E▶</Btn>
+          </div>
+          {!sensorsOn?(
+            <div style={{display:'flex',gap:'4px'}}>
+              <Btn onClick={()=>doPitch(pitch===-1?0:-1)} active={pitch===-1} col='#22c55e' w={0} h={30} style={{flex:1,fontSize:'9px'}}>Z⬇</Btn>
+              <Btn onClick={()=>doPitch(pitch===1?0:1)}   active={pitch===1}  col='#ef4444' w={0} h={30} style={{flex:1,fontSize:'9px'}}>C⬆</Btn>
+            </div>
+          ):(
+            <div style={{display:'flex',alignItems:'center',gap:'4px',padding:'4px 6px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'4px'}}>
+              <div style={{flex:1,height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${((pitch+1)/2)*100}%`,background:pitchCol,transition:'width .1s'}}/>
+              </div>
+              <div style={{fontSize:'8px',color:pitchCol,minWidth:'38px',textAlign:'right'}}>{pitchLbl}</div>
+            </div>
+          )}
+          <div style={{fontSize:'8px',color:'#2a4a6f',textAlign:'center'}}>{DNAM[yawIdx]} · D{Math.round(div)}%</div>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:'4px',flexShrink:0}}>
+          <Btn onClick={doAttack} w={50} h={50} fs={22} style={{background:'#14532d',border:'1px solid #22c55e',color:'#22c55e'}}>⚔</Btn>
+          {!sensorsOn?(
+            <Btn onMD={doBeaconStart} onMU={doBeaconEnd}
+              onTS={e=>{e.preventDefault();doBeaconStart();}}
+              onTE={e=>{e.preventDefault();doBeaconEnd();}}
+              w={50} h={28} fs={9} style={{background:'#0c2a1f',border:'1px solid #1e5f3f',color:'#22c55e'}}>
+              ⬇B
+            </Btn>
+          ):(
+            <div style={{width:'50px',height:'28px',background:'#020c1a',border:'1px solid #1e3a5f',borderRadius:'4px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'8px',color:'#1e3a5f'}}>auto</div>
+          )}
+        </div>
+      </div>
+
+      <div style={{padding:'2px 8px 8px',fontSize:'8px',color:'#1e3a5f',display:'flex',gap:'8px'}}>
+        <span style={{color:divCol}}>D={Math.round(div)}%</span>
+        <span>HP<span style={{color:player.hp>50?'#22c55e':'#ef4444'}}>{player.hp}</span></span>
+        <span>STA<span style={{color:'#60a5fa'}}>{Math.round(sta)}</span></span>
+        {sensorsOn&&<span style={{color:'#22c55e'}}>◉ SENSORS</span>}
+      </div>
+
+      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}`}</style>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
