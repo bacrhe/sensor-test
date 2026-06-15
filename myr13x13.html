@@ -13,15 +13,13 @@
   #root{height:100%;display:flex;flex-direction:column}
   input[type=range]{width:100%;accent-color:#3b82f6}
   @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  @keyframes shake{0%,100%{transform:none}30%{transform:translateX(-5px)}70%{transform:translateX(5px)}}
 </style>
 </head>
 <body><div id="root"></div>
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
-
-// ── CONSTANTS ─────────────────────────────────────────────────────
 const G=13,CX=6,CY=6,TICK=120;
 const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
 const DNAM=['N','NE','E','SE','S','SW','W','NW'];
@@ -32,16 +30,15 @@ let EID=0;
 
 // ── WEAPONS ───────────────────────────────────────────────────────
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Швидкий, ближній'},
-  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс сили і радіусу'},
+  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий'},
+  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс сили і дальності'},
   axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓',   desc:'Широкий замах'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',     desc:'Далекобійний, прямо'},
-  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широкий і далекий'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',      desc:'Б\'є всі 8 клітинок'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',      desc:'Дальній постріл, лінія'},
+  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',     desc:'Далеко по прямій'},
+  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широко і далеко'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',      desc:'Всі 8 клітинок навколо'},
+  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',      desc:'5 клітинок прямо'},
 };
 
-// ── ENEMIES ───────────────────────────────────────────────────────
 const ET={
   shadow: {hp:3,spd:4, dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
   warden: {hp:8,spd:6, dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
@@ -49,8 +46,7 @@ const ET={
   ghost:  {hp:2,spd:3, dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
 };
 const WAVES=[
-  [{t:'shadow',n:1}],
-  [{t:'shadow',n:2}],
+  [{t:'shadow',n:1}],[{t:'shadow',n:2}],
   [{t:'shadow',n:2},{t:'warden',n:1}],
   [{t:'shadow',n:3},{t:'warden',n:1}],
   [{t:'shadow',n:2},{t:'berserk',n:1}],
@@ -59,263 +55,218 @@ const WAVES=[
 ];
 
 // ── MORSE SPELLS ──────────────────────────────────────────────────
-const MORSE={
-  '.-':   {name:'ЩИТА',  col:'#60a5fa', fn:'shield'},
-  '-...': {name:'ВОГНЮ', col:'#ef4444', fn:'burn'},
-  '.-.' : {name:'ПОРИВY',col:'#22c55e', fn:'rush'},
-  '--':   {name:'ЗЦІЛЕННЯ',col:'#a78bfa',fn:'mend'},
-  '.-..': {name:'БЛОКУ', col:'#f59e0b', fn:'lock'},
-};
-const MORSE_ALPHA={
-  'A':'.-','B':'-...','C':'-.-.','D':'-..','E':'.','F':'..-.','G':'--.','H':'....','I':'..','J':'.---',
-  'K':'-.-','L':'.-..','M':'--','N':'-.','O':'---','P':'.--.','Q':'--.-','R':'.-.','S':'...','T':'-',
-  'U':'..-','V':'...-','W':'.--','X':'-..-','Y':'-.--','Z':'--..'
+// Від простого до складного. Слова мають сенс.
+const SPELLS={
+  // Одиночні (найлегші)
+  '.':    {name:'СИЛА',    uk:'Сила',    col:'#60a5fa', desc:'Стаміна +30',          fn:'stamina'},
+  '-':    {name:'БРОНЯ',   uk:'Броня',   col:'#94a3b8', desc:'-60% шкоди на 4с',     fn:'armor'},
+  // Два символи (легкі)
+  '.-':   {name:'ЩИТА',   uk:'Щита',    col:'#3b82f6', desc:'Наступний удар блокується', fn:'shield'},
+  '--':   {name:'ЗЦІЛА',  uk:'Зцілення',col:'#a78bfa', desc:'Відновити 1 палець',    fn:'mend'},
+  '..':   {name:'КРИГА',  uk:'Крига',   col:'#67e8f9', desc:'Заморозити ворога 3с',  fn:'freeze'},
+  '-.':   {name:'ТІНЬ',   uk:'Тінь',    col:'#6b7280', desc:'Ворог не бачить 3с',    fn:'stealth'},
+  '-.' :  {name:'ТІНЬ',   uk:'Тінь',    col:'#6b7280', desc:'Ворог не бачить 3с',    fn:'stealth'},
+  // Три символи (середні)
+  '.-.':  {name:'ПОРИВУ', uk:'Поривом', col:'#22c55e', desc:'Рух без стаміни 5с',    fn:'rush'},
+  '...':  {name:'СПАЛАХ', uk:'Спалах',  col:'#f59e0b', desc:'Удар ×2 5с',            fn:'surge'},
+  '---':  {name:'ВИХОР',  uk:'Вихор',   col:'#e879f9', desc:'Удар всіх навколо',     fn:'omni'},
+  '-..':  {name:'ДОЛЯ',   uk:'Доля',    col:'#f87171', desc:'HP +30',                fn:'heal'},
+  '.-.' : {name:'ПОРИВУ', uk:'Поривом', col:'#22c55e', desc:'Рух без стаміни 5с',    fn:'rush'},
+  // Чотири+ символи (складні)
+  '.-..': {name:'ЗАМОК',  uk:'Замок',   col:'#fbbf24', desc:'Заморозити всіх 4с',    fn:'lockall'},
+  '-...': {name:'ВОГОНЬ', uk:'Вогонь',  col:'#ef4444', desc:'Наступний удар ×3',     fn:'burn'},
+  '.--.' :{name:'ПРОБІЙ', uk:'Пробій',  col:'#c084fc', desc:'Наступний удар скрізь', fn:'pierce'},
+  '-.-.' :{name:'ЦІЛЕННЯ',uk:'Цілення', col:'#34d399', desc:'HP +50',                fn:'cure'},
+  '....' :{name:'ХАОС',   uk:'Хаос',    col:'#fb7185', desc:'Всі вороги сповільнені',fn:'chaos'},
+  '...-' :{name:'ВЕКТОР', uk:'Вектор',  col:'#818cf8', desc:'Телепорт 3 кроки',      fn:'teleport'},
 };
 
 const TUT=[
   {msg:null},
-  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.',req:'auto'},
+  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.'},
   {msg:'Зроби крок. Свайп в будь-якому місці екрану.',req:'move'},
   {msg:'Добре. Поверни мене — оберни смартфон горизонтально.',req:'rotate'},
   {msg:'Опусти руку — я відпочиваю. Підніми — я заряджуюсь.',req:'pitch'},
   {msg:'Ціль попереду. Підніми і різко махни телефоном.',req:'attack',spawnDummy:true},
   {msg:'Дрейфую. Опусти вниз і замри дві секунди.',req:'beacon'},
-  {msg:'...і остання: торкнись коротко — крапка, довго — тире. Набери .- для ЩИТА.',req:'morse'},
-  {msg:'Calibrated. Ти вмієш все що треба.',req:'done'},
+  {msg:'Торкнись коротко — · (крапка), довго — − (тире). Набери · − для ЩИТА.',req:'morse'},
+  {msg:'Calibrated. Ти вмієш все що треба.'},
 ];
+
+// ── SPEECH ────────────────────────────────────────────────────────
+function speak(text,voiceOn=true){
+  if(!voiceOn||!window.speechSynthesis||!text)return;
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.9;
+  // Try to find a Ukrainian voice, fall back to any
+  const voices=window.speechSynthesis.getVoices();
+  const ukVoice=voices.find(v=>v.lang.startsWith('uk'))||voices.find(v=>v.lang.startsWith('ru'))||null;
+  if(ukVoice)u.voice=ukVoice;
+  window.speechSynthesis.speak(u);
+}
+
+// ── SOUND ─────────────────────────────────────────────────────────
+let AC=null;
+function getAC(){if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();return AC;}
+function snd(type){
+  try{
+    const C=getAC(),t=C.currentTime,o=C.createOscillator(),g=C.createGain();
+    o.connect(g);g.connect(C.destination);
+    if(type==='swing'){o.type='sawtooth';o.frequency.setValueAtTime(200,t);o.frequency.exponentialRampToValueAtTime(80,t+.12);g.gain.setValueAtTime(.2,t);g.gain.exponentialRampToValueAtTime(.001,t+.12);o.start(t);o.stop(t+.12);}
+    else if(type==='hit'){const b=C.createBuffer(1,C.sampleRate*.04,C.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/400);const s=C.createBufferSource();s.buffer=b;const gg=C.createGain();gg.gain.value=.5;s.connect(gg);gg.connect(C.destination);s.start(t);}
+    else if(type==='hurt'){o.type='square';o.frequency.setValueAtTime(100,t);o.frequency.exponentialRampToValueAtTime(50,t+.25);g.gain.setValueAtTime(.25,t);g.gain.exponentialRampToValueAtTime(.001,t+.25);o.start(t);o.stop(t+.25);}
+    else if(type==='drop'){o.type='triangle';o.frequency.setValueAtTime(280,t);o.frequency.exponentialRampToValueAtTime(70,t+.3);g.gain.setValueAtTime(.18,t);g.gain.exponentialRampToValueAtTime(.001,t+.3);o.start(t);o.stop(t+.3);}
+    else if(type==='beacon'){[440,550,660,880].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.07;gg.gain.setValueAtTime(0,st);gg.gain.linearRampToValueAtTime(.15,st+.04);gg.gain.exponentialRampToValueAtTime(.001,st+.35);oo.start(st);oo.stop(st+.35);});}
+    else if(type==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.15,t);g.gain.exponentialRampToValueAtTime(.001,t+.07);o.start(t);o.stop(t+.07);}
+    else if(type==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.15,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);o.start(t);o.stop(t+.18);}
+    else if(type==='spell'){[330,440,550,660,550,440].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
+    else if(type==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,t);o.frequency.exponentialRampToValueAtTime(220,t+.45);g.gain.setValueAtTime(.2,t);g.gain.exponentialRampToValueAtTime(.001,t+.45);o.start(t);o.stop(t+.45);}
+    else if(type==='death'){o.type='sine';o.frequency.setValueAtTime(440,t);o.frequency.exponentialRampToValueAtTime(110,t+.9);g.gain.setValueAtTime(.3,t);g.gain.exponentialRampToValueAtTime(.001,t+.9);o.start(t);o.stop(t+.9);}
+    else if(type==='teleport'){[800,600,400,200].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.04;gg.gain.setValueAtTime(.15,st);gg.gain.exponentialRampToValueAtTime(.001,st+.1);oo.start(st);oo.stop(st+.1);});}
+  }catch(e){}
+}
 
 // ── HELPERS ───────────────────────────────────────────────────────
 function getWCells(px,py,yi,wk){
   const w=WPN[wk],cells=[];
-  if(w.sweep){
-    for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}
-    return cells;
-  }
+  if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
   const[dx,dy]=DIR[yi];
   for(let r=1;r<=w.reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
-  for(let s=-w.arc;s<=w.arc;s++){
-    if(!s)continue;
-    const ai=(yi+s+8)%8,[ax,ay]=DIR[ai];
-    const nx=px+ax,ny=py+ay;
-    if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});
-  }
+  for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
   return cells;
 }
-
 function spawn(type,occ){
-  const edges=[];
-  for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}
-  for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
-  const free=edges.filter(c=>!occ.some(o=>o.x===c.x&&o.y===c.y));
-  if(!free.length)return null;
-  const p=free[Math.floor(Math.random()*free.length)];
-  return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,ticks:0};
+  const edges=[];for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
+  const free=edges.filter(c=>!occ.some(o=>o.x===c.x&&o.y===c.y));if(!free.length)return null;
+  const p=free[Math.floor(Math.random()*free.length)];return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,ticks:0};
 }
-
-function toScreen(gx,gy,px,py,cDeg){
-  const rx=gx-px,ry=gy-py,a=-rad(cDeg);
-  return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};
-}
-function swipeToWorld(sdx,sdy,cDeg){
-  const a=rad(cDeg);
-  return{gdx:Math.round(sdx*Math.cos(a)-sdy*Math.sin(a)),gdy:Math.round(sdx*Math.sin(a)+sdy*Math.cos(a))};
-}
+function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
+function swipeToWorld(sdx,sdy,cDeg){const a=rad(cDeg);return{gdx:Math.round(sdx*Math.cos(a)-sdy*Math.sin(a)),gdy:Math.round(sdx*Math.sin(a)+sdy*Math.cos(a))};}
 function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
-function pitchColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
+function pCol(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
-// ── SOUND ENGINE ──────────────────────────────────────────────────
-let audioCtx=null;
-function getAudio(){
-  if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-  if(audioCtx.state==='suspended')audioCtx.resume();
-  return audioCtx;
-}
-function playSound(type){
-  try{
-    const C=getAudio(),t=C.currentTime;
-    const osc=C.createOscillator(),gain=C.createGain();
-    osc.connect(gain);gain.connect(C.destination);
-    if(type==='swing'){
-      osc.type='sawtooth';osc.frequency.setValueAtTime(220,t);osc.frequency.exponentialRampToValueAtTime(80,t+.12);
-      gain.gain.setValueAtTime(.25,t);gain.gain.exponentialRampToValueAtTime(.001,t+.12);
-      osc.start(t);osc.stop(t+.12);
-    }else if(type==='hit'){
-      const buf=C.createBuffer(1,C.sampleRate*.05,C.sampleRate);
-      const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/500);
-      const src=C.createBufferSource();src.buffer=buf;
-      const g=C.createGain();g.gain.setValueAtTime(.4,t);src.connect(g);g.connect(C.destination);src.start(t);
-    }else if(type==='hurt'){
-      osc.type='square';osc.frequency.setValueAtTime(120,t);osc.frequency.exponentialRampToValueAtTime(60,t+.2);
-      gain.gain.setValueAtTime(.3,t);gain.gain.exponentialRampToValueAtTime(.001,t+.2);
-      osc.start(t);osc.stop(t+.2);
-    }else if(type==='drop'){
-      osc.type='triangle';osc.frequency.setValueAtTime(300,t);osc.frequency.exponentialRampToValueAtTime(80,t+.3);
-      gain.gain.setValueAtTime(.2,t);gain.gain.exponentialRampToValueAtTime(.001,t+.3);
-      osc.start(t);osc.stop(t+.3);
-    }else if(type==='beacon'){
-      [440,550,660].forEach((f,i)=>{
-        const o=C.createOscillator(),g=C.createGain();
-        o.type='sine';o.frequency.value=f;o.connect(g);g.connect(C.destination);
-        g.gain.setValueAtTime(0,t+i*.08);g.gain.linearRampToValueAtTime(.15,t+i*.08+.04);g.gain.exponentialRampToValueAtTime(.001,t+i*.08+.3);
-        o.start(t+i*.08);o.stop(t+i*.08+.3);
-      });
-    }else if(type==='dot'){
-      osc.type='sine';osc.frequency.value=880;
-      gain.gain.setValueAtTime(.15,t);gain.gain.exponentialRampToValueAtTime(.001,t+.07);
-      osc.start(t);osc.stop(t+.07);
-    }else if(type==='dash'){
-      osc.type='sine';osc.frequency.value=660;
-      gain.gain.setValueAtTime(.15,t);gain.gain.exponentialRampToValueAtTime(.001,t+.15);
-      osc.start(t);osc.stop(t+.15);
-    }else if(type==='spell'){
-      [330,440,550,440,330].forEach((f,i)=>{
-        const o=C.createOscillator(),g=C.createGain();
-        o.type='sine';o.frequency.value=f;o.connect(g);g.connect(C.destination);
-        const st=t+i*.06;
-        g.gain.setValueAtTime(.2,st);g.gain.exponentialRampToValueAtTime(.001,st+.1);
-        o.start(st);o.stop(st+.1);
-      });
-    }else if(type==='wave'){
-      osc.type='triangle';osc.frequency.setValueAtTime(110,t);osc.frequency.exponentialRampToValueAtTime(220,t+.4);
-      gain.gain.setValueAtTime(.2,t);gain.gain.exponentialRampToValueAtTime(.001,t+.4);
-      osc.start(t);osc.stop(t+.4);
-    }else if(type==='death'){
-      osc.type='sine';osc.frequency.setValueAtTime(440,t);osc.frequency.exponentialRampToValueAtTime(110,t+.8);
-      gain.gain.setValueAtTime(.3,t);gain.gain.exponentialRampToValueAtTime(.001,t+.8);
-      osc.start(t);osc.stop(t+.8);
-    }
-  }catch(e){}
+// ── MORSE REFERENCE PANEL ─────────────────────────────────────────
+function MorsePanel({onClose}){
+  const groups=[
+    {title:'· Одна (легкі)',items:[['.',SPELLS['.']],['-',SPELLS['-']]]},
+    {title:'·− Дві',items:[['.-',SPELLS['.-']],['--',SPELLS['--']],['..',SPELLS['..']],['-.',SPELLS['-.']]]},
+    {title:'·−· Три',items:[['.-.',SPELLS['.-.']], ['...',SPELLS['...']],['---',SPELLS['---']],['-..', SPELLS['-..']]]},
+    {title:'·−·· Чотири+',items:[['.-..', SPELLS['.-..']],['-...',SPELLS['-...']],['.--.',SPELLS['.--.']], ['-.-.', SPELLS['-.-.']],['....',SPELLS['....']],['...-',SPELLS['...-']]]},
+  ];
+  return(
+    <div style={{position:'fixed',inset:0,background:'#010d1fee',zIndex:100,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'12px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+        <div style={{color:'#3a6a9f',fontSize:'14px',fontWeight:'bold'}}>МОРЗЕ — МАГІЯ</div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer'}}>✕</button>
+      </div>
+      <div style={{fontSize:'9px',color:'#334155',marginBottom:'10px',lineHeight:1.8}}>
+        Торкнись коротко = · (крапка) &nbsp;|&nbsp; Утримай = − (тире)<br/>
+        Пауза &gt;1с → заклинання | Свайп перериває
+      </div>
+      {groups.map(gr=>(
+        <div key={gr.title} style={{marginBottom:'10px'}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.1em',marginBottom:'5px'}}>{gr.title}</div>
+          {gr.items.filter(([k,v])=>v).map(([code,sp])=>(
+            <div key={code} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 8px',background:'#060f1e',borderRadius:'4px',marginBottom:'3px',border:`1px solid ${sp.col}22`}}>
+              <span style={{color:'#f59e0b',fontWeight:'bold',minWidth:'36px',fontSize:'11px',letterSpacing:'.1em'}}>
+                {code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
+              </span>
+              <span style={{color:sp.col,fontWeight:'bold',minWidth:'60px',fontSize:'10px'}}>{sp.uk}</span>
+              <span style={{color:'#334155',fontSize:'9px'}}>{sp.desc}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+      <div style={{fontSize:'9px',color:'#1e3a5f',marginTop:'6px',lineHeight:1.8}}>
+        Повна абетка Морзе: A=·− B=−··· C=−·−· D=−··<br/>
+        E=· F=··−· G=−−· H=···· I=·· J=·−−−<br/>
+        K=−·− L=·−·· M=−− N=−· O=−−−<br/>
+        P=·−−· Q=−−·− R=·−· S=··· T=−<br/>
+        U=··− V=···− W=·−− X=−··−
+      </div>
+    </div>
+  );
 }
 
-// ── SETTINGS COMPONENT ────────────────────────────────────────────
-function SettingsScreen({settings,setSettings,sPhase,setSPhase,rawSens,onBack}){
-  const reqSensors=async()=>{
-    setSPhase('req');
-    try{
-      if(typeof DeviceOrientationEvent?.requestPermission==='function')
-        if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;
-      if(typeof DeviceMotionEvent?.requestPermission==='function')
-        if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;
-      setSPhase('active');
-    }catch{setSPhase('denied');}
-  };
-  const s=settings;
-  const pv=betaToPitch(rawSens.beta,s.pitchSens);
+// ── SETTINGS ──────────────────────────────────────────────────────
+function Settings({s,setS,sPhase,setSPhase,raw,onBack}){
+  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
+  const pv=betaToPitch(raw.beta,s.pitchSens);
   return(
     <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
         <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer',padding:'4px'}}>←</button>
         <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
       </div>
-
       <Sec title="ДАТЧИКИ">
-        {sPhase==='idle'&&<B2 onClick={reqSensors} col='#22c55e'>▷ ПІДКЛЮЧИТИ</B2>}
-        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую...</div>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Клавіатура/кнопки.</div>}
+        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ</B2>}
+        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую дозволу...</div>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. WASD/клавіші доступні.</div>}
         {sPhase==='active'&&<>
           <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
-            {[['β нахил',rawSens.beta.toFixed(1)+'°',pitchColor(pv)],
-              ['компас',rawSens.compass.toFixed(0)+'°','#60a5fa'],
-              ['|a|',rawSens.mag.toFixed(1),'#f59e0b']
-            ].map(([l,v,c])=>(
-              <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'5px',textAlign:'center'}}>
+            {[['β нахил',raw.beta.toFixed(1)+'°',pCol(pv)],['компас',raw.compass.toFixed(0)+'°','#60a5fa'],['|a| удар',raw.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
+              <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'6px',textAlign:'center'}}>
                 <div style={{fontSize:'8px',color:'#1e3a5f'}}>{l}</div>
-                <div style={{fontSize:'13px',color:c,fontWeight:'bold'}}>{v}</div>
+                <div style={{fontSize:'14px',color:c,fontWeight:'bold'}}>{v}</div>
               </div>
             ))}
           </div>
         </>}
       </Sec>
-
-      <Sec title="РЕЖИМ ГРАВЦЯ">
+      <Sec title="РЕЖИМ">
         <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі, світ обертається']].map(([val,lbl,desc])=>(
-            <button key={val} onClick={()=>setSettings(p=>({...p,worldMode:val}))}
-              style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',
-                border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,
-                color:s.worldMode===val?'#60a5fa':'#334155',
-                borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
-              <div style={{fontWeight:'bold'}}>{lbl}</div>
-              <div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
+          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
+            <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))}
+              style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
+              <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
           ))}
         </div>
       </Sec>
-
       <Sec title={`ПОРІГ УДАРУ — ${s.strikeThr} m/s²`}>
-        <input type="range" min="4" max="20" value={s.strikeThr}
-          onChange={e=>setSettings(p=>({...p,strikeThr:+e.target.value}))}/>
-        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}>
-          <span>Легкий мах (4)</span><span>Сильний (20)</span>
-        </div>
-        {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
-          <div style={{height:'100%',width:`${clamp((rawSens.mag-9.8)/(s.strikeThr)*100,0,100)}%`,
-            background:'#f59e0b',transition:'width .05s'}}/>
+        <input type="range" min="3" max="20" value={s.strikeThr} onChange={e=>setS(p=>({...p,strikeThr:+e.target.value}))}/>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>Легкий мах (3)</span><span>Сильний (20)</span></div>
+        {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${clamp((raw.mag-9.8)/s.strikeThr*100,0,100)}%`,background:'#f59e0b',transition:'width .05s'}}/></div>}
+      </Sec>
+      <Sec title={`ЧУТЛИВІСТЬ НАХИЛУ — ±${s.pitchSens}°`}>
+        <input type="range" min="15" max="60" value={s.pitchSens} onChange={e=>setS(p=>({...p,pitchSens:+e.target.value}))}/>
+        {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}>
+          <div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pCol(pv),transition:'width .05s'}}/></div>
+          <div style={{fontSize:'9px',color:pCol(pv),minWidth:'44px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div>
         </div>}
       </Sec>
-
-      <Sec title={`ЧУТЛИВІСТЬ НАХИЛУ — ±${s.pitchSens}°`}>
-        <input type="range" min="15" max="60" value={s.pitchSens}
-          onChange={e=>setSettings(p=>({...p,pitchSens:+e.target.value}))}/>
-        {sPhase==='active'&&<>
-          <div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}>
-            <div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
-              <div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pitchColor(pv),transition:'width .05s'}}/>
-            </div>
-            <div style={{fontSize:'9px',color:pitchColor(pv),minWidth:'42px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div>
-          </div>
-        </>}
+      <Sec title="ГОЛОС КОМПАНЬЙОНА">
+        <div style={{display:'flex',gap:'8px'}}>
+          {[['on','🔊 Увімкнений'],['off','🔇 Вимкнений']].map(([val,lbl])=>(
+            <button key={val} onClick={()=>setS(p=>({...p,voice:val==='on'}))}
+              style={{flex:1,padding:'8px',background:((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#1e3a8a33':'#060f1e',border:`1px solid ${((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#3b82f6':'#1e3a5f'}`,color:((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+        <div style={{fontSize:'8px',color:'#1e3a5f',marginTop:'5px'}}>Компаньйон говорить через Text-to-Speech</div>
+        <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{marginTop:'6px',width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>
+          ▶ Тест голосу
+        </button>
       </Sec>
-
       <Sec title="СТАРТОВА ЗБРОЯ">
-        <div style={{display:'flex',flexDirection:'column',gap:'5px'}}>
+        <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
           {Object.entries(WPN).map(([k,w])=>(
-            <button key={k} onClick={()=>setSettings(p=>({...p,startWpn:k}))}
-              style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',
-                border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,
-                color:s.startWpn===k?'#22c55e':'#334155',
-                borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
-              <span>{w.label}</span>
-              <span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
+            <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))}
+              style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+              <span>{w.label}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
             </button>
           ))}
         </div>
       </Sec>
-
-      <Sec title="АЗБУКА МОРЗЕ — МАГІЯ">
-        <div style={{fontSize:'9px',color:'#4a6a9f',lineHeight:1.9,marginBottom:'6px'}}>
-          Торкнись коротко = · &nbsp; Утримай = −<br/>
-          Пауза &gt;1с → заклинання
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px'}}>
-          {Object.entries(MORSE).map(([code,sp])=>(
-            <div key={code} style={{background:'#020c1a',borderRadius:'4px',padding:'5px 7px',fontSize:'9px'}}>
-              <span style={{color:sp.col,fontWeight:'bold'}}>{code}</span>
-              <span style={{color:'#334155',marginLeft:'6px'}}>{sp.name}</span>
-            </div>
-          ))}
-        </div>
-      </Sec>
-
       <B2 onClick={onBack} col='#22c55e' style={{marginTop:'6px'}}>✓ ГОТОВО</B2>
     </div>
   );
 }
-function Sec({title,children}){
-  return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}>
-    <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>
-    {children}
-  </div>);
-}
-function B2({children,onClick,col='#60a5fa',style={}}){
-  return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',
-    border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',
-    fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>
-    {children}
-  </button>);
-}
+function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
+function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
 
 // ── GAME ──────────────────────────────────────────────────────────
 function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
@@ -340,7 +291,8 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
   const[wMsg,    setWMsg]   =useState('');
   const[dropped, setDropped]=useState(false);
   const[morseSeq,setMorseSeq]=useState('');
-  const[activeSpell,setActiveSpell]=useState(null); // {fn, col, name, expires}
+  const[spell,   setSpell]  =useState(null); // active spell {fn,col,name,exp}
+  const[showMorse,setShowMorse]=useState(false);
   const isRadar=settings.worldMode==='radar';
   const STRENGTH=4;
 
@@ -350,65 +302,82 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
   const prevAccMag=useRef(9.8);
   const lastStrikeT=useRef(0);
   const doAttackRef=useRef(null);
-  const doBeaconCompleteRef=useRef(null);
+  const doBeaconRef=useRef(null);
   const morseTimer=useRef(null);
-  const touchStartRef=useRef({x:0,y:0,t:0});
+  const touchStart=useRef({x:0,y:0,t:0});
 
-  useEffect(()=>{
-    R.current={gmode,player,yawIdx,compassD,vYaw,pitch,sta,fingers,
-               enemies,wave,score,divD,tutStep,tutDone,beaconT,highD,dropped,isRadar,activeSpell};
-  });
+  useEffect(()=>{R.current={gmode,player,yawIdx,compassD,vYaw,pitch,sta,fingers,enemies,wave,score,divD,tutStep,tutDone,beaconT,highD,dropped,isRadar,spell};});
 
-  const showMsg=useCallback((t)=>{setMsg(t);setMsgK(k=>k+1);},[]);
-  const flashAt=useCallback((cells,col)=>{
-    setFlash(cells.map(c=>({...c,col,fid:Math.random()})));
-    setTimeout(()=>setFlash([]),350);
-  },[]);
+  const showMsg=useCallback((text)=>{
+    setMsg(text);setMsgK(k=>k+1);
+    speak(text,settings.voice);
+  },[settings.voice]);
+
+  const flashAt=useCallback((cells,col)=>{setFlash(cells.map(c=>({...c,col,fid:Math.random()})));setTimeout(()=>setFlash([]),350);},[]);
 
   // ── SPELL CAST ────────────────────────────────────────────────
   const castSpell=useCallback((sp)=>{
-    playSound('spell');
-    showMsg(`✨ ${sp.name}!`);
-    const expires=Date.now()+5000;
-    setActiveSpell({...sp,expires});
-    if(sp.fn==='mend'){
-      setFingers(f=>Math.min(5,f+1));
-      setTimeout(()=>setActiveSpell(null),1000);
-    }else if(sp.fn==='rush'){
-      setSta(s=>Math.min(100,s+30));
-      setTimeout(()=>setActiveSpell(null),1000);
-    }else{
-      setTimeout(()=>setActiveSpell(null),5000);
-    }
+    snd('spell');
     const r=R.current;
-    if(r.gmode==='tutorial'&&!r.tutDone.morsed){
+    const expires=Date.now()+5000;
+    if(sp.fn==='stamina'){setSta(s=>Math.min(100,s+30));showMsg(`✨ ${sp.uk}! Стаміна +30`);}
+    else if(sp.fn==='mend'){setFingers(f=>Math.min(5,f+1));showMsg(`✨ ${sp.uk}! Палець відновлено`);}
+    else if(sp.fn==='heal'){setPlayer(p=>({...p,hp:Math.min(p.maxHp,p.hp+30)}));showMsg(`✨ ${sp.uk}! HP +30`);}
+    else if(sp.fn==='cure'){setPlayer(p=>({...p,hp:Math.min(p.maxHp,p.hp+50)}));showMsg(`✨ ${sp.uk}! HP +50`);}
+    else if(sp.fn==='rush'){setSpell({fn:'rush',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Рух без стаміни 5с`);}
+    else if(sp.fn==='shield'){setSpell({fn:'shield',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар заблоковано`);}
+    else if(sp.fn==='armor'){setSpell({fn:'armor',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! -60% шкоди на 4с`);}
+    else if(sp.fn==='burn'){setSpell({fn:'burn',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар ×3`);}
+    else if(sp.fn==='surge'){setSpell({fn:'surge',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Удар ×2 5с`);}
+    else if(sp.fn==='pierce'){setSpell({fn:'pierce',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар ігнорує захист`);}
+    else if(sp.fn==='freeze'){
+      setEnemies(es=>es.map(e=>({...e,frozen:Date.now()+3000})));
+      showMsg(`✨ ${sp.uk}! Найближчий ворог заморожений 3с`);
+    }
+    else if(sp.fn==='lockall'){
+      setEnemies(es=>es.map(e=>({...e,frozen:Date.now()+4000})));
+      showMsg(`✨ ${sp.uk}! Всі вороги заморожені 4с`);
+    }
+    else if(sp.fn==='stealth'){setSpell({fn:'stealth',col:sp.col,name:sp.uk,expires:Date.now()+3000});showMsg(`✨ ${sp.uk}! Ворог не бачить 3с`);}
+    else if(sp.fn==='omni'){
+      doAttackRef.current?.({omni:true});showMsg(`✨ ${sp.uk}! Удар навколо`);
+    }
+    else if(sp.fn==='chaos'){setEnemies(es=>es.map(e=>({...e,spd:ET[e.type].spd*2})));setTimeout(()=>setEnemies(es=>es.map(e=>({...e,spd:ET[e.type].spd}))),5000);showMsg(`✨ ${sp.uk}! Вороги сповільнені`);}
+    else if(sp.fn==='teleport'){
+      const r2=R.current;const[dx,dy]=DIR[r2.yawIdx];
+      setPlayer(p=>({...p,x:clamp(p.x+dx*3,0,G-1),y:clamp(p.y+dy*3,0,G-1)}));
+      snd('teleport');showMsg(`✨ ${sp.uk}! Телепорт`);
+    }
+    const r2=R.current;
+    if(r2.gmode==='tutorial'&&!r2.tutDone.morsed){
       setTutDone(d=>({...d,morsed:true}));
-      if(r.tutStep===7){setTutStep(8);setTimeout(()=>showMsg(TUT[8].msg),800);}
+      if(r2.tutStep===7){setTutStep(8);setTimeout(()=>showMsg(TUT[8].msg),800);}
     }
   },[showMsg]);
 
   // ── ATTACK ────────────────────────────────────────────────────
-  const doAttack=useCallback(()=>{
+  const doAttack=useCallback((opts={})=>{
     const r=R.current;
-    if(r.dropped||r.sta<5)return;
-    playSound('swing');
-    const cells=getWCells(r.player.x,r.player.y,r.yawIdx,settings.startWpn);
+    if(r.dropped||r.sta<4)return;
+    snd('swing');
+    const yi=opts.omni?0:r.yawIdx;
+    const wk=opts.omni?'flail':settings.startWpn;
+    const cells=getWCells(r.player.x,r.player.y,yi,wk);
     const C=STRENGTH/WPN[settings.startWpn].w;
     const chargeMult=1+Math.max(0,r.pitch)*1.8;
-    const burnMult=r.activeSpell?.fn==='burn'?2:1;
-    const baseDmg=Math.round(12*chargeMult*C*burnMult);
+    const spellMult=(r.spell?.fn==='burn'?3:r.spell?.fn==='surge'?2:1);
+    const baseDmg=Math.round(12*chargeMult*C*spellMult);
+    if(r.spell?.fn==='burn'||r.spell?.fn==='surge')setSpell(null);
     let hits=0;
     setEnemies(es=>es.map(e=>{
       const cell=cells.find(c=>c.x===e.x&&c.y===e.y);
-      if(!cell)return e;
-      hits++;
-      const pierce=r.activeSpell?.fn==='pierce';
+      if(!cell)return e;hits++;
       const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
       if(e.hp-dmg<=0){setScore(s=>s+10);return null;}
       return{...e,hp:e.hp-dmg};
     }).filter(Boolean));
     setSta(s=>Math.max(0,s-10));
-    if(hits>0){flashAt(cells,'#22c55e');playSound('hit');}else flashAt(cells,'#ef4444');
+    if(hits>0){flashAt(cells,'#22c55e');snd('hit');}else flashAt(cells,'#ef4444');
     const r2=R.current;
     if(r2.gmode==='tutorial'&&!r2.tutDone.attacked&&hits>0){
       setTutDone(d=>({...d,attacked:true}));
@@ -417,268 +386,209 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
   },[flashAt,showMsg,settings.startWpn]);
   useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
 
-  // ── BEACON COMPLETE ───────────────────────────────────────────
+  // ── BEACON ────────────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
-    playSound('beacon');setSta(s=>Math.min(100,s+50));
-    setDivD(0);setHighD(0);setDropped(false);setBeaconT(0);beaconCount.current=0;
+    snd('beacon');setSta(s=>Math.min(100,s+50));setDivD(0);setHighD(0);setDropped(false);setBeaconT(0);beaconCount.current=0;
     const r=R.current;
-    if(r.gmode==='tutorial'&&!r.tutDone.beaconed){
-      setTutDone(d=>({...d,beaconed:true}));
-      if(r.tutStep===6){setTutStep(7);setTimeout(()=>showMsg(TUT[7].msg),600);}
-    }
+    if(r.gmode==='tutorial'&&!r.tutDone.beaconed){setTutDone(d=>({...d,beaconed:true}));if(r.tutStep===6){setTutStep(7);setTimeout(()=>showMsg(TUT[7].msg),600);}}
   },[showMsg]);
-  useEffect(()=>{doBeaconCompleteRef.current=doBeaconComplete;},[doBeaconComplete]);
+  useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
 
   // ── SENSORS ───────────────────────────────────────────────────
   useEffect(()=>{
     if(sPhase!=='active')return;
     const onO=(e)=>{
-      const beta=e.beta??0;
-      const p=betaToPitch(beta,settings.pitchSens);
-      setPitch(p);
+      const beta=e.beta??0;const p=betaToPitch(beta,settings.pitchSens);setPitch(p);
       if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){
-        const hdg=e.webkitCompassHeading;
-        setCompassD(hdg);setYawIdx(Math.round(hdg/45)%8);
+        const hdg=e.webkitCompassHeading;setCompassD(hdg);setYawIdx(Math.round(hdg/45)%8);
         const r=R.current;
-        if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){
-          setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);
-        }
+        if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
       }
       const r=R.current;
       if(r.gmode==='tutorial'&&!r.tutDone.pitched&&r.tutStep===4&&(p<-0.4||p>0.4)){
         setTutDone(d=>({...d,pitched:true}));
-        const[dx,dy]=DIR[r.yawIdx];
-        const tx=clamp(r.player.x+dx*2,0,G-1),ty=clamp(r.player.y+dy*2,0,G-1);
+        const[dx,dy]=DIR[r.yawIdx];const tx=clamp(r.player.x+dx*2,0,G-1),ty=clamp(r.player.y+dy*2,0,G-1);
         setEnemies([{id:EID++,type:'shadow',x:tx,y:ty,hp:3,maxHp:3,ticks:0,dummy:true}]);
         setTutStep(5);setTimeout(()=>showMsg(TUT[5].msg),600);
       }
     };
-    const onOA=(e)=>{
-      if(e.alpha!=null&&!isNaN(e.alpha)){
-        const hdg=(360-e.alpha)%360;setCompassD(hdg);setYawIdx(Math.round(hdg/45)%8);
-      }
-    };
+    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha)){const h=(360-e.alpha)%360;setCompassD(h);setYawIdx(Math.round(h/45)%8);}};
     const onM=(e)=>{
       const g=e.accelerationIncludingGravity;if(!g)return;
       const mag=Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2);
-      const delta=Math.abs(mag-prevAccMag.current);
-      const now=Date.now();
-      if(delta>settings.strikeThr&&now-lastStrikeT.current>500){
-        lastStrikeT.current=now;doAttackRef.current?.();
-      }
+      const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
+      if(delta>settings.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
       prevAccMag.current=mag;
-      const rr=e.rotationRate;
-      const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
+      const rr=e.rotationRate;const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
       const r=R.current;
       if(r.pitch<-0.4&&still<18&&(r.gmode==='tutorial'||r.gmode==='survival')){
-        beaconCount.current++;
-        setBeaconT(Math.round(clamp(beaconCount.current/100,0,1)*16));
-        if(beaconCount.current>=100)doBeaconCompleteRef.current?.();
+        beaconCount.current++;setBeaconT(Math.round(clamp(beaconCount.current/100,0,1)*16));
+        if(beaconCount.current>=100)doBeaconRef.current?.();
       }else{beaconCount.current=0;setBeaconT(t=>Math.max(0,t-1));}
     };
     window.addEventListener('deviceorientation',onO,true);
     window.addEventListener('deviceorientationabsolute',onOA,true);
     window.addEventListener('devicemotion',onM);
-    return()=>{
-      window.removeEventListener('deviceorientation',onO,true);
-      window.removeEventListener('deviceorientationabsolute',onOA,true);
-      window.removeEventListener('devicemotion',onM);
-    };
+    return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
   },[sPhase,settings,showMsg]);
 
-  // ── KEYBOARD ──────────────────────────────────────────────────
+  // ── PAGE VISIBILITY — скидає тіки ворогів ────────────────────
   useEffect(()=>{
-    const held={};let bInt=null;
-    const kd=e=>{
-      if(held[e.key])return;held[e.key]=true;
-      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);
-      if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
-      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);
-      if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
-      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
-      if(sPhase!=='active'){
-        if(e.key==='z')setPitch(-1);if(e.key==='c')setPitch(1);
-        if(e.key==='b'){bInt=setInterval(()=>setBeaconT(t=>{if(t>=16){clearInterval(bInt);doBeaconCompleteRef.current?.();return 0;}return t+1;}),TICK);}
+    const h=()=>{
+      if(!document.hidden){
+        // Скидаємо тіки щоб вороги не атакували пачкою після повернення
+        setEnemies(es=>es.map(e=>({...e,ticks:0})));
       }
-      if(e.key===' '){e.preventDefault();doAttackRef.current?.();}
-      if(e.key==='.'||e.key===','){handleMorse('.');}
-      if(e.key==='-'||e.key==='_'){handleMorse('-');}
     };
-    const ku=e=>{
-      delete held[e.key];
-      if(sPhase!=='active'){if(e.key==='z')setPitch(0);if(e.key==='c')setPitch(0);if(e.key==='b'){clearInterval(bInt);setBeaconT(0);}}
-    };
-    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
-    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
-  },[sPhase]);
+    document.addEventListener('visibilitychange',h);
+    return()=>document.removeEventListener('visibilitychange',h);
+  },[]);
 
   // ── MOVE ──────────────────────────────────────────────────────
   const doMoveDir=useCallback((sdx,sdy)=>{
     const r=R.current;
     let gdx=sdx,gdy=sdy;
     if(r.isRadar){const w=swipeToWorld(sdx,sdy,r.compassD);gdx=w.gdx;gdy=w.gdy;}
-    if(r.dropped||r.sta<4)return;
+    if(r.dropped||(r.sta<4&&r.spell?.fn!=='rush'))return;
     const nx=clamp(r.player.x+gdx,0,G-1),ny=clamp(r.player.y+gdy,0,G-1);
     if(nx===r.player.x&&ny===r.player.y)return;
     if(r.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    const rushFree=r.activeSpell?.fn==='rush';
     setPlayer(p=>({...p,x:nx,y:ny}));
-    if(!rushFree){const cost=Math.max(0,r.pitch)*10;if(cost>0)setSta(s=>Math.max(0,s-cost));}
-    if(r.gmode==='tutorial'&&!r.tutDone.moved){
-      setTutDone(d=>({...d,moved:true}));
-      if(r.tutStep===2){setTutStep(3);setTimeout(()=>showMsg(TUT[3].msg),600);}
-    }
+    if(r.spell?.fn!=='rush'){const cost=Math.max(0,r.pitch)*10;if(cost>0)setSta(s=>Math.max(0,s-cost));}
+    if(r.gmode==='tutorial'&&!r.tutDone.moved){setTutDone(d=>({...d,moved:true}));if(r.tutStep===2){setTutStep(3);setTimeout(()=>showMsg(TUT[3].msg),600);}}
   },[showMsg]);
 
   const rotateW=useCallback((dir)=>{
-    const r=R.current;
-    setYawIdx(y=>(y+dir+8)%8);
-    if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){
-      setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);
-    }
+    const r=R.current;setYawIdx(y=>(y+dir+8)%8);
+    if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
   },[showMsg]);
 
   // ── MORSE ─────────────────────────────────────────────────────
   const handleMorse=useCallback((sym)=>{
-    playSound(sym==='.'?'dot':'dash');
+    snd(sym==='.'?'dot':'dash');
     setMorseSeq(m=>{
       const next=m+sym;
       clearTimeout(morseTimer.current);
       morseTimer.current=setTimeout(()=>{
         setMorseSeq('');
-        const spell=MORSE[next];
-        if(spell)castSpell(spell);
-        else showMsg(`? "${next}" — невідоме заклинання`);
+        const sp=SPELLS[next];
+        if(sp)castSpell(sp);else showMsg(`? "${next}" — невідоме. Дивись ⎍ МОРЗЕ`);
       },1000);
       return next;
     });
   },[castSpell,showMsg]);
 
-  // ── TOUCH (swipe + morse) ────────────────────────────────────
+  // ── TOUCH ─────────────────────────────────────────────────────
   useEffect(()=>{
-    const onStart=e=>{
+    const onS=e=>{e.preventDefault();touchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};};
+    const onE=e=>{
       e.preventDefault();
-      touchStartRef.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};
+      const{x,y,t}=touchStart.current;
+      const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
+      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
+      if(dist<25){handleMorse(dt<280?'.':'-');}
+      else{clearTimeout(morseTimer.current);setMorseSeq('');if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);else doMoveDir(0,Math.sign(dy));}
     };
-    const onEnd=e=>{
-      e.preventDefault();
-      const{x,y,t}=touchStartRef.current;
-      const dx=e.changedTouches[0].clientX-x;
-      const dy=e.changedTouches[0].clientY-y;
-      const dist=Math.sqrt(dx*dx+dy*dy);
-      const dt=Date.now()-t;
-      if(dist<25){
-        // TAP or HOLD → Morse
-        handleMorse(dt<280?'.':'-');
-      }else{
-        // SWIPE → move
-        clearTimeout(morseTimer.current);
-        setMorseSeq('');
-        if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);
-        else doMoveDir(0,Math.sign(dy));
-      }
-    };
-    const onMove=e=>e.preventDefault();
-    document.addEventListener('touchstart',onStart,{passive:false});
-    document.addEventListener('touchend',onEnd,{passive:false});
-    document.addEventListener('touchmove',onMove,{passive:false});
-    return()=>{
-      document.removeEventListener('touchstart',onStart);
-      document.removeEventListener('touchend',onEnd);
-      document.removeEventListener('touchmove',onMove);
-    };
+    const onM=e=>e.preventDefault();
+    document.addEventListener('touchstart',onS,{passive:false});
+    document.addEventListener('touchend',onE,{passive:false});
+    document.addEventListener('touchmove',onM,{passive:false});
+    return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
   },[doMoveDir,handleMorse]);
 
-  // ── GAME TICK ─────────────────────────────────────────────────
+  // ── KEYBOARD ──────────────────────────────────────────────────
+  useEffect(()=>{
+    const h={};let bInt=null;
+    const kd=e=>{
+      if(h[e.key])return;h[e.key]=true;
+      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
+      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
+      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
+      if(sPhase!=='active'){if(e.key==='z')setPitch(-1);if(e.key==='c')setPitch(1);if(e.key==='b'){bInt=setInterval(()=>setBeaconT(t=>{if(t>=16){clearInterval(bInt);doBeaconRef.current?.();return 0;}return t+1;}),TICK);}}
+      if(e.key===' '){e.preventDefault();doAttack();}
+      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
+    };
+    const ku=e=>{delete h[e.key];if(sPhase!=='active'){if(e.key==='z')setPitch(0);if(e.key==='c')setPitch(0);if(e.key==='b'){clearInterval(bInt);setBeaconT(0);}}};
+    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
+    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
+  },[sPhase,doMoveDir,rotateW,doAttack,handleMorse]);
+
+  // ── GAME TICK ──────────────────────────────────────────────────
+  // ВИПРАВЛЕНО: не викликаємо setPlayer всередині setEnemies
   useEffect(()=>{
     const id=setInterval(()=>{
       const r=R.current;
       // Divergence
-      const target=r.yawIdx*45;
-      const C=STRENGTH/WPN[settings.startWpn].w;
-      let diff=target-r.vYaw;
-      if(diff>180)diff-=360;if(diff<-180)diff+=360;
+      const target=r.yawIdx*45;const C=STRENGTH/WPN[settings.startWpn].w;
+      let diff=target-r.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
       setVYaw(v=>v+diff*(C*0.09));
       const D=Math.min(100,Math.abs(diff)*(1/C));setDivD(D);
-      if(D>65){
-        setHighD(h=>{
-          if(h>18){
-            setSta(s=>{
-              if(s<=0){
-                setDropped(true);playSound('drop');
-                setFingers(f=>{const nf=f-1;if(nf<=0){playSound('death');onDead();}return Math.max(0,nf);});
-                setTimeout(()=>setDropped(false),5000);
-              }
-              return Math.max(0,s-25);
-            });
-            return 0;
-          }
-          return h+1;
-        });
-      }else setHighD(0);
-      const regen=(1-(r.pitch+1)/2)*1.8,drain=D>65?1.2:D>40?0.3:0;
-      setSta(s=>clamp(s+regen-drain,0,100));
-      // Enemies
-      if(!r.dropped){
+      if(D>65){setHighD(hh=>{if(hh>18){setSta(s=>{if(s<=0){setDropped(true);snd('drop');setFingers(f=>{const nf=f-1;if(nf<=0){snd('death');onDead();}return Math.max(0,nf);});setTimeout(()=>setDropped(false),5000);}return Math.max(0,s-25);});return 0;}return hh+1;});}else setHighD(0);
+      setSta(s=>clamp(s+(1-(r.pitch+1)/2)*1.8-(D>65?1.2:D>40?0.3:0),0,100));
+      // Spell expire
+      if(r.spell&&Date.now()>r.spell.expires)setSpell(null);
+      // Enemies — ОКРЕМО від setPlayer
+      if(!r.dropped&&r.enemies.length>0){
+        let dmgToPlayer=0;let didFlash=false;
+        const now=Date.now();
         setEnemies(es=>{
           if(!es.length)return es;
+          dmgToPlayer=0;didFlash=false;
           return es.map(e=>{
             if(e.dummy)return e;
+            if(e.frozen&&now<e.frozen)return{...e,ticks:0};
             const et=ET[e.type];
-            const nt=e.ticks+1;
-            if(nt<et.spd)return{...e,ticks:nt};
+            const spd=e.spd||et.spd;
+            const nt=e.ticks+1;if(nt<spd)return{...e,ticks:nt};
             const dx=r.player.x-e.x,dy=r.player.y-e.y;
             const dist=Math.abs(dx)+Math.abs(dy);
             if(dist<=1){
-              const shieldBlock=r.activeSpell?.fn==='shield'&&Math.random()>.5;
-              if(!shieldBlock){
-                setPlayer(p=>{const nh=Math.max(0,p.hp-et.dmg);if(nh<=0){playSound('death');onDead();}return{...p,hp:nh};});
-                playSound('hurt');
-                setFlash([{x:r.player.x,y:r.player.y,col:'#ef4444',fid:Math.random()}]);
-                setTimeout(()=>setFlash([]),300);
+              const stealth=r.spell?.fn==='stealth';
+              const armor=r.spell?.fn==='armor';
+              if(!stealth){
+                const dmg=armor?Math.round(et.dmg*.4):et.dmg;
+                dmgToPlayer+=dmg;didFlash=true;
               }
               return{...e,ticks:0};
             }
-            // Move toward player (ghost can teleport diagonally)
-            const candidates=[];
-            const steps=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
-            steps.forEach(([mx,my])=>{
+            // Move
+            const moves=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
+            const best=moves.map(([mx,my])=>{
               const nx2=e.x+mx,ny2=e.y+my;
-              if(nx2>=0&&nx2<G&&ny2>=0&&ny2<G&&
-                 !(nx2===r.player.x&&ny2===r.player.y)&&
-                 !es.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))
-                candidates.push({x:nx2,y:ny2,d:Math.abs(r.player.x-nx2)+Math.abs(r.player.y-ny2)});
-            });
-            candidates.sort((a,b)=>a.d-b.d);
-            if(candidates.length){
-              const best=e.type==='ghost'?candidates[0]:candidates[0];
-              return{...e,x:best.x,y:best.y,ticks:0};
-            }
+              if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
+              if(nx2===r.player.x&&ny2===r.player.y)return null;
+              if(es.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
+              return{x:nx2,y:ny2,d:Math.abs(r.player.x-nx2)+Math.abs(r.player.y-ny2)};
+            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+            if(best)return{...e,x:best.x,y:best.y,ticks:0};
             return{...e,ticks:0};
           });
         });
+        // Apply damage ПІСЛЯ setEnemies, не всередині
+        if(dmgToPlayer>0){
+          setPlayer(p=>{
+            const nh=Math.max(0,p.hp-dmgToPlayer);
+            if(nh<=0){setTimeout(()=>{snd('death');onDead();},0);}
+            return{...p,hp:nh};
+          });
+          if(didFlash){snd('hurt');setFlash([{x:r.player.x,y:r.player.y,col:'#ef4444',fid:Math.random()}]);setTimeout(()=>setFlash([]),300);}
+        }
       }
     },TICK);
     return()=>clearInterval(id);
   },[settings.startWpn,onDead]);
 
-  // ── WAVE PROGRESSION ─────────────────────────────────────────
+  // ── WAVE ──────────────────────────────────────────────────────
   useEffect(()=>{
     if(gmode!=='survival'||wave===0||enemies.length>0||waveSpawning.current)return;
     waveSpawning.current=true;
-    const next=wave+1;
-    playSound('wave');setWMsg(`Хвиля ${next}`);
+    const next=wave+1;snd('wave');setWMsg(`Хвиля ${next}`);
     setTimeout(()=>{
       setWave(next);setWMsg('');
-      const wi=Math.min(next-1,WAVES.length-1);
-      const extra=Math.max(0,next-WAVES.length);
+      const wi=Math.min(next-1,WAVES.length-1),extra=Math.max(0,next-WAVES.length);
       const spawned=[];
-      WAVES[wi].forEach(({t,n})=>{
-        const total=n+(t==='shadow'?extra:0);
-        for(let i=0;i<total;i++){const e=spawn(t,[{x:player.x,y:player.y},...spawned]);if(e)spawned.push(e);}
-      });
-      setEnemies(spawned);
-      showMsg(`Хвиля ${next} · ${spawned.length} ворогів`);
+      WAVES[wi].forEach(({t,n})=>{const tot=n+(t==='shadow'?extra:0);for(let i=0;i<tot;i++){const e=spawn(t,[{x:player.x,y:player.y},...spawned]);if(e)spawned.push(e);}});
+      setEnemies(spawned);showMsg(`Хвиля ${next} · ${spawned.length} ворогів`);
       waveSpawning.current=false;
     },2500);
   },[enemies.length,gmode,wave,player.x,player.y,showMsg]);
@@ -686,85 +596,62 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
   // ── INIT ──────────────────────────────────────────────────────
   useEffect(()=>{
     EID=0;waveSpawning.current=true;
-    setPlayer({x:CX,y:CY,hp:100,maxHp:100});
-    setYawIdx(0);setVYaw(0);setCompassD(0);setPitch(0);
-    setSta(100);setFingers(5);setEnemies([]);setScore(0);
-    setDivD(0);setHighD(0);setDropped(false);setBeaconT(0);
-    setMorseSeq('');setActiveSpell(null);
+    setPlayer({x:CX,y:CY,hp:100,maxHp:100});setYawIdx(0);setVYaw(0);setCompassD(0);setPitch(0);
+    setSta(100);setFingers(5);setEnemies([]);setScore(0);setDivD(0);setHighD(0);
+    setDropped(false);setBeaconT(0);setMorseSeq('');setSpell(null);setFlash([]);
     if(gmode==='tutorial'){
-      setWave(0);
-      setTutStep(0);setTutDone({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false});
+      setWave(0);setTutStep(0);setTutDone({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false});
       setTimeout(()=>showMsg('...'),1500);
       setTimeout(()=>showMsg(TUT[1].msg),4500);
-      setTimeout(()=>{setTutStep(2);showMsg(TUT[2].msg);},8000);
+      setTimeout(()=>{setTutStep(2);showMsg(TUT[2].msg);},8500);
     }
     if(gmode==='survival'){
-      setWave(1);
-      playSound('wave');setWMsg('Хвиля 1');
-      setTimeout(()=>{
-        setWMsg('');
-        const spawned=[];
-        WAVES[0].forEach(({t,n})=>{for(let i=0;i<n;i++){const e=spawn(t,[{x:CX,y:CY},...spawned]);if(e)spawned.push(e);}});
-        setEnemies(spawned);showMsg(`Хвиля 1 · ${spawned.length} ворогів`);
-        waveSpawning.current=false;
-      },2000);
+      setWave(1);snd('wave');setWMsg('Хвиля 1');
+      setTimeout(()=>{setWMsg('');const sp=[];WAVES[0].forEach(({t,n})=>{for(let i=0;i<n;i++){const e=spawn(t,[{x:CX,y:CY},...sp]);if(e)sp.push(e);}});setEnemies(sp);showMsg(`Хвиля 1 · ${sp.length} ворогів`);waveSpawning.current=false;},2000);
     }
   },[]);// eslint-disable-line
 
   // ── RENDER ────────────────────────────────────────────────────
   const wCells=getWCells(player.x,player.y,yawIdx,settings.startWpn);
-  const cellSz=Math.min(29,Math.floor((Math.min(window.innerWidth,480)-22)/G));
-  const pCol=pitchColor(pitch);
-  const divCol=divD>70?'#ef4444':divD>40?'#f59e0b':'#22c55e';
+  const cellSz=Math.min(28,Math.floor((Math.min(window.innerWidth,480)-20)/G));
+  const pc=pCol(pitch);const dc=divD>70?'#ef4444':divD>40?'#f59e0b':'#22c55e';
   const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,player.x,player.y,compassD):{sx:gx,sy:gy};
 
   return(
     <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
+      {showMorse&&<MorsePanel onClose={()=>setShowMorse(false)}/>}
 
       {/* HUD */}
       <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center'}}>
         <Bar v={player.hp} max={player.maxHp} col={player.hp>50?'#22c55e':player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
         <Bar v={sta} max={100} col='#60a5fa' lbl="STA"/>
-        <div style={{display:'flex',gap:'2px'}}>
-          {Array.from({length:5},(_,i)=>(
-            <div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',
-              background:i<fingers?(dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>
-          ))}
-        </div>
-        {sPhase==='active'&&<div style={{fontSize:'8px',color:'#22c55e'}}>◉</div>}
-        <div style={{fontSize:'9px',color:'#60a5fa',minWidth:'28px',textAlign:'right'}}>
-          {gmode==='survival'?`W${wave}`:'TUT'}
-        </div>
-        {gmode==='survival'&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{score}</div>}
+        <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<fingers?(dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
+        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
+        <div style={{fontSize:'8px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='survival'?`W${wave}`:'TUT'}</div>
+        {gmode==='survival'&&<div style={{fontSize:'8px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{score}</div>}
+        <button onClick={()=>setShowMorse(true)} style={{background:'none',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'3px',padding:'1px 4px',cursor:'pointer',fontSize:'8px',fontFamily:'inherit',flexShrink:0}}>⎍</button>
       </div>
 
       {/* DIV + SPELL */}
-      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'7px',color:'#1e3a5f',width:'20px'}}>DIV</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
-          <div style={{height:'100%',width:`${divD}%`,background:divCol,transition:'width .08s'}}/>
-        </div>
-        {activeSpell&&<div style={{fontSize:'8px',color:activeSpell.col,animation:'pulse 0.5s infinite'}}>{activeSpell.name}</div>}
-        {dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse 0.5s infinite'}}>⚠DROP</div>}
+      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'4px'}}>
+        <div style={{fontSize:'7px',color:'#1e3a5f',width:'18px'}}>DIV</div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${divD}%`,background:dc,transition:'width .08s'}}/></div>
+        {spell&&<div style={{fontSize:'8px',color:spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{spell.name}</div>}
+        {dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
       </div>
 
-      {/* MORSE INPUT */}
-      {morseSeq&&(
-        <div style={{fontSize:'11px',color:'#a78bfa',letterSpacing:'0.2em',padding:'1px 8px'}}>
-          {morseSeq.split('').map((s,i)=>(
-            <span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>
-          ))}
-        </div>
-      )}
+      {/* MORSE DISPLAY */}
+      {morseSeq&&<div style={{fontSize:'12px',letterSpacing:'.2em',padding:'0 8px 1px'}}>
+        {morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
+      </div>}
 
-      {sPhase==='active'&&(
-        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-          <span>β<span style={{color:pCol}}>{rawSens.beta.toFixed(0)}°</span></span>
-          <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[yawIdx]}</span></span>
-          {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{compassD.toFixed(0)}°</span></span>}
-          <span style={{color:pCol}}>{pitch<-0.3?'REST':pitch>0.3?'CHARGE':'HOLD'}</span>
-        </div>
-      )}
+      {/* SENSOR INFO */}
+      {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
+        <span>β<span style={{color:pc}}>{rawSens.beta.toFixed(0)}°</span></span>
+        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[yawIdx]}</span></span>
+        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{compassD.toFixed(0)}°</span></span>}
+        <span style={{color:pc}}>{pitch<-0.3?'REST':pitch>0.3?'CHARGE':'HOLD'}</span>
+      </div>}
 
       {wMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{wMsg}</div>}
 
@@ -780,21 +667,16 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
             let bg='#020c1a',bdr='1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
-            else if(en){const et=ET[en.type];bg=et.col+'22';bdr=`1px solid ${et.col}`;}
+            else if(en){const et=ET[en.type];bg=et.col+(en.frozen&&Date.now()<en.frozen?'55':'22');bdr=`1px solid ${et.col}`;}
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
               <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .08s'}}>
                 {isP?(<>
                   <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
-                    background:dropped?'#f59e0b':activeSpell?.fn==='shield'?'#60a5fa':'#22c55e',
-                    boxShadow:`0 0 6px ${dropped?'#f59e0b':activeSpell?.fn==='shield'?'#60a5fa':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',
-                    fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>
-                    {isRadar?'↑':DSYM[yawIdx]}
-                  </div>
-                </>):en?(
-                  <span style={{color:ET[en.type].col,fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>
-                ):null}
+                    background:dropped?'#f59e0b':spell?.fn==='shield'?'#3b82f6':'#22c55e',
+                    boxShadow:`0 0 6px ${dropped?'#f59e0b':spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[yawIdx]}</div>
+                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'88':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
               </div>
             );
           })}
@@ -804,65 +686,46 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
       {/* BEACON */}
       {beaconT>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
         <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
-          <div style={{height:'100%',width:`${(beaconT/16)*100}%`,background:'#22c55e',transition:'width .1s'}}/>
-        </div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${(beaconT/16)*100}%`,background:'#22c55e',transition:'width .1s'}}/></div>
       </div>}
 
-      {/* COMPANION */}
-      {msg&&<div key={msgK} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',
-        borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',
-        maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>
-        {msg}
-      </div>}
+      {/* MSG */}
+      {msg&&<div key={msgK} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{msg}</div>}
 
-      {/* BOTTOM INFO */}
-      <div style={{marginTop:'auto',padding:'2px 8px 6px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'8px',flexWrap:'wrap'}}>
-        <span style={{color:divCol}}>D={Math.round(divD)}%</span>
+      {/* STATUS */}
+      <div style={{marginTop:'auto',padding:'2px 8px 5px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{color:dc}}>D={Math.round(divD)}%</span>
         <span>HP<span style={{color:player.hp>50?'#22c55e':'#ef4444'}}>{player.hp}</span></span>
         {isRadar&&<span style={{color:'#a78bfa'}}>RADAR</span>}
-        <span style={{color:'#2a4a6f'}}>свайп=рух · тап=· · тримай=−</span>
-        {sPhase!=='active'&&<span style={{color:'#1e3a5f'}}>WASD·q/e·z/c·пробіл·./−·b</span>}
+        <span>свайп=рух · тап=· · тримай=−</span>
+        <span style={{color:'#2a4a6f'}}>⎍ = Морзе довідка</span>
       </div>
     </div>
   );
 }
+function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
-function Bar({v,max,col,lbl}){
-  return(<div style={{flex:1}}>
-    <div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div>
-    <div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
-      <div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/>
-    </div>
-  </div>);
-}
-
-// ── WARNING SCREEN ────────────────────────────────────────────────
+// ── WARNING ───────────────────────────────────────────────────────
 function Warning({onOk}){
-  const[checked,setChecked]=useState(false);
-  return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'24px',gap:'14px'}}>
-      <div style={{fontSize:'40px'}}>⚠️</div>
-      <div style={{color:'#f59e0b',fontSize:'16px',fontWeight:'bold',textAlign:'center'}}>УВАГА!</div>
-      <div style={{color:'#4a6a9f',fontSize:'11px',textAlign:'center',lineHeight:1.9,maxWidth:'300px',
-        background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'16px'}}>
-        Ця гра вимагає фізичних рухів смартфоном.<br/><br/>
-        <span style={{color:'#ef4444'}}>НЕ розбий телефон!</span><br/>
-        Грай в безпечному місці.<br/>
-        Переконайся, що навколо немає людей чи предметів.<br/><br/>
-        <span style={{color:'#334155'}}>Рекомендується тримати телефон обома руками або використовувати ремінець.</span>
-      </div>
-      <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
-        <input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}
-          style={{width:'18px',height:'18px',cursor:'pointer'}}/>
-        Я розумію і граю обережно
-      </label>
-      <B2 onClick={checked?onOk:undefined} col={checked?'#22c55e':'#1e3a5f'}
-        style={{maxWidth:'280px',opacity:checked?1:.5}}>
-        {checked?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
-      </B2>
+  const[ok,setOk]=useState(false);
+  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
+    <div style={{fontSize:'36px'}}>⚠️</div>
+    <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>УВАГА!</div>
+    <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:2,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'14px'}}>
+      Ця гра вимагає фізичних рухів смартфоном.<br/>
+      <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
+      Грай в безпечному відкритому місці.<br/>
+      Переконайся що навколо нікого немає.<br/>
+      <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
     </div>
-  );
+    <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
+      <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
+      Я розумію і граю обережно
+    </label>
+    <B2 onClick={ok?onOk:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok?1:.5}}>
+      {ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
+    </B2>
+  </div>);
 }
 
 // ── APP ───────────────────────────────────────────────────────────
@@ -870,87 +733,45 @@ function App(){
   const[screen,setScreen]=useState('warning');
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
-  const[settings,setSettings]=useState({worldMode:'classic',strikeThr:8,pitchSens:40,startWpn:'sword'});
-  const[rawSens,setRawSens]=useState({beta:0,compass:0,mag:9.8});
+  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true});
+  const[raw,setRaw]=useState({beta:0,compass:0,mag:9.8});
 
   useEffect(()=>{
     if(sPhase!=='active')return;
-    const onO=(e)=>{
-      const beta=e.beta??0;
-      let compass=rawSens.compass;
-      if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading))compass=e.webkitCompassHeading;
-      setRawSens(p=>({...p,beta,compass}));
-    };
-    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha))setRawSens(p=>({...p,compass:(360-e.alpha)%360}));};
-    const onM=(e)=>{
-      const g=e.accelerationIncludingGravity;
-      if(!g)return;
-      setRawSens(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));
-    };
-    window.addEventListener('deviceorientation',onO,true);
-    window.addEventListener('deviceorientationabsolute',onOA,true);
-    window.addEventListener('devicemotion',onM);
-    return()=>{
-      window.removeEventListener('deviceorientation',onO,true);
-      window.removeEventListener('deviceorientationabsolute',onOA,true);
-      window.removeEventListener('devicemotion',onM);
-    };
+    const o=(e)=>{const beta=e.beta??0;let compass=raw.compass;if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading))compass=e.webkitCompassHeading;setRaw(p=>({...p,beta,compass}));};
+    const oa=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha))setRaw(p=>({...p,compass:(360-e.alpha)%360}));};
+    const m=(e)=>{const g=e.accelerationIncludingGravity;if(!g)return;setRaw(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));};
+    window.addEventListener('deviceorientation',o,true);window.addEventListener('deviceorientationabsolute',oa,true);window.addEventListener('devicemotion',m);
+    return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
   },[sPhase]);
 
   if(screen==='warning')return <Warning onOk={()=>setScreen('menu')}/>;
-
-  if(screen==='settings')return(
-    <SettingsScreen settings={settings} setSettings={setSettings}
-      sPhase={sPhase} setSPhase={setSPhase} rawSens={rawSens}
-      onBack={()=>setScreen('menu')}/>
-  );
-
-  if(screen==='game')return(
-    <Game gmode={gmode} settings={settings} sPhase={sPhase} rawSens={rawSens}
-      onDead={()=>setScreen('dead')} onMenu={()=>setScreen('menu')}/>
-  );
-
+  if(screen==='settings')return <Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} raw={raw} onBack={()=>setScreen('menu')}/>;
+  if(screen==='game')return <Game gmode={gmode} settings={S} sPhase={sPhase} rawSens={raw} onDead={()=>setScreen('dead')} onMenu={()=>setScreen('menu')}/>;
   if(screen==='dead')return(
     <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
-      <div style={{color:'#ef4444',fontSize:'36px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
-      <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'260px'}}>
+      <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
+      <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
         <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
         <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
       </div>
     </div>
   );
-
-  // MENU
   return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'11px'}}>
-      <div style={{color:'#1e3a5f',fontSize:'10px',letterSpacing:'.25em'}}>МИР 13×13</div>
-      <div style={{color:'#3a6a9f',fontSize:'26px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
-      <div style={{fontSize:'9px',color:'#334155',textAlign:'center',lineHeight:1.8}}>
-        Телефон = меч · Вібрація = мова світу<br/>
-        <span style={{color:'#1e3a5f'}}>свайп = рух · тап = · · тримай = − · мах = удар</span>
+    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
+      <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
+      <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
+      <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп = рух · тап = · · тримай = − · мах = удар<br/>⎍ = Морзе довідка у грі</div>
+      <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
+        {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙ Налаштування</span>}
       </div>
-
-      <div style={{padding:'8px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'280px'}}>
-        {sPhase==='active'
-          ?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[settings.startWpn].label} · {settings.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>
-          :<span style={{color:'#334155'}}>Датчики вимкнені · відкрий ⚙ Налаштування</span>}
-      </div>
-
-      <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'280px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
         <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
         <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
         <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
       </div>
-
-      <div style={{fontSize:'8px',color:'#1e3a5f',textAlign:'center',lineHeight:1.9}}>
-        Морзе: · − = ЩИТА &nbsp;|&nbsp; − − = ЗЦІЛЕННЯ<br/>
-        · − · = ПОРИВУ &nbsp;|&nbsp; − · · · = ВОГНЮ
-      </div>
     </div>
   );
 }
-
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-</script>
-</body>
-</html>
+</script></body></html>
