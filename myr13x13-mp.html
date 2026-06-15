@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>МИР 13×13 — МУЛЬТИПЛЕЄР</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#010d1f;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
+#root{height:100%;display:flex;flex-direction:column}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ms::-webkit-scrollbar{height:3px}.ms::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:2px}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback,useReducer}=React;
+
+// ── FIREBASE ──────────────────────────────────────────────────────
+const FB={
+  apiKey:"AIzaSyBuAf-MhxZVI_T9dx74gZ-Br6W-HpLT8Xg",
+  authDomain:"myr13x13.firebaseapp.com",
+  projectId:"myr13x13",
+  storageBucket:"myr13x13.firebasestorage.app",
+  messagingSenderId:"41210335847",
+  appId:"1:41210335847:web:e7d8e171ab5ff97ebfbac2",
+  databaseURL:"https://myr13x13-default-rtdb.firebaseio.com",
+};
+let _db=null;
+function db(){if(!_db){firebase.initializeApp(FB);_db=firebase.database();}return _db;}
+function genCode(){return Math.random().toString(36).slice(2,6).toUpperCase();}
+
+// ── CONSTANTS ─────────────────────────────────────────────────────
+const G=13,CX=6,CY=6,TICK=80,ARENA_TIME=180;
+const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+const DNAM=['N','NE','E','SE','S','SW','W','NW'];
+const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let EID=1000;
+
+// Колір/старт для кожного слота
+const PSLOTS={
+  p1:{col:'#22c55e',label:'P1 🟢',sx:2, sy:6, yi:2}, // facing E
+  p2:{col:'#3b82f6',label:'P2 🔵',sx:10,sy:6, yi:6}, // facing W
+  p3:{col:'#f59e0b',label:'P3 🟡',sx:6, sy:2, yi:4}, // facing S
+  p4:{col:'#ef4444',label:'P4 🔴',sx:6, sy:10,yi:0}, // facing N
+};
+
+const WPN={
+  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔'},
+  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓'},
+  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀'},
+  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹'},
+};
+const ET={
+  shadow: {hp:3,ms:400,dmg:12,col:'#7c3aed',sym:'◆'},
+  warden: {hp:8,ms:700,dmg:20,col:'#dc2626',sym:'◉'},
+  berserk:{hp:5,ms:500,dmg:28,col:'#ea580c',sym:'▲'},
+  ghost:  {hp:2,ms:300,dmg:8, col:'#0ea5e9',sym:'◌'},
+};
+const WAVES=[
+  [{t:'shadow',n:2}],[{t:'shadow',n:3}],
+  [{t:'shadow',n:3},{t:'warden',n:1}],
+  [{t:'shadow',n:4},{t:'warden',n:2}],
+  [{t:'shadow',n:3},{t:'warden',n:1},{t:'berserk',n:1}],
+  [{t:'shadow',n:4},{t:'warden',n:2},{t:'berserk',n:2}],
+  [{t:'shadow',n:5},{t:'warden',n:2},{t:'berserk',n:2},{t:'ghost',n:2}],
+];
+
+// ── HELPERS ───────────────────────────────────────────────────────
+function getWCells(px,py,yi,wk){
+  const w=WPN[wk]||WPN.sword,cells=[];
+  if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
+  const[dx,dy]=DIR[yi];
+  for(let r=1;r<=w.reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
+  for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
+  return cells;
+}
+function spawnE(type,occ){
+  const edges=[];for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
+  const free=edges.filter(c=>!occ.some(o=>o.x===c.x&&o.y===c.y));if(!free.length)return null;
+  const p=free[Math.floor(Math.random()*free.length)];
+  return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};
+}
+
+// ── SOUND ─────────────────────────────────────────────────────────
+let AC=null;
+function snd(t){
+  try{if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
+    const C=AC,ts=C.currentTime,o=C.createOscillator(),g=C.createGain();o.connect(g);g.connect(C.destination);
+    if(t==='swing'){o.type='sawtooth';o.frequency.setValueAtTime(200,ts);o.frequency.exponentialRampToValueAtTime(80,ts+.12);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.12);o.start(ts);o.stop(ts+.12);}
+    else if(t==='hit'){const b=C.createBuffer(1,C.sampleRate*.04,C.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/400);const s=C.createBufferSource();s.buffer=b;const gg=C.createGain();gg.gain.value=.4;s.connect(gg);gg.connect(C.destination);s.start(ts);}
+    else if(t==='hurt'){o.type='square';o.frequency.setValueAtTime(100,ts);o.frequency.exponentialRampToValueAtTime(50,ts+.25);g.gain.setValueAtTime(.25,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.25);o.start(ts);o.stop(ts+.25);}
+    else if(t==='death'){o.type='sine';o.frequency.setValueAtTime(440,ts);o.frequency.exponentialRampToValueAtTime(110,ts+.9);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.9);o.start(ts);o.stop(ts+.9);}
+    else if(t==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,ts);o.frequency.exponentialRampToValueAtTime(220,ts+.45);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.45);o.start(ts);o.stop(ts+.45);}
+    else if(t==='join'){[440,660,880].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.1;gg.gain.setValueAtTime(.15,st);gg.gain.exponentialRampToValueAtTime(.001,st+.2);oo.start(st);oo.stop(st+.2);});}
+    else if(t==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.13,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.07);o.start(ts);o.stop(ts+.07);}
+    else if(t==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.13,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.18);o.start(ts);o.stop(ts+.18);}
+    else if(t==='pvpkill'){[660,880,1100].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.08;gg.gain.setValueAtTime(.2,st);gg.gain.exponentialRampToValueAtTime(.001,st+.15);oo.start(st);oo.stop(st+.15);});}
+  }catch(e){}
+}
+
+// ── UI HELPERS ───────────────────────────────────────────────────
+function Btn2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'10px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'11px',fontFamily:"'Courier New',monospace",letterSpacing:'.05em',...style}}>{children}</button>);}
+function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'10px',marginBottom:'8px'}}><div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'8px'}}>{title}</div>{children}</div>);}
+
+// ── LOBBY ─────────────────────────────────────────────────────────
+function Lobby({onStart}){
+  const[tab,    setTab]   =useState('menu');
+  const[code,   setCode]  =useState('');
+  const[input,  setInput] =useState('');
+  const[status, setStatus]=useState('');
+  const[config, setConfig]=useState({mode:'coop',maxPlayers:2,friendlyFire:false,duelLives:3,wpn:'sword'});
+  const[sPhase, setSPhase]=useState('idle');
+  const[waiting,setWaiting]=useState({connected:0,max:2});
+  const roomRef=useRef(null);
+
+  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
+
+  const upd=(k,v)=>setConfig(c=>({...c,[k]:v}));
+
+  const createRoom=async()=>{
+    setStatus('Створюємо...');
+    try{
+      const c=genCode();
+      const sl=PSLOTS.p1;
+      const room={
+        status:'waiting',config,created:Date.now(),
+        players:{p1:{x:sl.sx,y:sl.sy,hp:100,maxHp:100,yawIdx:sl.yi,lives:config.duelLives,active:true,name:'P1'}},
+        connectedSlots:{p1:true},
+        enemies:{},scores:{p1:0},
+        wave:0,totalScore:0,waveMsg:'',arenaTimeLeft:ARENA_TIME,
+        inputs:{},hostAck:Date.now(),
+      };
+      await db().ref(`rooms/${c}`).set(room);
+      roomRef.current=db().ref(`rooms/${c}`);
+      setCode(c);setTab('waiting');setStatus('');
+      // Слухаємо підключення гравців
+      roomRef.current.child('connectedSlots').on('value',snap=>{
+        const slots=snap.val()||{};const cnt=Object.keys(slots).length;
+        setWaiting({connected:cnt,max:config.maxPlayers});
+      });
+      // Слухаємо старт від хоста (якщо хост сам же це чи від когось)
+      roomRef.current.child('status').on('value',snap=>{
+        if(snap.val()==='playing'){
+          roomRef.current.child('status').off();
+          roomRef.current.child('connectedSlots').off();
+          snd('join');
+          onStart({code:c,mySlot:'p1',isHost:true,config,sPhase});
+        }
+      });
+    }catch(e){setStatus('Помилка: '+e.message);}
+  };
+
+  const startGame=async()=>{
+    if(!roomRef.current)return;
+    await roomRef.current.child('status').set('playing');
+  };
+
+  const joinRoom=async()=>{
+    const c=input.trim().toUpperCase();
+    if(c.length<4){setStatus('Введи 4-значний код');return;}
+    setStatus('Підключаємось...');
+    try{
+      const snap=await db().ref(`rooms/${c}`).get();
+      if(!snap.exists()){setStatus('Кімната не знайдена');return;}
+      const room=snap.val();
+      if(room.status==='ended'){setStatus('Гра вже завершена');return;}
+      // Знайти вільний слот
+      const taken=Object.keys(room.connectedSlots||{});
+      const allSlots=['p1','p2','p3','p4'];
+      const mySlot=allSlots.find(s=>!taken.includes(s));
+      if(!mySlot){setStatus('Кімната заповнена');return;}
+      const sl=PSLOTS[mySlot];
+      const cfg=room.config||{duelLives:3};
+      // Зареєструвати себе
+      await db().ref(`rooms/${c}/players/${mySlot}`).set({x:sl.sx,y:sl.sy,hp:100,maxHp:100,yawIdx:sl.yi,lives:cfg.duelLives,active:true,name:PSLOTS[mySlot].label});
+      await db().ref(`rooms/${c}/connectedSlots/${mySlot}`).set(true);
+      await db().ref(`rooms/${c}/scores/${mySlot}`).set(0);
+      snd('join');
+      // Якщо кімната вже грає — одразу підключаємось
+      if(room.status==='playing'){
+        onStart({code:c,mySlot,isHost:false,config:room.config,sPhase});
+      }else{
+        // Чекаємо старту від хоста
+        setTab('waitJoin');setStatus(`Підключено як ${PSLOTS[mySlot].label}. Чекаємо хоста...`);
+        db().ref(`rooms/${c}/status`).on('value',snap2=>{
+          if(snap2.val()==='playing'){db().ref(`rooms/${c}/status`).off();onStart({code:c,mySlot,isHost:false,config:room.config,sPhase});}
+        });
+      }
+    }catch(e){setStatus('Помилка: '+e.message);}
+  };
+
+  const modeDesc={coop:'Спільна боротьба з ворогами',duel:'1v1 до вичерпання життів',arena:'PvP + вороги, рейтинг очок'};
+
+  return(
+    <div style={{background:'#010d1f',flex:1,overflow:'auto',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
+      <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
+      <div style={{color:'#3a6a9f',fontSize:'22px',fontWeight:'bold'}}>МУЛЬТИПЛЕЄР</div>
+
+      {tab==='menu'&&(<>
+        {/* Датчики */}
+        <div style={{width:'100%',maxWidth:'300px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'7px',padding:'10px'}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',marginBottom:'6px',letterSpacing:'.1em'}}>ДАТЧИКИ РУХУ</div>
+          {sPhase==='idle'&&<Btn2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ</Btn2>}
+          {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'9px'}}>⏳ Очікую дозволу...</div>}
+          {sPhase==='active'&&<div style={{color:'#22c55e',fontSize:'9px'}}>◉ Датчики активні</div>}
+          {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'9px'}}>⚠ Відхилено · WASD доступні</div>}
+        </div>
+
+        {/* Режим гри */}
+        <div style={{width:'100%',maxWidth:'300px'}}>
+          <Sec title="РЕЖИМ ГРИ">
+            {['coop','duel','arena'].map(m=>(
+              <button key={m} onClick={()=>upd('mode',m)} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'8px 10px',marginBottom:'4px',background:config.mode===m?'#1e3a8a22':'#020c1a',border:`1px solid ${config.mode===m?'#3b82f6':'#1e3a5f'}`,color:config.mode===m?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+                <span style={{fontWeight:config.mode===m?'bold':'normal'}}>{m==='coop'?'⚔ КООП':m==='duel'?'⚔⚔ ДУЕЛЬ':'🏆 АРЕНА'}</span>
+                <span style={{fontSize:'8px',color:'#1e3a5f'}}>{modeDesc[m]}</span>
+              </button>
+            ))}
+          </Sec>
+
+          {/* Кількість гравців (не в дуелі) */}
+          {config.mode!=='duel'&&(
+            <Sec title="КІЛЬКІСТЬ ГРАВЦІВ">
+              <div style={{display:'flex',gap:'6px'}}>
+                {[2,3,4].map(n=>(
+                  <button key={n} onClick={()=>upd('maxPlayers',n)} style={{flex:1,padding:'8px',background:config.maxPlayers===n?'#1e3a8a22':'#020c1a',border:`1px solid ${config.maxPlayers===n?'#3b82f6':'#1e3a5f'}`,color:config.maxPlayers===n?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'13px',fontWeight:'bold'}}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </Sec>
+          )}
+
+          {/* Кооп: Friendly Fire */}
+          {config.mode==='coop'&&(
+            <Sec title="FRIENDLY FIRE">
+              <div style={{display:'flex',gap:'6px'}}>
+                <button onClick={()=>upd('friendlyFire',false)} style={{flex:1,padding:'7px',background:!config.friendlyFire?'#14532d22':'#020c1a',border:`1px solid ${!config.friendlyFire?'#22c55e':'#1e3a5f'}`,color:!config.friendlyFire?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🤝 Вимк</button>
+                <button onClick={()=>upd('friendlyFire',true)} style={{flex:1,padding:'7px',background:config.friendlyFire?'#ef444422':'#020c1a',border:`1px solid ${config.friendlyFire?'#ef4444':'#1e3a5f'}`,color:config.friendlyFire?'#ef4444':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔥 Увімк</button>
+              </div>
+            </Sec>
+          )}
+
+          {/* Дуель: кількість життів */}
+          {config.mode==='duel'&&(
+            <Sec title="КІЛЬКІСТЬ ЖИТТІВ">
+              <div style={{display:'flex',gap:'6px'}}>
+                {[1,3,5].map(n=>(
+                  <button key={n} onClick={()=>upd('duelLives',n)} style={{flex:1,padding:'8px',background:config.duelLives===n?'#ef444422':'#020c1a',border:`1px solid ${config.duelLives===n?'#ef4444':'#1e3a5f'}`,color:config.duelLives===n?'#ef4444':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'13px',fontWeight:'bold'}}>
+                    {'❤'.repeat(n)}
+                  </button>
+                ))}
+              </div>
+            </Sec>
+          )}
+
+          {/* Зброя */}
+          <Sec title="ЗБРОЯ">
+            <div style={{display:'flex',flexWrap:'wrap',gap:'4px'}}>
+              {Object.entries(WPN).map(([k,w])=>(
+                <button key={k} onClick={()=>upd('wpn',k)} style={{padding:'5px 8px',background:config.wpn===k?'#14532d33':'#020c1a',border:`1px solid ${config.wpn===k?'#22c55e':'#1e3a5f'}`,color:config.wpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>{w.label}</button>
+              ))}
+            </div>
+          </Sec>
+        </div>
+
+        <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'300px'}}>
+          <Btn2 onClick={()=>setTab('create')} col='#22c55e'>⚔ СТВОРИТИ КІМНАТУ</Btn2>
+          <Btn2 onClick={()=>setTab('join')}   col='#60a5fa'>🔗 ПРИЄДНАТИСЬ</Btn2>
+          <a href="myr13x13.html" style={{textAlign:'center',color:'#1e3a5f',fontSize:'9px',textDecoration:'none',marginTop:'4px'}}>← Одиночна гра</a>
+        </div>
+      </>)}
+
+      {tab==='create'&&(<>
+        <div style={{color:'#94a3b8',fontSize:'10px',textAlign:'center',lineHeight:1.8,maxWidth:'280px'}}>
+          {config.mode==='coop'?`Кооп · ${config.maxPlayers} гравці · FF:${config.friendlyFire?'увімк':'вимк'}`:config.mode==='duel'?`Дуель · ${config.duelLives}❤`:`Арена · ${config.maxPlayers} гравці`}
+        </div>
+        <Btn2 onClick={createRoom} col='#22c55e'>▷ СТВОРИТИ</Btn2>
+        {status&&<div style={{color:'#f59e0b',fontSize:'10px',textAlign:'center'}}>{status}</div>}
+        <button onClick={()=>setTab('menu')} style={{background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>← назад</button>
+      </>)}
+
+      {tab==='waiting'&&(<>
+        <div style={{color:'#94a3b8',fontSize:'10px',textAlign:'center'}}>Надішли цей код партнерам:</div>
+        <div style={{color:'#22c55e',fontSize:'52px',fontWeight:'bold',letterSpacing:'.2em'}}>{code}</div>
+        <div style={{color:'#334155',fontSize:'9px',textAlign:'center',lineHeight:1.9}}>
+          Гравців підключено: <span style={{color:'#60a5fa',fontWeight:'bold'}}>{waiting.connected}</span> / {config.mode==='duel'?2:config.maxPlayers}<br/>
+          {waiting.connected>=2?<span style={{color:'#22c55e'}}>Можна починати!</span>:<span style={{animation:'pulse 1s infinite',display:'inline-block'}}>⏳ Чекаємо...</span>}
+        </div>
+        {waiting.connected>=2&&(
+          <Btn2 onClick={startGame} col='#22c55e'>▷ ПОЧАТИ ГРУ ({waiting.connected} гравці)</Btn2>
+        )}
+        <button onClick={()=>{roomRef.current?.remove();setTab('menu');}} style={{background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>✕ Скасувати</button>
+      </>)}
+
+      {tab==='join'&&(<>
+        <div style={{color:'#94a3b8',fontSize:'10px'}}>Введи 4-значний код кімнати:</div>
+        <input value={input} onChange={e=>setInput(e.target.value.toUpperCase().slice(0,4))}
+          placeholder="XKJF"
+          style={{width:'150px',padding:'12px',fontSize:'30px',fontWeight:'bold',letterSpacing:'.2em',textAlign:'center',background:'#020c1a',border:'2px solid #1e3a5f',color:'#60a5fa',borderRadius:'6px',fontFamily:"'Courier New',monospace",outline:'none'}}
+          onKeyDown={e=>e.key==='Enter'&&joinRoom()}
+        />
+        {status&&<div style={{color:status.includes('Підключ')?'#22c55e':'#ef4444',fontSize:'10px',textAlign:'center'}}>{status}</div>}
+        <Btn2 onClick={joinRoom} col='#60a5fa'>▷ ПРИЄДНАТИСЬ</Btn2>
+        <button onClick={()=>setTab('menu')} style={{background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>← назад</button>
+      </>)}
+
+      {tab==='waitJoin'&&(
+        <div style={{textAlign:'center',color:'#94a3b8',fontSize:'10px',lineHeight:2}}>
+          {status}<br/><span style={{animation:'pulse 1s infinite',display:'inline-block'}}>⏳</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MULTIPLAYER GAME ───────────────────────────────────────────────
+function MultiGame({code,mySlot,isHost,config,sPhase,onEnd}){
+  const gs=useRef(null);
+  const[,forceRender]=useReducer(x=>x+1,0);
+  const touchSt=useRef({x:0,y:0,t:0});
+  const prevAcc=useRef(9.8);
+  const lastStrT=useRef(0);
+  const waveTimer=useRef(null);
+  const morseTimer=useRef(null);
+  const arenaTimer=useRef(null);
+  const mode=config?.mode||'coop';
+  const wpn=config?.wpn||'sword';
+  const ff=config?.friendlyFire||false;
+
+  const roomRef=useRef(db().ref(`rooms/${code}`));
+  const stateRef=useRef(db().ref(`rooms/${code}`));
+  const myInputRef=useRef(db().ref(`rooms/${code}/inputs/${mySlot}`));
+
+  const sl=PSLOTS[mySlot];
+
+  // ── INIT ──────────────────────────────────────────────────────
+  useEffect(()=>{
+    EID=1000;
+    gs.current={
+      mySlot,
+      player:{x:sl.sx,y:sl.sy,hp:100,maxHp:100,lives:config?.duelLives||3,respawnAt:0},
+      yawIdx:sl.yi,compassD:0,vYaw:0,pitch:0,
+      stamina:100,divergence:0,highDTicks:0,dropped:false,droppedUntil:0,
+      spell:null,fingers:5,
+      // Усі гравці (отримуємо з Firebase)
+      allPlayers:{},
+      // Ворожий стан (тільки від хоста)
+      enemies:[],wave:0,totalScore:0,waveMsg:'',
+      scores:{},arenaTimeLeft:ARENA_TIME,
+      flash:[],flashUntil:0,
+      msg:'',msgKey:0,morseSeq:'',
+      pendingInputs:{},
+      _lastInputTs:{},
+    };
+
+    if(isHost){
+      // Host запускає хвилю
+      if(mode==='coop'||mode==='arena'){
+        gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
+        waveTimer.current=setTimeout(()=>doSpawnWave(1),2500);
+      }
+      if(mode==='arena'){
+        // Арена: таймер
+        arenaTimer.current=setInterval(()=>{
+          const g=gs.current;if(!g)return;
+          g.arenaTimeLeft=Math.max(0,g.arenaTimeLeft-1);
+          if(g.arenaTimeLeft<=0){clearInterval(arenaTimer.current);endGame();}
+        },1000);
+      }
+      // Слухаємо інпут від гостей
+      db().ref(`rooms/${code}/inputs`).on('value',snap=>{
+        const inp=snap.val()||{};
+        const g=gs.current;if(!g)return;
+        Object.entries(inp).forEach(([slot,data])=>{
+          if(slot===mySlot||!data)return;
+          // Оновити позицію/стан гравця
+          if(!g.allPlayers[slot])g.allPlayers[slot]={x:PSLOTS[slot].sx,y:PSLOTS[slot].sy,hp:100,lives:config?.duelLives||3,yawIdx:PSLOTS[slot].yi};
+          g.allPlayers[slot]={...g.allPlayers[slot],x:data.x??g.allPlayers[slot].x,y:data.y??g.allPlayers[slot].y,yawIdx:data.yawIdx??g.allPlayers[slot].yawIdx,hp:data.hp??g.allPlayers[slot].hp};
+          // Атака від гостя
+          if(data.attack&&data.attack.t>(g._lastInputTs[slot]||0)){
+            g._lastInputTs[slot]=data.attack.t;
+            if(!g.pendingInputs[slot])g.pendingInputs[slot]=[];
+            g.pendingInputs[slot].push(data.attack);
+          }
+        });
+      });
+    } else {
+      // Guest: читає стан від хоста
+      stateRef.current.on('value',snap=>{
+        const room=snap.val();if(!room||!gs.current)return;
+        const g=gs.current;
+        // Ворог, хвиля, очки
+        g.enemies=Object.values(room.enemies||{}).filter(Boolean);
+        g.wave=room.wave||0;g.totalScore=room.totalScore||0;
+        g.waveMsg=room.waveMsg||'';g.scores=room.scores||{};
+        g.arenaTimeLeft=room.arenaTimeLeft??ARENA_TIME;
+        // Стан усіх гравців (для відображення)
+        const allP=room.players||{};
+        Object.entries(allP).forEach(([slot,pd])=>{
+          if(slot===mySlot){
+            // HP мого гравця може оновитись хостом (damage from enemies/ff)
+            if(pd&&pd.hp!==undefined)g.player={...g.player,hp:pd.hp,lives:pd.lives??g.player.lives};
+          }else{
+            g.allPlayers[slot]=pd||{};
+          }
+        });
+        if(room.status==='ended')endGame();
+        forceRender();
+      });
+    }
+
+    return()=>{
+      clearTimeout(waveTimer.current);clearTimeout(morseTimer.current);clearInterval(arenaTimer.current);
+      db().ref(`rooms/${code}/inputs`).off();
+      stateRef.current.off();
+      myInputRef.current.remove();
+      if(isHost)roomRef.current.child('status').set('ended');
+    };
+  },[]);// eslint-disable-line
+
+  const endGame=useCallback(()=>{
+    const g=gs.current;if(!g)return;
+    snd('death');onEnd({scores:g.scores,totalScore:g.totalScore,wave:g.wave,mode});
+  },[mode,onEnd]);
+
+  // ── SPAWN WAVE ────────────────────────────────────────────────
+  const doSpawnWave=useCallback((waveNum)=>{
+    if(!isHost||!gs.current)return;
+    const g=gs.current;
+    const occ=[{x:g.player.x,y:g.player.y},...Object.values(g.allPlayers).map(p=>({x:p.x,y:p.y}))];
+    const wi=Math.min(waveNum-1,WAVES.length-1);
+    const extra=Math.max(0,waveNum-WAVES.length);
+    const spawned=[];
+    WAVES[wi].forEach(({t,n})=>{
+      const tot=n+(t==='shadow'?extra:0);
+      for(let i=0;i<tot;i++){const e=spawnE(t,[...occ,...spawned]);if(e)spawned.push(e);}
+    });
+    g.enemies=spawned;g.waveMsg='';
+    g.wave=waveNum;
+    showMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
+    snd('wave');forceRender();
+  },[isHost]);// eslint-disable-line
+
+  const showMsg=useCallback((t)=>{const g=gs.current;if(!g)return;g.msg=t;g.msgKey++;forceRender();},[]);
+
+  // ── APPLY ATTACK (host applies, returns kill info) ────────────
+  function applyAttack(g,px,py,yi,wk,attackerSlot){
+    const C=4/(WPN[wk]?.w||5);
+    const pitch=attackerSlot===mySlot?g.pitch:0;
+    const chargeMult=1+Math.max(0,pitch)*1.8;
+    const baseDmg=Math.round(12*chargeMult*C);
+    const cells=getWCells(px,py,yi,wk);
+    let hits=0;
+
+    // Атакуємо ворогів
+    g.enemies=g.enemies.map(e=>{
+      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
+      hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
+      if(e.hp-dmg<=0){
+        (g.scores[attackerSlot]=g.scores[attackerSlot]||0);
+        g.scores[attackerSlot]+=10;g.totalScore+=10;
+        snd('hit');return null;
+      }
+      return{...e,hp:e.hp-dmg};
+    }).filter(Boolean);
+
+    // Friendly Fire або PvP: атакуємо гравців
+    const allPlayerEntries=[
+      {slot:'p1_host',pd:g.player,isMe:attackerSlot===mySlot},
+      ...Object.entries(g.allPlayers).map(([slot,pd])=>({slot,pd,isMe:false})),
+    ].filter(e=>e.slot!==attackerSlot+'_host'&&e.slot!==attackerSlot);
+
+    if((mode==='coop'&&ff)||mode==='duel'||mode==='arena'){
+      allPlayerEntries.forEach(({slot,pd,isMe})=>{
+        if(!pd)return;
+        const hit=cells.find(c=>c.x===pd.x&&c.y===pd.y);
+        if(!hit)return;
+        const dmg=hit.main?baseDmg:Math.round(baseDmg*.5);
+        if(isMe||slot==='p1_host'){
+          g.player={...g.player,hp:Math.max(0,g.player.hp-dmg)};
+          snd('hurt');
+          if(g.player.hp<=0)handlePlayerDeath(g,mySlot);
+        }else{
+          if(!g.allPlayers[slot])return;
+          g.allPlayers[slot]={...g.allPlayers[slot],hp:Math.max(0,(g.allPlayers[slot].hp||100)-dmg)};
+          snd('hurt');
+          if(g.allPlayers[slot].hp<=0){
+            handlePlayerDeath(g,slot);
+            // Очки за PvP kill
+            if(mode==='duel'||mode==='arena'){
+              snd('pvpkill');
+              g.scores[attackerSlot]=(g.scores[attackerSlot]||0)+50;
+              showMsg(`${PSLOTS[attackerSlot]?.label} вбив ${PSLOTS[slot]?.label}! +50`);
+            }
+          }
+        }
+      });
+    }
+    return hits;
+  }
+
+  function handlePlayerDeath(g,slot){
+    if(slot===mySlot){
+      const newLives=Math.max(0,(g.player.lives||1)-1);
+      g.player={...g.player,lives:newLives,hp:0};
+      if(newLives<=0){if(mode==='duel')endGame();}
+      else{g.player.respawnAt=Date.now()+3000;}
+    }else{
+      if(!g.allPlayers[slot])return;
+      const newLives=Math.max(0,(g.allPlayers[slot].lives||1)-1);
+      g.allPlayers[slot]={...g.allPlayers[slot],lives:newLives,hp:0};
+      if(newLives<=0&&mode==='duel')endGame();
+      else{g.allPlayers[slot].respawnAt=Date.now()+3000;}
+    }
+  }
+
+  // ── ATTACK (мій гравець) ──────────────────────────────────────
+  const doAttack=useCallback(()=>{
+    const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
+    snd('swing');
+    if(isHost){
+      const hits=applyAttack(g,g.player.x,g.player.y,g.yawIdx,wpn,mySlot);
+      g.flash=getWCells(g.player.x,g.player.y,g.yawIdx,wpn).map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));
+      g.flashUntil=Date.now()+350;
+    }else{
+      // Guest: надсилає атаку хосту
+      const cells=getWCells(g.player.x,g.player.y,g.yawIdx,wpn);
+      myInputRef.current.update({attack:{cells,wk:wpn,yi:g.yawIdx,t:Date.now(),px:g.player.x,py:g.player.y}});
+      g.flash=cells.map(c=>({...c,col:PSLOTS[mySlot].col+'44',fid:Math.random()}));
+      g.flashUntil=Date.now()+350;
+    }
+    g.stamina=Math.max(0,g.stamina-10);
+    forceRender();
+  },[isHost,wpn,mySlot]);// eslint-disable-line
+  const doAttackRef=useRef(doAttack);useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
+
+  // ── MOVE ──────────────────────────────────────────────────────
+  const doMoveDir=useCallback((dx,dy)=>{
+    const g=gs.current;if(!g||g.dropped||g.stamina<3)return;
+    const nx=clamp(g.player.x+dx,0,G-1),ny=clamp(g.player.y+dy,0,G-1);
+    if(nx===g.player.x&&ny===g.player.y)return;
+    if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
+    if(Object.values(g.allPlayers).some(p=>p&&p.x===nx&&p.y===ny))return;
+    g.player={...g.player,x:nx,y:ny};
+    g.stamina=Math.max(0,g.stamina-Math.max(0,g.pitch)*7);
+    forceRender();
+  },[]);
+
+  const rotateW=useCallback((dir)=>{const g=gs.current;if(!g)return;g.yawIdx=(g.yawIdx+dir+8)%8;forceRender();},[]);
+
+  // ── MORSE ─────────────────────────────────────────────────────
+  const handleMorse=useCallback((sym)=>{
+    const g=gs.current;if(!g)return;
+    snd(sym==='.'?'dot':'dash');g.morseSeq+=sym;forceRender();
+    clearTimeout(morseTimer.current);
+    morseTimer.current=setTimeout(()=>{
+      const g2=gs.current;if(!g2)return;
+      const seq=g2.morseSeq;g2.morseSeq='';
+      if(seq==='.')g2.stamina=Math.min(100,g2.stamina+30);
+      else if(seq==='.-')g2.spell={fn:'shield',name:'Щита',col:'#3b82f6',expires:Date.now()+5000};
+      else if(seq==='--'){g2.player={...g2.player,hp:Math.min(g2.player.maxHp,g2.player.hp+25)};}
+      else if(seq==='-..'){g2.player={...g2.player,hp:Math.min(g2.player.maxHp,g2.player.hp+30)};}
+      showMsg('✨ '+seq);forceRender();
+    },1000);
+  },[showMsg]);
+
+  // ── SENSORS ───────────────────────────────────────────────────
+  useEffect(()=>{
+    if(sPhase!=='active')return;
+    const onO=(e)=>{
+      const g=gs.current;if(!g)return;
+      g.pitch=clamp(((e.beta??40)-40)/40,-1,1);
+      if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){g.compassD=e.webkitCompassHeading;g.yawIdx=Math.round(g.compassD/45)%8;}
+      forceRender();
+    };
+    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha)){const g=gs.current;if(!g)return;g.compassD=(360-e.alpha)%360;g.yawIdx=Math.round(g.compassD/45)%8;forceRender();}};
+    const onM=(e)=>{
+      const ag=e.accelerationIncludingGravity;if(!ag)return;
+      const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
+      const delta=Math.abs(mag-prevAcc.current);const now=Date.now();
+      if(delta>8&&now-lastStrT.current>500){lastStrT.current=now;doAttackRef.current?.();}
+      prevAcc.current=mag;
+    };
+    window.addEventListener('deviceorientation',onO,true);
+    window.addEventListener('deviceorientationabsolute',onOA,true);
+    window.addEventListener('devicemotion',onM);
+    return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
+  },[sPhase]);
+
+  // ── KEYBOARD ──────────────────────────────────────────────────
+  useEffect(()=>{
+    const held={};
+    const kd=e=>{
+      if(held[e.key])return;held[e.key]=true;
+      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
+      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
+      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
+      if(e.key===' '){e.preventDefault();doAttack();}
+      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
+    };
+    const ku=e=>{delete held[e.key];};
+    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
+    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);};
+  },[doMoveDir,rotateW,doAttack,handleMorse]);
+
+  // ── TOUCH ─────────────────────────────────────────────────────
+  useEffect(()=>{
+    const onS=e=>{e.preventDefault();touchSt.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};};
+    const onE=e=>{
+      e.preventDefault();
+      const{x,y,t}=touchSt.current;
+      const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
+      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
+      if(dist<25)handleMorse(dt<280?'.':'-');
+      else if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);
+      else doMoveDir(0,Math.sign(dy));
+    };
+    const onM=e=>e.preventDefault();
+    document.addEventListener('touchstart',onS,{passive:false});
+    document.addEventListener('touchend',onE,{passive:false});
+    document.addEventListener('touchmove',onM,{passive:false});
+    return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
+  },[doMoveDir,handleMorse]);
+
+  // ════════════════════════════════════════════════════════════════
+  // HOST GAME LOOP
+  // ════════════════════════════════════════════════════════════════
+  useEffect(()=>{
+    if(!isHost)return;
+    const id=setInterval(()=>{
+      const g=gs.current;if(!g)return;
+      const now=Date.now();
+      const C=4/(WPN[wpn]?.w||5);
+
+      if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
+
+      // Divergence мого гравця
+      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
+      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
+      if(g.divergence>65){g.highDTicks++;if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.droppedUntil=now+5000;g.fingers--;}}}else g.highDTicks=0;
+      if(g.dropped&&now>g.droppedUntil)g.dropped=false;
+      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.5-(g.divergence>65?1:0),0,100);
+      if(g.spell&&now>g.spell.expires)g.spell=null;
+
+      // Respawn
+      if(g.player.hp<=0&&g.player.respawnAt&&now>g.player.respawnAt&&(g.player.lives||0)>0){
+        g.player={...g.player,hp:g.player.maxHp,respawnAt:0,x:sl.sx,y:sl.sy};
+      }
+      Object.entries(g.allPlayers).forEach(([slot,pd])=>{
+        if(pd&&pd.hp<=0&&pd.respawnAt&&now>pd.respawnAt&&(pd.lives||0)>0){
+          g.allPlayers[slot]={...pd,hp:100,respawnAt:0,x:PSLOTS[slot].sx,y:PSLOTS[slot].sy};
+        }
+      });
+
+      // Застосувати атаки від гостей
+      Object.entries(g.pendingInputs||{}).forEach(([slot,attacks])=>{
+        if(!attacks?.length)return;
+        attacks.forEach(atk=>{
+          applyAttack(g,atk.px,atk.py,atk.yi,atk.wk||wpn,slot);
+        });
+        delete g.pendingInputs[slot];
+      });
+
+      // Ворожий AI
+      if((mode==='coop'||mode==='arena')&&g.enemies.length>0){
+        const allPos=[
+          {slot:mySlot,x:g.player.x,y:g.player.y,hp:g.player.hp},
+          ...Object.entries(g.allPlayers).map(([s,p])=>({slot:s,x:p?.x??0,y:p?.y??0,hp:p?.hp??100})),
+        ].filter(p=>p.hp>0);
+
+        g.enemies=g.enemies.map(e=>{
+          if(e.frozen&&now<e.frozen)return e;
+          const et=ET[e.type];
+          if(now-(e.lastMove||0)<et.ms)return e;
+          // Найближчий гравець
+          const target=allPos.reduce((b,p)=>{const d=Math.abs(e.x-p.x)+Math.abs(e.y-p.y);return(!b||d<b.d)?{...p,d}:b;},null);
+          if(!target)return{...e,lastMove:now};
+          const dx=target.x-e.x,dy=target.y-e.y;
+          const dist=Math.abs(dx)+Math.abs(dy);
+          if(dist<=1){
+            // Атака відповідного гравця
+            const shield=target.slot===mySlot&&g.spell?.fn==='shield';
+            if(!shield){
+              if(target.slot===mySlot){
+                g.player={...g.player,hp:Math.max(0,g.player.hp-et.dmg)};
+                snd('hurt');g.flash=[{x:g.player.x,y:g.player.y,col:'#ef4444',fid:Math.random()}];g.flashUntil=now+300;
+                if(g.player.hp<=0)handlePlayerDeath(g,mySlot);
+              }else{
+                if(g.allPlayers[target.slot]){
+                  g.allPlayers[target.slot]={...g.allPlayers[target.slot],hp:Math.max(0,(g.allPlayers[target.slot].hp||100)-et.dmg)};
+                  snd('hurt');
+                  if(g.allPlayers[target.slot].hp<=0)handlePlayerDeath(g,target.slot);
+                }
+              }
+            }else g.spell=null;
+            return{...e,lastMove:now};
+          }
+          const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
+          const best=dirs.map(([mx,my])=>{
+            const nx2=e.x+mx,ny2=e.y+my;
+            if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
+            if(allPos.some(p=>p.x===nx2&&p.y===ny2))return null;
+            if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
+            return{x:nx2,y:ny2,d:Math.abs(target.x-nx2)+Math.abs(target.y-ny2)};
+          }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+          return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
+        }).filter(Boolean);
+      }
+
+      // Хвиля завершена
+      if((mode==='coop'||mode==='arena')&&g.wave>0&&g.enemies.length===0&&!waveTimer.current){
+        const next=g.wave+1;g.wave=next;g.waveMsg=`Хвиля ${next}`;
+        waveTimer.current=setTimeout(()=>{waveTimer.current=null;doSpawnWave(next);},2500);
+      }
+
+      // Записуємо повний стан у Firebase
+      const allPFb={};
+      allPFb[mySlot]={x:g.player.x,y:g.player.y,hp:g.player.hp,maxHp:g.player.maxHp,yawIdx:g.yawIdx,lives:g.player.lives,spell:g.spell?.fn||null};
+      Object.entries(g.allPlayers).forEach(([slot,pd])=>{if(pd)allPFb[slot]={x:pd.x,y:pd.y,hp:pd.hp,maxHp:pd.maxHp||100,yawIdx:pd.yawIdx||0,lives:pd.lives};});
+
+      roomRef.current.update({
+        wave:g.wave,totalScore:g.totalScore,waveMsg:g.waveMsg,arenaTimeLeft:g.arenaTimeLeft,
+        scores:g.scores,players:allPFb,
+        enemies:g.enemies.reduce((a,e)=>{a[`e${e.id}`]={type:e.type,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,frozen:e.frozen||0,lastMove:e.lastMove||0};return a;},{}),
+      });
+
+      forceRender();
+    },TICK);
+    return()=>clearInterval(id);
+  },[isHost,wpn,mode,doSpawnWave]);// eslint-disable-line
+
+  // ════════════════════════════════════════════════════════════════
+  // GUEST LOCAL LOOP — фізика + синхронізація позиції
+  // ════════════════════════════════════════════════════════════════
+  useEffect(()=>{
+    if(isHost)return;
+    const id=setInterval(()=>{
+      const g=gs.current;if(!g)return;
+      const C=4/(WPN[wpn]?.w||5);
+      if(g.flashUntil&&Date.now()>g.flashUntil){g.flash=[];g.flashUntil=0;}
+      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
+      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
+      if(g.divergence>65){g.highDTicks++;if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.fingers--;}}}else g.highDTicks=0;
+      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.5-(g.divergence>65?1:0),0,100);
+      if(g.spell&&Date.now()>g.spell.expires)g.spell=null;
+      // Надіслати свій стан
+      myInputRef.current.update({x:g.player.x,y:g.player.y,yawIdx:g.yawIdx,pitch:g.pitch,hp:g.player.hp,spell:g.spell?.fn||null,stamina:Math.round(g.stamina)});
+      forceRender();
+    },TICK);
+    return()=>clearInterval(id);
+  },[isHost,wpn]);
+
+  // ── RENDER ────────────────────────────────────────────────────
+  const g=gs.current;if(!g)return null;
+  const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,wpn);
+  const cellSz=Math.min(26,Math.floor((Math.min(window.innerWidth,480)-20)/G));
+  const myCol=PSLOTS[mySlot]?.col||'#22c55e';
+  const divCol=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
+
+  // Усі гравці для рендерингу
+  const otherPlayers=Object.entries(g.allPlayers).filter(([,p])=>p&&p.x!==undefined);
+
+  // Арена: таймер хвилин:секунди
+  const arenaMin=Math.floor(g.arenaTimeLeft/60);
+  const arenaSec=(g.arenaTimeLeft%60).toString().padStart(2,'0');
+
+  return(
+    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
+
+      {/* HUD — усі гравці */}
+      <div style={{width:'100%',maxWidth:'480px',padding:'4px 8px 1px',display:'flex',gap:'4px',alignItems:'center',flexWrap:'wrap'}}>
+        {/* Мій слот */}
+        <div style={{display:'flex',alignItems:'center',gap:'3px',minWidth:'80px'}}>
+          <span style={{fontSize:'8px',color:myCol,fontWeight:'bold'}}>{PSLOTS[mySlot]?.label}</span>
+          <div style={{width:'40px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${(g.player.hp/g.player.maxHp)*100}%`,background:g.player.hp>50?myCol:g.player.hp>25?'#f59e0b':'#ef4444',transition:'width .2s'}}/>
+          </div>
+          {(mode==='duel'||mode==='arena')&&<span style={{fontSize:'8px',color:'#ef4444'}}>{'❤'.repeat(Math.max(0,g.player.lives||0))}</span>}
+        </div>
+        {/* Інші гравці */}
+        {otherPlayers.map(([slot,pd])=>(
+          <div key={slot} style={{display:'flex',alignItems:'center',gap:'3px',minWidth:'80px'}}>
+            <span style={{fontSize:'8px',color:PSLOTS[slot]?.col,fontWeight:'bold'}}>{PSLOTS[slot]?.label}</span>
+            <div style={{width:'40px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${((pd.hp||0)/(pd.maxHp||100))*100}%`,background:PSLOTS[slot]?.col,transition:'width .2s'}}/>
+            </div>
+            {(mode==='duel'||mode==='arena')&&<span style={{fontSize:'8px',color:'#ef4444'}}>{'❤'.repeat(Math.max(0,pd.lives||0))}</span>}
+          </div>
+        ))}
+        <div style={{marginLeft:'auto',display:'flex',gap:'6px',alignItems:'center'}}>
+          {mode==='arena'&&<span style={{fontSize:'8px',color:g.arenaTimeLeft<30?'#ef4444':'#f59e0b'}}>{arenaMin}:{arenaSec}</span>}
+          {(mode==='coop')&&<span style={{fontSize:'8px',color:'#f59e0b'}}>{g.totalScore}</span>}
+          {mode!=='duel'&&<span style={{fontSize:'8px',color:'#60a5fa'}}>W{g.wave}</span>}
+        </div>
+      </div>
+
+      {/* Очки (Арена/Дуель) */}
+      {(mode==='arena'||mode==='duel')&&Object.keys(g.scores||{}).length>0&&(
+        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'8px'}}>
+          {Object.entries(g.scores).sort(([,a],[,b])=>b-a).map(([slot,sc])=>(
+            <span key={slot} style={{color:PSLOTS[slot]?.col}}>{PSLOTS[slot]?.label}:{sc}</span>
+          ))}
+        </div>
+      )}
+
+      {/* STA + DIV */}
+      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',gap:'5px',alignItems:'center'}}>
+        <div style={{fontSize:'7px',color:'#1e3a5f',width:'20px'}}>STA</div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.stamina}%`,background:'#60a5fa',transition:'width .08s'}}/></div>
+        <div style={{fontSize:'7px',color:'#1e3a5f',width:'20px',textAlign:'right'}}>DIV</div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:divCol,transition:'width .08s'}}/></div>
+        {g.dropped&&<span style={{fontSize:'7px',color:'#f59e0b',animation:'pulse .5s infinite'}}>DROP</span>}
+        {ff&&mode==='coop'&&<span style={{fontSize:'7px',color:'#ef4444'}}>FF🔥</span>}
+      </div>
+
+      {g.morseSeq&&<div style={{fontSize:'11px',letterSpacing:'.2em',padding:'0 8px 1px'}}>{g.morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>}
+      {g.waveMsg&&<div style={{fontSize:'14px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
+
+      {/* СІТКА */}
+      <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+          {Array.from({length:G*G},(_,idx)=>{
+            const sx=idx%G,sy=Math.floor(idx/G);
+            const isMe=sx===g.player.x&&sy===g.player.y;
+            const isEdge=sx===0||sx===G-1||sy===0||sy===G-1;
+            const otherP=otherPlayers.find(([,p])=>p&&p.x===sx&&p.y===sy);
+            const en=g.enemies.find(e=>e.x===sx&&e.y===sy);
+            const wc=wCells.find(c=>c.x===sx&&c.y===sy);
+            const fl=g.flash.find(c=>c.x===sx&&c.y===sy);
+            let bg=isEdge?'#030f1f':'#020c1a';
+            let bdr=isEdge?'1px solid #2a4a7f':'1px solid #091c30';
+            if(fl)bg=fl.col+'55';
+            else if(isMe){bg='#14532d';bdr=`1px solid ${myCol}`;}
+            else if(otherP){const[slot]=otherP;bg='#1e3a8a33';bdr=`1px solid ${PSLOTS[slot]?.col}`;}
+            else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
+            else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?myCol+'88':'#1e3a5f'}`;}
+            return(
+              <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
+                {isMe?(<>
+                  <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:g.player.hp<=0?'#334155':myCol,boxShadow:`0 0 5px ${myCol}`}}/>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:myCol,lineHeight:1}}>{DSYM[g.yawIdx]}</div>
+                </>):otherP?(<>
+                  {(()=>{const[slot,pd]=otherP;const pc=PSLOTS[slot]?.col;return(<>
+                    <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:pd.hp<=0?'#334155':pc,boxShadow:`0 0 5px ${pc}`}}/>
+                    <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:pc,lineHeight:1}}>{DSYM[pd.yawIdx||0]}</div>
+                  </>);})()}
+                </>):en?(<span style={{color:ET[en.type].col,fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Морзе підказки */}
+      <div style={{width:'100%',maxWidth:'480px',overflowX:'auto',padding:'2px 8px',display:'flex',gap:'4px',flexShrink:0}} className="ms">
+        {[['.','.','Сила','#60a5fa'],['.-','·−','Щита','#3b82f6'],['--','−−','HP+','#a78bfa'],['-..','−··','HP++','#f87171']].map(([code,sym,name,col])=>(
+          <div key={code} style={{flexShrink:0,background:'#060f1e',border:`1px solid ${g.morseSeq&&code.startsWith(g.morseSeq)?col:'#1e3a5f'}`,borderRadius:'4px',padding:'3px 6px',textAlign:'center'}}>
+            <div style={{fontSize:'9px',color:col}}>{sym}</div><div style={{fontSize:'7px',color:'#334155'}}>{name}</div>
+          </div>
+        ))}
+      </div>
+
+      {g.msg&&<div key={g.msgKey} style={{margin:'1px 8px',padding:'5px 8px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'5px',fontSize:'9px',color:'#94a3b8',fontStyle:'italic',width:'100%',maxWidth:'440px',animation:'fadeIn .3s ease'}}>{g.msg}</div>}
+
+      <div style={{padding:'1px 8px 5px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px'}}>
+        <span style={{color:myCol}}>{PSLOTS[mySlot]?.label} {isHost?'[HOST]':''}</span>
+        <span>⚔{WPN[wpn]?.label}</span>
+        <span>{DNAM[g.yawIdx]}</span>
+        <span>{mode==='coop'?'КООП':mode==='duel'?'ДУЕЛЬ':'АРЕНА'}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── END SCREEN ────────────────────────────────────────────────────
+function EndScreen({result,onBack}){
+  const sorted=Object.entries(result.scores||{}).sort(([,a],[,b])=>b-a);
+  const winner=sorted[0]?.[0];
+  return(
+    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'10px',padding:'20px'}}>
+      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.2em'}}>{result.mode==='coop'?'КООП':'PvP'}</div>
+      <div style={{color:'#f59e0b',fontSize:'24px',fontWeight:'bold'}}>
+        {result.mode==='coop'?`ХВИЛЯ ${result.wave} · ${result.totalScore} очок`:
+         result.mode==='duel'?`ПЕРЕМІГ ${PSLOTS[winner]?.label||''}!`:'АРЕНА ЗАВЕРШЕНА'}
+      </div>
+      {sorted.length>0&&(
+        <div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'12px',width:'100%',maxWidth:'260px'}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.1em',marginBottom:'8px'}}>РЕЗУЛЬТАТИ</div>
+          {sorted.map(([slot,sc],i)=>(
+            <div key={slot} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid #091c30'}}>
+              <span style={{color:PSLOTS[slot]?.col,fontWeight:i===0?'bold':'normal'}}>{i===0?'🏆 ':''}{PSLOTS[slot]?.label}</span>
+              <span style={{color:'#60a5fa',fontWeight:'bold'}}>{sc} очок</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <Btn2 onClick={onBack} col='#60a5fa' style={{maxWidth:'240px'}}>← ЛОБІ</Btn2>
+      <a href="myr13x13.html" style={{color:'#1e3a5f',fontSize:'9px',textDecoration:'none'}}>Одиночна гра</a>
+    </div>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────────
+function App(){
+  const[screen,setScreen]=useState('lobby');
+  const[mpCfg, setMpCfg] =useState(null);
+  const[result,setResult]=useState(null);
+  const handleStart=useCallback((cfg)=>{setMpCfg(cfg);setScreen('game');},[]);
+  const handleEnd=useCallback((res)=>{setResult(res);setScreen('ended');},[]);
+  return(
+    <>
+      {screen==='lobby'&&<Lobby onStart={handleStart}/>}
+      {screen==='game'&&mpCfg&&(
+        <MultiGame key={mpCfg.code+mpCfg.mySlot}
+          code={mpCfg.code} mySlot={mpCfg.mySlot} isHost={mpCfg.isHost}
+          config={mpCfg.config} sPhase={mpCfg.sPhase} onEnd={handleEnd}/>
+      )}
+      {screen==='ended'&&<EndScreen result={result||{}} onBack={()=>setScreen('lobby')}/>}
+    </>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script></body></html>
