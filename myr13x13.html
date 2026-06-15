@@ -179,7 +179,12 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
     if(sPhase!=='active')return;
     const o=(e)=>{let c=live.compass;if(e.webkitCompassHeading!=null)c=e.webkitCompassHeading;setLive(p=>({...p,beta:e.beta??0,compass:c}));};
     const oa=(e)=>{if(e.alpha!=null)setLive(p=>({...p,compass:(360-e.alpha)%360}));};
-    const m=(e)=>{const g=e.accelerationIncludingGravity;if(!g)return;setLive(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));};
+    const m=(e)=>{
+      // Перевагу надаємо чистому прискоренню (без гравітації) — краще для iOS
+      const a=e.acceleration;const ag=e.accelerationIncludingGravity;
+      if(a&&a.x!==null){setLive(p=>({...p,mag:Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2)}));}
+      else if(ag){const g2=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||9.8)**2);setLive(p=>({...p,mag:Math.abs(g2-9.8)}));}
+    };
     window.addEventListener('deviceorientation',o,true);window.addEventListener('deviceorientationabsolute',oa,true);window.addEventListener('devicemotion',m);
     return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
   },[sPhase]);
@@ -503,12 +508,29 @@ function Game({gmode,settings,sPhase,onDead}){
     };
     const onM=(e)=>{
       const g=gs.current;if(!g)return;
-      const ag=e.accelerationIncludingGravity;if(!ag)return;
-      const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
-      const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
-      if(delta>settingsRef.current.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
-      prevAccMag.current=mag;
-      const rr=e.rotationRate;const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
+      const now=Date.now();const thr=settingsRef.current.strikeThr;let struck=false;
+      // Метод 1: чисте прискорення без гравітації (iOS Safari — найкраще)
+      const a=e.acceleration;
+      if(!struck&&a&&a.x!==null){
+        const amag=Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2);
+        if(amag>Math.max(6,thr*0.9)&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}
+      }
+      // Метод 2: кутова швидкість зап'ястя (iOS+Android)
+      const rr=e.rotationRate;
+      if(!struck&&rr){
+        const rot=Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0);
+        if(rot>Math.max(220,thr*28)&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}
+      }
+      // Метод 3: зміна магнітуди з гравітацією (запасний)
+      const ag=e.accelerationIncludingGravity;
+      if(!struck&&ag){
+        const gmag=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||9.8)**2);
+        const delta=Math.abs(gmag-prevAccMag.current);
+        if(delta>thr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
+        prevAccMag.current=gmag;
+      }
+      // still — для маяку (низька кутова швидкість = нерухомо)
+      const still=rr?Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0):999;
       if(g.pitch<-0.2&&still<22&&(gmodeRef.current==='tutorial'||gmodeRef.current==='survival')){
         g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/120,0,1);
         if(g.beaconCount>=120)doBeaconRef.current?.();
