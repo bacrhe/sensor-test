@@ -144,15 +144,14 @@ function Sec({title,children}){return(<div style={{background:'#060f1e',border:'
 
 // ── MORSE BAR (як в одиночній) ────────────────────────────────────
 function MorseBar({currentSeq}){
-  return(<div style={{width:'100%',maxWidth:'480px',overflowX:'auto',padding:'3px 8px 4px',display:'flex',gap:'5px',flexShrink:0}} className="ms">
-    {SPELLS.map(sp=>(<div key={sp.code} style={{flexShrink:0,background:currentSeq&&sp.code.startsWith(currentSeq)?sp.col+'22':'#060f1e',border:`1px solid ${currentSeq&&sp.code.startsWith(currentSeq)?sp.col:'#1e3a5f'}`,borderRadius:'4px',padding:'3px 6px',textAlign:'center',transition:'background .2s'}}>
-      <div style={{fontSize:'9px',letterSpacing:'.1em'}}>{sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
-      <div style={{fontSize:'8px',color:sp.col,marginTop:'1px'}}>{sp.name}</div>
+  return(<div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
+    {SPELLS.map(sp=>(<div key={sp.code} style={{width:'calc(12.5% - 3px)',background:currentSeq&&sp.code.startsWith(currentSeq)?sp.col+'22':'#060f1e',border:`1px solid ${currentSeq&&sp.code.startsWith(currentSeq)?sp.col:'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
+      <div style={{fontSize:'8px',letterSpacing:'.07em'}}>{sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
+      <div style={{fontSize:'7px',color:sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{sp.name}</div>
     </div>))}
   </div>);
 }
 
-// ── WARNING + SENSORS (як в одиночній) ───────────────────────────
 function WarningSensors({sPhase,setSPhase,onContinue}){
   const[ok,setOk]=useState(false);
   const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
@@ -191,7 +190,8 @@ function Lobby({sPhase,onStart}){
   const[code,  setCode] =useState('');
   const[input, setInput]=useState('');
   const[status,setStatus]=useState('');
-  const[cfg,   setCfg]  =useState({mode:'coop',maxPlayers:2,friendlyFire:false,duelLives:3,wpn:'sword',worldMode:'classic'});
+  const[cfg,   setCfg]  =useState({mode:'coop',maxPlayers:2,friendlyFire:false,duelLives:3,worldMode:'classic'});
+  const[myWpn, setMyWpn]=useState('sword');
   const[waiting,setWaiting]=useState(0);
   const roomRef=useRef(null);
   const upd=(k,v)=>setCfg(c=>({...c,[k]:v}));
@@ -207,7 +207,7 @@ function Lobby({sPhase,onStart}){
       setCode(c);setTab('waiting');setStatus('');
       roomRef.current.child('slots').on('value',snap=>{setWaiting(Object.keys(snap.val()||{}).length);});
       roomRef.current.child('status').on('value',snap=>{
-        if(snap.val()==='playing'){roomRef.current.child('status').off();roomRef.current.child('slots').off();snd('join');onStart({code:c,mySlot:'p1',isHost:true,cfg,sPhase});}
+        if(snap.val()==='playing'){roomRef.current.child('status').off();roomRef.current.child('slots').off();snd('join');onStart({code:c,mySlot:'p1',isHost:true,cfg,myWpn,sPhase});}
       });
     }catch(e){setStatus('Помилка: '+e.message);}
   };
@@ -228,9 +228,9 @@ function Lobby({sPhase,onStart}){
       await fdb().ref(`rooms/${c}/slots/${mySlot}`).set(true);
       await fdb().ref(`rooms/${c}/scores/${mySlot}`).set(0);
       snd('join');
-      if(room.status==='playing')onStart({code:c,mySlot,isHost:false,cfg:room.cfg,sPhase});
+      if(room.status==='playing')onStart({code:c,mySlot,isHost:false,cfg:room.cfg,myWpn,sPhase});
       else{setTab('waitJoin');setStatus(`Підключено як ${PSLOTS[mySlot].lbl}. Чекаємо на хоста...`);
-        fdb().ref(`rooms/${c}/status`).on('value',s=>{if(s.val()==='playing'){fdb().ref(`rooms/${c}/status`).off();onStart({code:c,mySlot,isHost:false,cfg:room.cfg,sPhase});}});}
+        fdb().ref(`rooms/${c}/status`).on('value',s=>{if(s.val()==='playing'){fdb().ref(`rooms/${c}/status`).off();onStart({code:c,mySlot,isHost:false,cfg:room.cfg,myWpn,sPhase});}});}
     }catch(e){setStatus('Помилка: '+e.message);}
   };
 
@@ -260,17 +260,18 @@ function Lobby({sPhase,onStart}){
           <div style={{display:'flex',gap:'6px'}}>{[1,3,5].map(n=><button key={n} onClick={()=>upd('duelLives',n)} style={{flex:1,padding:'8px',background:cfg.duelLives===n?'#ef444422':'#020c1a',border:`1px solid ${cfg.duelLives===n?'#ef4444':'#1e3a5f'}`,color:cfg.duelLives===n?'#ef4444':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'13px',fontWeight:'bold'}}>{'❤'.repeat(n)}</button>)}</div>
         </Sec>}
         <Sec title="РЕЖИМ ГРАВЦЯ">
-          <div style={{display:'flex',gap:'6px'}}>
-            {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
+          <div style={{display:'flex',gap:'5px',flexWrap:'wrap'}}>
+            {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі'],['panorama','Панорама','Перспектива']].map(([val,lbl,desc])=>(
               <button key={val} onClick={()=>upd('worldMode',val)} style={{flex:1,padding:'7px 5px',background:cfg.worldMode===val?'#1e3a8a33':'#020c1a',border:`1px solid ${cfg.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:cfg.worldMode===val?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',lineHeight:1.5,textAlign:'left'}}>
                 <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
               </button>
             ))}
           </div>
         </Sec>
-        <Sec title="ЗБРОЯ">
+        <Sec title="МОЯ ЗБРОЯ (особиста)">
+          <div style={{fontSize:'8px',color:'#1e3a5f',marginBottom:'5px'}}>Кожен гравець обирає свою зброю незалежно</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:'4px'}}>
-            {Object.entries(WPN).map(([k,w])=><button key={k} onClick={()=>upd('wpn',k)} style={{padding:'5px 8px',background:cfg.wpn===k?'#14532d33':'#020c1a',border:`1px solid ${cfg.wpn===k?'#22c55e':'#1e3a5f'}`,color:cfg.wpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>{w.label}</button>)}
+            {Object.entries(WPN).map(([k,w])=><button key={k} onClick={()=>setMyWpn(k)} style={{padding:'5px 8px',background:myWpn===k?'#14532d33':'#020c1a',border:`1px solid ${myWpn===k?'#22c55e':'#1e3a5f'}`,color:myWpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>{w.label}</button>)}
           </div>
         </Sec>
       </div>
@@ -315,7 +316,7 @@ function Lobby({sPhase,onStart}){
 function Btn2(p){return <B2 {...p}/>;}
 
 // ── MULTIPLAYER GAME (все як в одиночній + Firebase) ──────────────
-function MultiGame({code,mySlot,isHost,cfg,sPhase,onEnd}){
+function MultiGame({code,mySlot,isHost,cfg,myWpn:_myWpn,sPhase,onEnd}){
   const gs=useRef(null);
   const[,forceRender]=useReducer(x=>x+1,0);
   const touchSt=useRef({x:0,y:0,t:0});
@@ -324,9 +325,9 @@ function MultiGame({code,mySlot,isHost,cfg,sPhase,onEnd}){
   const waveTimer=useRef(null);
   const morseTimer=useRef(null);
   const mode=cfg?.mode||'coop';
-  const wpn=cfg?.wpn||'sword';
+  const wpn=_myWpn||'sword'; // моя особиста зброя
   const ff=cfg?.friendlyFire||false;
-  const isRadar=cfg?.worldMode==='radar';
+  const isRadar=cfg?.worldMode==='radar'||cfg?.worldMode==='panorama';const isPanorama=cfg?.worldMode==='panorama';
   const STRENGTH=4;
   const mySl=PSLOTS[mySlot]||PSLOTS.p1;
 
@@ -739,8 +740,8 @@ function MultiGame({code,mySlot,isHost,cfg,sPhase,onEnd}){
     {g.waveMsg&&<div style={{fontSize:'15px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
 
     {/* СІТКА (з рамкою як в одиночній + radar + edge detection) */}
-    <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
-      <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+    <div style={isPanorama?{position:'fixed',inset:0,zIndex:1,display:'grid',gridTemplateColumns:`repeat(${G},1fr)`,gridTemplateRows:`repeat(${G},1fr)`,transform:'perspective(280px) rotateX(40deg)',transformOrigin:'50% 46%'}:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
+      <div style={isPanorama?{display:'contents'}:{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
         {Array.from({length:G*G},(_,idx)=>{
           const sx=idx%G,sy=Math.floor(idx/G);
           const isMe=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
@@ -758,9 +759,9 @@ function MultiGame({code,mySlot,isHost,cfg,sPhase,onEnd}){
           else if(otherP){const[slot]=otherP;bg='#1e3a8a33';bdr=`1px solid ${PSLOTS[slot]?.col}`;}
           else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
           else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?myCol+'88':'#1e3a5f'}`;}
-          return(<div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
-            {isMe?(<><div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:g.player.hp<=0?'#334155':g.spell?.fn==='shield'?'#3b82f6':myCol,boxShadow:`0 0 5px ${myCol}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:myCol,lineHeight:1}}>{isRadar?'↑':DSYM[g.yawIdx]}</div></>)
-            :otherP?(()=>{const[slot,pd]=otherP;const pc2=PSLOTS[slot]?.col||'#60a5fa';return(<><div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:pd.hp<=0?'#334155':pc2,boxShadow:`0 0 5px ${pc2}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:pc2,lineHeight:1}}>{DSYM[pd.yawIdx||0]}</div></>);})()
+          return(<div key={idx} style={isPanorama?{background:bg,border:bdr,display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}:{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
+            {isMe?(<><div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',background:g.player.hp<=0?'#334155':g.spell?.fn==='shield'?'#3b82f6':myCol,boxShadow:`0 0 5px ${myCol}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:myCol,lineHeight:1}}>{isRadar?'↑':DSYM[g.yawIdx]}</div></>)
+            :otherP?(()=>{const[slot,pd]=otherP;const pc2=PSLOTS[slot]?.col||'#60a5fa';return(<><div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',background:pd.hp<=0?'#334155':pc2,boxShadow:`0 0 5px ${pc2}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:pc2,lineHeight:1}}>{DSYM[pd.yawIdx||0]}</div></>);})()
             :en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
           </div>);
         })}
