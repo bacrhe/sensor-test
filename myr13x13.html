@@ -146,6 +146,9 @@ function spawnE(type,occ){
   return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};
 }
 function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
+// Інверсія: екранна клітинка → позиція в ігровому світі (для radar-режиму)
+function fromScreen(sx,sy,px,py,cDeg){const dsx=sx-CX,dsy=sy-CY,a=rad(cDeg);return{gx:Math.round(px+dsx*Math.cos(a)-dsy*Math.sin(a)),gy:Math.round(py+dsx*Math.sin(a)+dsy*Math.cos(a))};}
+function isEdgeCell(gx,gy){return gx===0||gx===G-1||gy===0||gy===G-1;}
 function swipeToWorld(sdx,sdy,cDeg){const a=rad(cDeg);return{gdx:Math.round(sdx*Math.cos(a)-sdy*Math.sin(a)),gdy:Math.round(sdx*Math.sin(a)+sdy*Math.cos(a))};}
 function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
 function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
@@ -716,7 +719,7 @@ function Game({gmode,settings,sPhase,onDead}){
       {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
 
       {/* GRID */}
-      <div style={{padding:'3px',background:'#020c1a',border:'1px solid #1e3a5f',borderRadius:'5px',margin:'2px 0'}}>
+      <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
         <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
@@ -724,7 +727,17 @@ function Game({gmode,settings,sPhase,onDead}){
             const en=g.enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
             const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
             const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
-            let bg='#020c1a',bdr='1px solid #091c30';
+            // Межі ігрового поля
+            let edge=false,outOfBounds=false;
+            if(isRadar){
+              const{gx,gy}=fromScreen(sx,sy,g.player.x,g.player.y,g.compassD);
+              outOfBounds=gx<0||gx>=G||gy<0||gy>=G;
+              edge=!outOfBounds&&isEdgeCell(gx,gy);
+            }else{
+              edge=isEdgeCell(sx,sy);
+            }
+            let bg=outOfBounds?'#010610':edge?'#030f1f':'#020c1a';
+            let bdr=outOfBounds?'1px solid #050a10':edge?'1px solid #2a4a7f':'1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
             else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
@@ -768,26 +781,149 @@ function Game({gmode,settings,sPhase,onDead}){
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
 // ── WARNING ───────────────────────────────────────────────────────
-function Warning({onOk}){
+// ── COMBINED: ПОПЕРЕДЖЕННЯ + ДАТЧИКИ ─────────────────────────────
+function WarningSensors({sPhase,setSPhase,onContinue}){
   const[ok,setOk]=useState(false);
-  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
-    <div style={{fontSize:'36px'}}>⚠️</div>
-    <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>УВАГА!</div>
-    <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:2,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'14px'}}>
-      Гра вимагає фізичних рухів смартфоном.<br/>
-      <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
-      Грай в безпечному відкритому місці.<br/>
-      Переконайся що навколо нікого немає.<br/>
-      <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
+  const reqS=async()=>{
+    setSPhase('req');
+    try{
+      if(typeof DeviceOrientationEvent?.requestPermission==='function')
+        if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;
+      if(typeof DeviceMotionEvent?.requestPermission==='function')
+        if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;
+      setSPhase('active');
+    }catch{setSPhase('denied');}
+  };
+  return(
+    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'11px'}}>
+      <div style={{fontSize:'32px'}}>⚠️</div>
+      <div style={{color:'#f59e0b',fontSize:'14px',fontWeight:'bold'}}>МИР 13×13 — СЛІПИЙ БІЙ</div>
+
+      {/* Попередження */}
+      <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:1.9,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'12px',width:'100%'}}>
+        Гра вимагає фізичних рухів смартфоном.<br/>
+        <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
+        Грай в безпечному відкритому місці.<br/>
+        <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
+      </div>
+
+      {/* Датчики */}
+      <div style={{width:'100%',maxWidth:'300px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':sPhase==='denied'?'#7f1d1d':'#1e3a5f'}`,borderRadius:'8px',padding:'12px'}}>
+        <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'8px'}}>ДАТЧИКИ РУХУ</div>
+        {sPhase==='idle'&&(
+          <>
+            <div style={{fontSize:'9px',color:'#334155',marginBottom:'8px',lineHeight:1.7}}>
+              Без датчиків гра не має сенсу.<br/>
+              Компас → напрямок зброї · Нахил → заряд<br/>
+              Мах телефоном → удар · Спокій → Маяк
+            </div>
+            <B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>
+            <button onClick={()=>setSPhase('denied')} style={{width:'100%',marginTop:'6px',padding:'6px',background:'none',border:'none',color:'#1e3a5f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit'}}>
+              продовжити без датчиків (тільки клавіатура)
+            </button>
+          </>
+        )}
+        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px',textAlign:'center'}}>⏳ Очікую дозволу...</div>}
+        {sPhase==='active'&&(
+          <div style={{fontSize:'10px',color:'#22c55e',lineHeight:1.9}}>
+            ◉ ДАТЧИКИ АКТИВНІ<br/>
+            <span style={{fontSize:'9px',color:'#16a34a'}}>
+              Оберти телефону = напрямок зброї<br/>
+              Нахил вгору/вниз = заряд / відпочинок<br/>
+              Різкий мах = удар · Донизу+нерухомо = Маяк
+            </span>
+          </div>
+        )}
+        {sPhase==='denied'&&(
+          <div style={{fontSize:'9px',color:'#ef4444',lineHeight:1.7}}>
+            ⚠ Датчики недоступні<br/>
+            <span style={{color:'#334155'}}>Доступні кнопки: WASD · Q/E · Z/C · Пробіл · B</span><br/>
+            <button onClick={reqS} style={{marginTop:'4px',background:'none',border:'none',color:'#4a6a9f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline'}}>спробувати знову</button>
+          </div>
+        )}
+      </div>
+
+      {/* Підтвердження */}
+      <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
+        <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
+        Я розумію і граю обережно
+      </label>
+      <B2 onClick={(ok&&sPhase!=='idle'&&sPhase!=='req')?onContinue:undefined}
+        col={(ok&&sPhase!=='idle'&&sPhase!=='req')?'#22c55e':'#1e3a5f'}
+        style={{maxWidth:'280px',opacity:(ok&&sPhase!=='idle'&&sPhase!=='req')?1:.4}}>
+        {!ok?'(підтвердь спочатку)':sPhase==='idle'||sPhase==='req'?'(підключи датчики)':'▷ ПРОДОВЖИТИ'}
+      </B2>
     </div>
-    <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
-      <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
-      Я розумію і граю обережно
-    </label>
-    <B2 onClick={ok?onOk:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok?1:.5}}>
-      {ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
-    </B2>
-  </div>);
+  );
+}
+
+// ── ШВИДКІ НАЛАШТУВАННЯ ПЕРЕД ГРОЮ ───────────────────────────────
+function PreGame({s,setS,sPhase,setSPhase,onStart,onBack}){
+  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
+  return(
+    <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
+        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer',padding:'4px'}}>←</button>
+        <div style={{color:'#3a6a9f',fontSize:'14px',fontWeight:'bold'}}>◈ ВИЖИВАННЯ</div>
+      </div>
+
+      {/* Датчики */}
+      <Sec title="ДАТЧИКИ">
+        {sPhase==='active'
+          ?<div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{color:'#22c55e',fontSize:'10px'}}>◉ АКТИВНІ</span>
+            <button onClick={()=>setSPhase('idle')} style={{background:'none',border:'1px solid #1e3a5f',color:'#334155',borderRadius:'4px',padding:'3px 8px',cursor:'pointer',fontFamily:'inherit',fontSize:'8px'}}>вимкнути</button>
+          </div>
+          :<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ</B2>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'9px',marginTop:'4px'}}>⚠ Відхилено. WASD доступні.</div>}
+      </Sec>
+
+      {/* Складність */}
+      <Sec title="СКЛАДНІСТЬ">
+        <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
+          {DIFFS.map((d,i)=>(
+            <button key={d.id} onClick={()=>setS(p=>({...p,diff:i}))}
+              style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',
+                background:s.diff===i?d.id==='night'?'#1e3a8a22':d.id==='warrior'?'#16a34a22':d.id==='hunter'?'#f59e0b22':d.id==='berserk'?'#ef444422':'#a855f722':'#060f1e',
+                border:`1px solid ${s.diff===i?d.id==='night'?'#3b82f6':d.id==='warrior'?'#22c55e':d.id==='hunter'?'#f59e0b':d.id==='berserk'?'#ef4444':'#a855f7':'#1e3a5f'}`,
+                borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',
+                color:s.diff===i?'#e2e8f0':'#334155'}}>
+              <span style={{fontWeight:s.diff===i?'bold':'normal'}}>{d.name}</span>
+              <span style={{fontSize:'8px',color:'#4a6a9f'}}>{d.desc}</span>
+            </button>
+          ))}
+        </div>
+      </Sec>
+
+      {/* Режим */}
+      <Sec title="РЕЖИМ ГРАВЦЯ">
+        <div style={{display:'flex',gap:'6px'}}>
+          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
+            <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))}
+              style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
+              <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
+            </button>
+          ))}
+        </div>
+      </Sec>
+
+      {/* Зброя */}
+      <Sec title="ЗБРОЯ">
+        <div style={{display:'flex',flexDirection:'column',gap:'3px'}}>
+          {Object.entries(WPN).map(([k,w])=>(
+            <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))}
+              style={{display:'flex',justifyContent:'space-between',padding:'7px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+              <span>{w.label}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
+            </button>
+          ))}
+        </div>
+      </Sec>
+
+      <B2 onClick={onStart} col='#60a5fa' style={{marginTop:'4px',fontSize:'14px',fontWeight:'bold'}}>
+        ◈ ПОЧАТИ
+      </B2>
+    </div>
+  );
 }
 
 // ── APP ───────────────────────────────────────────────────────────
@@ -796,18 +932,19 @@ function App(){
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
   const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true,diff:1});
-  // onDead — стабільний через useCallback щоб не перезапускати гейм-луп
   const onDead=useCallback(()=>setScreen('dead'),[]);
   return(
     <>
-      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')}/>}
+      {screen==='warning'&&<WarningSensors sPhase={sPhase} setSPhase={setSPhase} onContinue={()=>setScreen('menu')}/>}
       {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')}/>}
+      {screen==='pregame'&&<PreGame s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onStart={()=>{setGmode('survival');setScreen('game');}} onBack={()=>setScreen('menu')}/>}
       {screen==='game'&&<Game key={`${gmode}-${Math.random()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={onDead}/>}
       {screen==='dead'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
           <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
           <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
+            <B2 onClick={()=>setScreen('pregame')}>↻ НАЛАШТУВАННЯ → ЗНОВУ</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>▷ ЩЕ РАЗ (ті ж)</B2>
             <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
           </div>
         </div>
@@ -816,13 +953,24 @@ function App(){
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
           <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
           <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
-          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар<br/><span style={{color:'#1e3a5f'}}>Морзе-заклинання — дивись знизу під сіткою</span></div>
-          <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
-            {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {DIFFS[S.diff??1].name}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙ &nbsp; Складність: {DIFFS[S.diff??1].name}</span>}
+          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар</div>
+
+          {/* Статус */}
+          <div style={{padding:'8px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',width:'100%',maxWidth:'270px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{color:sPhase==='active'?'#22c55e':'#334155'}}>
+                {sPhase==='active'?'◉ Датчики активні':'○ Датчики вимкнені'}
+              </span>
+              <span style={{color:['#60a5fa','#22c55e','#f59e0b','#ef4444','#a855f7'][S.diff??1]}}>
+                {DIFFS[S.diff??1].name}
+              </span>
+            </div>
+            <div style={{color:'#1e3a5f',fontSize:'8px',marginTop:'3px'}}>{WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</div>
           </div>
+
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
             <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
+            <B2 onClick={()=>setScreen('pregame')} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
             <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
           </div>
         </div>
