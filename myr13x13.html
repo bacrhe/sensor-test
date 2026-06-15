@@ -8,19 +8,19 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{background:#010d1f;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
-  #root{height:100%;display:flex;flex-direction:column}
-  input[type=range]{width:100%;accent-color:#3b82f6}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-  @keyframes shake{0%,100%{transform:none}30%{transform:translateX(-5px)}70%{transform:translateX(5px)}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#010d1f;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
+#root{height:100%;display:flex;flex-direction:column}
+input[type=range]{width:100%;accent-color:#3b82f6}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shake{0%,100%{transform:none}30%{transform:translateX(-5px)}70%{transform:translateX(5px)}}
 </style>
 </head>
 <body><div id="root"></div>
 <script type="text/babel">
-const{useState,useEffect,useRef,useCallback}=React;
-const G=13,CX=6,CY=6,TICK=120;
+const{useState,useEffect,useRef,useCallback,useReducer}=React;
+const G=13,CX=6,CY=6,TICK=80;
 const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
 const DNAM=['N','NE','E','SE','S','SW','W','NW'];
 const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
@@ -28,7 +28,6 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const rad=d=>d*Math.PI/180;
 let EID=0;
 
-// ── WEAPONS ───────────────────────────────────────────────────────
 const WPN={
   dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий'},
   sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс сили і дальності'},
@@ -40,10 +39,10 @@ const WPN={
 };
 
 const ET={
-  shadow: {hp:3,spd:4, dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
-  warden: {hp:8,spd:6, dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
-  berserk:{hp:5,spd:5, dmg:30,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
-  ghost:  {hp:2,spd:3, dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
+  shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
+  warden: {hp:8,ms:800,dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
+  berserk:{hp:5,ms:600,dmg:30,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
+  ghost:  {hp:2,ms:360,dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
 };
 const WAVES=[
   [{t:'shadow',n:1}],[{t:'shadow',n:2}],
@@ -54,76 +53,65 @@ const WAVES=[
   [{t:'shadow',n:3},{t:'warden',n:1},{t:'berserk',n:1},{t:'ghost',n:1}],
 ];
 
-// ── MORSE SPELLS ──────────────────────────────────────────────────
-// Від простого до складного. Слова мають сенс.
 const SPELLS={
-  // Одиночні (найлегші)
-  '.':    {name:'СИЛА',    uk:'Сила',    col:'#60a5fa', desc:'Стаміна +30',          fn:'stamina'},
-  '-':    {name:'БРОНЯ',   uk:'Броня',   col:'#94a3b8', desc:'-60% шкоди на 4с',     fn:'armor'},
-  // Два символи (легкі)
-  '.-':   {name:'ЩИТА',   uk:'Щита',    col:'#3b82f6', desc:'Наступний удар блокується', fn:'shield'},
-  '--':   {name:'ЗЦІЛА',  uk:'Зцілення',col:'#a78bfa', desc:'Відновити 1 палець',    fn:'mend'},
-  '..':   {name:'КРИГА',  uk:'Крига',   col:'#67e8f9', desc:'Заморозити ворога 3с',  fn:'freeze'},
-  '-.':   {name:'ТІНЬ',   uk:'Тінь',    col:'#6b7280', desc:'Ворог не бачить 3с',    fn:'stealth'},
-  '-.' :  {name:'ТІНЬ',   uk:'Тінь',    col:'#6b7280', desc:'Ворог не бачить 3с',    fn:'stealth'},
-  // Три символи (середні)
-  '.-.':  {name:'ПОРИВУ', uk:'Поривом', col:'#22c55e', desc:'Рух без стаміни 5с',    fn:'rush'},
-  '...':  {name:'СПАЛАХ', uk:'Спалах',  col:'#f59e0b', desc:'Удар ×2 5с',            fn:'surge'},
-  '---':  {name:'ВИХОР',  uk:'Вихор',   col:'#e879f9', desc:'Удар всіх навколо',     fn:'omni'},
-  '-..':  {name:'ДОЛЯ',   uk:'Доля',    col:'#f87171', desc:'HP +30',                fn:'heal'},
-  '.-.' : {name:'ПОРИВУ', uk:'Поривом', col:'#22c55e', desc:'Рух без стаміни 5с',    fn:'rush'},
-  // Чотири+ символи (складні)
-  '.-..': {name:'ЗАМОК',  uk:'Замок',   col:'#fbbf24', desc:'Заморозити всіх 4с',    fn:'lockall'},
-  '-...': {name:'ВОГОНЬ', uk:'Вогонь',  col:'#ef4444', desc:'Наступний удар ×3',     fn:'burn'},
-  '.--.' :{name:'ПРОБІЙ', uk:'Пробій',  col:'#c084fc', desc:'Наступний удар скрізь', fn:'pierce'},
-  '-.-.' :{name:'ЦІЛЕННЯ',uk:'Цілення', col:'#34d399', desc:'HP +50',                fn:'cure'},
-  '....' :{name:'ХАОС',   uk:'Хаос',    col:'#fb7185', desc:'Всі вороги сповільнені',fn:'chaos'},
-  '...-' :{name:'ВЕКТОР', uk:'Вектор',  col:'#818cf8', desc:'Телепорт 3 кроки',      fn:'teleport'},
+  '.':    {name:'Сила',   col:'#60a5fa',desc:'Стаміна +30',       fn:'stamina'},
+  '-':    {name:'Броня',  col:'#94a3b8',desc:'-60% шкоди 4с',    fn:'armor'},
+  '.-':   {name:'Щита',   col:'#3b82f6',desc:'Блок наступного удару',fn:'shield'},
+  '--':   {name:'Зцілення',col:'#a78bfa',desc:'+1 палець',        fn:'mend'},
+  '..':   {name:'Крига',  col:'#67e8f9',desc:'Заморозити 3с',    fn:'freeze'},
+  '-.':   {name:'Тінь',   col:'#6b7280',desc:'Невидимість 3с',   fn:'stealth'},
+  '.-.':  {name:'Поривом',col:'#22c55e',desc:'Рух без стаміни 5с',fn:'rush'},
+  '...':  {name:'Спалах', col:'#f59e0b',desc:'Удар ×2 5с',       fn:'surge'},
+  '---':  {name:'Вихор',  col:'#e879f9',desc:'Удар всіх навколо',fn:'omni'},
+  '-..':  {name:'Доля',   col:'#f87171',desc:'HP +30',            fn:'heal'},
+  '.-..': {name:'Замок',  col:'#fbbf24',desc:'Заморозити всіх 4с',fn:'lockall'},
+  '-...': {name:'Вогонь', col:'#ef4444',desc:'Удар ×3',          fn:'burn'},
+  '.--.' :{name:'Пробій', col:'#c084fc',desc:'Ігнорує захист',   fn:'pierce'},
+  '-.-.': {name:'Цілення',col:'#34d399',desc:'HP +50',           fn:'cure'},
+  '....': {name:'Хаос',   col:'#fb7185',desc:'Вороги сповільнені 5с',fn:'chaos'},
+  '...-': {name:'Вектор', col:'#818cf8',desc:'Телепорт 3 кроки', fn:'teleport'},
 };
 
 const TUT=[
-  {msg:null},
-  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.'},
-  {msg:'Зроби крок. Свайп в будь-якому місці екрану.',req:'move'},
+  {msg:null},{msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.'},
+  {msg:'Зроби крок. Свайп будь-де на екрані.',req:'move'},
   {msg:'Добре. Поверни мене — оберни смартфон горизонтально.',req:'rotate'},
-  {msg:'Опусти руку — я відпочиваю. Підніми — я заряджуюсь.',req:'pitch'},
+  {msg:'Опусти руку — я відпочиваю. Підніми — заряджуюсь.',req:'pitch'},
   {msg:'Ціль попереду. Підніми і різко махни телефоном.',req:'attack',spawnDummy:true},
-  {msg:'Дрейфую. Опусти вниз і замри дві секунди.',req:'beacon'},
-  {msg:'Торкнись коротко — · (крапка), довго — − (тире). Набери · − для ЩИТА.',req:'morse'},
+  {msg:'Дрейфую. Опусти вниз і замри 2 секунди.',req:'beacon'},
+  {msg:'Торкнись коротко = · тривало = − Набери ·− для ЩИТА.',req:'morse'},
   {msg:'Calibrated. Ти вмієш все що треба.'},
 ];
 
 // ── SPEECH ────────────────────────────────────────────────────────
-function speak(text,voiceOn=true){
-  if(!voiceOn||!window.speechSynthesis||!text)return;
+function speak(text,on){
+  if(!on||!text||!window.speechSynthesis)return;
   window.speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(text);
-  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.9;
-  // Try to find a Ukrainian voice, fall back to any
-  const voices=window.speechSynthesis.getVoices();
-  const ukVoice=voices.find(v=>v.lang.startsWith('uk'))||voices.find(v=>v.lang.startsWith('ru'))||null;
-  if(ukVoice)u.voice=ukVoice;
+  const u=new SpeechSynthesisUtterance(text);u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;
+  const v=window.speechSynthesis.getVoices();
+  const uk=v.find(x=>x.lang.startsWith('uk'))||v.find(x=>x.lang.startsWith('ru'));
+  if(uk)u.voice=uk;
   window.speechSynthesis.speak(u);
 }
 
 // ── SOUND ─────────────────────────────────────────────────────────
 let AC=null;
-function getAC(){if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();return AC;}
-function snd(type){
+function snd(t){
   try{
-    const C=getAC(),t=C.currentTime,o=C.createOscillator(),g=C.createGain();
+    if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();
+    if(AC.state==='suspended')AC.resume();
+    const C=AC,ts=C.currentTime,o=C.createOscillator(),g=C.createGain();
     o.connect(g);g.connect(C.destination);
-    if(type==='swing'){o.type='sawtooth';o.frequency.setValueAtTime(200,t);o.frequency.exponentialRampToValueAtTime(80,t+.12);g.gain.setValueAtTime(.2,t);g.gain.exponentialRampToValueAtTime(.001,t+.12);o.start(t);o.stop(t+.12);}
-    else if(type==='hit'){const b=C.createBuffer(1,C.sampleRate*.04,C.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/400);const s=C.createBufferSource();s.buffer=b;const gg=C.createGain();gg.gain.value=.5;s.connect(gg);gg.connect(C.destination);s.start(t);}
-    else if(type==='hurt'){o.type='square';o.frequency.setValueAtTime(100,t);o.frequency.exponentialRampToValueAtTime(50,t+.25);g.gain.setValueAtTime(.25,t);g.gain.exponentialRampToValueAtTime(.001,t+.25);o.start(t);o.stop(t+.25);}
-    else if(type==='drop'){o.type='triangle';o.frequency.setValueAtTime(280,t);o.frequency.exponentialRampToValueAtTime(70,t+.3);g.gain.setValueAtTime(.18,t);g.gain.exponentialRampToValueAtTime(.001,t+.3);o.start(t);o.stop(t+.3);}
-    else if(type==='beacon'){[440,550,660,880].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.07;gg.gain.setValueAtTime(0,st);gg.gain.linearRampToValueAtTime(.15,st+.04);gg.gain.exponentialRampToValueAtTime(.001,st+.35);oo.start(st);oo.stop(st+.35);});}
-    else if(type==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.15,t);g.gain.exponentialRampToValueAtTime(.001,t+.07);o.start(t);o.stop(t+.07);}
-    else if(type==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.15,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);o.start(t);o.stop(t+.18);}
-    else if(type==='spell'){[330,440,550,660,550,440].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
-    else if(type==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,t);o.frequency.exponentialRampToValueAtTime(220,t+.45);g.gain.setValueAtTime(.2,t);g.gain.exponentialRampToValueAtTime(.001,t+.45);o.start(t);o.stop(t+.45);}
-    else if(type==='death'){o.type='sine';o.frequency.setValueAtTime(440,t);o.frequency.exponentialRampToValueAtTime(110,t+.9);g.gain.setValueAtTime(.3,t);g.gain.exponentialRampToValueAtTime(.001,t+.9);o.start(t);o.stop(t+.9);}
-    else if(type==='teleport'){[800,600,400,200].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=t+i*.04;gg.gain.setValueAtTime(.15,st);gg.gain.exponentialRampToValueAtTime(.001,st+.1);oo.start(st);oo.stop(st+.1);});}
+    if(t==='swing'){o.type='sawtooth';o.frequency.setValueAtTime(200,ts);o.frequency.exponentialRampToValueAtTime(80,ts+.12);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.12);o.start(ts);o.stop(ts+.12);}
+    else if(t==='hit'){const b=C.createBuffer(1,C.sampleRate*.04,C.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/400);const s=C.createBufferSource();s.buffer=b;const gg=C.createGain();gg.gain.value=.5;s.connect(gg);gg.connect(C.destination);s.start(ts);}
+    else if(t==='hurt'){o.type='square';o.frequency.setValueAtTime(100,ts);o.frequency.exponentialRampToValueAtTime(50,ts+.25);g.gain.setValueAtTime(.25,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.25);o.start(ts);o.stop(ts+.25);}
+    else if(t==='drop'){o.type='triangle';o.frequency.setValueAtTime(280,ts);o.frequency.exponentialRampToValueAtTime(70,ts+.3);g.gain.setValueAtTime(.18,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.3);o.start(ts);o.stop(ts+.3);}
+    else if(t==='beacon'){[440,550,660,880].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.07;gg.gain.setValueAtTime(0,st);gg.gain.linearRampToValueAtTime(.15,st+.04);gg.gain.exponentialRampToValueAtTime(.001,st+.35);oo.start(st);oo.stop(st+.35);});}
+    else if(t==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.07);o.start(ts);o.stop(ts+.07);}
+    else if(t==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.18);o.start(ts);o.stop(ts+.18);}
+    else if(t==='spell'){[330,440,550,660,550].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
+    else if(t==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,ts);o.frequency.exponentialRampToValueAtTime(220,ts+.45);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.45);o.start(ts);o.stop(ts+.45);}
+    else if(t==='death'){o.type='sine';o.frequency.setValueAtTime(440,ts);o.frequency.exponentialRampToValueAtTime(110,ts+.9);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.9);o.start(ts);o.stop(ts+.9);}
   }catch(e){}
 }
 
@@ -136,81 +124,84 @@ function getWCells(px,py,yi,wk){
   for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
   return cells;
 }
-function spawn(type,occ){
+function spawnE(type,occ){
   const edges=[];for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
   const free=edges.filter(c=>!occ.some(o=>o.x===c.x&&o.y===c.y));if(!free.length)return null;
-  const p=free[Math.floor(Math.random()*free.length)];return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,ticks:0};
+  const p=free[Math.floor(Math.random()*free.length)];return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};
 }
 function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
 function swipeToWorld(sdx,sdy,cDeg){const a=rad(cDeg);return{gdx:Math.round(sdx*Math.cos(a)-sdy*Math.sin(a)),gdy:Math.round(sdx*Math.sin(a)+sdy*Math.cos(a))};}
 function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
-function pCol(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
+function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
-// ── MORSE REFERENCE PANEL ─────────────────────────────────────────
+// ── MORSE PANEL ───────────────────────────────────────────────────
 function MorsePanel({onClose}){
   const groups=[
-    {title:'· Одна (легкі)',items:[['.',SPELLS['.']],['-',SPELLS['-']]]},
-    {title:'·− Дві',items:[['.-',SPELLS['.-']],['--',SPELLS['--']],['..',SPELLS['..']],['-.',SPELLS['-.']]]},
-    {title:'·−· Три',items:[['.-.',SPELLS['.-.']], ['...',SPELLS['...']],['---',SPELLS['---']],['-..', SPELLS['-..']]]},
-    {title:'·−·· Чотири+',items:[['.-..', SPELLS['.-..']],['-...',SPELLS['-...']],['.--.',SPELLS['.--.']], ['-.-.', SPELLS['-.-.']],['....',SPELLS['....']],['...-',SPELLS['...-']]]},
+    {t:'· Одна (легкі)',items:[['.',SPELLS['.']],['-',SPELLS['-']]]},
+    {t:'·− Дві',items:[['.-',SPELLS['.-']],['--',SPELLS['--']],['..',SPELLS['..']],['-.',SPELLS['-.']]]},
+    {t:'·−· Три',items:[['.-.',SPELLS['.-.']], ['...',SPELLS['...']],['---',SPELLS['---']], ['-..', SPELLS['-..']]]},
+    {t:'·−·· Чотири+',items:[['.-..', SPELLS['.-..']],['-...',SPELLS['-...']],['.--.',SPELLS['.--.']], ['-.-.', SPELLS['-.-.']],['....',SPELLS['....']],['...-',SPELLS['...-']]]},
   ];
   return(
     <div style={{position:'fixed',inset:0,background:'#010d1fee',zIndex:100,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'12px'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
-        <div style={{color:'#3a6a9f',fontSize:'14px',fontWeight:'bold'}}>МОРЗЕ — МАГІЯ</div>
-        <button onClick={onClose} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer'}}>✕</button>
+        <div style={{color:'#3a6a9f',fontSize:'14px',fontWeight:'bold'}}>⎍ МОРЗЕ — МАГІЯ</div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer'}}>✕</button>
       </div>
-      <div style={{fontSize:'9px',color:'#334155',marginBottom:'10px',lineHeight:1.8}}>
-        Торкнись коротко = · (крапка) &nbsp;|&nbsp; Утримай = − (тире)<br/>
-        Пауза &gt;1с → заклинання | Свайп перериває
+      <div style={{fontSize:'9px',color:'#4a6a9f',marginBottom:'8px',lineHeight:1.8,background:'#060f1e',padding:'8px',borderRadius:'4px'}}>
+        Коротке торкання = <span style={{color:'#60a5fa'}}>·</span> (крапка)<br/>
+        Тривале торкання = <span style={{color:'#f59e0b'}}>−</span> (тире)<br/>
+        Пауза 1с → заклинання. Свайп перериває.
       </div>
       {groups.map(gr=>(
-        <div key={gr.title} style={{marginBottom:'10px'}}>
-          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.1em',marginBottom:'5px'}}>{gr.title}</div>
+        <div key={gr.t} style={{marginBottom:'8px'}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.1em',marginBottom:'4px'}}>{gr.t}</div>
           {gr.items.filter(([k,v])=>v).map(([code,sp])=>(
-            <div key={code} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 8px',background:'#060f1e',borderRadius:'4px',marginBottom:'3px',border:`1px solid ${sp.col}22`}}>
-              <span style={{color:'#f59e0b',fontWeight:'bold',minWidth:'36px',fontSize:'11px',letterSpacing:'.1em'}}>
+            <div key={code} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 8px',background:'#060f1e',borderRadius:'4px',marginBottom:'3px'}}>
+              <span style={{minWidth:'38px',fontSize:'12px',letterSpacing:'.1em'}}>
                 {code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
               </span>
-              <span style={{color:sp.col,fontWeight:'bold',minWidth:'60px',fontSize:'10px'}}>{sp.uk}</span>
+              <span style={{color:sp.col,fontWeight:'bold',minWidth:'64px',fontSize:'10px'}}>{sp.name}</span>
               <span style={{color:'#334155',fontSize:'9px'}}>{sp.desc}</span>
             </div>
           ))}
         </div>
       ))}
-      <div style={{fontSize:'9px',color:'#1e3a5f',marginTop:'6px',lineHeight:1.8}}>
-        Повна абетка Морзе: A=·− B=−··· C=−·−· D=−··<br/>
-        E=· F=··−· G=−−· H=···· I=·· J=·−−−<br/>
-        K=−·− L=·−·· M=−− N=−· O=−−−<br/>
-        P=·−−· Q=−−·− R=·−· S=··· T=−<br/>
-        U=··− V=···− W=·−− X=−··−
-      </div>
     </div>
   );
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────
-function Settings({s,setS,sPhase,setSPhase,raw,onBack}){
+function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
+function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
+
+function Settings({s,setS,sPhase,setSPhase,onBack}){
+  const[liveSens,setLiveSens]=useState({beta:0,compass:0,mag:9.8});
+  useEffect(()=>{
+    if(sPhase!=='active')return;
+    const o=(e)=>{let c=liveSens.compass;if(e.webkitCompassHeading!=null)c=e.webkitCompassHeading;setLiveSens(p=>({...p,beta:e.beta??0,compass:c}));};
+    const oa=(e)=>{if(e.alpha!=null)setLiveSens(p=>({...p,compass:(360-e.alpha)%360}));};
+    const m=(e)=>{const g=e.accelerationIncludingGravity;if(!g)return;setLiveSens(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));};
+    window.addEventListener('deviceorientation',o,true);window.addEventListener('deviceorientationabsolute',oa,true);window.addEventListener('devicemotion',m);
+    return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
+  },[sPhase]);
+  const pv=betaToPitch(liveSens.beta,s.pitchSens);
   const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
-  const pv=betaToPitch(raw.beta,s.pitchSens);
   return(
     <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
-        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer',padding:'4px'}}>←</button>
+        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
         <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
       </div>
       <Sec title="ДАТЧИКИ">
-        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ</B2>}
+        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>}
         {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую дозволу...</div>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. WASD/клавіші доступні.</div>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. WASD + клавіші доступні.</div>}
         {sPhase==='active'&&<>
           <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
-            {[['β нахил',raw.beta.toFixed(1)+'°',pCol(pv)],['компас',raw.compass.toFixed(0)+'°','#60a5fa'],['|a| удар',raw.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
-              <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'6px',textAlign:'center'}}>
-                <div style={{fontSize:'8px',color:'#1e3a5f'}}>{l}</div>
-                <div style={{fontSize:'14px',color:c,fontWeight:'bold'}}>{v}</div>
-              </div>
+            {[['β нахил',liveSens.beta.toFixed(1)+'°',pColor(pv)],['компас',liveSens.compass.toFixed(0)+'°','#60a5fa'],['|a|',liveSens.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
+              <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'6px',textAlign:'center'}}><div style={{fontSize:'8px',color:'#1e3a5f'}}>{l}</div><div style={{fontSize:'14px',color:c,fontWeight:'bold'}}>{v}</div></div>
             ))}
           </div>
         </>}
@@ -218,8 +209,7 @@ function Settings({s,setS,sPhase,setSPhase,raw,onBack}){
       <Sec title="РЕЖИМ">
         <div style={{display:'flex',gap:'6px'}}>
           {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
-            <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))}
-              style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
+            <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))} style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
               <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
           ))}
@@ -227,35 +217,24 @@ function Settings({s,setS,sPhase,setSPhase,raw,onBack}){
       </Sec>
       <Sec title={`ПОРІГ УДАРУ — ${s.strikeThr} m/s²`}>
         <input type="range" min="3" max="20" value={s.strikeThr} onChange={e=>setS(p=>({...p,strikeThr:+e.target.value}))}/>
-        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>Легкий мах (3)</span><span>Сильний (20)</span></div>
-        {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${clamp((raw.mag-9.8)/s.strikeThr*100,0,100)}%`,background:'#f59e0b',transition:'width .05s'}}/></div>}
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>Легкий (3)</span><span>Сильний (20)</span></div>
+        {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${clamp((liveSens.mag-9.8)/s.strikeThr*100,0,100)}%`,background:'#f59e0b',transition:'width .05s'}}/></div>}
       </Sec>
       <Sec title={`ЧУТЛИВІСТЬ НАХИЛУ — ±${s.pitchSens}°`}>
         <input type="range" min="15" max="60" value={s.pitchSens} onChange={e=>setS(p=>({...p,pitchSens:+e.target.value}))}/>
-        {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}>
-          <div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pCol(pv),transition:'width .05s'}}/></div>
-          <div style={{fontSize:'9px',color:pCol(pv),minWidth:'44px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div>
-        </div>}
+        {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}><div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pColor(pv),transition:'width .05s'}}/></div><div style={{fontSize:'9px',color:pColor(pv),minWidth:'46px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div></div>}
       </Sec>
       <Sec title="ГОЛОС КОМПАНЬЙОНА">
-        <div style={{display:'flex',gap:'8px'}}>
-          {[['on','🔊 Увімкнений'],['off','🔇 Вимкнений']].map(([val,lbl])=>(
-            <button key={val} onClick={()=>setS(p=>({...p,voice:val==='on'}))}
-              style={{flex:1,padding:'8px',background:((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#1e3a8a33':'#060f1e',border:`1px solid ${((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#3b82f6':'#1e3a5f'}`,color:((s.voice&&val==='on')||(!s.voice&&val==='off'))?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
-              {lbl}
-            </button>
-          ))}
+        <div style={{display:'flex',gap:'8px',marginBottom:'6px'}}>
+          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔊 Увімкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔇 Вимкнений</button>
         </div>
-        <div style={{fontSize:'8px',color:'#1e3a5f',marginTop:'5px'}}>Компаньйон говорить через Text-to-Speech</div>
-        <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{marginTop:'6px',width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>
-          ▶ Тест голосу
-        </button>
+        <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>▶ Тест голосу</button>
       </Sec>
       <Sec title="СТАРТОВА ЗБРОЯ">
         <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
           {Object.entries(WPN).map(([k,w])=>(
-            <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))}
-              style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+            <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))} style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
               <span>{w.label}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
             </button>
           ))}
@@ -265,220 +244,240 @@ function Settings({s,setS,sPhase,setSPhase,raw,onBack}){
     </div>
   );
 }
-function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
-function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
 
 // ── GAME ──────────────────────────────────────────────────────────
-function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
-  const[player,  setPlayer] =useState({x:CX,y:CY,hp:100,maxHp:100});
-  const[yawIdx,  setYawIdx] =useState(0);
-  const[compassD,setCompassD]=useState(0);
-  const[vYaw,    setVYaw]   =useState(0);
-  const[pitch,   setPitch]  =useState(0);
-  const[sta,     setSta]    =useState(100);
-  const[fingers, setFingers]=useState(5);
-  const[enemies, setEnemies]=useState([]);
-  const[wave,    setWave]   =useState(0);
-  const[score,   setScore]  =useState(0);
-  const[divD,    setDivD]   =useState(0);
-  const[flash,   setFlash]  =useState([]);
-  const[msg,     setMsg]    =useState('');
-  const[msgK,    setMsgK]   =useState(0);
-  const[tutStep, setTutStep]=useState(0);
-  const[tutDone, setTutDone]=useState({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false});
-  const[beaconT, setBeaconT]=useState(0);
-  const[highD,   setHighD]  =useState(0);
-  const[wMsg,    setWMsg]   =useState('');
-  const[dropped, setDropped]=useState(false);
-  const[morseSeq,setMorseSeq]=useState('');
-  const[spell,   setSpell]  =useState(null); // active spell {fn,col,name,exp}
+function Game({gmode,settings,sPhase,onDead,onMenu}){
+  // ══ ЄДИНИЙ МЮТАБЕЛЬНий СТАН ГРИ ══
+  // Вся логіка мутує gs напряму. forceRender() оновлює UI.
+  const gs=useRef(null);
+  const[,forceRender]=useReducer(x=>x+1,0);
   const[showMorse,setShowMorse]=useState(false);
+  const morseTimer=useRef(null);
+  const touchStart=useRef({x:0,y:0,t:0});
+  const prevAccMag=useRef(9.8);
+  const lastStrikeT=useRef(0);
+  const waveTimeout=useRef(null);
   const isRadar=settings.worldMode==='radar';
   const STRENGTH=4;
 
-  const R=useRef({});
-  const waveSpawning=useRef(true);
-  const beaconCount=useRef(0);
-  const prevAccMag=useRef(9.8);
-  const lastStrikeT=useRef(0);
-  const doAttackRef=useRef(null);
-  const doBeaconRef=useRef(null);
-  const morseTimer=useRef(null);
-  const touchStart=useRef({x:0,y:0,t:0});
+  // ── Ініціалізація ────────────────────────────────────────────
+  const initGS=useCallback(()=>{
+    gs.current={
+      player:{x:CX,y:CY,hp:100,maxHp:100},
+      enemies:[],
+      yawIdx:0,compassD:0,vYaw:0,pitch:0,
+      stamina:100,fingers:5,
+      dropped:false,droppedUntil:0,
+      wave:0,score:0,
+      divergence:0,highDTicks:0,
+      beaconCount:0,beaconProgress:0,
+      spell:null,
+      flash:[],flashUntil:0,
+      msg:'',msgKey:0,waveMsg:'',
+      tutStep:0,tutDone:{moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false},
+      morseSeq:'',
+    };
+  },[]);
 
-  useEffect(()=>{R.current={gmode,player,yawIdx,compassD,vYaw,pitch,sta,fingers,enemies,wave,score,divD,tutStep,tutDone,beaconT,highD,dropped,isRadar,spell};});
-
-  const showMsg=useCallback((text)=>{
-    setMsg(text);setMsgK(k=>k+1);
+  const setMsg=useCallback((text)=>{
+    if(!gs.current)return;
+    gs.current.msg=text;gs.current.msgKey++;
     speak(text,settings.voice);
+    forceRender();
   },[settings.voice]);
 
-  const flashAt=useCallback((cells,col)=>{setFlash(cells.map(c=>({...c,col,fid:Math.random()})));setTimeout(()=>setFlash([]),350);},[]);
+  // ── Спавн хвилі ─────────────────────────────────────────────
+  const spawnWave=useCallback((waveNum)=>{
+    if(!gs.current)return;
+    const wi=Math.min(waveNum-1,WAVES.length-1);
+    const extra=Math.max(0,waveNum-WAVES.length);
+    const spawned=[];
+    WAVES[wi].forEach(({t,n})=>{
+      const tot=n+(t==='shadow'?extra:0);
+      for(let i=0;i<tot;i++){const e=spawnE(t,[{x:gs.current.player.x,y:gs.current.player.y},...spawned]);if(e)spawned.push(e);}
+    });
+    gs.current.enemies=spawned;
+    gs.current.waveMsg='';
+    setMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
+    snd('wave');
+  },[setMsg]);
 
-  // ── SPELL CAST ────────────────────────────────────────────────
-  const castSpell=useCallback((sp)=>{
-    snd('spell');
-    const r=R.current;
-    const expires=Date.now()+5000;
-    if(sp.fn==='stamina'){setSta(s=>Math.min(100,s+30));showMsg(`✨ ${sp.uk}! Стаміна +30`);}
-    else if(sp.fn==='mend'){setFingers(f=>Math.min(5,f+1));showMsg(`✨ ${sp.uk}! Палець відновлено`);}
-    else if(sp.fn==='heal'){setPlayer(p=>({...p,hp:Math.min(p.maxHp,p.hp+30)}));showMsg(`✨ ${sp.uk}! HP +30`);}
-    else if(sp.fn==='cure'){setPlayer(p=>({...p,hp:Math.min(p.maxHp,p.hp+50)}));showMsg(`✨ ${sp.uk}! HP +50`);}
-    else if(sp.fn==='rush'){setSpell({fn:'rush',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Рух без стаміни 5с`);}
-    else if(sp.fn==='shield'){setSpell({fn:'shield',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар заблоковано`);}
-    else if(sp.fn==='armor'){setSpell({fn:'armor',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! -60% шкоди на 4с`);}
-    else if(sp.fn==='burn'){setSpell({fn:'burn',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар ×3`);}
-    else if(sp.fn==='surge'){setSpell({fn:'surge',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Удар ×2 5с`);}
-    else if(sp.fn==='pierce'){setSpell({fn:'pierce',col:sp.col,name:sp.uk,expires});showMsg(`✨ ${sp.uk}! Наступний удар ігнорує захист`);}
-    else if(sp.fn==='freeze'){
-      setEnemies(es=>es.map(e=>({...e,frozen:Date.now()+3000})));
-      showMsg(`✨ ${sp.uk}! Найближчий ворог заморожений 3с`);
+  useEffect(()=>{
+    EID=0;initGS();
+    if(gmode==='tutorial'){
+      setTimeout(()=>setMsg('...'),1500);
+      setTimeout(()=>setMsg(TUT[1].msg),4500);
+      setTimeout(()=>{if(!gs.current)return;gs.current.tutStep=2;setMsg(TUT[2].msg);},8500);
     }
-    else if(sp.fn==='lockall'){
-      setEnemies(es=>es.map(e=>({...e,frozen:Date.now()+4000})));
-      showMsg(`✨ ${sp.uk}! Всі вороги заморожені 4с`);
+    if(gmode==='survival'){
+      gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
+      waveTimeout.current=setTimeout(()=>spawnWave(1),2000);
     }
-    else if(sp.fn==='stealth'){setSpell({fn:'stealth',col:sp.col,name:sp.uk,expires:Date.now()+3000});showMsg(`✨ ${sp.uk}! Ворог не бачить 3с`);}
-    else if(sp.fn==='omni'){
-      doAttackRef.current?.({omni:true});showMsg(`✨ ${sp.uk}! Удар навколо`);
-    }
-    else if(sp.fn==='chaos'){setEnemies(es=>es.map(e=>({...e,spd:ET[e.type].spd*2})));setTimeout(()=>setEnemies(es=>es.map(e=>({...e,spd:ET[e.type].spd}))),5000);showMsg(`✨ ${sp.uk}! Вороги сповільнені`);}
-    else if(sp.fn==='teleport'){
-      const r2=R.current;const[dx,dy]=DIR[r2.yawIdx];
-      setPlayer(p=>({...p,x:clamp(p.x+dx*3,0,G-1),y:clamp(p.y+dy*3,0,G-1)}));
-      snd('teleport');showMsg(`✨ ${sp.uk}! Телепорт`);
-    }
-    const r2=R.current;
-    if(r2.gmode==='tutorial'&&!r2.tutDone.morsed){
-      setTutDone(d=>({...d,morsed:true}));
-      if(r2.tutStep===7){setTutStep(8);setTimeout(()=>showMsg(TUT[8].msg),800);}
-    }
-  },[showMsg]);
+    return()=>{clearTimeout(waveTimeout.current);clearTimeout(morseTimer.current);};
+  },[]);// eslint-disable-line
 
-  // ── ATTACK ────────────────────────────────────────────────────
+  // ── АТАКА ────────────────────────────────────────────────────
   const doAttack=useCallback((opts={})=>{
-    const r=R.current;
-    if(r.dropped||r.sta<4)return;
+    const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
     snd('swing');
-    const yi=opts.omni?0:r.yawIdx;
+    const yi=opts.omni?0:g.yawIdx;
     const wk=opts.omni?'flail':settings.startWpn;
-    const cells=getWCells(r.player.x,r.player.y,yi,wk);
+    const cells=getWCells(g.player.x,g.player.y,yi,wk);
     const C=STRENGTH/WPN[settings.startWpn].w;
-    const chargeMult=1+Math.max(0,r.pitch)*1.8;
-    const spellMult=(r.spell?.fn==='burn'?3:r.spell?.fn==='surge'?2:1);
+    const chargeMult=1+Math.max(0,g.pitch)*1.8;
+    const spellMult=(g.spell?.fn==='burn'?3:g.spell?.fn==='surge'?2:1);
     const baseDmg=Math.round(12*chargeMult*C*spellMult);
-    if(r.spell?.fn==='burn'||r.spell?.fn==='surge')setSpell(null);
+    if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
     let hits=0;
-    setEnemies(es=>es.map(e=>{
-      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);
-      if(!cell)return e;hits++;
-      const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
-      if(e.hp-dmg<=0){setScore(s=>s+10);return null;}
+    g.enemies=g.enemies.map(e=>{
+      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
+      hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
+      if(e.hp-dmg<=0){g.score+=10;return null;}
       return{...e,hp:e.hp-dmg};
-    }).filter(Boolean));
-    setSta(s=>Math.max(0,s-10));
-    if(hits>0){flashAt(cells,'#22c55e');snd('hit');}else flashAt(cells,'#ef4444');
-    const r2=R.current;
-    if(r2.gmode==='tutorial'&&!r2.tutDone.attacked&&hits>0){
-      setTutDone(d=>({...d,attacked:true}));
-      if(r2.tutStep===5){setTimeout(()=>setEnemies([]),300);setTutStep(6);setTimeout(()=>showMsg(TUT[6].msg),900);}
+    }).filter(Boolean);
+    g.stamina=Math.max(0,g.stamina-10);
+    g.flash=cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
+    if(hits>0)snd('hit');
+    // Tutorial
+    if(gmode==='tutorial'&&!g.tutDone.attacked&&hits>0){
+      g.tutDone.attacked=true;
+      if(g.tutStep===5){setTimeout(()=>{if(gs.current)gs.current.enemies=[];},300);g.tutStep=6;setTimeout(()=>setMsg(TUT[6].msg),900);}
     }
-  },[flashAt,showMsg,settings.startWpn]);
-  useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
+    forceRender();
+  },[settings.startWpn,gmode,setMsg]);
 
-  // ── BEACON ────────────────────────────────────────────────────
+  // ── ЗАКЛИНАННЯ ───────────────────────────────────────────────
+  const castSpell=useCallback((sp)=>{
+    const g=gs.current;if(!g)return;snd('spell');
+    const fn=sp.fn,now=Date.now();
+    if(fn==='stamina'){g.stamina=Math.min(100,g.stamina+30);}
+    else if(fn==='mend'){g.fingers=Math.min(5,g.fingers+1);}
+    else if(fn==='heal'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+30)};}
+    else if(fn==='cure'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+50)};}
+    else if(fn==='omni'){doAttack({omni:true});}
+    else if(fn==='teleport'){const[dx,dy]=DIR[g.yawIdx];g.player={...g.player,x:clamp(g.player.x+dx*3,0,G-1),y:clamp(g.player.y+dy*3,0,G-1)};}
+    else if(fn==='freeze'){const near=g.enemies.reduce((b,e)=>{const d=Math.abs(e.x-g.player.x)+Math.abs(e.y-g.player.y);return(!b||d<b.d)?{e,d}:b;},null);if(near)g.enemies=g.enemies.map(e=>e.id===near.e.id?{...e,frozen:now+3000}:e);}
+    else if(fn==='lockall'){g.enemies=g.enemies.map(e=>({...e,frozen:now+4000}));}
+    else if(fn==='chaos'){g.enemies=g.enemies.map(e=>({...e,msBonus:ET[e.type].ms*2,chaosUntil:now+5000}));}
+    else{g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
+    setMsg(`✨ ${sp.name}! ${sp.desc}`);
+    // Tutorial
+    if(gmode==='tutorial'&&!g.tutDone.morsed){g.tutDone.morsed=true;if(g.tutStep===7){g.tutStep=8;setTimeout(()=>setMsg(TUT[8].msg),800);}}
+    forceRender();
+  },[doAttack,setMsg,gmode]);
+
+  // ── МАЯК ─────────────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
-    snd('beacon');setSta(s=>Math.min(100,s+50));setDivD(0);setHighD(0);setDropped(false);setBeaconT(0);beaconCount.current=0;
-    const r=R.current;
-    if(r.gmode==='tutorial'&&!r.tutDone.beaconed){setTutDone(d=>({...d,beaconed:true}));if(r.tutStep===6){setTutStep(7);setTimeout(()=>showMsg(TUT[7].msg),600);}}
-  },[showMsg]);
-  useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
+    const g=gs.current;if(!g)return;
+    snd('beacon');g.stamina=Math.min(100,g.stamina+50);g.divergence=0;g.highDTicks=0;g.dropped=false;g.beaconCount=0;g.beaconProgress=0;
+    if(gmode==='tutorial'&&!g.tutDone.beaconed){g.tutDone.beaconed=true;if(g.tutStep===6){g.tutStep=7;setTimeout(()=>setMsg(TUT[7].msg),600);}}
+    forceRender();
+  },[setMsg,gmode]);
 
-  // ── SENSORS ───────────────────────────────────────────────────
+  // ── РУХ ──────────────────────────────────────────────────────
+  const doMoveDir=useCallback((sdx,sdy)=>{
+    const g=gs.current;if(!g)return;
+    let gdx=sdx,gdy=sdy;
+    if(isRadar){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
+    if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
+    const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
+    if(nx===g.player.x&&ny===g.player.y)return;
+    if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
+    g.player={...g.player,x:nx,y:ny};
+    if(g.spell?.fn!=='rush'){const cost=Math.max(0,g.pitch)*10;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
+    if(gmode==='tutorial'&&!g.tutDone.moved){g.tutDone.moved=true;if(g.tutStep===2){g.tutStep=3;setTimeout(()=>setMsg(TUT[3].msg),600);}}
+    forceRender();
+  },[isRadar,gmode,setMsg]);
+
+  const rotateW=useCallback((dir)=>{
+    const g=gs.current;if(!g)return;g.yawIdx=(g.yawIdx+dir+8)%8;
+    if(gmode==='tutorial'&&!g.tutDone.rotated&&g.tutStep===3){g.tutDone.rotated=true;g.tutStep=4;setTimeout(()=>setMsg(TUT[4].msg),600);}
+    forceRender();
+  },[gmode,setMsg]);
+
+  // ── МОРЗЕ ────────────────────────────────────────────────────
+  const handleMorse=useCallback((sym)=>{
+    const g=gs.current;if(!g)return;
+    snd(sym==='.'?'dot':'dash');
+    g.morseSeq+=sym;forceRender();
+    clearTimeout(morseTimer.current);
+    morseTimer.current=setTimeout(()=>{
+      const g2=gs.current;if(!g2)return;
+      const seq=g2.morseSeq;g2.morseSeq='';
+      const sp=SPELLS[seq];
+      if(sp)castSpell(sp);else setMsg(`? "${seq}" — невідоме. ⎍`);
+      forceRender();
+    },1000);
+  },[castSpell,setMsg]);
+
+  // ── СЕНСОРИ ───────────────────────────────────────────────────
   useEffect(()=>{
     if(sPhase!=='active')return;
     const onO=(e)=>{
-      const beta=e.beta??0;const p=betaToPitch(beta,settings.pitchSens);setPitch(p);
+      const g=gs.current;if(!g)return;
+      const beta=e.beta??0;g.pitch=betaToPitch(beta,settings.pitchSens);
       if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){
-        const hdg=e.webkitCompassHeading;setCompassD(hdg);setYawIdx(Math.round(hdg/45)%8);
-        const r=R.current;
-        if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
+        g.compassD=e.webkitCompassHeading;g.yawIdx=Math.round(g.compassD/45)%8;
+        if(gmode==='tutorial'&&!g.tutDone.rotated&&g.tutStep===3){g.tutDone.rotated=true;g.tutStep=4;setTimeout(()=>setMsg(TUT[4].msg),600);}
       }
-      const r=R.current;
-      if(r.gmode==='tutorial'&&!r.tutDone.pitched&&r.tutStep===4&&(p<-0.4||p>0.4)){
-        setTutDone(d=>({...d,pitched:true}));
-        const[dx,dy]=DIR[r.yawIdx];const tx=clamp(r.player.x+dx*2,0,G-1),ty=clamp(r.player.y+dy*2,0,G-1);
-        setEnemies([{id:EID++,type:'shadow',x:tx,y:ty,hp:3,maxHp:3,ticks:0,dummy:true}]);
-        setTutStep(5);setTimeout(()=>showMsg(TUT[5].msg),600);
+      if(gmode==='tutorial'&&!g.tutDone.pitched&&g.tutStep===4&&(g.pitch<-0.4||g.pitch>0.4)){
+        g.tutDone.pitched=true;
+        const[dx,dy]=DIR[g.yawIdx];
+        g.enemies=[{id:EID++,type:'shadow',x:clamp(g.player.x+dx*2,0,G-1),y:clamp(g.player.y+dy*2,0,G-1),hp:3,maxHp:3,lastMove:0,dummy:true}];
+        g.tutStep=5;setTimeout(()=>setMsg(TUT[5].msg),600);
       }
+      forceRender();
     };
-    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha)){const h=(360-e.alpha)%360;setCompassD(h);setYawIdx(Math.round(h/45)%8);}};
+    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha)){const g=gs.current;if(!g)return;g.compassD=(360-e.alpha)%360;g.yawIdx=Math.round(g.compassD/45)%8;forceRender();}};
     const onM=(e)=>{
-      const g=e.accelerationIncludingGravity;if(!g)return;
-      const mag=Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2);
+      const g=gs.current;if(!g)return;
+      const ag=e.accelerationIncludingGravity;if(!ag)return;
+      const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
       const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
-      if(delta>settings.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
+      if(delta>settings.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttack();}
       prevAccMag.current=mag;
       const rr=e.rotationRate;const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
-      const r=R.current;
-      if(r.pitch<-0.4&&still<18&&(r.gmode==='tutorial'||r.gmode==='survival')){
-        beaconCount.current++;setBeaconT(Math.round(clamp(beaconCount.current/100,0,1)*16));
-        if(beaconCount.current>=100)doBeaconRef.current?.();
-      }else{beaconCount.current=0;setBeaconT(t=>Math.max(0,t-1));}
+      if(g.pitch<-0.4&&still<18&&(gmode==='tutorial'||gmode==='survival')){
+        g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/120,0,1);
+        if(g.beaconCount>=120)doBeaconComplete();
+      }else{g.beaconCount=Math.max(0,g.beaconCount-1);g.beaconProgress=clamp(g.beaconCount/120,0,1);}
+      forceRender();
     };
     window.addEventListener('deviceorientation',onO,true);
     window.addEventListener('deviceorientationabsolute',onOA,true);
     window.addEventListener('devicemotion',onM);
     return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
-  },[sPhase,settings,showMsg]);
+  },[sPhase,settings,gmode,doAttack,doBeaconComplete,setMsg]);
 
-  // ── PAGE VISIBILITY — скидає тіки ворогів ────────────────────
+  // ── КЛАВІАТУРА ────────────────────────────────────────────────
   useEffect(()=>{
-    const h=()=>{
-      if(!document.hidden){
-        // Скидаємо тіки щоб вороги не атакували пачкою після повернення
-        setEnemies(es=>es.map(e=>({...e,ticks:0})));
+    const held={};let bInt=null;
+    const kd=e=>{
+      if(held[e.key])return;held[e.key]=true;
+      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
+      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
+      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
+      if(sPhase!=='active'){
+        if(e.key==='z'){const g=gs.current;if(g){g.pitch=-1;forceRender();}}
+        if(e.key==='c'){const g=gs.current;if(g){g.pitch=1;forceRender();}}
+        if(e.key==='b'){bInt=setInterval(()=>{const g=gs.current;if(!g)return;g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/16,0,1);if(g.beaconCount>=16){clearInterval(bInt);doBeaconComplete();}forceRender();},TICK);}
+      }
+      if(e.key===' '){e.preventDefault();doAttack();}
+      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
+    };
+    const ku=e=>{
+      delete held[e.key];
+      if(sPhase!=='active'){
+        if(e.key==='z'){const g=gs.current;if(g){g.pitch=0;forceRender();}}
+        if(e.key==='c'){const g=gs.current;if(g){g.pitch=0;forceRender();}}
+        if(e.key==='b'){clearInterval(bInt);}
       }
     };
-    document.addEventListener('visibilitychange',h);
-    return()=>document.removeEventListener('visibilitychange',h);
-  },[]);
+    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
+    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
+  },[sPhase,doMoveDir,rotateW,doAttack,doBeaconComplete,handleMorse]);
 
-  // ── MOVE ──────────────────────────────────────────────────────
-  const doMoveDir=useCallback((sdx,sdy)=>{
-    const r=R.current;
-    let gdx=sdx,gdy=sdy;
-    if(r.isRadar){const w=swipeToWorld(sdx,sdy,r.compassD);gdx=w.gdx;gdy=w.gdy;}
-    if(r.dropped||(r.sta<4&&r.spell?.fn!=='rush'))return;
-    const nx=clamp(r.player.x+gdx,0,G-1),ny=clamp(r.player.y+gdy,0,G-1);
-    if(nx===r.player.x&&ny===r.player.y)return;
-    if(r.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    setPlayer(p=>({...p,x:nx,y:ny}));
-    if(r.spell?.fn!=='rush'){const cost=Math.max(0,r.pitch)*10;if(cost>0)setSta(s=>Math.max(0,s-cost));}
-    if(r.gmode==='tutorial'&&!r.tutDone.moved){setTutDone(d=>({...d,moved:true}));if(r.tutStep===2){setTutStep(3);setTimeout(()=>showMsg(TUT[3].msg),600);}}
-  },[showMsg]);
-
-  const rotateW=useCallback((dir)=>{
-    const r=R.current;setYawIdx(y=>(y+dir+8)%8);
-    if(r.gmode==='tutorial'&&!r.tutDone.rotated&&r.tutStep===3){setTutDone(d=>({...d,rotated:true}));setTutStep(4);setTimeout(()=>showMsg(TUT[4].msg),600);}
-  },[showMsg]);
-
-  // ── MORSE ─────────────────────────────────────────────────────
-  const handleMorse=useCallback((sym)=>{
-    snd(sym==='.'?'dot':'dash');
-    setMorseSeq(m=>{
-      const next=m+sym;
-      clearTimeout(morseTimer.current);
-      morseTimer.current=setTimeout(()=>{
-        setMorseSeq('');
-        const sp=SPELLS[next];
-        if(sp)castSpell(sp);else showMsg(`? "${next}" — невідоме. Дивись ⎍ МОРЗЕ`);
-      },1000);
-      return next;
-    });
-  },[castSpell,showMsg]);
-
-  // ── TOUCH ─────────────────────────────────────────────────────
+  // ── СВАЙП ─────────────────────────────────────────────────────
   useEffect(()=>{
     const onS=e=>{e.preventDefault();touchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};};
     const onE=e=>{
@@ -487,7 +486,7 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
       const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
       const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
       if(dist<25){handleMorse(dt<280?'.':'-');}
-      else{clearTimeout(morseTimer.current);setMorseSeq('');if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);else doMoveDir(0,Math.sign(dy));}
+      else{clearTimeout(morseTimer.current);const g=gs.current;if(g){g.morseSeq='';forceRender();}if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);else doMoveDir(0,Math.sign(dy));}
     };
     const onM=e=>e.preventDefault();
     document.addEventListener('touchstart',onS,{passive:false});
@@ -496,126 +495,91 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
     return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
   },[doMoveDir,handleMorse]);
 
-  // ── KEYBOARD ──────────────────────────────────────────────────
-  useEffect(()=>{
-    const h={};let bInt=null;
-    const kd=e=>{
-      if(h[e.key])return;h[e.key]=true;
-      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
-      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
-      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
-      if(sPhase!=='active'){if(e.key==='z')setPitch(-1);if(e.key==='c')setPitch(1);if(e.key==='b'){bInt=setInterval(()=>setBeaconT(t=>{if(t>=16){clearInterval(bInt);doBeaconRef.current?.();return 0;}return t+1;}),TICK);}}
-      if(e.key===' '){e.preventDefault();doAttack();}
-      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
-    };
-    const ku=e=>{delete h[e.key];if(sPhase!=='active'){if(e.key==='z')setPitch(0);if(e.key==='c')setPitch(0);if(e.key==='b'){clearInterval(bInt);setBeaconT(0);}}};
-    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
-    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
-  },[sPhase,doMoveDir,rotateW,doAttack,handleMorse]);
-
-  // ── GAME TICK ──────────────────────────────────────────────────
-  // ВИПРАВЛЕНО: не викликаємо setPlayer всередині setEnemies
+  // ════════════════════════════════════════════════════════════════
+  // ІГРОВИЙ ЛУП — МУТУЄ gs.current НАПРЯМУ (без setState!)
+  // ════════════════════════════════════════════════════════════════
   useEffect(()=>{
     const id=setInterval(()=>{
-      const r=R.current;
-      // Divergence
-      const target=r.yawIdx*45;const C=STRENGTH/WPN[settings.startWpn].w;
-      let diff=target-r.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
-      setVYaw(v=>v+diff*(C*0.09));
-      const D=Math.min(100,Math.abs(diff)*(1/C));setDivD(D);
-      if(D>65){setHighD(hh=>{if(hh>18){setSta(s=>{if(s<=0){setDropped(true);snd('drop');setFingers(f=>{const nf=f-1;if(nf<=0){snd('death');onDead();}return Math.max(0,nf);});setTimeout(()=>setDropped(false),5000);}return Math.max(0,s-25);});return 0;}return hh+1;});}else setHighD(0);
-      setSta(s=>clamp(s+(1-(r.pitch+1)/2)*1.8-(D>65?1.2:D>40?0.3:0),0,100));
-      // Spell expire
-      if(r.spell&&Date.now()>r.spell.expires)setSpell(null);
-      // Enemies — ОКРЕМО від setPlayer
-      if(!r.dropped&&r.enemies.length>0){
-        let dmgToPlayer=0;let didFlash=false;
-        const now=Date.now();
-        setEnemies(es=>{
-          if(!es.length)return es;
-          dmgToPlayer=0;didFlash=false;
-          return es.map(e=>{
-            if(e.dummy)return e;
-            if(e.frozen&&now<e.frozen)return{...e,ticks:0};
-            const et=ET[e.type];
-            const spd=e.spd||et.spd;
-            const nt=e.ticks+1;if(nt<spd)return{...e,ticks:nt};
-            const dx=r.player.x-e.x,dy=r.player.y-e.y;
-            const dist=Math.abs(dx)+Math.abs(dy);
-            if(dist<=1){
-              const stealth=r.spell?.fn==='stealth';
-              const armor=r.spell?.fn==='armor';
-              if(!stealth){
-                const dmg=armor?Math.round(et.dmg*.4):et.dmg;
-                dmgToPlayer+=dmg;didFlash=true;
-              }
-              return{...e,ticks:0};
-            }
-            // Move
-            const moves=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
-            const best=moves.map(([mx,my])=>{
-              const nx2=e.x+mx,ny2=e.y+my;
-              if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
-              if(nx2===r.player.x&&ny2===r.player.y)return null;
-              if(es.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
-              return{x:nx2,y:ny2,d:Math.abs(r.player.x-nx2)+Math.abs(r.player.y-ny2)};
-            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
-            if(best)return{...e,x:best.x,y:best.y,ticks:0};
-            return{...e,ticks:0};
-          });
-        });
-        // Apply damage ПІСЛЯ setEnemies, не всередині
-        if(dmgToPlayer>0){
-          setPlayer(p=>{
-            const nh=Math.max(0,p.hp-dmgToPlayer);
-            if(nh<=0){setTimeout(()=>{snd('death');onDead();},0);}
-            return{...p,hp:nh};
-          });
-          if(didFlash){snd('hurt');setFlash([{x:r.player.x,y:r.player.y,col:'#ef4444',fid:Math.random()}]);setTimeout(()=>setFlash([]),300);}
+      const g=gs.current;if(!g)return;
+      const now=Date.now();
+      const C=STRENGTH/WPN[settings.startWpn].w;
+
+      // Кліренс флешу
+      if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
+
+      // Дивергенція
+      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
+      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
+
+      // Висока дивергенція
+      if(g.divergence>65){
+        g.highDTicks++;
+        if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.droppedUntil=now+5000;g.fingers--;snd('drop');if(g.fingers<=0){snd('death');onDead();return;}}}
+      }else{g.highDTicks=0;}
+
+      // Авто-відновлення drop
+      if(g.dropped&&now>g.droppedUntil)g.dropped=false;
+
+      // Стаміна
+      const regen=(1-(g.pitch+1)/2)*1.8;const drain=g.divergence>65?1.2:g.divergence>40?0.3:0;
+      g.stamina=clamp(g.stamina+regen-drain,0,100);
+
+      // Expire spell
+      if(g.spell&&now>g.spell.expires)g.spell=null;
+
+      // ── ВОРОГИ — ВСЕ СИНХРОННО В ОДНОМУ МІСЦІ ──────────────
+      if(!g.dropped&&g.enemies.length>0){
+        let dmg=0,flash=false;
+        g.enemies=g.enemies.map(e=>{
+          if(e.dummy)return e;
+          if(e.frozen&&now<e.frozen)return e;
+          const et=ET[e.type];
+          const ms=e.msBonus||(e.chaosUntil&&now<e.chaosUntil?et.ms*2:et.ms);
+          if(now-(e.lastMove||0)<ms)return e;
+          const dx=g.player.x-e.x,dy=g.player.y-e.y;
+          const dist=Math.abs(dx)+Math.abs(dy);
+          if(dist<=1){
+            const shield=g.spell?.fn==='shield',armor=g.spell?.fn==='armor',stealth=g.spell?.fn==='stealth';
+            if(!stealth){const d=armor?Math.round(et.dmg*.4):et.dmg;dmg+=d;flash=true;if(shield){g.spell=null;dmg=0;flash=false;}}
+            return{...e,lastMove:now};
+          }
+          const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
+          const best=dirs.map(([mx,my])=>{
+            const nx2=e.x+mx,ny2=e.y+my;
+            if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
+            if(nx2===g.player.x&&ny2===g.player.y)return null;
+            if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
+            return{x:nx2,y:ny2,d:Math.abs(g.player.x-nx2)+Math.abs(g.player.y-ny2)};
+          }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+          return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
+        }).filter(Boolean);
+
+        // Дамаг гравцю — тут же, синхронно
+        if(dmg>0){
+          g.player={...g.player,hp:Math.max(0,g.player.hp-dmg)};
+          if(flash){snd('hurt');g.flash=[{x:g.player.x,y:g.player.y,col:'#ef4444',fid:Math.random()}];g.flashUntil=now+300;}
+          if(g.player.hp<=0){snd('death');onDead();return;}
         }
       }
+
+      // Хвиля пройдена
+      if(gmode==='survival'&&g.wave>0&&g.enemies.length===0&&!waveTimeout.current){
+        const next=g.wave+1;g.wave=next;g.waveMsg=`Хвиля ${next}`;
+        waveTimeout.current=setTimeout(()=>{waveTimeout.current=null;spawnWave(next);},2500);
+      }
+
+      forceRender();
     },TICK);
     return()=>clearInterval(id);
-  },[settings.startWpn,onDead]);
+  },[settings.startWpn,gmode,onDead,spawnWave]);
 
-  // ── WAVE ──────────────────────────────────────────────────────
-  useEffect(()=>{
-    if(gmode!=='survival'||wave===0||enemies.length>0||waveSpawning.current)return;
-    waveSpawning.current=true;
-    const next=wave+1;snd('wave');setWMsg(`Хвиля ${next}`);
-    setTimeout(()=>{
-      setWave(next);setWMsg('');
-      const wi=Math.min(next-1,WAVES.length-1),extra=Math.max(0,next-WAVES.length);
-      const spawned=[];
-      WAVES[wi].forEach(({t,n})=>{const tot=n+(t==='shadow'?extra:0);for(let i=0;i<tot;i++){const e=spawn(t,[{x:player.x,y:player.y},...spawned]);if(e)spawned.push(e);}});
-      setEnemies(spawned);showMsg(`Хвиля ${next} · ${spawned.length} ворогів`);
-      waveSpawning.current=false;
-    },2500);
-  },[enemies.length,gmode,wave,player.x,player.y,showMsg]);
-
-  // ── INIT ──────────────────────────────────────────────────────
-  useEffect(()=>{
-    EID=0;waveSpawning.current=true;
-    setPlayer({x:CX,y:CY,hp:100,maxHp:100});setYawIdx(0);setVYaw(0);setCompassD(0);setPitch(0);
-    setSta(100);setFingers(5);setEnemies([]);setScore(0);setDivD(0);setHighD(0);
-    setDropped(false);setBeaconT(0);setMorseSeq('');setSpell(null);setFlash([]);
-    if(gmode==='tutorial'){
-      setWave(0);setTutStep(0);setTutDone({moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false});
-      setTimeout(()=>showMsg('...'),1500);
-      setTimeout(()=>showMsg(TUT[1].msg),4500);
-      setTimeout(()=>{setTutStep(2);showMsg(TUT[2].msg);},8500);
-    }
-    if(gmode==='survival'){
-      setWave(1);snd('wave');setWMsg('Хвиля 1');
-      setTimeout(()=>{setWMsg('');const sp=[];WAVES[0].forEach(({t,n})=>{for(let i=0;i<n;i++){const e=spawn(t,[{x:CX,y:CY},...sp]);if(e)sp.push(e);}});setEnemies(sp);showMsg(`Хвиля 1 · ${sp.length} ворогів`);waveSpawning.current=false;},2000);
-    }
-  },[]);// eslint-disable-line
-
-  // ── RENDER ────────────────────────────────────────────────────
-  const wCells=getWCells(player.x,player.y,yawIdx,settings.startWpn);
+  // ── РЕНДЕР ────────────────────────────────────────────────────
+  const g=gs.current;
+  if(!g)return null;
+  const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn);
   const cellSz=Math.min(28,Math.floor((Math.min(window.innerWidth,480)-20)/G));
-  const pc=pCol(pitch);const dc=divD>70?'#ef4444':divD>40?'#f59e0b':'#22c55e';
-  const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,player.x,player.y,compassD):{sx:gx,sy:gy};
+  const pc=pColor(g.pitch);const dc=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
+  const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
 
   return(
     <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
@@ -623,82 +587,81 @@ function Game({gmode,settings,sPhase,rawSens,onDead,onMenu}){
 
       {/* HUD */}
       <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center'}}>
-        <Bar v={player.hp} max={player.maxHp} col={player.hp>50?'#22c55e':player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
-        <Bar v={sta} max={100} col='#60a5fa' lbl="STA"/>
-        <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<fingers?(dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
+        <Bar v={g.player.hp} max={g.player.maxHp} col={g.player.hp>50?'#22c55e':g.player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
+        <Bar v={g.stamina} max={100} col='#60a5fa' lbl="STA"/>
+        <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<g.fingers?(g.dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
         {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
-        <div style={{fontSize:'8px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='survival'?`W${wave}`:'TUT'}</div>
-        {gmode==='survival'&&<div style={{fontSize:'8px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{score}</div>}
-        <button onClick={()=>setShowMorse(true)} style={{background:'none',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'3px',padding:'1px 4px',cursor:'pointer',fontSize:'8px',fontFamily:'inherit',flexShrink:0}}>⎍</button>
+        <div style={{fontSize:'9px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='survival'?`W${g.wave}`:'TUT'}</div>
+        {gmode==='survival'&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
+        <button onClick={()=>setShowMorse(v=>!v)} style={{background:'none',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'3px',padding:'1px 5px',cursor:'pointer',fontSize:'8px',fontFamily:'inherit',flexShrink:0}}>⎍</button>
       </div>
 
-      {/* DIV + SPELL */}
-      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'4px'}}>
+      {/* DIV */}
+      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',alignItems:'center',gap:'4px'}}>
         <div style={{fontSize:'7px',color:'#1e3a5f',width:'18px'}}>DIV</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${divD}%`,background:dc,transition:'width .08s'}}/></div>
-        {spell&&<div style={{fontSize:'8px',color:spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{spell.name}</div>}
-        {dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:dc,transition:'width .05s'}}/></div>
+        {g.spell&&<div style={{fontSize:'8px',color:g.spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{g.spell.name}</div>}
+        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
       </div>
 
-      {/* MORSE DISPLAY */}
-      {morseSeq&&<div style={{fontSize:'12px',letterSpacing:'.2em',padding:'0 8px 1px'}}>
-        {morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
+      {/* Morse display */}
+      {g.morseSeq&&<div style={{fontSize:'12px',letterSpacing:'.2em',padding:'0 8px 1px'}}>
+        {g.morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
       </div>}
 
-      {/* SENSOR INFO */}
+      {/* Sensor info */}
       {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-        <span>β<span style={{color:pc}}>{rawSens.beta.toFixed(0)}°</span></span>
-        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[yawIdx]}</span></span>
-        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{compassD.toFixed(0)}°</span></span>}
-        <span style={{color:pc}}>{pitch<-0.3?'REST':pitch>0.3?'CHARGE':'HOLD'}</span>
+        <span>β<span style={{color:pc}}>{Math.round(g.pitch*40+40)}°</span></span>
+        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
+        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
+        <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
       </div>}
 
-      {wMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{wMsg}</div>}
+      {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
 
       {/* GRID */}
       <div style={{padding:'3px',background:'#020c1a',border:'1px solid #1e3a5f',borderRadius:'5px',margin:'2px 0'}}>
         <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
-            const isP=isRadar?(sx===CX&&sy===CY):(sx===player.x&&sy===player.y);
-            const en=enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
+            const isP=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
+            const en=g.enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
             const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
-            const fl=flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,player.x,player.y,compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
+            const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
             let bg='#020c1a',bdr='1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
-            else if(en){const et=ET[en.type];bg=et.col+(en.frozen&&Date.now()<en.frozen?'55':'22');bdr=`1px solid ${et.col}`;}
+            else if(en){const et=ET[en.type];bg=et.col+'22';bdr=`1px solid ${et.col}`;}
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
-              <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .08s'}}>
+              <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
                 {isP?(<>
                   <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
-                    background:dropped?'#f59e0b':spell?.fn==='shield'?'#3b82f6':'#22c55e',
-                    boxShadow:`0 0 6px ${dropped?'#f59e0b':spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[yawIdx]}</div>
-                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'88':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
+                    background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
+                    boxShadow:`0 0 6px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[g.yawIdx]}</div>
+                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* BEACON */}
-      {beaconT>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
+      {/* Beacon */}
+      {g.beaconProgress>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
         <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${(beaconT/16)*100}%`,background:'#22c55e',transition:'width .1s'}}/></div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.beaconProgress*100}%`,background:'#22c55e',transition:'width .05s'}}/></div>
       </div>}
 
-      {/* MSG */}
-      {msg&&<div key={msgK} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{msg}</div>}
+      {/* Companion */}
+      {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
 
-      {/* STATUS */}
-      <div style={{marginTop:'auto',padding:'2px 8px 5px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center'}}>
-        <span style={{color:dc}}>D={Math.round(divD)}%</span>
-        <span>HP<span style={{color:player.hp>50?'#22c55e':'#ef4444'}}>{player.hp}</span></span>
+      {/* Status */}
+      <div style={{marginTop:'auto',padding:'2px 8px 5px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
+        <span style={{color:dc}}>D={Math.round(g.divergence)}%</span>
+        <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
         {isRadar&&<span style={{color:'#a78bfa'}}>RADAR</span>}
-        <span>свайп=рух · тап=· · тримай=−</span>
-        <span style={{color:'#2a4a6f'}}>⎍ = Морзе довідка</span>
+        <span>свайп=рух · тап=· · тримай=− · ⎍=Морзе</span>
       </div>
     </div>
   );
@@ -712,7 +675,7 @@ function Warning({onOk}){
     <div style={{fontSize:'36px'}}>⚠️</div>
     <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>УВАГА!</div>
     <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:2,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'14px'}}>
-      Ця гра вимагає фізичних рухів смартфоном.<br/>
+      Гра вимагає фізичних рухів смартфоном.<br/>
       <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
       Грай в безпечному відкритому місці.<br/>
       Переконайся що навколо нікого немає.<br/>
@@ -734,43 +697,36 @@ function App(){
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
   const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true});
-  const[raw,setRaw]=useState({beta:0,compass:0,mag:9.8});
-
-  useEffect(()=>{
-    if(sPhase!=='active')return;
-    const o=(e)=>{const beta=e.beta??0;let compass=raw.compass;if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading))compass=e.webkitCompassHeading;setRaw(p=>({...p,beta,compass}));};
-    const oa=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha))setRaw(p=>({...p,compass:(360-e.alpha)%360}));};
-    const m=(e)=>{const g=e.accelerationIncludingGravity;if(!g)return;setRaw(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));};
-    window.addEventListener('deviceorientation',o,true);window.addEventListener('deviceorientationabsolute',oa,true);window.addEventListener('devicemotion',m);
-    return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
-  },[sPhase]);
-
-  if(screen==='warning')return <Warning onOk={()=>setScreen('menu')}/>;
-  if(screen==='settings')return <Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} raw={raw} onBack={()=>setScreen('menu')}/>;
-  if(screen==='game')return <Game gmode={gmode} settings={S} sPhase={sPhase} rawSens={raw} onDead={()=>setScreen('dead')} onMenu={()=>setScreen('menu')}/>;
-  if(screen==='dead')return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
-      <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
-      <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
-        <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
-        <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
-      </div>
-    </div>
-  );
   return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
-      <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
-      <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
-      <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп = рух · тап = · · тримай = − · мах = удар<br/>⎍ = Морзе довідка у грі</div>
-      <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
-        {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙ Налаштування</span>}
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
-        <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
-        <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
-        <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
-      </div>
-    </div>
+    <>
+      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')}/>}
+      {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')}/>}
+      {screen==='game'&&<Game key={`${gmode}-${Date.now()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={()=>setScreen('dead')} onMenu={()=>setScreen('menu')}/>}
+      {screen==='dead'&&(
+        <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
+          <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
+          <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
+            <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
+          </div>
+        </div>
+      )}
+      {screen==='menu'&&(
+        <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
+          <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
+          <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
+          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар</div>
+          <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
+            {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙</span>}
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
+            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
+            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
