@@ -125,17 +125,178 @@ function snd(t){
     else if(t==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.07);o.start(ts);o.stop(ts+.07);}
     else if(t==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.18);o.start(ts);o.stop(ts+.18);}
     else if(t==='spell'){[330,440,550,660,550].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
+    else if(t==='clank'){o.type='square';o.frequency.setValueAtTime(80,ts);o.frequency.exponentialRampToValueAtTime(40,ts+.15);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.15);o.start(ts);o.stop(ts+.15);}
     else if(t==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,ts);o.frequency.exponentialRampToValueAtTime(220,ts+.45);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.45);o.start(ts);o.stop(ts+.45);}
     else if(t==='death'){o.type='sine';o.frequency.setValueAtTime(440,ts);o.frequency.exponentialRampToValueAtTime(110,ts+.9);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.9);o.start(ts);o.stop(ts+.9);}
   }catch(e){}
 }
 
+// ── ROOM SYSTEM ───────────────────────────────────────────────────
+const OBJ_TYPES={
+  pillar:{sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,blocksAtk:false,desc:'Стовп кам'яний'},
+  wall:  {sym:'▬',col:'#475569',destructible:false,blocksMove:true,blocksAtk:true, desc:'Кам'яна стіна'},
+  crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,blocksAtk:false,hp:3,desc:'Дерев'яний ящик'},
+  barrel:{sym:'◉',col:'#b45309',destructible:true, blocksMove:true,blocksAtk:false,hp:1,explodes:true,desc:'Вибухова бочка'},
+  loot_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',  desc:'Апгрейд: Дальність'},
+  loot_weight:   {sym:'🌬',col:'#a78bfa',destructible:false,blocksMove:false,isLoot:true,upg:'weight', desc:'Апгрейд: Вага'},
+  loot_sharpness:{sym:'⚡',col:'#fbbf24',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Апгрейд: Гострота'},
+  loot_hp:       {sym:'❤', col:'#f87171',destructible:false,blocksMove:false,isLoot:true,upg:'hp',      desc:'Апгрейд: MaxHP +20'},
+  loot_stamina:  {sym:'💙',col:'#38bdf8',destructible:false,blocksMove:false,isLoot:true,upg:'stamina', desc:'Апгрейд: Стаміна'},
+  loot_fingers:  {sym:'🖐',col:'#34d399',destructible:false,blocksMove:false,isLoot:true,upg:'fingers', desc:'Апгрейд: +1 Палець'},
+  loot_spell:    {sym:'📜',col:'#e879f9',destructible:false,blocksMove:false,isLoot:true,upg:'spell',   desc:'Нове заклинання'},
+};
+const UPGRADE_TYPES={
+  reach:     {sym:'🔭',col:'#60a5fa',desc:'Дальність +20%',   fn:(m)=>({...m,reach:m.reach*1.2})},
+  weight:    {sym:'🌬',col:'#a78bfa',desc:'Вага -15%',         fn:(m)=>({...m,weight:m.weight*0.85})},
+  sharpness: {sym:'⚡',col:'#fbbf24',desc:'Гострота +25%',     fn:(m)=>({...m,sharpness:m.sharpness*1.25})},
+  hp:        {sym:'❤',col:'#f87171',desc:'MaxHP +20',          fn:(m,p)=>p},// handled separately
+  stamina:   {sym:'💙',col:'#38bdf8',desc:'Стаміна-мод +0.3',  fn:(m)=>({...m,staminaRegen:m.staminaRegen+0.3})},
+  fingers:   {sym:'🖐',col:'#34d399',desc:'+1 палець',         fn:(m)=>m},// handled separately
+};
+const UNLOCKABLE_SPELLS=SPELLS.filter(s=>s.code!=='.'&&s.code!=='-').map(s=>s.code);
+const BOSS_DEFS={
+  colossus:  {name:'КОЛОС',    col:'#f97316',sym:'⬡',basehp:60, dmg:22,ms:700,size:2,special:'charge'},
+  wraith:    {name:'ПРИМАРА',  col:'#d946ef',sym:'◈',basehp:40, dmg:15,ms:320,size:1,special:'teleport'},
+  juggernaut:{name:'ДРЕДНОУТ', col:'#dc2626',sym:'◼',basehp:120,dmg:35,ms:950,size:3,special:'aoe'},
+  devourer:  {name:'ПОЖИРАЧ',  col:'#84cc16',sym:'✦',basehp:80, dmg:28,ms:500,size:2,special:'spawn'},
+};
+const UPGRADE_TYPES={
+  reach:    {label:'ДАЛЬНІСТЬ', sym:'🔭',col:'#60a5fa',desc:'+20% радіусу зброї',  apply:(p)=>{p.weaponMods.reach=(p.weaponMods.reach||1)+0.2;}},
+  weight:   {label:'ЛЕГКІСТЬ',  sym:'🌬',col:'#22c55e',desc:'-15% ваги (швидше)',  apply:(p)=>{p.weaponMods.weight=Math.max(0.2,(p.weaponMods.weight||1)-0.15);}},
+  sharpness:{label:'ГОСТРОТА',  sym:'⚡',col:'#f59e0b',desc:'+25% шкоди',          apply:(p)=>{p.weaponMods.sharpness=(p.weaponMods.sharpness||1)+0.25;}},
+  hp:       {label:'HP MAX +20',sym:'❤',col:'#f87171',desc:'Макс HP +20',          apply:(p)=>{p.maxHp=(p.maxHp||100)+20;p.hp=Math.min(p.hp+20,p.maxHp);}},
+  stamina:  {label:'ВИТРИВАЛІСТЬ',sym:'💙',col:'#3b82f6',desc:'Стаміна регенерує швидше',apply:(p)=>{p.staminaMod=(p.staminaMod||1)+0.3;}},
+  fingers:  {label:'ПАЛЬЦІ +1', sym:'🖐',col:'#a78bfa',desc:'+1 захисний палець', apply:(p)=>{p.fingers=Math.min(7,p.fingers+1);}},
+};
+// Заклинання що розблоковуються в кімнатах (крім перших двох)
+const UNLOCKABLE_SPELLS=['.-','--','..','-.','.-.',  '...','---','-..','.-..', '-...','.--.','-.-.','....','...-'];
+
+function generateUpgrades(roomNum,isBoss){
+  const items=[];
+  const count=isBoss?2:(Math.random()<0.6?1:0);
+  const usedPos=new Set();
+  for(let i=0;i<count;i++){
+    let x,y,key;
+    do{x=1+Math.floor(Math.random()*(G-2));y=1+Math.floor(Math.random()*(G-2));key=`${x},${y}`;}while(usedPos.has(key));
+    usedPos.add(key);
+    // Рандомний тип покращення
+    const isSpell=Math.random()<(isBoss?0.5:0.35)&&roomNum>1;
+    if(isSpell){
+      const code=UNLOCKABLE_SPELLS[Math.floor(Math.random()*UNLOCKABLE_SPELLS.length)];
+      const sp=SPELL_MAP[code];
+      items.push({id:EID++,x,y,upgType:'spell',spellCode:code,sym:'✨',col:'#e879f9',label:sp?sp.name:'Заклинання'});
+    }else{
+      const wKeys=Object.keys(UPGRADE_TYPES);
+      const type=wKeys[Math.floor(Math.random()*wKeys.length)];
+      const ut=UPGRADE_TYPES[type];
+      items.push({id:EID++,x,y,upgType:type,sym:ut.sym,col:ut.col,label:ut.label});
+    }
+  }
+  return items;
+}
+
+function coordToId(x,y){return`${x},${y}`;}
+function getNextCoord(coord,dir){
+  if(dir==='N')return{x:coord.x,y:coord.y-1};
+  if(dir==='S')return{x:coord.x,y:coord.y+1};
+  if(dir==='E')return{x:coord.x+1,y:coord.y};
+  if(dir==='W')return{x:coord.x-1,y:coord.y};
+  return coord;
+}
+function edgeFromPlayer(px,py){
+  if(py===0)return'N';if(py===G-1)return'S';
+  if(px===0)return'W';if(px===G-1)return'E';
+  return null;
+}
+function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
+
+// ── UPGRADE SYSTEM ────────────────────────────────────────────────
+const UPGRADE_TYPES={
+  reach:    {sym:'🔭',name:'Далекобій',desc:'+20% радіусу',   col:'#60a5fa'},
+  weight:   {sym:'🌬',name:'Легкість', desc:'-15% ваги',      col:'#22c55e'},
+  sharpness:{sym:'⚡',name:'Гострота', desc:'+25% шкоди',     col:'#f59e0b'},
+  hp:       {sym:'❤', name:'Загарт.',  desc:'maxHP +20',       col:'#ef4444'},
+  stamina:  {sym:'💙',name:'Витрив.',  desc:'стаміна +0.4/т', col:'#3b82f6'},
+  fingers:  {sym:'🖐',name:'Спритн.',  desc:'+1 палець',       col:'#a78bfa'},
+};
+const UNLOCKABLE_SPELLS=SPELLS.filter(s=>s.code!=='.'&&s.code!=='-');
+function coordId(rx,ry){return`${rx},${ry}`;}
+function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
+const DIR4={left:{dx:-1,dy:0,edge:'x0'},right:{dx:1,dy:0,edge:'xG'},up:{dx:0,dy:-1,edge:'y0'},down:{dx:0,dy:1,edge:'yG'}};
+function playerEdgeDir(px,py){if(px===0)return'left';if(px===G-1)return'right';if(py===0)return'up';if(py===G-1)return'down';return null;}
+function entryPos(dir){const d=DIR4[dir];if(!d)return{x:CX,y:CY};if(d.edge==='x0')return{x:G-1,y:CY};if(d.edge==='xG')return{x:0,y:CY};if(d.edge==='y0')return{x:CX,y:G-1};return{x:CX,y:0};}
+
+function calcBossCells(bx,by,size){
+  const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;
+}
+function coordId(rx,ry){return `${rx},${ry}`;}
+function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
+function getNextCoord(coord,dir){
+  const{x,y}=coord;
+  if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};
+  if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};
+  return coord;
+}
+function generateRoomContent(roomNum,spawnX,spawnY){
+  const isBoss=roomNum>1&&(roomNum%3===0);
+  const occ=[{x:spawnX??CX,y:spawnY??CY}];
+  // Об'єкти
+  const objects=[];
+  const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/1.5),9);
+  const objKeys=Object.keys(OBJ_TYPES);
+  for(let i=0;i<objCount*5&&objects.length<objCount;i++){
+    const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
+    if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<3))continue;
+    const type=isBoss?(Math.random()<0.7?'pillar':'wall'):objKeys[Math.floor(Math.random()*objKeys.length)];
+    const ot=OBJ_TYPES[type];
+    const obj={id:EID++,type,x,y,hp:ot.hp??null};
+    objects.push(obj);occ.push({x,y});
+  }
+  // Вороги або бос
+  let enemies=[];
+  if(isBoss){
+    const bKeys=Object.keys(BOSS_DEFS);
+    const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
+    const bd=BOSS_DEFS[bType];
+    const scale=Math.max(1,1+(roomNum/3-1)*0.45);
+    const bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
+    const by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
+    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,
+      hp:Math.round(bd.basehp*scale),maxHp:Math.round(bd.basehp*scale),
+      dmg:Math.round(bd.dmg*scale),ms:Math.round(bd.ms/Math.sqrt(scale)),
+      size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,special:bd.special,
+      lastMove:0,lastSpecial:0}];
+  }else{
+    const etAll=Object.keys(ET);
+    const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
+    const count=Math.max(1,Math.floor(1+roomNum*0.55));
+    const spOcc=[...occ];
+    for(let i=0;i<count;i++){
+      const type=etAvail[Math.floor(Math.random()*etAvail.length)];
+      const e=spawnE(type,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}
+    }
+  }
+  const upgrades=generateUpgrades(roomNum,isBoss);
+  // Лут
+  const loot=[];const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+  const lootCount=Math.random()<0.65?1:0;
+  for(let i=0;i<lootCount*4&&loot.length<lootCount;i++){
+    const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
+    if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
+    const type=lootKeys[Math.floor(Math.random()*lootKeys.length)];
+    loot.push({id:EID++,type,x,y,hp:null});occ.push({x,y});
+  }
+  return{objects:[...objects,...loot],enemies,isBoss};
+}
+
 // ── HELPERS ───────────────────────────────────────────────────────
-function getWCells(px,py,yi,wk){
-  const w=WPN[wk],cells=[];
+function getWCells(px,py,yi,wk,reachOverride){
+  const w={...(WPN[wk]||WPN.sword)};if(reachOverride)w.reach=reachOverride;
+  const cells=[];
   if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
+  const reach=reachOverride!=null?reachOverride:w.reach;
   const[dx,dy]=DIR[yi];
-  for(let r=1;r<=w.reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
+  for(let r=1;r<=reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
   for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
   return cells;
 }
@@ -154,12 +315,16 @@ function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
 function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
 // ── MORSE BAR (завжди видимий) ────────────────────────────────────
-function MorseBar({currentSeq}){
+function MorseBar({currentSeq,unlocked}){
   return(<div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
-    {SPELLS.map(sp=>(<div key={sp.code} style={{width:'calc(12.5% - 3px)',background:currentSeq&&sp.code.startsWith(currentSeq)?sp.col+'22':'#060f1e',border:`1px solid ${currentSeq&&sp.code.startsWith(currentSeq)?sp.col:'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
-      <div style={{fontSize:'8px',letterSpacing:'.07em'}}>{sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
-      <div style={{fontSize:'7px',color:sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{sp.name}</div>
-    </div>))}
+    {SPELLS.map(sp=>{
+      const locked=unlocked&&!unlocked.includes(sp.code);
+      const active=!locked&&currentSeq&&sp.code.startsWith(currentSeq);
+      return(<div key={sp.code} style={{width:'calc(12.5% - 3px)',opacity:locked?0.22:1,background:active?sp.col+'22':'#060f1e',border:`1px solid ${active?sp.col:locked?'#0a1628':'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
+        <div style={{fontSize:'8px',letterSpacing:'.07em'}}>{locked?'🔒':sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
+        <div style={{fontSize:'7px',color:locked?'#1e3a5f':sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{locked?'???':sp.name}</div>
+      </div>);
+    })}
   </div>);
 }
 
@@ -251,6 +416,47 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
   );
 }
 
+// ── ROOM PREVIEW PANEL ────────────────────────────────────────────
+function RoomPreview({g,onEnter,onCancel}){
+  if(!g.peekDir||!g.peekRoom)return null;
+  const pr=g.peekRoom;
+  const bossE=pr.enemies?.find(e=>e.type==='boss');
+  const dirSym={'N':'↑ ПІВНІЧ','S':'↓ ПІВ','E':'→ СХІД','W':'← ЗАХІД'}[g.peekDir]||g.peekDir;
+  const upgCount=pr.upgrades?.length||0;
+  return(<div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:20,background:'rgba(1,13,31,0.95)',border:'1px solid #1e4a7f',borderBottom:'none',padding:'10px 14px',fontFamily:"'Courier New',monospace"}}>
+    <div style={{fontSize:'9px',color:'#1e3a5f',marginBottom:'4px',letterSpacing:'.12em'}}>НАСТУПНА КІМНАТА {dirSym}</div>
+    <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
+      {bossE?<span style={{color:bossE.col,fontWeight:'bold',fontSize:'11px'}}>👹 БОС: {bossE.name}</span>:
+        <span style={{color:'#dc2626',fontSize:'11px'}}>⚔ {pr.enemies?.length||0} ворогів</span>}
+      <span style={{color:'#6b7280',fontSize:'10px'}}>▪ {pr.objects?.length||0} об'єктів</span>
+      {upgCount>0&&<span style={{color:'#f59e0b',fontSize:'10px'}}>⭐ {upgCount} покращень</span>}
+      {pr.cleared&&<span style={{color:'#22c55e',fontSize:'10px'}}>✓ очищено</span>}
+    </div>
+    <div style={{display:'flex',gap:'8px',marginTop:'8px'}}>
+      <button onClick={onEnter} style={{flex:1,padding:'8px',background:'#22c55e22',border:'1px solid #22c55e',color:'#22c55e',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px',fontWeight:'bold'}}>
+        → УВІЙТИ
+      </button>
+      <button onClick={onCancel} style={{padding:'8px 12px',background:'#1e3a5f22',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
+        ✕
+      </button>
+    </div>
+  </div>);
+}
+
+// ── UPGRADE STATS DISPLAY ──────────────────────────────────────────
+function WeaponStats({mods,unlockedCount}){
+  if(!mods)return null;
+  const r=Math.round((mods.reach||1)*100);
+  const w=Math.round((mods.weight||1)*100);
+  const s=Math.round((mods.sharpness||1)*100);
+  return(<div style={{display:'flex',gap:'5px',fontSize:'7px',color:'#1e3a5f',flexWrap:'wrap'}}>
+    <span style={{color:r>100?'#60a5fa':'#1e3a5f'}}>🔭{r}%</span>
+    <span style={{color:w<100?'#22c55e':'#1e3a5f'}}>🌬{w}%</span>
+    <span style={{color:s>100?'#f59e0b':'#1e3a5f'}}>⚡{s}%</span>
+    <span style={{color:'#a78bfa'}}>✨{unlockedCount}</span>
+  </div>);
+}
+
 // ── GAME ──────────────────────────────────────────────────────────
 function Game({gmode,settings,sPhase,onDead}){
   const gs=useRef(null);
@@ -285,12 +491,20 @@ function Game({gmode,settings,sPhase,onDead}){
   useEffect(()=>{
     EID=0;
     gs.current={
-      player:{x:CX,y:CY,hp:100,maxHp:100},
+      player:{x:CX,y:CY,hp:100,maxHp:100,weaponMods:{reach:1,weight:1,sharpness:1},unlockedSpells:['.', '-'],staminaMod:1},
       enemies:[],
       yawIdx:0,compassD:0,vYaw:0,pitch:0,prevYawIdx:0,
       stamina:100,fingers:DIFFS[settings.diff??1].fi,
       dropped:false,droppedUntil:0,
       wave:0,score:0,
+      objects:[],upgrades:[],roomNumber:1,isBossRoom:false,transitioning:false,
+      roomCoord:{x:0,y:0},roomMap:{},
+      weaponMods:{reach:1,weight:1,sharpness:1,staminaMod:1},
+      unlockedSpells:['.','-'],
+      peekDir:null,peekProgress:0,peekTicks:0,peekData:null,adventureFF:false,
+      roomMap:{},roomCoord:{x:0,y:0},
+      upgrades:[],
+      edgeTicks:0,edgeDir:null,peekDir:null,peekRoom:null,
       divergence:0,highDTicks:0,
       beaconCount:0,beaconProgress:0,
       spell:null,
@@ -305,6 +519,23 @@ function Game({gmode,settings,sPhase,onDead}){
       setTimeout(()=>setMsg('...'),1500);
       setTimeout(()=>setMsg(TUT[1].msg),4500);
       setTimeout(()=>{const g=gs.current;if(!g)return;g.tutStep=2;setMsg(TUT[2].msg);},8500);
+    }
+    if(gmode==='adventure'){
+      EID=Math.max(EID,4000);
+      const startCoord={x:0,y:0};
+      const ac=generateRoomContent(1,CX,CY);
+      const cid=coordId(0,0);
+      gs.current.enemies=ac.enemies;
+      gs.current.objects=ac.objects||[];
+      gs.current.isBossRoom=ac.isBoss||false;
+      gs.current.roomNumber=1;
+      gs.current.roomCoord=startCoord;
+      gs.current.roomMap={[cid]:{enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true}};
+      gs.current.weaponMods={reach:1,weight:1,sharpness:1,staminaRegen:0};
+      gs.current.unlockedSpells=['.'];
+      gs.current.edgeTimer=0;gs.current.peekDir=null;gs.current.transitioning=false;
+      setTimeout(()=>setMsgRef.current?.('Кімната 1 · Йди до краю сітки → перехід до наступної кімнати'),800);
+      forceRender();
     }
     if(gmode==='survival'){
       gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
@@ -370,21 +601,54 @@ function Game({gmode,settings,sPhase,onDead}){
     const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
     snd('swing');
     const yi=omni?0:g.yawIdx;const wk=omni?'flail':settingsRef.current.startWpn;
-    const cells=getWCells(g.player.x,g.player.y,yi,wk);
-    const C=STRENGTH/WPN[settingsRef.current.startWpn].w;
+    const cells=getWCells(g.player.x,g.player.y,yi,wk,gmodeRef.current==='adventure'?modReach:undefined);
+    const _mods=g.player?.weaponMods||{reach:1,weight:1,sharpness:1};
+    const C=STRENGTH*(_mods.sharpness||1)/(WPN[settingsRef.current.startWpn].w*(_mods.weight||1));
+    const modReach=Math.round((WPN[settingsRef.current.startWpn]?.reach||2)*(_mods.reach||1));
     const chargeMult=1+Math.max(0,g.pitch)*1.8;
     const spellMult=(g.spell?.fn==='burn'?3:g.spell?.fn==='surge'?2:1);
     const baseDmg=Math.round(12*chargeMult*C*spellMult);
     if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
     let hits=0;
     g.enemies=g.enemies.map(e=>{
+      // Бос: перевіряємо всі клітинки тіла
+      if(e.type==='boss'){
+        const bossCells=calcBossCells(e.x,e.y,e.size);
+        const hit=bossCells.some(bc=>cells.find(c=>c.x===bc.x&&c.y===bc.y));
+        if(!hit)return e;hits++;
+        const dmg=baseDmg;
+        if(e.hp-dmg<=0){g.score+=100;snd('pvpkill'||'join');return null;}
+        return{...e,hp:e.hp-dmg};
+      }
       const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
       hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
       if(e.hp-dmg<=0){g.score+=10;return null;}
       return{...e,hp:e.hp-dmg};
     }).filter(Boolean);
     g.stamina=Math.max(0,g.stamina-10);
-    g.flash=cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
+    // Об'єкти
+    if(g.objects?.length){
+      let wallHit=false;
+      g.objects=(g.objects.map(obj=>{
+        const hit=cells.find(c=>c.x===obj.x&&c.y===obj.y);if(!hit)return obj;
+        const ot=OBJ_TYPES[obj.type];
+        if(!ot.destructible){wallHit=true;return obj;}
+        snd('hit');
+        const newHp=(obj.hp||1)-(hit.main?baseDmg:Math.round(baseDmg*.5));
+        if(newHp<=0){
+          g.score+=5;
+          if(ot.explodes){
+            const area=[{x:obj.x,y:obj.y},{x:obj.x+1,y:obj.y},{x:obj.x-1,y:obj.y},{x:obj.x,y:obj.y+1},{x:obj.x,y:obj.y-1}];
+            g.enemies=g.enemies.map(e=>{if(e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y))return{...e,hp:e.hp-20};return e;}).filter(e=>e.hp>0);
+            g.flash=[...cells.map(c=>({...c,col:'#f97316',fid:Math.random()}))];g.flashUntil=Date.now()+500;
+          }
+          return null;
+        }
+        return{...obj,hp:newHp};
+      })).filter(Boolean);
+      if(wallHit){g.stamina=Math.max(0,g.stamina-25);snd('clank');}
+    }
+    g.flash=g.flash?.length?g.flash:cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
     if(hits>0)snd('hit');
     if(gmodeRef.current==='tutorial'&&!g.tutDone.attacked&&hits>0){
       g.tutDone.attacked=true;
@@ -426,11 +690,36 @@ function Game({gmode,settings,sPhase,onDead}){
     let gdx=sdx,gdy=sdy;
     if(isRadarRef.current){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
     if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
-    const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
+    const rawX=g.player.x+gdx,rawY=g.player.y+gdy;
+       // Пригода: блок за краєм — перехід через edge timer
+    if(gmodeRef.current==='adventure'&&(rawX<0||rawX>=G||rawY<0||rawY>=G)){
+      return; // Не виходимо за межі — edgeTimer у game loop  const nx=clamp(rawX,0,G-1),ny=clamp(rawY,0,G-1);
     if(nx===g.player.x&&ny===g.player.y)return;
     if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
+    // Перевірка об'єктів
+    if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return;
+    // Перевірка боса (всі клітинки боса)
+    if(g.enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>bc.x===nx&&bc.y===ny)))return;
     g.player={...g.player,x:nx,y:ny};
-    if(g.spell?.fn!=='rush'){const cost=Math.max(0,g.pitch)*10;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
+    if(g.spell?.fn!=='rush'){const wMod=g.weaponMods?.weight||1;const cost=Math.max(0,g.pitch)*10*wMod;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
+    // Лут: підбір апгрейдів
+    if(gmodeRef.current==='adventure'&&g.objects){
+      const lootHit=g.objects.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
+      if(lootHit){
+        const ot=OBJ_TYPES[lootHit.type];const upg=ot.upg;
+        g.objects=g.objects.filter(o=>o.id!==lootHit.id);
+        if(upg==='hp'){g.player={...g.player,hp:Math.min(g.player.maxHp+20,g.player.hp+20),maxHp:g.player.maxHp+20};}
+        else if(upg==='fingers'){g.fingers=Math.min(7,(g.fingers||5)+1);}
+        else if(upg==='spell'){
+          const locked=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||[]).includes(s));
+          if(locked.length>0){const ns=locked[Math.floor(Math.random()*locked.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsgRef.current?.(`📜 Вивчено: ${SPELL_MAP[ns]?.name}!`);}
+        }else if(upg&&UPGRADE_TYPES[upg]){
+          g.weaponMods=UPGRADE_TYPES[upg].fn(g.weaponMods||{reach:1,weight:1,sharpness:1,staminaRegen:0},g.player);
+          setMsgRef.current?.(`${ot.sym} ${ot.desc}`);
+        }
+        snd('spell');
+      }
+    }
     if(gmodeRef.current==='tutorial'&&!g.tutDone.moved){
       g.tutDone.moved=true;if(g.tutStep===2){g.tutStep=3;setTimeout(()=>setMsgRef.current?.(TUT[3].msg),600);}
     }
@@ -596,7 +885,9 @@ function Game({gmode,settings,sPhase,onDead}){
       const g=gs.current;if(!g)return;
       const now=Date.now();
       const wpn=settingsRef.current.startWpn;
-      const C=STRENGTH/WPN[wpn].w;
+      const wMods=gs.current?.weaponMods||{reach:1,weight:1,sharpness:1};
+    const C=STRENGTH*wMods.sharpness/(WPN[wpn]?.w||5)/wMods.weight;
+    const modReach=Math.round((WPN[wpn]?.reach||2)*wMods.reach);
 
       // Flash expire
       if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
@@ -655,12 +946,41 @@ function Game({gmode,settings,sPhase,onDead}){
             if(!stealth){const d=armor?Math.round(baseDmgE*.4):baseDmgE;dmg+=d;flash=true;if(shield)g.spell=null;}
             return{...e,lastMove:now};
           }
+          // Боси: рух великим тілом
+          if(e.type==='boss'){
+            const bossCells=calcBossCells(e.x,e.y,e.size);
+            // Перевіряємо сусідність
+            const adj=bossCells.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
+            if(adj){dmg+=e.dmg;flash=true;return{...e,lastMove:now};}
+            // Рух боса — перевіряємо всі нові позиції тіла
+            const moveDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]];
+            const bossMove=moveDirs.map(([mx,my])=>{
+              const nbx=e.x+mx,nby=e.y+my;
+              if(nbx<0||nby<0||nbx+e.size>G||nby+e.size>G)return null;
+              const newCells=calcBossCells(nbx,nby,e.size);
+              if(newCells.some(nc=>nc.x===g.player.x&&nc.y===g.player.y))return null;
+              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&newCells.some(nc=>nc.x===o.x&&nc.y===o.y)))return null;
+              if(g.enemies.some(o=>o.id!==e.id&&o.type!=='boss'&&newCells.some(nc=>nc.x===o.x&&nc.y===o.y)))return null;
+              const d=Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby);
+              return{x:nbx,y:nby,d};
+            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+            // Спецздібність
+            const now2=Date.now();
+            if(e.special==='teleport'&&now2-(e.lastSpecial||0)>4000){
+              const tx=Math.max(0,g.player.x+(Math.random()>0.5?2:-2));
+              const ty=Math.max(0,g.player.y+(Math.random()>0.5?2:-2));
+              return{...e,x:clamp(tx,0,G-1),y:clamp(ty,0,G-1),lastSpecial:now2,lastMove:now};
+            }
+            return bossMove?{...e,x:bossMove.x,y:bossMove.y,lastMove:now}:{...e,lastMove:now};
+          }
           const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
           const best=dirs.map(([mx,my])=>{
             const nx2=e.x+mx,ny2=e.y+my;
             if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
             if(nx2===g.player.x&&ny2===g.player.y)return null;
             if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
+            // Об'єкти блокують рух
+            if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2))return null;
             return{x:nx2,y:ny2,d:Math.abs(g.player.x-nx2)+Math.abs(g.player.y-ny2)};
           }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
           return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
@@ -673,7 +993,24 @@ function Game({gmode,settings,sPhase,onDead}){
         }
       }
 
-      // ── ХВИЛЯ ЗАВЕРШЕНА ────────────────────────────────────────
+            // ── ПРИГОДА: EDGE TIMER + PEEK + КІМНАТА ОЧИЩЕНА ──────────────
+      if(gmodeRef.current==='adventure'){
+        const px=g.player.x,py=g.player.y;
+        let eDir=null;
+        if(py===0)eDir='N';else if(py===G-1)eDir='S';
+        else if(px===0)eDir='W';else if(px===G-1)eDir='E';
+        if(eDir&&!g.transitioning){
+          g.edgeTimer=(g.edgeTimer||0)+1;
+          if(g.edgeTimer===25){g.peekDir=eDir;const nc=getNextCoord(g.roomCoord||{x:0,y:0},eDir);const nid=coordId(nc.x,nc.y);g.peekInfo=g.roomMap[nid]||null;}
+          if(g.edgeTimer>=50)handleRoomTransitionRef.current?.(eDir);
+        }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
+        if(g.enemies.length===0&&!g._roomCleared){
+          g._roomCleared=true;
+          setMsgRef.current?.('✓ Очищено! Стань на краю → наступна кімната');
+          setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);
+        }
+      }
+      
       if(gmodeRef.current==='survival'&&g.wave>0&&g.enemies.length===0&&!g._waveTimer){
         const next=g.wave+1;
         g.wave=next;g.waveMsg=`Хвиля ${next}`;
@@ -698,6 +1035,8 @@ function Game({gmode,settings,sPhase,onDead}){
 
   return(
     <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",position:isPanorama?'fixed':'relative',inset:isPanorama?0:'auto',zIndex:isPanorama?0:'auto'}}>
+      {/* Кімнатний preview */}
+      {gmode==='adventure'&&<RoomPreview g={g} onEnter={doEnterRoom} onCancel={()=>{const gg=gs.current;if(gg){gg.peekDir=null;gg.peekRoom=null;gg.edgeTicks=0;forceRender();}}}/>}
 
       {/* HUD */}
       <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center',position:isPanorama?'relative':'static',zIndex:isPanorama?10:'auto',background:isPanorama?'rgba(1,13,31,0.85)':'transparent'}}>
@@ -705,7 +1044,7 @@ function Game({gmode,settings,sPhase,onDead}){
         <Bar v={g.stamina} max={100} col='#60a5fa' lbl="STA"/>
         <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<g.fingers?(g.dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
         {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
-        <div style={{fontSize:'9px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='survival'?`W${g.wave}`:'TUT'}</div>
+        <div style={{fontSize:'9px',color:g.isBossRoom?'#f97316':'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}`:gmode==='survival'?`W${g.wave}`:'TUT'}{g.isBossRoom&&'👹'}</div>
         {gmode==='survival'&&<div style={{fontSize:'8px',color:['#60a5fa','#22c55e','#f59e0b','#ef4444','#a855f7'][settings.diff??1],minWidth:'18px',textAlign:'right'}}>{['🌙','⚔','🏹','🔥','💀'][settings.diff??1]}</div>}
         {gmode==='survival'&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
       </div>
@@ -724,6 +1063,10 @@ function Game({gmode,settings,sPhase,onDead}){
       </div>}
 
       {/* Sensor readout */}
+      {/* Weapon stats in adventure mode */}
+      {gmode==='adventure'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px'}}>
+        <WeaponStats mods={g.player?.weaponMods} unlockedCount={(g.player?.unlockedSpells?.length||2)}/>
+      </div>}
       {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
         <span>β<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}°</span></span>
         <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
@@ -732,6 +1075,12 @@ function Game({gmode,settings,sPhase,onDead}){
       </div>}
 
       {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
+      {/* Бос HP бар */}
+      {g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
+        <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
+        <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}><div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/></div>
+        <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
+      </div>);})()}
 
       {/* GRID */}
       {/* СІТКА (PANORAMA = full screen perspective) */}
@@ -752,14 +1101,29 @@ function Game({gmode,settings,sPhase,onDead}){
             }else{
               edge=isEdgeCell(sx,sy);
             }
+            const cellObj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
+            const cellUpg=g.upgrades?.find(u=>{const{sx:ux,sy:uy}=getPos(u.x,u.y);return ux===sx&&uy===sy;});
+            const cellBoss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
             let bg=outOfBounds?'#010610':edge?'#030f1f':'#020c1a';
             let bdr=outOfBounds?'1px solid #050a10':edge?'1px solid #2a4a7f':'1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
             else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
+            else if(cellBoss){bg=cellBoss.col+'22';bdr=`2px solid ${cellBoss.col}`;}
+            else if(cellUpg){bg='#f59e0b22';bdr=`1px solid ${cellUpg.col}`;}
+            else if(cellObj){const ot=OBJ_TYPES[cellObj.type];bg=ot.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot.col}`;}
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
               <div key={idx} style={isPanorama?{background:bg,border:bdr,display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}:{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
+                {/* Об'єкти */}
+                {!isP&&!en&&(()=>{const obj=g.objects?.find(o=>isRadar?false:o.x===sx&&o.y===sy)||g.objects?.find(o=>{if(!isRadar)return false;const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});if(!obj)return null;const ot=OBJ_TYPES[obj.type];return(<span style={{fontSize:isPanorama?'1.5vw':`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.5+((obj.hp||1)/3)*0.5):1}}>{ot.sym}</span>);})()}
+                {/* Покращення (лут) */}
+                {!isP&&!en&&cellUpg&&!cellObj&&(<div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'1px'}}>
+                  <span style={{fontSize:isPanorama?'1.8vw':`${cellSz*.6}px`,filter:'drop-shadow(0 0 3px '+cellUpg.col+')'}}>{cellUpg.sym}</span>
+                  <span style={{fontSize:isPanorama?'0.7vw':`${Math.max(6,cellSz*.28)}px`,color:cellUpg.col,lineHeight:1}}>{cellUpg.label?.slice(0,4)}</span>
+                </div>)}
+                {/* Боси: відображення всього тіла */}
+                {!isP&&!en&&(()=>{if(!g.enemies)return null;const boss=g.enemies.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));if(!boss)return null;const isCore=getPos(boss.x,boss.y).sx===sx&&getPos(boss.x,boss.y).sy===sy;return(<><div style={{position:'absolute',inset:0,background:boss.col+'33',borderRadius:'2px'}}/><span style={{fontSize:isPanorama?'1.8vw':`${cellSz*.55}px`,color:boss.col,position:'relative',zIndex:1,fontWeight:'bold'}}>{isCore?boss.sym:'·'}</span></>);})()}
                 {isP?(<>
                   <div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',
                     background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
@@ -779,10 +1143,15 @@ function Game({gmode,settings,sPhase,onDead}){
       </div>}
 
       {/* Companion */}
-      {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
+      {/* Прев'ю кімнати + статистика зброї в режимі пригоди */}
+      {gmodeRef.current==='adventure'&&g.peekDir&&<RoomPreview peekDir={g.peekDir} peekInfo={g.peekInfo} edgeTimer={g.edgeTimer||0} roomCoord={g.roomCoord||{x:0,y:0}}/>}
+      {gmodeRef.current==='adventure'&&<WeaponStats weaponMods={g.weaponMods} unlockedSpells={g.unlockedSpells}/>}
+      {gmodeRef.current==='adventure'&&g.peekDir&&<RoomPreview peekDir={g.peekDir} peekInfo={g.peekInfo} edgeTimer={g.edgeTimer||0} roomCoord={g.roomCoord||{x:0,y:0}}/>}
+      {gmodeRef.current==='adventure'&&(g.weaponMods?.reach>1||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1)&&<WeaponStats weaponMods={g.weaponMods} unlockedSpells={g.unlockedSpells}/>}
+            {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
 
       {/* MORSE BAR — завжди видимий знизу */}
-      <MorseBar currentSeq={g.morseSeq}/>
+      <MorseBar currentSeq={g.morseSeq} unlocked={gmodeRef.current==='adventure'?g.unlockedSpells:null}/>
 
       {/* Status */}
       <div style={{padding:'1px 8px 4px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
@@ -942,6 +1311,87 @@ function PreGame({s,setS,sPhase,setSPhase,onStart,onBack}){
   );
 }
 
+// ── ROOM PREVIEW (превʼю кімнати перед переходом) ─────────────────
+function RoomPreview({peekData,peekProgress,peekDir,onEnter,onCancel}){
+  if(!peekData||!peekDir)return null;
+  const pd=peekData;const pct=Math.round((peekProgress||0)*100);
+  return(<div style={{position:'fixed',inset:0,zIndex:20,background:'rgba(1,13,31,0.88)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace"}}>
+    <div style={{background:'#060f1e',border:`2px solid ${pd.isBoss?'#f97316':'#3b82f6'}`,borderRadius:'10px',padding:'16px',maxWidth:'260px',width:'100%',textAlign:'center',display:'flex',flexDirection:'column',gap:'8px'}}>
+      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.15em'}}>КІМНАТА {pd.roomNum} · {peekDir==='left'?'←':peekDir==='right'?'→':peekDir==='up'?'↑':'↓'}</div>
+      <div style={{fontSize:'18px',color:pd.isBoss?'#f97316':'#60a5fa',fontWeight:'bold'}}>{pd.isBoss?`👹 ${pd.boss?.name||'БОС'}`:`${pd.enemies.length} ворогів`}</div>
+      {pd.upgrades?.length>0&&<div style={{fontSize:'10px',color:'#22c55e'}}>
+        {pd.upgrades.map((u,i)=><span key={i} style={{margin:'0 3px'}}>{u.pickupType==='spell'?'🔮':UPGRADE_TYPES[u.subtype]?.sym||'?'}</span>)}
+        {' '}<span style={{color:'#1e3a5f',fontSize:'9px'}}>покращення</span>
+      </div>}
+      {pd.objects?.filter(o=>!OBJ_TYPES[o.type].destructible).length>0&&<div style={{fontSize:'9px',color:'#6b7280'}}>⚠ {pd.objects.filter(o=>!OBJ_TYPES[o.type].destructible).length} перешкод</div>}
+      <div style={{height:'4px',background:'#1e3a5f',borderRadius:'2px',overflow:'hidden'}}>
+        <div style={{height:'100%',width:`${pct}%`,background:pd.isBoss?'#f97316':'#3b82f6',transition:'width .08s'}}/>
+      </div>
+      <div style={{display:'flex',gap:'8px'}}>
+        <button onClick={onEnter} style={{flex:2,padding:'9px',background:pd.isBoss?'#f9731622':'#3b82f622',border:`1px solid ${pd.isBoss?'#f97316':'#3b82f6'}`,color:pd.isBoss?'#f97316':'#60a5fa',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px',fontWeight:'bold'}}>УВІЙТИ →</button>
+        <button onClick={onCancel} style={{flex:1,padding:'9px',background:'#020c1a',border:'1px solid #1e3a5f',color:'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px'}}>✕</button>
+      </div>
+    </div>
+  </div>);
+}
+
+// ── WEAPON STATS BAR ──────────────────────────────────────────────
+function WeaponStats({mods}){
+  if(!mods)return null;
+  const r=Math.round((mods.reach-1)*100);const w=Math.round((1-mods.weight)*100);const s=Math.round((mods.sharpness-1)*100);
+  if(r===0&&w===0&&s===0)return null;
+  return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
+    {r!==0&&<span style={{color:'#60a5fa'}}>🔭+{r}%</span>}
+    {w!==0&&<span style={{color:'#22c55e'}}>🌬+{w}%</span>}
+    {s!==0&&<span style={{color:'#f59e0b'}}>⚡+{s}%</span>}
+    <span style={{color:'#1e3a5f',marginLeft:'auto'}}>✨перки</span>
+  </div>);
+}
+
+// ── ROOM PREVIEW COMPONENT ────────────────────────────────────────
+function RoomPreview({peekDir,peekInfo,edgeTimer,roomCoord,onCancel}){
+  if(!peekDir)return null;
+  const peekProgress=Math.min(1,(edgeTimer-25)/25);
+  const dirName={N:'ПІВНІЧ ↑',S:'ПІВ.ДЕНЬ ↓',E:'СХІД →',W:'ЗАХІД ←'}[peekDir]||peekDir;
+  const nc=getNextCoord(roomCoord||{x:0,y:0},peekDir);
+  const nextNum=calcRoomNum(nc.x,nc.y);
+  return(
+    <div style={{position:'absolute',bottom:'30%',left:'50%',transform:'translateX(-50%)',zIndex:20,background:'rgba(1,13,31,0.93)',border:`1px solid ${peekInfo?.isBoss?'#f97316':'#1e4a7f'}`,borderRadius:'10px',padding:'12px 16px',minWidth:'220px',fontFamily:"'Courier New',monospace",animation:'fadeIn .3s ease'}}>
+      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'4px'}}>{dirName}</div>
+      <div style={{fontSize:'13px',fontWeight:'bold',color:peekInfo?.isBoss?'#f97316':'#60a5fa',marginBottom:'6px'}}>
+        {peekInfo?.isBoss?`👹 КІМНАТА ${nextNum} — БОС`:`Кімната ${nextNum}`}
+      </div>
+      {peekInfo?(
+        <div style={{fontSize:'9px',color:'#94a3b8',lineHeight:1.8}}>
+          {peekInfo.cleared?<span style={{color:'#22c55e'}}>✓ Вже очищена</span>:<span>⚔ Ворогів: <b style={{color:'#ef4444'}}>{peekInfo.enemies?.length||0}</b></span>}
+          {peekInfo.objects?.filter(o=>OBJ_TYPES[o.type]?.isLoot).length>0&&<span style={{display:'block',color:'#fbbf24'}}>💎 Є лут: {peekInfo.objects.filter(o=>OBJ_TYPES[o.type]?.isLoot).map(o=>OBJ_TYPES[o.type]?.sym).join(' ')}</span>}
+        </div>
+      ):<div style={{fontSize:'9px',color:'#334155'}}>? Невідома кімната</div>}
+      <div style={{marginTop:'8px'}}>
+        <div style={{height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden',border:'1px solid #1e3a5f'}}><div style={{height:'100%',width:`${peekProgress*100}%`,background:'#f97316',transition:'width .08s'}}/></div>
+        <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'3px',textAlign:'center'}}>Залишайся на краю → перехід</div>
+      </div>
+    </div>
+  );
+}
+
+// ── WEAPON STATS COMPONENT (показується лише в пригоді) ───────────
+function WeaponStats({weaponMods,unlockedSpells}){
+  if(!weaponMods)return null;
+  const r=Math.round((weaponMods.reach-1)*100);
+  const w=Math.round((1-weaponMods.weight)*100);
+  const s=Math.round((weaponMods.sharpness-1)*100);
+  const spCount=(unlockedSpells||['.']).length;
+  return(
+    <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
+      {r!==0&&<span>🔭{r>0?'+':''}{ r}%</span>}
+      {w!==0&&<span>🌬{w>0?'+':''}{w}%</span>}
+      {s!==0&&<span>⚡{s>0?'+':''}{s}%</span>}
+      <span style={{color:'#e879f9'}}>✨{spCount}/16</span>
+    </div>
+  );
+}
+
 // ── APP ───────────────────────────────────────────────────────────
 function App(){
   const[screen,setScreen]=useState('warning');
@@ -987,6 +1437,7 @@ function App(){
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
             <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
             <B2 onClick={()=>setScreen('pregame')} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
+            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺 ПРИГОДА (кімнати + боси)</B2>
             <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
           </div>
         </div>
@@ -995,4 +1446,43 @@ function App(){
   );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-</script></body></html>
+</script></body></html>      const handleRoomTransition=useCallback((dir)=>{
+        const g=gs.current;if(!g||g.transitioning)return;
+        g.transitioning=true;g.edgeTimer=0;g.peekDir=null;
+        // Зберегти стан поточної кімнати
+        const curId=coordId(g.roomCoord.x,g.roomCoord.y);
+        if(g.roomMap[curId]){
+          g.roomMap[curId].enemies=[...g.enemies];
+          g.roomMap[curId].objects=[...g.objects];
+          g.roomMap[curId].cleared=g.enemies.length===0;
+        }
+        // Нові координати
+        const nextCoord=getNextCoord(g.roomCoord,dir);
+        const nextId=coordId(nextCoord.x,nextCoord.y);
+        const roomNum=calcRoomNum(nextCoord.x,nextCoord.y);
+        // Спавн гравця на протилежному краї нової кімнати
+        const spawnX=dir==='E'?0:dir==='W'?G-1:g.player.x;
+        const spawnY=dir==='S'?0:dir==='N'?G-1:g.player.y;
+        g.player={...g.player,x:spawnX,y:spawnY};
+        g.roomCoord=nextCoord;
+        g.roomNumber=roomNum;
+        // Відновити або згенерувати кімнату
+        if(g.roomMap[nextId]){
+          const saved=g.roomMap[nextId];
+          g.enemies=saved.enemies||[];
+          g.objects=saved.objects||[];
+          g.isBossRoom=saved.isBoss||false;
+          g.roomMap[nextId].visited=true;
+          setMsgRef.current?.(saved.cleared?`Кімната ${roomNum} (очищена)`:`Кімната ${roomNum} · ${g.enemies.length} ворогів${g.isBossRoom?' 👹':''}`);
+        }else{
+          const ac=generateRoomContent(roomNum,spawnX,spawnY);
+          g.enemies=ac.enemies;g.objects=ac.objects||[];g.isBossRoom=ac.isBoss||false;
+          g.roomMap[nextId]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};
+          setMsgRef.current?.(ac.isBoss?`👹 Кімната ${roomNum} — ${ac.enemies[0]?.name||'БОС'}!`:`Кімната ${roomNum} · ${ac.enemies.length} ворогів`);
+        }
+        g.score+=15;g.flash=[];
+        snd('wave');
+        setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
+        forceRender();
+      },[]);
+      useEffect(()=>{handleRoomTransitionRef.current=handleRoomTransition;},[handleRoomTransition]);
