@@ -31,13 +31,13 @@ const rad=d=>d*Math.PI/180;
 let EID=0;
 
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал \ud83d\udde1',  desc:'Ближній, швидкий'},
+  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий'},
   sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс'},
-  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира \ud83e\ude93',   desc:'Широкий замах'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис \ud83d\udd31',     desc:'Далеко по прямій'},
+  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓',   desc:'Широкий замах'},
+  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',     desc:'Далеко по прямій'},
   greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широко і далеко'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп \ud83c\udf00',      desc:'Всі 8 клітинок'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук \ud83c\udff9',      desc:'5 клітинок прямо'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',      desc:'Всі 8 клітинок'},
+  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',      desc:'5 клітинок прямо'},
 };
 const ET={
   shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
@@ -274,8 +274,8 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
       </Sec>
       <Sec title="ГОЛОС КОМПАНЬЙОНА">
         <div style={{display:'flex',gap:'8px',marginBottom:'6px'}}>
-          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd0a Увімкнений</button>
-          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd07 Вимкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔊 Увімкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔇 Вимкнений</button>
         </div>
         <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>▶ Тест голосу</button>
       </Sec>
@@ -661,7 +661,10 @@ function Game({gmode,settings,sPhase,onDead}){
             g.score+=15;g.flash=[];snd('wave');setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
           }
         }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
-        if(g.enemies.length===0&&!g._roomCleared){g._roomCleared=true;setMsgRef.current?.('✓ Очищено! Стань на краю 4с → наступна кімната');setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);}
+        if(g.enemies.length===0&&g._roomCleared!==g.roomNumber){
+          g._roomCleared=g.roomNumber; // tied to room, not a timer
+          setMsgRef.current?.('✓ Кімнату очищено! Стань на краю 4с → перехід');
+        }
       }
 
       // Divergence
@@ -693,8 +696,29 @@ function Game({gmode,settings,sPhase,onDead}){
         let dmg=0,flash=false;
         g.enemies=g.enemies.map(e=>{
           if(e.dummy)return e;
+          // ── BOSS: handle BEFORE ET lookup (ET has no 'boss' key) ──
+          if(e.type==='boss'){
+            if(e.frozen&&now<e.frozen)return e;
+            if(now-(e.lastMove||0)<(e.ms||700))return e;
+            const bcs=calcBossCells(e.x,e.y,e.size||1);
+            const adjToPlayer=bcs.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
+            if(adjToPlayer){dmg+=e.dmg||20;flash=true;return{...e,lastMove:now};}
+            const bdx=g.player.x-e.x,bdy=g.player.y-e.y;
+            const bDirs=[[Math.sign(bdx),0],[0,Math.sign(bdy)],[Math.sign(bdx),Math.sign(bdy)]].filter(([mx,my])=>mx||my);
+            const bm=bDirs.map(([mx,my])=>{
+              const nbx=e.x+mx,nby=e.y+my;
+              if(nbx<0||nby<0||nbx+(e.size||1)>G||nby+(e.size||1)>G)return null;
+              const nc=calcBossCells(nbx,nby,e.size||1);
+              if(nc.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;
+              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc.some(c=>c.x===o.x&&c.y===o.y)))return null;
+              return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};
+            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+            return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
+          }
+          // ── Regular enemy ──────────────────────────────────────────
           if(e.frozen&&now<e.frozen)return e;
           const et=ET[e.type];
+          if(!et)return e; // safety: unknown type
           const ms=(e.chaosUntil&&now<e.chaosUntil)?et.ms*2:et.ms;
           if(now-(e.lastMove||0)<ms)return e;
           const dx=g.player.x-e.x,dy=g.player.y-e.y;
@@ -703,14 +727,6 @@ function Game({gmode,settings,sPhase,onDead}){
             const shield=g.spell?.fn==='shield',armor=g.spell?.fn==='armor',stealth=g.spell?.fn==='stealth';
             if(!stealth){const d=armor?Math.round(et.dmg*.4):et.dmg;dmg+=d;flash=true;if(shield)g.spell=null;}
             return{...e,lastMove:now};
-          }
-          if(e.type==='boss'){
-            const bcs=calcBossCells(e.x,e.y,e.size);
-            const adj=bcs.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
-            if(adj){dmg+=e.dmg;flash=true;return{...e,lastMove:now};}
-            const bDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]].filter(([mx,my])=>mx||my);
-            const bm=bDirs.map(([mx,my])=>{const nbx=e.x+mx,nby=e.y+my;if(nbx<0||nby<0||nbx+e.size>G||nby+e.size>G)return null;const nc=calcBossCells(nbx,nby,e.size);if(nc.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc.some(c=>c.x===o.x&&c.y===o.y)))return null;return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
-            return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
           }
           const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
           const best=dirs.map(([mx,my])=>{
