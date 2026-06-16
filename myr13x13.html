@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
-<title>МИР 13×13</title>
+<title>\u041c\u0418\u0420 13\u00d713</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -25,25 +25,25 @@ const{useState,useEffect,useRef,useCallback,useReducer}=React;
 const G=13,CX=6,CY=6,TICK=80;
 const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
 const DNAM=['N','NE','E','SE','S','SW','W','NW'];
-const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
+const DSYM=['\u2191','\u2197','\u2192','\u2198','\u2193','\u2199','\u2190','\u2196'];
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const rad=d=>d*Math.PI/180;
 let EID=0;
 
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий'},
-  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс'},
-  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓',   desc:'Широкий замах'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',     desc:'Далеко по прямій'},
-  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широко і далеко'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',      desc:'Всі 8 клітинок'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',      desc:'5 клітинок прямо'},
+  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'\u041a\u0438\u043d\u0434\u0436\u0430\u043b \ud83d\udde1',  desc:'\u0411\u043b\u0438\u0436\u043d\u0456\u0439, \u0448\u0432\u0438\u0434\u043a\u0438\u0439'},
+  sword:     {w:5,reach:2,arc:1,sweep:false,label:'\u041c\u0435\u0447 \u2694',       desc:'\u0411\u0430\u043b\u0430\u043d\u0441'},
+  axe:       {w:8,reach:1,arc:2,sweep:false,label:'\u0421\u043e\u043a\u0438\u0440\u0430 \ud83e\ude93',   desc:'\u0428\u0438\u0440\u043e\u043a\u0438\u0439 \u0437\u0430\u043c\u0430\u0445'},
+  spear:     {w:4,reach:3,arc:0,sweep:false,label:'\u0421\u043f\u0438\u0441 \ud83d\udd31',     desc:'\u0414\u0430\u043b\u0435\u043a\u043e \u043f\u043e \u043f\u0440\u044f\u043c\u0456\u0439'},
+  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'\u0414\u0432\u043e\u0440\u0443\u0447\u043d\u0438\u043a \u2694\u2694',desc:'\u0428\u0438\u0440\u043e\u043a\u043e \u0456 \u0434\u0430\u043b\u0435\u043a\u043e'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, label:'\u0426\u0456\u043f \ud83c\udf00',      desc:'\u0412\u0441\u0456 8 \u043a\u043b\u0456\u0442\u0438\u043d\u043e\u043a'},
+  bow:       {w:3,reach:5,arc:0,sweep:false,label:'\u041b\u0443\u043a \ud83c\udff9',      desc:'5 \u043a\u043b\u0456\u0442\u0438\u043d\u043e\u043a \u043f\u0440\u044f\u043c\u043e'},
 };
 const ET={
-  shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
-  warden: {hp:8,ms:800,dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
-  berserk:{hp:5,ms:600,dmg:30,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
-  ghost:  {hp:2,ms:360,dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
+  shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'\u25c6',lbl:'\u0422\u0456\u043d\u044c'},
+  warden: {hp:8,ms:800,dmg:20,col:'#dc2626',sym:'\u25c9',lbl:'\u0412\u0430\u0440\u0442\u043e\u0432\u0438\u0439'},
+  berserk:{hp:5,ms:600,dmg:30,col:'#ea580c',sym:'\u25b2',lbl:'\u0411\u0435\u0440\u0441\u0435\u0440\u043a'},
+  ghost:  {hp:2,ms:360,dmg:8, col:'#0ea5e9',sym:'\u25cc',lbl:'\u041f\u0440\u0438\u0432\u0438\u0434'},
 };
 const WAVES=[
   [{t:'shadow',n:1}],[{t:'shadow',n:2}],
@@ -54,62 +54,53 @@ const WAVES=[
   [{t:'shadow',n:3},{t:'warden',n:1},{t:'berserk',n:1},{t:'ghost',n:1}],
 ];
 
-// Коди від простих до складних
+// \u041a\u043e\u0434\u0438 \u0432\u0456\u0434 \u043f\u0440\u043e\u0441\u0442\u0438\u0445 \u0434\u043e \u0441\u043a\u043b\u0430\u0434\u043d\u0438\u0445
 const SPELLS=[
-  {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +30',           fn:'stamina'},
-  {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 4с',        fn:'armor'},
-  {code:'.-',   name:'Щита',   col:'#3b82f6',desc:'Блок удару',            fn:'shield'},
-  {code:'--',   name:'Зцілення',col:'#a78bfa',desc:'+1 палець',            fn:'mend'},
-  {code:'..',   name:'Крига',   col:'#67e8f9',desc:'Заморозити 3с',        fn:'freeze'},
-  {code:'-.',   name:'Тінь',    col:'#6b7280',desc:'Невидимість 3с',       fn:'stealth'},
-  {code:'.-.',  name:'Поривом', col:'#22c55e',desc:'Рух без стаміни 5с',   fn:'rush'},
-  {code:'...',  name:'Спалах',  col:'#f59e0b',desc:'Удар ×2 5с',           fn:'surge'},
-  {code:'---',  name:'Вихор',   col:'#e879f9',desc:'Удар всіх навколо',    fn:'omni'},
-  {code:'-..',  name:'Доля',    col:'#f87171',desc:'HP +30',               fn:'heal'},
-  {code:'.-..',  name:'Замок',  col:'#fbbf24',desc:'Заморозити всіх 4с',   fn:'lockall'},
-  {code:'-...',  name:'Вогонь', col:'#ef4444',desc:'Удар ×3',              fn:'burn'},
-  {code:'.--.',  name:'Пробій', col:'#c084fc',desc:'Ігнорує захист',       fn:'pierce'},
-  {code:'-.-.', name:'Цілення', col:'#34d399',desc:'HP +50',               fn:'cure'},
-  {code:'....',  name:'Хаос',   col:'#fb7185',desc:'Вороги сповільнені 5с',fn:'chaos'},
-  {code:'...-',  name:'Вектор', col:'#818cf8',desc:'Телепорт 3 кроки',     fn:'teleport'},
+  {code:'.',    name:'\u0421\u0438\u043b\u0430',    col:'#60a5fa',desc:'\u0421\u0442\u0430\u043c\u0456\u043d\u0430 +30',           fn:'stamina'},
+  {code:'-',    name:'\u0411\u0440\u043e\u043d\u044f',   col:'#94a3b8',desc:'-60% \u0448\u043a\u043e\u0434\u0438 4\u0441',        fn:'armor'},
+  {code:'.-',   name:'\u0429\u0438\u0442\u0430',   col:'#3b82f6',desc:'\u0411\u043b\u043e\u043a \u0443\u0434\u0430\u0440\u0443',            fn:'shield'},
+  {code:'--',   name:'\u0417\u0446\u0456\u043b\u0435\u043d\u043d\u044f',col:'#a78bfa',desc:'+1 \u043f\u0430\u043b\u0435\u0446\u044c',            fn:'mend'},
+  {code:'..',   name:'\u041a\u0440\u0438\u0433\u0430',   col:'#67e8f9',desc:'\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u0438\u0442\u0438 3\u0441',        fn:'freeze'},
+  {code:'-.',   name:'\u0422\u0456\u043d\u044c',    col:'#6b7280',desc:'\u041d\u0435\u0432\u0438\u0434\u0438\u043c\u0456\u0441\u0442\u044c 3\u0441',       fn:'stealth'},
+  {code:'.-.',  name:'\u041f\u043e\u0440\u0438\u0432\u043e\u043c', col:'#22c55e',desc:'\u0420\u0443\u0445 \u0431\u0435\u0437 \u0441\u0442\u0430\u043c\u0456\u043d\u0438 5\u0441',   fn:'rush'},
+  {code:'...',  name:'\u0421\u043f\u0430\u043b\u0430\u0445',  col:'#f59e0b',desc:'\u0423\u0434\u0430\u0440 \u00d72 5\u0441',           fn:'surge'},
+  {code:'---',  name:'\u0412\u0438\u0445\u043e\u0440',   col:'#e879f9',desc:'\u0423\u0434\u0430\u0440 \u0432\u0441\u0456\u0445 \u043d\u0430\u0432\u043a\u043e\u043b\u043e',    fn:'omni'},
+  {code:'-..',  name:'\u0414\u043e\u043b\u044f',    col:'#f87171',desc:'HP +30',               fn:'heal'},
+  {code:'.-..',  name:'\u0417\u0430\u043c\u043e\u043a',  col:'#fbbf24',desc:'\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u0438\u0442\u0438 \u0432\u0441\u0456\u0445 4\u0441',   fn:'lockall'},
+  {code:'-...',  name:'\u0412\u043e\u0433\u043e\u043d\u044c', col:'#ef4444',desc:'\u0423\u0434\u0430\u0440 \u00d73',              fn:'burn'},
+  {code:'.--.',  name:'\u041f\u0440\u043e\u0431\u0456\u0439', col:'#c084fc',desc:'\u0406\u0433\u043d\u043e\u0440\u0443\u0454 \u0437\u0430\u0445\u0438\u0441\u0442',       fn:'pierce'},
+  {code:'-.-.', name:'\u0426\u0456\u043b\u0435\u043d\u043d\u044f', col:'#34d399',desc:'HP +50',               fn:'cure'},
+  {code:'....',  name:'\u0425\u0430\u043e\u0441',   col:'#fb7185',desc:'\u0412\u043e\u0440\u043e\u0433\u0438 \u0441\u043f\u043e\u0432\u0456\u043b\u044c\u043d\u0435\u043d\u0456 5\u0441',fn:'chaos'},
+  {code:'...-',  name:'\u0412\u0435\u043a\u0442\u043e\u0440', col:'#818cf8',desc:'\u0422\u0435\u043b\u0435\u043f\u043e\u0440\u0442 3 \u043a\u0440\u043e\u043a\u0438',     fn:'teleport'},
 ];
-// Словник для розпізнавання
+// \u0421\u043b\u043e\u0432\u043d\u0438\u043a \u0434\u043b\u044f \u0440\u043e\u0437\u043f\u0456\u0437\u043d\u0430\u0432\u0430\u043d\u043d\u044f
 const SPELL_MAP={};SPELLS.forEach(s=>{SPELL_MAP[s.code]=s;});
-
-// ── DIFFICULTY ────────────────────────────────────────────────────
-const DIFFS=[
-  {id:'night',  name:'🌙 НІЧ',       desc:'Для знайомства',     hp:.5, spd:1.8, dmg:.5, sz:.5, regen:1.5, fi:5},
-  {id:'warrior',name:'⚔ ВОЇН',       desc:'Стандарт',           hp:1,  spd:1,   dmg:1,  sz:1,  regen:1,   fi:5},
-  {id:'hunter', name:'🏹 МИСЛИВЕЦЬ', desc:'Досвідчений',        hp:1.5,spd:.7,  dmg:1.5,sz:1.5,regen:.8,  fi:5},
-  {id:'berserk',name:'🔥 БЕРСЕРК',   desc:'Для майстрів',      hp:2,  spd:.5,  dmg:2,  sz:2,  regen:.6,  fi:5},
-  {id:'abyss',  name:'💀 БЕЗОДНЯ',   desc:'Немилосердний хаос',hp:3,  spd:.3,  dmg:3,  sz:3,  regen:.25, fi:3},
-];
 
 const TUT=[
   {msg:null},
-  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.'},
-  {msg:'Зроби крок. Свайп будь-де на екрані.',req:'move'},
-  {msg:'Добре. Поверни мене — оберни смартфон горизонтально.',req:'rotate'},
-  {msg:'Опусти руку — я відпочиваю. Підніми — заряджуюсь.',req:'pitch'},
-  {msg:'Ціль попереду. Підніми і різко махни телефоном.',req:'attack',spawnDummy:true},
-  {msg:'Дрейфую. Опусти вниз і замри 2 секунди.',req:'beacon'},
-  {msg:'Торкнись коротко = · тривало = − Набери ·− для ЩИТА.',req:'morse'},
-  {msg:'Calibrated. Ти вмієш все що треба.'},
+  {msg:'...\u0442\u0438 \u0442\u0440\u0438\u043c\u0430\u0454\u0448 \u043c\u0435\u043d\u0435 \u043a\u0440\u0438\u0432\u043e. \u0412\u0456\u0434\u0447\u0443\u0432\u0430\u0454\u0448? \u0412\u0456\u0431\u0440\u0430\u0446\u0456\u044f \u2014 \u0446\u0435 \u044f. \u0422\u0438\u0448\u0430 \u2014 \u0446\u0435 \u043c\u0438.'},
+  {msg:'\u0417\u0440\u043e\u0431\u0438 \u043a\u0440\u043e\u043a. \u0421\u0432\u0430\u0439\u043f \u0431\u0443\u0434\u044c-\u0434\u0435 \u043d\u0430 \u0435\u043a\u0440\u0430\u043d\u0456.',req:'move'},
+  {msg:'\u0414\u043e\u0431\u0440\u0435. \u041f\u043e\u0432\u0435\u0440\u043d\u0438 \u043c\u0435\u043d\u0435 \u2014 \u043e\u0431\u0435\u0440\u043d\u0438 \u0441\u043c\u0430\u0440\u0442\u0444\u043e\u043d \u0433\u043e\u0440\u0438\u0437\u043e\u043d\u0442\u0430\u043b\u044c\u043d\u043e.',req:'rotate'},
+  {msg:'\u041e\u043f\u0443\u0441\u0442\u0438 \u0440\u0443\u043a\u0443 \u2014 \u044f \u0432\u0456\u0434\u043f\u043e\u0447\u0438\u0432\u0430\u044e. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u2014 \u0437\u0430\u0440\u044f\u0434\u0436\u0443\u044e\u0441\u044c.',req:'pitch'},
+  {msg:'\u0426\u0456\u043b\u044c \u043f\u043e\u043f\u0435\u0440\u0435\u0434\u0443. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u0456 \u0440\u0456\u0437\u043a\u043e \u043c\u0430\u0445\u043d\u0438 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u043e\u043c.',req:'attack',spawnDummy:true},
+  {msg:'\u0414\u0440\u0435\u0439\u0444\u0443\u044e. \u041e\u043f\u0443\u0441\u0442\u0438 \u0432\u043d\u0438\u0437 \u0456 \u0437\u0430\u043c\u0440\u0438 2 \u0441\u0435\u043a\u0443\u043d\u0434\u0438.',req:'beacon'},
+  {msg:'\u0422\u043e\u0440\u043a\u043d\u0438\u0441\u044c \u043a\u043e\u0440\u043e\u0442\u043a\u043e = \u00b7 \u0442\u0440\u0438\u0432\u0430\u043b\u043e = \u2212 \u041d\u0430\u0431\u0435\u0440\u0438 \u00b7\u2212 \u0434\u043b\u044f \u0429\u0418\u0422\u0410.',req:'morse'},
+  {msg:'Calibrated. \u0422\u0438 \u0432\u043c\u0456\u0454\u0448 \u0432\u0441\u0435 \u0449\u043e \u0442\u0440\u0435\u0431\u0430.'},
 ];
 
-// ── SPEECH ────────────────────────────────────────────────────────
+// \u2500\u2500 SPEECH \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function speak(text,on){
   if(!on||!text||!window.speechSynthesis)return;
   window.speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(text);
-  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.45; // вдвічі тихіше
+  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.45; // \u0432\u0434\u0432\u0456\u0447\u0456 \u0442\u0438\u0445\u0456\u0448\u0435
   const v=window.speechSynthesis.getVoices();
   const uk=v.find(x=>x.lang.startsWith('uk'))||v.find(x=>x.lang.startsWith('ru'));
   if(uk)u.voice=uk;
   window.speechSynthesis.speak(u);
 }
 
-// ── SOUND ─────────────────────────────────────────────────────────
+// \u2500\u2500 SOUND \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 let AC=null;
 function snd(t){
   try{
@@ -125,178 +116,98 @@ function snd(t){
     else if(t==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.07);o.start(ts);o.stop(ts+.07);}
     else if(t==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.15,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.18);o.start(ts);o.stop(ts+.18);}
     else if(t==='spell'){[330,440,550,660,550].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
-    else if(t==='clank'){o.type='square';o.frequency.setValueAtTime(80,ts);o.frequency.exponentialRampToValueAtTime(40,ts+.15);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.15);o.start(ts);o.stop(ts+.15);}
     else if(t==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,ts);o.frequency.exponentialRampToValueAtTime(220,ts+.45);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.45);o.start(ts);o.stop(ts+.45);}
     else if(t==='death'){o.type='sine';o.frequency.setValueAtTime(440,ts);o.frequency.exponentialRampToValueAtTime(110,ts+.9);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.9);o.start(ts);o.stop(ts+.9);}
   }catch(e){}
 }
 
-// ── ROOM SYSTEM ───────────────────────────────────────────────────
+// \u2500\u2500 HELPERS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── ADVENTURE MODE: ОБ'ЄКТИ + БОСИ + КІМНАТИ ─────────────────────
 const OBJ_TYPES={
-  pillar:{sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,blocksAtk:false,desc:'Стовп кам'яний'},
-  wall:  {sym:'▬',col:'#475569',destructible:false,blocksMove:true,blocksAtk:true, desc:'Кам'яна стіна'},
-  crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,blocksAtk:false,hp:3,desc:'Дерев'яний ящик'},
-  barrel:{sym:'◉',col:'#b45309',destructible:true, blocksMove:true,blocksAtk:false,hp:1,explodes:true,desc:'Вибухова бочка'},
-  loot_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',  desc:'Апгрейд: Дальність'},
-  loot_weight:   {sym:'🌬',col:'#a78bfa',destructible:false,blocksMove:false,isLoot:true,upg:'weight', desc:'Апгрейд: Вага'},
-  loot_sharpness:{sym:'⚡',col:'#fbbf24',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Апгрейд: Гострота'},
-  loot_hp:       {sym:'❤', col:'#f87171',destructible:false,blocksMove:false,isLoot:true,upg:'hp',      desc:'Апгрейд: MaxHP +20'},
-  loot_stamina:  {sym:'💙',col:'#38bdf8',destructible:false,blocksMove:false,isLoot:true,upg:'stamina', desc:'Апгрейд: Стаміна'},
-  loot_fingers:  {sym:'🖐',col:'#34d399',destructible:false,blocksMove:false,isLoot:true,upg:'fingers', desc:'Апгрейд: +1 Палець'},
-  loot_spell:    {sym:'📜',col:'#e879f9',destructible:false,blocksMove:false,isLoot:true,upg:'spell',   desc:'Нове заклинання'},
+  pillar:{sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,desc:'Стовп'},
+  wall:  {sym:'▬',col:'#475569',destructible:false,blocksMove:true,desc:'Стіна'},
+  crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,hp:3,   desc:'Ящик'},
+  barrel:{sym:'◉',col:'#b45309',destructible:true, blocksMove:true,hp:1,explodes:true,desc:'Бочка'},
+  upg_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Дальнiсть +20%'},
+  upg_weight:   {sym:'🌬',col:'#22c55e',destructible:false,blocksMove:false,isLoot:true,upg:'weight',   desc:'Вага -15%'},
+  upg_sharpness:{sym:'⚡',col:'#f59e0b',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Гострота +25%'},
+  upg_hp:       {sym:'❤', col:'#ef4444',destructible:false,blocksMove:false,isLoot:true,upg:'hp',       desc:'MaxHP +20'},
+  upg_spell:    {sym:'📜',col:'#e879f9',destructible:false,blocksMove:false,isLoot:true,upg:'spell',    desc:'Нове заклинання'},
 };
-const UPGRADE_TYPES={
-  reach:     {sym:'🔭',col:'#60a5fa',desc:'Дальність +20%',   fn:(m)=>({...m,reach:m.reach*1.2})},
-  weight:    {sym:'🌬',col:'#a78bfa',desc:'Вага -15%',         fn:(m)=>({...m,weight:m.weight*0.85})},
-  sharpness: {sym:'⚡',col:'#fbbf24',desc:'Гострота +25%',     fn:(m)=>({...m,sharpness:m.sharpness*1.25})},
-  hp:        {sym:'❤',col:'#f87171',desc:'MaxHP +20',          fn:(m,p)=>p},// handled separately
-  stamina:   {sym:'💙',col:'#38bdf8',desc:'Стаміна-мод +0.3',  fn:(m)=>({...m,staminaRegen:m.staminaRegen+0.3})},
-  fingers:   {sym:'🖐',col:'#34d399',desc:'+1 палець',         fn:(m)=>m},// handled separately
+const BOSS_DEFS={
+  colossus:  {name:'КОЛОС',    col:'#f97316',sym:'⬡',basehp:60, dmg:22,ms:700,size:2},
+  wraith:    {name:'ПРИМАРА',  col:'#d946ef',sym:'◈',basehp:40, dmg:15,ms:320,size:1},
+  juggernaut:{name:'ДРЕДНОУТ', col:'#dc2626',sym:'◼',basehp:120,dmg:35,ms:950,size:3},
+  devourer:  {name:'ПОЖИРАЧ',  col:'#84cc16',sym:'✦',basehp:80, dmg:28,ms:500,size:2},
 };
 const UNLOCKABLE_SPELLS=SPELLS.filter(s=>s.code!=='.'&&s.code!=='-').map(s=>s.code);
-const BOSS_DEFS={
-  colossus:  {name:'КОЛОС',    col:'#f97316',sym:'⬡',basehp:60, dmg:22,ms:700,size:2,special:'charge'},
-  wraith:    {name:'ПРИМАРА',  col:'#d946ef',sym:'◈',basehp:40, dmg:15,ms:320,size:1,special:'teleport'},
-  juggernaut:{name:'ДРЕДНОУТ', col:'#dc2626',sym:'◼',basehp:120,dmg:35,ms:950,size:3,special:'aoe'},
-  devourer:  {name:'ПОЖИРАЧ',  col:'#84cc16',sym:'✦',basehp:80, dmg:28,ms:500,size:2,special:'spawn'},
-};
-const UPGRADE_TYPES={
-  reach:    {label:'ДАЛЬНІСТЬ', sym:'🔭',col:'#60a5fa',desc:'+20% радіусу зброї',  apply:(p)=>{p.weaponMods.reach=(p.weaponMods.reach||1)+0.2;}},
-  weight:   {label:'ЛЕГКІСТЬ',  sym:'🌬',col:'#22c55e',desc:'-15% ваги (швидше)',  apply:(p)=>{p.weaponMods.weight=Math.max(0.2,(p.weaponMods.weight||1)-0.15);}},
-  sharpness:{label:'ГОСТРОТА',  sym:'⚡',col:'#f59e0b',desc:'+25% шкоди',          apply:(p)=>{p.weaponMods.sharpness=(p.weaponMods.sharpness||1)+0.25;}},
-  hp:       {label:'HP MAX +20',sym:'❤',col:'#f87171',desc:'Макс HP +20',          apply:(p)=>{p.maxHp=(p.maxHp||100)+20;p.hp=Math.min(p.hp+20,p.maxHp);}},
-  stamina:  {label:'ВИТРИВАЛІСТЬ',sym:'💙',col:'#3b82f6',desc:'Стаміна регенерує швидше',apply:(p)=>{p.staminaMod=(p.staminaMod||1)+0.3;}},
-  fingers:  {label:'ПАЛЬЦІ +1', sym:'🖐',col:'#a78bfa',desc:'+1 захисний палець', apply:(p)=>{p.fingers=Math.min(7,p.fingers+1);}},
-};
-// Заклинання що розблоковуються в кімнатах (крім перших двох)
-const UNLOCKABLE_SPELLS=['.-','--','..','-.','.-.',  '...','---','-..','.-..', '-...','.--.','-.-.','....','...-'];
-
-function generateUpgrades(roomNum,isBoss){
-  const items=[];
-  const count=isBoss?2:(Math.random()<0.6?1:0);
-  const usedPos=new Set();
-  for(let i=0;i<count;i++){
-    let x,y,key;
-    do{x=1+Math.floor(Math.random()*(G-2));y=1+Math.floor(Math.random()*(G-2));key=`${x},${y}`;}while(usedPos.has(key));
-    usedPos.add(key);
-    // Рандомний тип покращення
-    const isSpell=Math.random()<(isBoss?0.5:0.35)&&roomNum>1;
-    if(isSpell){
-      const code=UNLOCKABLE_SPELLS[Math.floor(Math.random()*UNLOCKABLE_SPELLS.length)];
-      const sp=SPELL_MAP[code];
-      items.push({id:EID++,x,y,upgType:'spell',spellCode:code,sym:'✨',col:'#e879f9',label:sp?sp.name:'Заклинання'});
-    }else{
-      const wKeys=Object.keys(UPGRADE_TYPES);
-      const type=wKeys[Math.floor(Math.random()*wKeys.length)];
-      const ut=UPGRADE_TYPES[type];
-      items.push({id:EID++,x,y,upgType:type,sym:ut.sym,col:ut.col,label:ut.label});
-    }
-  }
-  return items;
-}
-
-function coordToId(x,y){return`${x},${y}`;}
-function getNextCoord(coord,dir){
-  if(dir==='N')return{x:coord.x,y:coord.y-1};
-  if(dir==='S')return{x:coord.x,y:coord.y+1};
-  if(dir==='E')return{x:coord.x+1,y:coord.y};
-  if(dir==='W')return{x:coord.x-1,y:coord.y};
-  return coord;
-}
-function edgeFromPlayer(px,py){
-  if(py===0)return'N';if(py===G-1)return'S';
-  if(px===0)return'W';if(px===G-1)return'E';
-  return null;
-}
-function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
-
-// ── UPGRADE SYSTEM ────────────────────────────────────────────────
-const UPGRADE_TYPES={
-  reach:    {sym:'🔭',name:'Далекобій',desc:'+20% радіусу',   col:'#60a5fa'},
-  weight:   {sym:'🌬',name:'Легкість', desc:'-15% ваги',      col:'#22c55e'},
-  sharpness:{sym:'⚡',name:'Гострота', desc:'+25% шкоди',     col:'#f59e0b'},
-  hp:       {sym:'❤', name:'Загарт.',  desc:'maxHP +20',       col:'#ef4444'},
-  stamina:  {sym:'💙',name:'Витрив.',  desc:'стаміна +0.4/т', col:'#3b82f6'},
-  fingers:  {sym:'🖐',name:'Спритн.',  desc:'+1 палець',       col:'#a78bfa'},
-};
-const UNLOCKABLE_SPELLS=SPELLS.filter(s=>s.code!=='.'&&s.code!=='-');
-function coordId(rx,ry){return`${rx},${ry}`;}
-function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
-const DIR4={left:{dx:-1,dy:0,edge:'x0'},right:{dx:1,dy:0,edge:'xG'},up:{dx:0,dy:-1,edge:'y0'},down:{dx:0,dy:1,edge:'yG'}};
-function playerEdgeDir(px,py){if(px===0)return'left';if(px===G-1)return'right';if(py===0)return'up';if(py===G-1)return'down';return null;}
-function entryPos(dir){const d=DIR4[dir];if(!d)return{x:CX,y:CY};if(d.edge==='x0')return{x:G-1,y:CY};if(d.edge==='xG')return{x:0,y:CY};if(d.edge==='y0')return{x:CX,y:G-1};return{x:CX,y:0};}
-
-function calcBossCells(bx,by,size){
-  const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;
-}
-function coordId(rx,ry){return `${rx},${ry}`;}
-function calcRoomNum(rx,ry){return 1+Math.abs(rx)+Math.abs(ry);}
+function coordId(x,y){return x+','+y;}
+function calcRoomNum(x,y){return 1+Math.abs(x)+Math.abs(y);}
 function getNextCoord(coord,dir){
   const{x,y}=coord;
   if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};
   if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};
   return coord;
 }
-function generateRoomContent(roomNum,spawnX,spawnY){
-  const isBoss=roomNum>1&&(roomNum%3===0);
+function calcBossCells(bx,by,size){
+  const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;
+}
+function generateRoom(roomNum,spawnX,spawnY){
+  const isBoss=roomNum>1&&roomNum%3===0;
   const occ=[{x:spawnX??CX,y:spawnY??CY}];
-  // Об'єкти
+  // Objects
   const objects=[];
-  const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/1.5),9);
-  const objKeys=Object.keys(OBJ_TYPES);
+  const objKeys=isBoss?['pillar','wall']:Object.keys(OBJ_TYPES);
+  const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/2),8);
   for(let i=0;i<objCount*5&&objects.length<objCount;i++){
     const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
     if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<3))continue;
-    const type=isBoss?(Math.random()<0.7?'pillar':'wall'):objKeys[Math.floor(Math.random()*objKeys.length)];
-    const ot=OBJ_TYPES[type];
-    const obj={id:EID++,type,x,y,hp:ot.hp??null};
-    objects.push(obj);occ.push({x,y});
+    const t=objKeys[Math.floor(Math.random()*objKeys.length)];
+    const ot=OBJ_TYPES[t];if(!ot||ot.isLoot)continue;
+    objects.push({id:EID++,type:t,x,y,hp:ot.hp??null});occ.push({x,y});
   }
-  // Вороги або бос
+  // Loot
+  if(Math.random()<0.65){
+    const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+    // Only offer spell scrolls if there are unlockable spells remaining
+    for(let i=0;i<20;i++){
+      const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
+      if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
+      const t=lootKeys[Math.floor(Math.random()*lootKeys.length)];
+      objects.push({id:EID++,type:t,x,y,hp:null});occ.push({x,y});break;
+    }
+  }
+  // Enemies or boss
   let enemies=[];
   if(isBoss){
     const bKeys=Object.keys(BOSS_DEFS);
     const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
     const bd=BOSS_DEFS[bType];
-    const scale=Math.max(1,1+(roomNum/3-1)*0.45);
+    const scale=Math.max(1,1+(roomNum/3-1)*0.4);
     const bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
     const by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
     enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,
       hp:Math.round(bd.basehp*scale),maxHp:Math.round(bd.basehp*scale),
       dmg:Math.round(bd.dmg*scale),ms:Math.round(bd.ms/Math.sqrt(scale)),
-      size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,special:bd.special,
-      lastMove:0,lastSpecial:0}];
+      size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
   }else{
     const etAll=Object.keys(ET);
     const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
-    const count=Math.max(1,Math.floor(1+roomNum*0.55));
+    const count=Math.max(1,Math.round(1+roomNum*0.55));
     const spOcc=[...occ];
     for(let i=0;i<count;i++){
-      const type=etAvail[Math.floor(Math.random()*etAvail.length)];
-      const e=spawnE(type,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}
+      const t=etAvail[Math.floor(Math.random()*etAvail.length)];
+      const e=spawnE(t,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}
     }
   }
-  const upgrades=generateUpgrades(roomNum,isBoss);
-  // Лут
-  const loot=[];const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
-  const lootCount=Math.random()<0.65?1:0;
-  for(let i=0;i<lootCount*4&&loot.length<lootCount;i++){
-    const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
-    if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
-    const type=lootKeys[Math.floor(Math.random()*lootKeys.length)];
-    loot.push({id:EID++,type,x,y,hp:null});occ.push({x,y});
-  }
-  return{objects:[...objects,...loot],enemies,isBoss};
+  return{objects,enemies,isBoss};
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────
-function getWCells(px,py,yi,wk,reachOverride){
-  const w={...(WPN[wk]||WPN.sword)};if(reachOverride)w.reach=reachOverride;
-  const cells=[];
+function getWCells(px,py,yi,wk){
+  const w=WPN[wk],cells=[];
   if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
-  const reach=reachOverride!=null?reachOverride:w.reach;
   const[dx,dy]=DIR[yi];
-  for(let r=1;r<=reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
+  for(let r=1;r<=w.reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
   for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
   return cells;
 }
@@ -307,27 +218,27 @@ function spawnE(type,occ){
   return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};
 }
 function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
-// Інверсія: екранна клітинка → позиція в ігровому світі (для radar-режиму)
-function fromScreen(sx,sy,px,py,cDeg){const dsx=sx-CX,dsy=sy-CY,a=rad(cDeg);return{gx:Math.round(px+dsx*Math.cos(a)-dsy*Math.sin(a)),gy:Math.round(py+dsx*Math.sin(a)+dsy*Math.cos(a))};}
-function isEdgeCell(gx,gy){return gx===0||gx===G-1||gy===0||gy===G-1;}
 function swipeToWorld(sdx,sdy,cDeg){const a=rad(cDeg);return{gdx:Math.round(sdx*Math.cos(a)-sdy*Math.sin(a)),gdy:Math.round(sdx*Math.sin(a)+sdy*Math.cos(a))};}
 function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
 function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
-// ── MORSE BAR (завжди видимий) ────────────────────────────────────
+// \u2500\u2500 MORSE BAR (\u0437\u0430\u0432\u0436\u0434\u0438 \u0432\u0438\u0434\u0438\u043c\u0438\u0439) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function MorseBar({currentSeq,unlocked}){
-  return(<div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
-    {SPELLS.map(sp=>{
-      const locked=unlocked&&!unlocked.includes(sp.code);
-      const active=!locked&&currentSeq&&sp.code.startsWith(currentSeq);
-      return(<div key={sp.code} style={{width:'calc(12.5% - 3px)',opacity:locked?0.22:1,background:active?sp.col+'22':'#060f1e',border:`1px solid ${active?sp.col:locked?'#0a1628':'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
-        <div style={{fontSize:'8px',letterSpacing:'.07em'}}>{locked?'🔒':sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
-        <div style={{fontSize:'7px',color:locked?'#1e3a5f':sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{locked?'???':sp.name}</div>
-      </div>);
-    })}
-  </div>);
+  return(
+    <div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
+      {SPELLS.map(sp=>{
+        const locked=unlocked&&!unlocked.includes(sp.code);
+        const active=!locked&&currentSeq&&sp.code.startsWith(currentSeq);
+        return(<div key={sp.code} style={{width:'calc(12.5% - 3px)',opacity:locked?0.22:1,background:active?sp.col+'22':'#060f1e',border:`1px solid ${active?sp.col:locked?'#0a1628':'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
+          <div style={{fontSize:'8px',letterSpacing:'.05em'}}>{locked?'🔒':sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
+          <div style={{fontSize:'7px',color:locked?'#1e3a5f':sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{locked?'???':sp.name}</div>
+        </div>);
+      })}
+    </div>
+  );
 }
 
+// \u2500\u2500 SETTINGS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
 function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
 
@@ -337,12 +248,7 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
     if(sPhase!=='active')return;
     const o=(e)=>{let c=live.compass;if(e.webkitCompassHeading!=null)c=e.webkitCompassHeading;setLive(p=>({...p,beta:e.beta??0,compass:c}));};
     const oa=(e)=>{if(e.alpha!=null)setLive(p=>({...p,compass:(360-e.alpha)%360}));};
-    const m=(e)=>{
-      // Перевагу надаємо чистому прискоренню (без гравітації) — краще для iOS
-      const a=e.acceleration;const ag=e.accelerationIncludingGravity;
-      if(a&&a.x!==null){setLive(p=>({...p,mag:Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2)}));}
-      else if(ag){const g2=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||9.8)**2);setLive(p=>({...p,mag:Math.abs(g2-9.8)}));}
-    };
+    const m=(e)=>{const g=e.accelerationIncludingGravity;if(!g)return;setLive(p=>({...p,mag:Math.sqrt((g.x??0)**2+(g.y??0)**2+(g.z??9.8)**2)}));};
     window.addEventListener('deviceorientation',o,true);window.addEventListener('deviceorientationabsolute',oa,true);window.addEventListener('devicemotion',m);
     return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
   },[sPhase]);
@@ -351,58 +257,48 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
   return(
     <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
-        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
-        <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
+        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>\u2190</button>
+        <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>\u041d\u0410\u041b\u0410\u0428\u0422\u0423\u0412\u0410\u041d\u041d\u042f</div>
       </div>
-      <Sec title="ДАТЧИКИ">
-        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>}
-        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую...</div>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Доступні WASD + клавіші.</div>}
+      <Sec title="\u0414\u0410\u0422\u0427\u0418\u041a\u0418">
+        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>\u25b7 \u041f\u0406\u0414\u041a\u041b\u042e\u0427\u0418\u0422\u0418 \u0414\u0410\u0422\u0427\u0418\u041a\u0418</B2>}
+        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>\u23f3 \u041e\u0447\u0456\u043a\u0443\u044e...</div>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>\u26a0 \u0412\u0456\u0434\u0445\u0438\u043b\u0435\u043d\u043e. \u0414\u043e\u0441\u0442\u0443\u043f\u043d\u0456 WASD + \u043a\u043b\u0430\u0432\u0456\u0448\u0456.</div>}
         {sPhase==='active'&&<>
-          <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
+          <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>\u25c9 \u0410\u041a\u0422\u0418\u0412\u041d\u0406</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
-            {[['β нахил',live.beta.toFixed(1)+'°',pColor(pv)],['компас',live.compass.toFixed(0)+'°','#60a5fa'],['|a|',live.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
+            {[['\u03b2 \u043d\u0430\u0445\u0438\u043b',live.beta.toFixed(1)+'\u00b0',pColor(pv)],['\u043a\u043e\u043c\u043f\u0430\u0441',live.compass.toFixed(0)+'\u00b0','#60a5fa'],['|a|',live.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
               <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'6px',textAlign:'center'}}><div style={{fontSize:'8px',color:'#1e3a5f'}}>{l}</div><div style={{fontSize:'14px',color:c,fontWeight:'bold'}}>{v}</div></div>
             ))}
           </div>
         </>}
       </Sec>
-      <Sec title="РЕЖИМ">
+      <Sec title="\u0420\u0415\u0416\u0418\u041c">
         <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі'],['panorama','Панорама','Перспектива']].map(([val,lbl,desc])=>(
+          {[['classic','\u041a\u043b\u0430\u0441\u0438\u043a\u0430','\u0413\u0440\u0430\u0432\u0435\u0446\u044c \u0440\u0443\u0445\u0430\u0454\u0442\u044c\u0441\u044f'],['radar','\u0420\u0430\u0434\u0430\u0440','\u0413\u0440\u0430\u0432\u0435\u0446\u044c \u0432 \u0446\u0435\u043d\u0442\u0440\u0456']].map(([val,lbl,desc])=>(
             <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))} style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
               <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
           ))}
         </div>
       </Sec>
-      <Sec title={`ПОРІГ УДАРУ — ${s.strikeThr} m/s²`}>
+      <Sec title={`\u041f\u041e\u0420\u0406\u0413 \u0423\u0414\u0410\u0420\u0423 \u2014 ${s.strikeThr} m/s\u00b2`}>
         <input type="range" min="3" max="20" value={s.strikeThr} onChange={e=>setS(p=>({...p,strikeThr:+e.target.value}))}/>
-        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>Легкий (3)</span><span>Сильний (20)</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>\u041b\u0435\u0433\u043a\u0438\u0439 (3)</span><span>\u0421\u0438\u043b\u044c\u043d\u0438\u0439 (20)</span></div>
         {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${clamp((live.mag-9.8)/s.strikeThr*100,0,100)}%`,background:'#f59e0b',transition:'width .05s'}}/></div>}
       </Sec>
-      <Sec title={`ЧУТЛИВІСТЬ НАХИЛУ — ±${s.pitchSens}°`}>
+      <Sec title={`\u0427\u0423\u0422\u041b\u0418\u0412\u0406\u0421\u0422\u042c \u041d\u0410\u0425\u0418\u041b\u0423 \u2014 \u00b1${s.pitchSens}\u00b0`}>
         <input type="range" min="15" max="60" value={s.pitchSens} onChange={e=>setS(p=>({...p,pitchSens:+e.target.value}))}/>
         {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}><div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pColor(pv),transition:'width .05s'}}/></div><div style={{fontSize:'9px',color:pColor(pv),minWidth:'46px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div></div>}
       </Sec>
-      <Sec title="ГОЛОС КОМПАНЬЙОНА">
+      <Sec title="\u0413\u041e\u041b\u041e\u0421 \u041a\u041e\u041c\u041f\u0410\u041d\u042c\u0419\u041e\u041d\u0410">
         <div style={{display:'flex',gap:'8px',marginBottom:'6px'}}>
-          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔊 Увімкнений</button>
-          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔇 Вимкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd0a \u0423\u0432\u0456\u043c\u043a\u043d\u0435\u043d\u0438\u0439</button>
+          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd07 \u0412\u0438\u043c\u043a\u043d\u0435\u043d\u0438\u0439</button>
         </div>
-        <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>▶ Тест голосу</button>
+        <button onClick={()=>speak('\u042f \u0433\u043e\u0442\u043e\u0432\u0438\u0439. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u043c\u0435\u043d\u0435.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>\u25b6 \u0422\u0435\u0441\u0442 \u0433\u043e\u043b\u043e\u0441\u0443</button>
       </Sec>
-      <Sec title="СКЛАДНІСТЬ">
-        <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
-          {DIFFS.map((d,i)=>(
-            <button key={d.id} onClick={()=>setS(p=>({...p,diff:i}))} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',background:s.diff===i?d.id==='night'?'#1e3a8a22':d.id==='warrior'?'#16a34a22':d.id==='hunter'?'#f59e0b22':d.id==='berserk'?'#ef444422':'#a855f722':'#060f1e',border:`1px solid ${s.diff===i?d.id==='night'?'#3b82f6':d.id==='warrior'?'#22c55e':d.id==='hunter'?'#f59e0b':d.id==='berserk'?'#ef4444':'#a855f7':'#1e3a5f'}`,borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',color:s.diff===i?'#e2e8f0':'#334155'}}>
-              <span style={{fontWeight:'bold'}}>{d.name}</span>
-              <span style={{fontSize:'8px',color:'#4a6a9f'}}>{d.desc}</span>
-            </button>
-          ))}
-        </div>
-      </Sec>
-      <Sec title="СТАРТОВА ЗБРОЯ">
+      <Sec title="\u0421\u0422\u0410\u0420\u0422\u041e\u0412\u0410 \u0417\u0411\u0420\u041e\u042f">
         <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
           {Object.entries(WPN).map(([k,w])=>(
             <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))} style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
@@ -411,53 +307,12 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
           ))}
         </div>
       </Sec>
-      <B2 onClick={onBack} col='#22c55e' style={{marginTop:'6px'}}>✓ ГОТОВО</B2>
+      <B2 onClick={onBack} col='#22c55e' style={{marginTop:'6px'}}>\u2713 \u0413\u041e\u0422\u041e\u0412\u041e</B2>
     </div>
   );
 }
 
-// ── ROOM PREVIEW PANEL ────────────────────────────────────────────
-function RoomPreview({g,onEnter,onCancel}){
-  if(!g.peekDir||!g.peekRoom)return null;
-  const pr=g.peekRoom;
-  const bossE=pr.enemies?.find(e=>e.type==='boss');
-  const dirSym={'N':'↑ ПІВНІЧ','S':'↓ ПІВ','E':'→ СХІД','W':'← ЗАХІД'}[g.peekDir]||g.peekDir;
-  const upgCount=pr.upgrades?.length||0;
-  return(<div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:20,background:'rgba(1,13,31,0.95)',border:'1px solid #1e4a7f',borderBottom:'none',padding:'10px 14px',fontFamily:"'Courier New',monospace"}}>
-    <div style={{fontSize:'9px',color:'#1e3a5f',marginBottom:'4px',letterSpacing:'.12em'}}>НАСТУПНА КІМНАТА {dirSym}</div>
-    <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
-      {bossE?<span style={{color:bossE.col,fontWeight:'bold',fontSize:'11px'}}>👹 БОС: {bossE.name}</span>:
-        <span style={{color:'#dc2626',fontSize:'11px'}}>⚔ {pr.enemies?.length||0} ворогів</span>}
-      <span style={{color:'#6b7280',fontSize:'10px'}}>▪ {pr.objects?.length||0} об'єктів</span>
-      {upgCount>0&&<span style={{color:'#f59e0b',fontSize:'10px'}}>⭐ {upgCount} покращень</span>}
-      {pr.cleared&&<span style={{color:'#22c55e',fontSize:'10px'}}>✓ очищено</span>}
-    </div>
-    <div style={{display:'flex',gap:'8px',marginTop:'8px'}}>
-      <button onClick={onEnter} style={{flex:1,padding:'8px',background:'#22c55e22',border:'1px solid #22c55e',color:'#22c55e',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px',fontWeight:'bold'}}>
-        → УВІЙТИ
-      </button>
-      <button onClick={onCancel} style={{padding:'8px 12px',background:'#1e3a5f22',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
-        ✕
-      </button>
-    </div>
-  </div>);
-}
-
-// ── UPGRADE STATS DISPLAY ──────────────────────────────────────────
-function WeaponStats({mods,unlockedCount}){
-  if(!mods)return null;
-  const r=Math.round((mods.reach||1)*100);
-  const w=Math.round((mods.weight||1)*100);
-  const s=Math.round((mods.sharpness||1)*100);
-  return(<div style={{display:'flex',gap:'5px',fontSize:'7px',color:'#1e3a5f',flexWrap:'wrap'}}>
-    <span style={{color:r>100?'#60a5fa':'#1e3a5f'}}>🔭{r}%</span>
-    <span style={{color:w<100?'#22c55e':'#1e3a5f'}}>🌬{w}%</span>
-    <span style={{color:s>100?'#f59e0b':'#1e3a5f'}}>⚡{s}%</span>
-    <span style={{color:'#a78bfa'}}>✨{unlockedCount}</span>
-  </div>);
-}
-
-// ── GAME ──────────────────────────────────────────────────────────
+// \u2500\u2500 GAME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function Game({gmode,settings,sPhase,onDead}){
   const gs=useRef(null);
   const[,forceRender]=useReducer(x=>x+1,0);
@@ -465,10 +320,10 @@ function Game({gmode,settings,sPhase,onDead}){
   const touchStart=useRef({x:0,y:0,t:0,onBtn:false});
   const prevAccMag=useRef(9.8);
   const lastStrikeT=useRef(0);
-  const isRadar=settings.worldMode==='radar'||settings.worldMode==='panorama';const isPanorama=settings.worldMode==='panorama';
+  const isRadar=settings.worldMode==='radar';
   const STRENGTH=4;
 
-  // ══ REFS для гейм-лупу — уникаємо stale closure ══
+  // \u2550\u2550 REFS \u0434\u043b\u044f \u0433\u0435\u0439\u043c-\u043b\u0443\u043f\u0443 \u2014 \u0443\u043d\u0438\u043a\u0430\u0454\u043c\u043e stale closure \u2550\u2550
   const onDeadRef=useRef(onDead);
   const settingsRef=useRef(settings);
   const gmodeRef=useRef(gmode);
@@ -487,24 +342,21 @@ function Game({gmode,settings,sPhase,onDead}){
   const setMsgRef=useRef(setMsg);
   useEffect(()=>{setMsgRef.current=setMsg;},[setMsg]);
 
-  // ── Init ────────────────────────────────────────────────────
+  // \u2500\u2500 Init \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(()=>{
     EID=0;
     gs.current={
-      player:{x:CX,y:CY,hp:100,maxHp:100,weaponMods:{reach:1,weight:1,sharpness:1},unlockedSpells:['.', '-'],staminaMod:1},
+      player:{x:CX,y:CY,hp:100,maxHp:100},
       enemies:[],
       yawIdx:0,compassD:0,vYaw:0,pitch:0,prevYawIdx:0,
-      stamina:100,fingers:DIFFS[settings.diff??1].fi,
+      stamina:100,fingers:5,
       dropped:false,droppedUntil:0,
       wave:0,score:0,
-      objects:[],upgrades:[],roomNumber:1,isBossRoom:false,transitioning:false,
-      roomCoord:{x:0,y:0},roomMap:{},
-      weaponMods:{reach:1,weight:1,sharpness:1,staminaMod:1},
-      unlockedSpells:['.','-'],
-      peekDir:null,peekProgress:0,peekTicks:0,peekData:null,adventureFF:false,
-      roomMap:{},roomCoord:{x:0,y:0},
-      upgrades:[],
-      edgeTicks:0,edgeDir:null,peekDir:null,peekRoom:null,
+      // Adventure mode fields
+      objects:[],roomCoord:{x:0,y:0},roomMap:{},roomNumber:1,isBossRoom:false,
+      transitioning:false,edgeTimer:0,peekDir:null,peekInfo:null,_roomCleared:false,
+      weaponMods:{reach:1,weight:1,sharpness:1},
+      unlockedSpells:['.'],
       divergence:0,highDTicks:0,
       beaconCount:0,beaconProgress:0,
       spell:null,
@@ -520,25 +372,8 @@ function Game({gmode,settings,sPhase,onDead}){
       setTimeout(()=>setMsg(TUT[1].msg),4500);
       setTimeout(()=>{const g=gs.current;if(!g)return;g.tutStep=2;setMsg(TUT[2].msg);},8500);
     }
-    if(gmode==='adventure'){
-      EID=Math.max(EID,4000);
-      const startCoord={x:0,y:0};
-      const ac=generateRoomContent(1,CX,CY);
-      const cid=coordId(0,0);
-      gs.current.enemies=ac.enemies;
-      gs.current.objects=ac.objects||[];
-      gs.current.isBossRoom=ac.isBoss||false;
-      gs.current.roomNumber=1;
-      gs.current.roomCoord=startCoord;
-      gs.current.roomMap={[cid]:{enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true}};
-      gs.current.weaponMods={reach:1,weight:1,sharpness:1,staminaRegen:0};
-      gs.current.unlockedSpells=['.'];
-      gs.current.edgeTimer=0;gs.current.peekDir=null;gs.current.transitioning=false;
-      setTimeout(()=>setMsgRef.current?.('Кімната 1 · Йди до краю сітки → перехід до наступної кімнати'),800);
-      forceRender();
-    }
     if(gmode==='survival'){
-      gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
+      gs.current.wave=1;gs.current.waveMsg='\u0425\u0432\u0438\u043b\u044f 1';snd('wave');forceRender();
       gs.current._waveTimer=setTimeout(()=>{gs.current._waveTimer=null;doSpawnWave(1);},2000);
     }
     return()=>{
@@ -547,34 +382,24 @@ function Game({gmode,settings,sPhase,onDead}){
     };
   },[]);// eslint-disable-line
 
-  // ── Spawn wave ───────────────────────────────────────────────
+  // \u2500\u2500 Spawn wave \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const doSpawnWave=useCallback((waveNum)=>{
     const g=gs.current;if(!g)return;
-    const diff=DIFFS[settingsRef.current.diff??1];
     const wi=Math.min(waveNum-1,WAVES.length-1);
     const extra=Math.max(0,waveNum-WAVES.length);
     const spawned=[];
     WAVES[wi].forEach(({t,n})=>{
-      const tot=Math.max(1,Math.round((n+(t==='shadow'?extra:0))*diff.sz));
-      for(let i=0;i<tot;i++){
-        const e=spawnE(t,[{x:g.player.x,y:g.player.y},...spawned]);
-        if(e)spawned.push({
-          ...e,
-          hp:Math.max(1,Math.round(ET[t].hp*diff.hp)),
-          maxHp:Math.max(1,Math.round(ET[t].hp*diff.hp)),
-          dmgM:diff.dmg,
-          spdM:diff.spd,
-        });
-      }
+      const tot=n+(t==='shadow'?extra:0);
+      for(let i=0;i<tot;i++){const e=spawnE(t,[{x:g.player.x,y:g.player.y},...spawned]);if(e)spawned.push(e);}
     });
     g.enemies=spawned;g.waveMsg='';
-    setMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
+    setMsg(`\u0425\u0432\u0438\u043b\u044f ${waveNum} \u00b7 ${spawned.length} \u0432\u043e\u0440\u043e\u0433\u0456\u0432`);
     snd('wave');forceRender();
   },[setMsg]);
   const doSpawnRef=useRef(doSpawnWave);
   useEffect(()=>{doSpawnRef.current=doSpawnWave;},[doSpawnWave]);
 
-  // ── Spell ────────────────────────────────────────────────────
+  // \u2500\u2500 Spell \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const castSpell=useCallback((sp)=>{
     const g=gs.current;if(!g)return;snd('spell');
     const fn=sp.fn,now=Date.now();
@@ -588,77 +413,66 @@ function Game({gmode,settings,sPhase,onDead}){
     else if(fn==='lockall'){g.enemies=g.enemies.map(e=>({...e,frozen:now+4000}));}
     else if(fn==='chaos'){g.enemies=g.enemies.map(e=>({...e,chaosUntil:now+5000}));}
     else{g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    setMsg(`✨ ${sp.name}! ${sp.desc}`);
+    setMsg(`\u2728 ${sp.name}! ${sp.desc}`);
     if(gmodeRef.current==='tutorial'&&!g.tutDone.morsed){
-      g.tutDone.morsed=true;
-      if(g.tutStep===7){g.tutStep=8;setTimeout(()=>setMsg(TUT[8].msg),800);}
+      g.tutDone.morsed=true;if(g.tutStep===7){g.tutStep=8;setTimeout(()=>setMsg(TUT[8].msg),800);}
     }
     forceRender();
   },[setMsg]);
 
-  // ── Attack ────────────────────────────────────────────────────
+  // \u2500\u2500 Attack \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   function doAttackInternal(omni){
     const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
     snd('swing');
     const yi=omni?0:g.yawIdx;const wk=omni?'flail':settingsRef.current.startWpn;
-    const cells=getWCells(g.player.x,g.player.y,yi,wk,gmodeRef.current==='adventure'?modReach:undefined);
-    const _mods=g.player?.weaponMods||{reach:1,weight:1,sharpness:1};
-    const C=STRENGTH*(_mods.sharpness||1)/(WPN[settingsRef.current.startWpn].w*(_mods.weight||1));
-    const modReach=Math.round((WPN[settingsRef.current.startWpn]?.reach||2)*(_mods.reach||1));
+    const cells=getWCells(g.player.x,g.player.y,yi,wk);
+    const wMods=gs.current?.weaponMods||{reach:1,weight:1,sharpness:1};
+    const C=STRENGTH*wMods.sharpness/(WPN[settingsRef.current.startWpn].w*wMods.weight);
     const chargeMult=1+Math.max(0,g.pitch)*1.8;
     const spellMult=(g.spell?.fn==='burn'?3:g.spell?.fn==='surge'?2:1);
     const baseDmg=Math.round(12*chargeMult*C*spellMult);
     if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
     let hits=0;
     g.enemies=g.enemies.map(e=>{
-      // Бос: перевіряємо всі клітинки тіла
       if(e.type==='boss'){
-        const bossCells=calcBossCells(e.x,e.y,e.size);
-        const hit=bossCells.some(bc=>cells.find(c=>c.x===bc.x&&c.y===bc.y));
-        if(!hit)return e;hits++;
-        const dmg=baseDmg;
-        if(e.hp-dmg<=0){g.score+=100;snd('pvpkill'||'join');return null;}
-        return{...e,hp:e.hp-dmg};
+        // Boss: hit any of its body cells
+        const bc=calcBossCells(e.x,e.y,e.size);
+        if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;
+        hits++;
+        if(e.hp-baseDmg<=0){g.score+=100;snd('wave');return null;}
+        return{...e,hp:e.hp-baseDmg};
       }
       const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
       hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
       if(e.hp-dmg<=0){g.score+=10;return null;}
       return{...e,hp:e.hp-dmg};
     }).filter(Boolean);
-    g.stamina=Math.max(0,g.stamina-10);
-    // Об'єкти
-    if(g.objects?.length){
-      let wallHit=false;
-      g.objects=(g.objects.map(obj=>{
+    // Adventure: object hits
+    if(gmodeRef.current==='adventure'&&g.objects?.length){
+      let clank=false;
+      g.objects=g.objects.map(obj=>{
         const hit=cells.find(c=>c.x===obj.x&&c.y===obj.y);if(!hit)return obj;
-        const ot=OBJ_TYPES[obj.type];
-        if(!ot.destructible){wallHit=true;return obj;}
-        snd('hit');
-        const newHp=(obj.hp||1)-(hit.main?baseDmg:Math.round(baseDmg*.5));
-        if(newHp<=0){
-          g.score+=5;
-          if(ot.explodes){
+        const ot=OBJ_TYPES[obj.type];if(!ot||ot.isLoot)return obj;
+        if(!ot.destructible){clank=true;return obj;}
+        const dmg=hit.main?baseDmg:Math.round(baseDmg*.5);
+        const nhp=(obj.hp||1)-dmg;
+        if(nhp<=0){g.score+=5;
+          if(ot.explodes){// Barrel explodes
             const area=[{x:obj.x,y:obj.y},{x:obj.x+1,y:obj.y},{x:obj.x-1,y:obj.y},{x:obj.x,y:obj.y+1},{x:obj.x,y:obj.y-1}];
-            g.enemies=g.enemies.map(e=>{if(e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y))return{...e,hp:e.hp-20};return e;}).filter(e=>e.hp>0);
+            g.enemies=g.enemies.map(e=>e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y)?{...e,hp:e.hp-20}:e).filter(e=>e.hp>0);
             g.flash=[...cells.map(c=>({...c,col:'#f97316',fid:Math.random()}))];g.flashUntil=Date.now()+500;
           }
-          return null;
-        }
-        return{...obj,hp:newHp};
-      })).filter(Boolean);
-      if(wallHit){g.stamina=Math.max(0,g.stamina-25);snd('clank');}
+          return null;}
+        return{...obj,hp:nhp};
+      }).filter(Boolean);
+      if(clank){g.stamina=Math.max(0,g.stamina-25);snd('drop');}
     }
-    g.flash=g.flash?.length?g.flash:cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
+    g.stamina=Math.max(0,g.stamina-10);
+    g.flash=cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
     if(hits>0)snd('hit');
     if(gmodeRef.current==='tutorial'&&!g.tutDone.attacked&&hits>0){
       g.tutDone.attacked=true;
-      if(g.tutStep===5){
-        setTimeout(()=>{const g2=gs.current;if(g2)g2.enemies=[];},300);
-        g.tutStep=6;
-        setTimeout(()=>setMsgRef.current?.(TUT[6].msg),900);
-        // Авто-просування кроку 6 (маяк) через 20с
-        setTimeout(()=>{const g2=gs.current;if(g2&&g2.tutStep===6&&!g2.tutDone.beaconed){g2.tutDone.beaconed=true;g2.tutStep=7;setMsgRef.current?.(TUT[7].msg);forceRender();}},20000);
-      }
+      if(g.tutStep===5){setTimeout(()=>{const g2=gs.current;if(g2)g2.enemies=[];},300);g.tutStep=6;setTimeout(()=>setMsgRef.current?.(TUT[6].msg),900);}
     }
     forceRender();
   }
@@ -666,58 +480,49 @@ function Game({gmode,settings,sPhase,onDead}){
   const doAttackRef=useRef(doAttack);
   useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
 
-  // ── Beacon complete ────────────────────────────────────────────
+  // \u2500\u2500 Beacon complete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const doBeaconComplete=useCallback(()=>{
     const g=gs.current;if(!g)return;
     snd('beacon');g.stamina=Math.min(100,g.stamina+50);g.divergence=0;g.highDTicks=0;g.dropped=false;g.beaconCount=0;g.beaconProgress=0;
     if(gmodeRef.current==='tutorial'&&!g.tutDone.beaconed){
-      g.tutDone.beaconed=true;
-      if(g.tutStep===6){
-        g.tutStep=7;
-        setTimeout(()=>setMsgRef.current?.(TUT[7].msg),600);
-        // Авто-просування кроку 7 (морзе) через 25с
-        setTimeout(()=>{const g2=gs.current;if(g2&&g2.tutStep===7&&!g2.tutDone.morsed){g2.tutDone.morsed=true;g2.tutStep=8;setMsgRef.current?.(TUT[8].msg);forceRender();}},25000);
-      }
+      g.tutDone.beaconed=true;if(g.tutStep===6){g.tutStep=7;setTimeout(()=>setMsgRef.current?.(TUT[7].msg),600);}
     }
     forceRender();
   },[]);
   const doBeaconRef=useRef(doBeaconComplete);
   useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
 
-  // ── Move ──────────────────────────────────────────────────────
+  // \u2500\u2500 Move \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const doMoveDir=useCallback((sdx,sdy)=>{
     const g=gs.current;if(!g)return;
     let gdx=sdx,gdy=sdy;
     if(isRadarRef.current){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
     if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
-    const rawX=g.player.x+gdx,rawY=g.player.y+gdy;
-       // Пригода: блок за краєм — перехід через edge timer
-    if(gmodeRef.current==='adventure'&&(rawX<0||rawX>=G||rawY<0||rawY>=G)){
-      return; // Не виходимо за межі — edgeTimer у game loop  const nx=clamp(rawX,0,G-1),ny=clamp(rawY,0,G-1);
+    const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
     if(nx===g.player.x&&ny===g.player.y)return;
+    if(gmodeRef.current==='adventure'&&(nx<0||nx>=G||ny<0||ny>=G))return; // wall in adventure
     if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    // Перевірка об'єктів
-    if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return;
-    // Перевірка боса (всі клітинки боса)
-    if(g.enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>bc.x===nx&&bc.y===ny)))return;
+    // Block movement through objects and boss cells
+    if(gmodeRef.current==='adventure'){
+      if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return;
+      if(g.enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>bc.x===nx&&bc.y===ny)))return;
+    }
     g.player={...g.player,x:nx,y:ny};
-    if(g.spell?.fn!=='rush'){const wMod=g.weaponMods?.weight||1;const cost=Math.max(0,g.pitch)*10*wMod;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
-    // Лут: підбір апгрейдів
+    if(g.spell?.fn!=='rush'){const cost=Math.max(0,g.pitch)*10;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
+    // Adventure: loot pickup
     if(gmodeRef.current==='adventure'&&g.objects){
-      const lootHit=g.objects.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
-      if(lootHit){
-        const ot=OBJ_TYPES[lootHit.type];const upg=ot.upg;
-        g.objects=g.objects.filter(o=>o.id!==lootHit.id);
+      const loot=g.objects.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
+      if(loot){
+        g.objects=g.objects.filter(o=>o.id!==loot.id);
+        const upg=OBJ_TYPES[loot.type]?.upg;
         if(upg==='hp'){g.player={...g.player,hp:Math.min(g.player.maxHp+20,g.player.hp+20),maxHp:g.player.maxHp+20};}
-        else if(upg==='fingers'){g.fingers=Math.min(7,(g.fingers||5)+1);}
         else if(upg==='spell'){
-          const locked=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||[]).includes(s));
-          if(locked.length>0){const ns=locked[Math.floor(Math.random()*locked.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsgRef.current?.(`📜 Вивчено: ${SPELL_MAP[ns]?.name}!`);}
-        }else if(upg&&UPGRADE_TYPES[upg]){
-          g.weaponMods=UPGRADE_TYPES[upg].fn(g.weaponMods||{reach:1,weight:1,sharpness:1,staminaRegen:0},g.player);
-          setMsgRef.current?.(`${ot.sym} ${ot.desc}`);
-        }
-        snd('spell');
+          const avail=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||['.']).includes(s));
+          if(avail.length>0){const ns=avail[Math.floor(Math.random()*avail.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsg('📜 Вивчено: '+(SPELL_MAP[ns]?.name||ns)+'!');}
+        }else if(upg==='reach'){g.weaponMods={...g.weaponMods,reach:g.weaponMods.reach+0.2};}
+        else if(upg==='weight'){g.weaponMods={...g.weaponMods,weight:Math.max(0.3,g.weaponMods.weight-0.15)};}
+        else if(upg==='sharpness'){g.weaponMods={...g.weaponMods,sharpness:g.weaponMods.sharpness+0.25};}
+        snd('spell');setMsg(OBJ_TYPES[loot.type]?.desc||'Покращення!');
       }
     }
     if(gmodeRef.current==='tutorial'&&!g.tutDone.moved){
@@ -726,7 +531,7 @@ function Game({gmode,settings,sPhase,onDead}){
     forceRender();
   },[]);
 
-  // ── Rotate (keyboard/manual) ───────────────────────────────────
+  // \u2500\u2500 Rotate (keyboard/manual) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const rotateW=useCallback((dir)=>{
     const g=gs.current;if(!g)return;
     const oldYaw=g.yawIdx;g.yawIdx=(g.yawIdx+dir+8)%8;
@@ -736,7 +541,7 @@ function Game({gmode,settings,sPhase,onDead}){
     forceRender();
   },[]);
 
-  // ── Morse ─────────────────────────────────────────────────────
+  // \u2500\u2500 Morse \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const handleMorse=useCallback((sym)=>{
     const g=gs.current;if(!g)return;
     snd(sym==='.'?'dot':'dash');g.morseSeq+=sym;forceRender();
@@ -745,12 +550,12 @@ function Game({gmode,settings,sPhase,onDead}){
       const g2=gs.current;if(!g2)return;
       const seq=g2.morseSeq;g2.morseSeq='';
       const sp=SPELL_MAP[seq];
-      if(sp)castSpell(sp);else setMsg(`? "${seq}" — невідоме заклинання`);
+      if(sp)castSpell(sp);else setMsg(`? "${seq}" \u2014 \u043d\u0435\u0432\u0456\u0434\u043e\u043c\u0435 \u0437\u0430\u043a\u043b\u0438\u043d\u0430\u043d\u043d\u044f`);
       forceRender();
     },1000);
   },[castSpell,setMsg]);
 
-  // ── Sensors ───────────────────────────────────────────────────
+  // \u2500\u2500 Sensors \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(()=>{
     if(sPhase!=='active')return;
     const handleCompassChange=(heading)=>{
@@ -771,16 +576,11 @@ function Game({gmode,settings,sPhase,onDead}){
         handleCompassChange(e.webkitCompassHeading);
       }
       // Tutorial pitch detection
-      if(gmodeRef.current==='tutorial'&&!g.tutDone.pitched&&g.tutStep===4&&(g.pitch<-0.2||g.pitch>0.2)){
+      if(gmodeRef.current==='tutorial'&&!g.tutDone.pitched&&g.tutStep===4&&(g.pitch<-0.4||g.pitch>0.4)){
         g.tutDone.pitched=true;
         const[dx,dy]=DIR[g.yawIdx];
-        // Спавн на 1 клітинку (не 2) — завжди в зоні удару
-        g.enemies=[{id:EID++,type:'shadow',x:clamp(g.player.x+dx,0,G-1),y:clamp(g.player.y+dy,0,G-1),hp:1,maxHp:1,lastMove:0,dummy:true}];
+        g.enemies=[{id:EID++,type:'shadow',x:clamp(g.player.x+dx*2,0,G-1),y:clamp(g.player.y+dy*2,0,G-1),hp:3,maxHp:3,lastMove:0,dummy:true}];
         g.tutStep=5;setTimeout(()=>setMsgRef.current?.(TUT[5].msg),600);
-        // Авто-просування якщо через 10с не вдалось
-        setTimeout(()=>{const g2=gs.current;if(g2&&g2.tutStep===5&&!g2.tutDone.attacked){g2.tutDone.attacked=true;g2.enemies=[];g2.tutStep=6;setMsgRef.current?.(TUT[6].msg);forceRender();}},10000);
-        // Авто-просування кроку 6 (маяк) через 25с
-        setTimeout(()=>{const g2=gs.current;if(g2&&g2.tutStep===6&&!g2.tutDone.beaconed){g2.tutDone.beaconed=true;g2.tutStep=7;setMsgRef.current?.(TUT[7].msg);forceRender();}},25000);
       }
       forceRender();
     };
@@ -790,30 +590,13 @@ function Game({gmode,settings,sPhase,onDead}){
     };
     const onM=(e)=>{
       const g=gs.current;if(!g)return;
-      const now=Date.now();const thr=settingsRef.current.strikeThr;let struck=false;
-      // Метод 1: чисте прискорення без гравітації (iOS Safari — найкраще)
-      const a=e.acceleration;
-      if(!struck&&a&&a.x!==null){
-        const amag=Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2);
-        if(amag>Math.max(6,thr*0.9)&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}
-      }
-      // Метод 2: кутова швидкість зап'ястя (iOS+Android)
-      const rr=e.rotationRate;
-      if(!struck&&rr){
-        const rot=Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0);
-        if(rot>Math.max(220,thr*28)&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}
-      }
-      // Метод 3: зміна магнітуди з гравітацією (запасний)
-      const ag=e.accelerationIncludingGravity;
-      if(!struck&&ag){
-        const gmag=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||9.8)**2);
-        const delta=Math.abs(gmag-prevAccMag.current);
-        if(delta>thr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
-        prevAccMag.current=gmag;
-      }
-      // still — для маяку (низька кутова швидкість = нерухомо)
-      const still=rr?Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0):999;
-      if(g.pitch<-0.2&&still<22&&(gmodeRef.current==='tutorial'||gmodeRef.current==='survival')){
+      const ag=e.accelerationIncludingGravity;if(!ag)return;
+      const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
+      const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
+      if(delta>settingsRef.current.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
+      prevAccMag.current=mag;
+      const rr=e.rotationRate;const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
+      if(g.pitch<-0.4&&still<18&&(gmodeRef.current==='tutorial'||gmodeRef.current==='survival')){
         g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/120,0,1);
         if(g.beaconCount>=120)doBeaconRef.current?.();
       }else{g.beaconCount=Math.max(0,g.beaconCount-1);g.beaconProgress=clamp(g.beaconCount/120,0,1);}
@@ -825,7 +608,7 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
   },[sPhase]);// eslint-disable-line
 
-  // ── Keyboard ──────────────────────────────────────────────────
+  // \u2500\u2500 Keyboard \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(()=>{
     const held={};let bInt=null;
     const kd=e=>{
@@ -853,10 +636,10 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
   },[sPhase,doMoveDir,rotateW,handleMorse]);
 
-  // ── Touch (свайп скрізь, але НЕ на scroll-елементах) ─────────
+  // \u2500\u2500 Touch (\u0441\u0432\u0430\u0439\u043f \u0441\u043a\u0440\u0456\u0437\u044c, \u0430\u043b\u0435 \u041d\u0415 \u043d\u0430 scroll-\u0435\u043b\u0435\u043c\u0435\u043d\u0442\u0430\u0445) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   useEffect(()=>{
     const onS=e=>{
-      // Не перехоплюємо якщо це scroll-контейнер (Morse bar)
+      // \u041d\u0435 \u043f\u0435\u0440\u0435\u0445\u043e\u043f\u043b\u044e\u0454\u043c\u043e \u044f\u043a\u0449\u043e \u0446\u0435 scroll-\u043a\u043e\u043d\u0442\u0435\u0439\u043d\u0435\u0440 (Morse bar)
       if(e.target.closest('.morse-scroll'))return;
       e.preventDefault();
       touchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};
@@ -877,20 +660,67 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
   },[doMoveDir,handleMorse]);
 
-  // ════════════════════════════════════════════════════════════════
-  // ГЕЙМ ЛУП — мінімальні deps, все через refs
-  // ════════════════════════════════════════════════════════════════
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  // \u0413\u0415\u0419\u041c \u041b\u0423\u041f \u2014 \u043c\u0456\u043d\u0456\u043c\u0430\u043b\u044c\u043d\u0456 deps, \u0432\u0441\u0435 \u0447\u0435\u0440\u0435\u0437 refs
+  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   useEffect(()=>{
     const id=setInterval(()=>{
       const g=gs.current;if(!g)return;
       const now=Date.now();
       const wpn=settingsRef.current.startWpn;
-      const wMods=gs.current?.weaponMods||{reach:1,weight:1,sharpness:1};
-    const C=STRENGTH*wMods.sharpness/(WPN[wpn]?.w||5)/wMods.weight;
-    const modReach=Math.round((WPN[wpn]?.reach||2)*wMods.reach);
+      const C=STRENGTH/WPN[wpn].w;
 
       // Flash expire
       if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
+
+      // ── ADVENTURE: edge timer + room transition ──────────────────
+      if(gmodeRef.current==='adventure'&&!g.transitioning){
+        const px=g.player.x,py=g.player.y;
+        let eDir=null;
+        if(py===0)eDir='N';else if(py===G-1)eDir='S';
+        else if(px===0)eDir='W';else if(px===G-1)eDir='E';
+        if(eDir){
+          g.edgeTimer=(g.edgeTimer||0)+1;
+          if(g.edgeTimer===25){// ~2s: show preview
+            g.peekDir=eDir;
+            const nc=getNextCoord(g.roomCoord,eDir);
+            g.peekInfo=g.roomMap[coordId(nc.x,nc.y)]||null;
+          }
+          if(g.edgeTimer>=50){// ~4s: auto-transition
+            g.transitioning=true;g.edgeTimer=0;
+            const dir=eDir;const nc=getNextCoord(g.roomCoord,dir);
+            const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
+            // Save current room
+            const cid=coordId(g.roomCoord.x,g.roomCoord.y);
+            if(g.roomMap[cid]){g.roomMap[cid].enemies=[...g.enemies];g.roomMap[cid].objects=[...g.objects];g.roomMap[cid].cleared=g.enemies.length===0;}
+            // Spawn position in new room
+            const sx=dir==='E'?0:dir==='W'?G-1:clamp(g.player.x,0,G-1);
+            const sy=dir==='S'?0:dir==='N'?G-1:clamp(g.player.y,0,G-1);
+            g.player={...g.player,x:sx,y:sy};
+            g.roomCoord=nc;g.roomNumber=rNum;g.peekDir=null;g.peekInfo=null;g._roomCleared=false;
+            if(g.roomMap[nid]){
+              const sv=g.roomMap[nid];
+              g.enemies=sv.enemies||[];g.objects=sv.objects||[];g.isBossRoom=sv.isBoss||false;
+              g.roomMap[nid].visited=true;
+              setMsgRef.current?.(sv.cleared?'Кімната '+rNum+' (очищена)':'Кімната '+rNum+' · '+g.enemies.length+' ворогів'+(g.isBossRoom?' 👹':''));
+            }else{
+              const ac=generateRoom(rNum,sx,sy);
+              g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;
+              g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};
+              setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);
+            }
+            g.score+=15;g.flash=[];snd('wave');
+            setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
+          }
+        }else{
+          if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}
+        }
+        if(g.enemies.length===0&&!g._roomCleared){
+          g._roomCleared=true;
+          setMsgRef.current?.('✓ Очищено! Стань на краю 4с → наступна кімната');
+          setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);
+        }
+      }
 
       // Divergence
       let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
@@ -901,9 +731,8 @@ function Game({gmode,settings,sPhase,onDead}){
       else{g.highDTicks=0;}
       if(g.dropped&&now>g.droppedUntil)g.dropped=false;
 
-      // Stamina — з множником регену від складності
-      const dCfg=DIFFS[settingsRef.current.diff??1];
-      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8*dCfg.regen-(g.divergence>65?1.2:g.divergence>40?0.3:0),0,100);
+      // Stamina
+      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2:g.divergence>40?0.3:0),0,100);
 
       // Spell expire
       if(g.spell&&now>g.spell.expires)g.spell=null;
@@ -917,61 +746,38 @@ function Game({gmode,settings,sPhase,onDead}){
       }
       g.prevYawIdx=g.yawIdx;
 
-      // Tutorial крок 5: dummy завжди перед мечем (якщо гравець повернув)
-      if(gmodeRef.current==='tutorial'&&g.tutStep===5&&!g.tutDone.attacked){
-        const dummy=g.enemies.find(e=>e.dummy);
-        if(dummy){
-          const[fdx,fdy]=DIR[g.yawIdx];
-          const tx=clamp(g.player.x+fdx,0,G-1),ty=clamp(g.player.y+fdy,0,G-1);
-          if(dummy.x!==tx||dummy.y!==ty){
-            g.enemies=g.enemies.map(e=>e.dummy?{...e,x:tx,y:ty}:e);
-          }
-        }
-      }
-
-      // ── ВОРОГИ ─────────────────────────────────────────────────
+      // \u2500\u2500 \u0412\u041e\u0420\u041e\u0413\u0418 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       if(!g.dropped&&g.enemies.length>0){
         let dmg=0,flash=false;
         g.enemies=g.enemies.map(e=>{
           if(e.dummy)return e;
           if(e.frozen&&now<e.frozen)return e;
           const et=ET[e.type];
-          const ms=(e.chaosUntil&&now<e.chaosUntil)?et.ms*2:et.ms*(e.spdM||1);
+          const ms=(e.chaosUntil&&now<e.chaosUntil)?et.ms*2:et.ms;
           if(now-(e.lastMove||0)<ms)return e;
           const dx=g.player.x-e.x,dy=g.player.y-e.y;
           const dist=Math.abs(dx)+Math.abs(dy);
           if(dist<=1){
             const shield=g.spell?.fn==='shield',armor=g.spell?.fn==='armor',stealth=g.spell?.fn==='stealth';
-            const baseDmgE=Math.round(et.dmg*(e.dmgM||1));
-            if(!stealth){const d=armor?Math.round(baseDmgE*.4):baseDmgE;dmg+=d;flash=true;if(shield)g.spell=null;}
+            if(!stealth){const d=armor?Math.round(et.dmg*.4):et.dmg;dmg+=d;flash=true;if(shield)g.spell=null;}
             return{...e,lastMove:now};
           }
-          // Боси: рух великим тілом
+          // Boss: body-aware movement
           if(e.type==='boss'){
-            const bossCells=calcBossCells(e.x,e.y,e.size);
-            // Перевіряємо сусідність
-            const adj=bossCells.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
+            const bcells=calcBossCells(e.x,e.y,e.size);
+            const adj=bcells.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
             if(adj){dmg+=e.dmg;flash=true;return{...e,lastMove:now};}
-            // Рух боса — перевіряємо всі нові позиції тіла
-            const moveDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]];
-            const bossMove=moveDirs.map(([mx,my])=>{
+            // Move boss toward player
+            const moveDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]].filter(([mx,my])=>mx||my);
+            const bm=moveDirs.map(([mx,my])=>{
               const nbx=e.x+mx,nby=e.y+my;
               if(nbx<0||nby<0||nbx+e.size>G||nby+e.size>G)return null;
-              const newCells=calcBossCells(nbx,nby,e.size);
-              if(newCells.some(nc=>nc.x===g.player.x&&nc.y===g.player.y))return null;
-              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&newCells.some(nc=>nc.x===o.x&&nc.y===o.y)))return null;
-              if(g.enemies.some(o=>o.id!==e.id&&o.type!=='boss'&&newCells.some(nc=>nc.x===o.x&&nc.y===o.y)))return null;
-              const d=Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby);
-              return{x:nbx,y:nby,d};
+              const nc2=calcBossCells(nbx,nby,e.size);
+              if(nc2.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;
+              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc2.some(c=>c.x===o.x&&c.y===o.y)))return null;
+              return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};
             }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
-            // Спецздібність
-            const now2=Date.now();
-            if(e.special==='teleport'&&now2-(e.lastSpecial||0)>4000){
-              const tx=Math.max(0,g.player.x+(Math.random()>0.5?2:-2));
-              const ty=Math.max(0,g.player.y+(Math.random()>0.5?2:-2));
-              return{...e,x:clamp(tx,0,G-1),y:clamp(ty,0,G-1),lastSpecial:now2,lastMove:now};
-            }
-            return bossMove?{...e,x:bossMove.x,y:bossMove.y,lastMove:now}:{...e,lastMove:now};
+            return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
           }
           const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
           const best=dirs.map(([mx,my])=>{
@@ -979,7 +785,7 @@ function Game({gmode,settings,sPhase,onDead}){
             if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
             if(nx2===g.player.x&&ny2===g.player.y)return null;
             if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
-            // Об'єкти блокують рух
+            // Objects block enemies
             if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2))return null;
             return{x:nx2,y:ny2,d:Math.abs(g.player.x-nx2)+Math.abs(g.player.y-ny2)};
           }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
@@ -993,27 +799,10 @@ function Game({gmode,settings,sPhase,onDead}){
         }
       }
 
-            // ── ПРИГОДА: EDGE TIMER + PEEK + КІМНАТА ОЧИЩЕНА ──────────────
-      if(gmodeRef.current==='adventure'){
-        const px=g.player.x,py=g.player.y;
-        let eDir=null;
-        if(py===0)eDir='N';else if(py===G-1)eDir='S';
-        else if(px===0)eDir='W';else if(px===G-1)eDir='E';
-        if(eDir&&!g.transitioning){
-          g.edgeTimer=(g.edgeTimer||0)+1;
-          if(g.edgeTimer===25){g.peekDir=eDir;const nc=getNextCoord(g.roomCoord||{x:0,y:0},eDir);const nid=coordId(nc.x,nc.y);g.peekInfo=g.roomMap[nid]||null;}
-          if(g.edgeTimer>=50)handleRoomTransitionRef.current?.(eDir);
-        }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
-        if(g.enemies.length===0&&!g._roomCleared){
-          g._roomCleared=true;
-          setMsgRef.current?.('✓ Очищено! Стань на краю → наступна кімната');
-          setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);
-        }
-      }
-      
+      // \u2500\u2500 \u0425\u0412\u0418\u041b\u042f \u0417\u0410\u0412\u0415\u0420\u0428\u0415\u041d\u0410 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       if(gmodeRef.current==='survival'&&g.wave>0&&g.enemies.length===0&&!g._waveTimer){
         const next=g.wave+1;
-        g.wave=next;g.waveMsg=`Хвиля ${next}`;
+        g.wave=next;g.waveMsg=`\u0425\u0432\u0438\u043b\u044f ${next}`;
         g._waveTimer=setTimeout(()=>{
           if(gs.current)gs.current._waveTimer=null;
           doSpawnRef.current?.(next);
@@ -1023,9 +812,9 @@ function Game({gmode,settings,sPhase,onDead}){
       forceRender();
     },TICK);
     return()=>clearInterval(id);
-  },[]);// ← ПОРОЖНІ DEPS! Все через refs — луп ніколи не перезапускається.
+  },[]);// \u2190 \u041f\u041e\u0420\u041e\u0416\u041d\u0406 DEPS! \u0412\u0441\u0435 \u0447\u0435\u0440\u0435\u0437 refs \u2014 \u043b\u0443\u043f \u043d\u0456\u043a\u043e\u043b\u0438 \u043d\u0435 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0454\u0442\u044c\u0441\u044f.
 
-  // ── Render ────────────────────────────────────────────────────
+  // \u2500\u2500 Render \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const g=gs.current;
   if(!g)return null;
   const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn);
@@ -1034,19 +823,16 @@ function Game({gmode,settings,sPhase,onDead}){
   const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
 
   return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",position:isPanorama?'fixed':'relative',inset:isPanorama?0:'auto',zIndex:isPanorama?0:'auto'}}>
-      {/* Кімнатний preview */}
-      {gmode==='adventure'&&<RoomPreview g={g} onEnter={doEnterRoom} onCancel={()=>{const gg=gs.current;if(gg){gg.peekDir=null;gg.peekRoom=null;gg.edgeTicks=0;forceRender();}}}/>}
+    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
 
       {/* HUD */}
-      <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center',position:isPanorama?'relative':'static',zIndex:isPanorama?10:'auto',background:isPanorama?'rgba(1,13,31,0.85)':'transparent'}}>
+      <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center'}}>
         <Bar v={g.player.hp} max={g.player.maxHp} col={g.player.hp>50?'#22c55e':g.player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
         <Bar v={g.stamina} max={100} col='#60a5fa' lbl="STA"/>
         <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<g.fingers?(g.dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
-        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
-        <div style={{fontSize:'9px',color:g.isBossRoom?'#f97316':'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}`:gmode==='survival'?`W${g.wave}`:'TUT'}{g.isBossRoom&&'👹'}</div>
-        {gmode==='survival'&&<div style={{fontSize:'8px',color:['#60a5fa','#22c55e','#f59e0b','#ef4444','#a855f7'][settings.diff??1],minWidth:'18px',textAlign:'right'}}>{['🌙','⚔','🏹','🔥','💀'][settings.diff??1]}</div>}
-        {gmode==='survival'&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
+        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>\u25c9</div>}
+        <div style={{fontSize:'9px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:gmode==='survival'?`W${g.wave}`:'TUT'}</div>
+        {(gmode==='survival'||gmode==='adventure')&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
       </div>
 
       {/* DIV + spell */}
@@ -1054,7 +840,7 @@ function Game({gmode,settings,sPhase,onDead}){
         <div style={{fontSize:'7px',color:'#1e3a5f',width:'18px'}}>DIV</div>
         <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:dc,transition:'width .05s'}}/></div>
         {g.spell&&<div style={{fontSize:'8px',color:g.spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{g.spell.name}</div>}
-        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
+        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>\u26a0DROP</div>}
       </div>
 
       {/* Morse input display */}
@@ -1063,73 +849,95 @@ function Game({gmode,settings,sPhase,onDead}){
       </div>}
 
       {/* Sensor readout */}
-      {/* Weapon stats in adventure mode */}
-      {gmode==='adventure'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px'}}>
-        <WeaponStats mods={g.player?.weaponMods} unlockedCount={(g.player?.unlockedSpells?.length||2)}/>
-      </div>}
       {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-        <span>β<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}°</span></span>
-        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
-        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
+        <span>\u03b2<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}\u00b0</span></span>
+        <span>\u2694<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
+        {isRadar&&<span>\u21bb<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}\u00b0</span></span>}
         <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
       </div>}
 
       {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
-      {/* Бос HP бар */}
-      {g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
-        <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}><div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/></div>
-        <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
-      </div>);})()}
+      {/* Adventure HUD */}
+      {gmode==='adventure'&&g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(
+        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
+          <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
+          <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}>
+            <div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/>
+          </div>
+          <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
+        </div>);})()}
+      {gmode==='adventure'&&(g.edgeTimer||0)>5&&(
+        <div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
+          <div style={{fontSize:'7px',color:'#f97316',minWidth:'40px'}}>{g.peekDir?`→${g.peekDir}`:'🚪'}</div>
+          <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.min(100,(g.edgeTimer||0)/50*100)}%`,background:'#f97316',transition:'width .08s'}}/>
+          </div>
+          <div style={{fontSize:'7px',color:'#f97316'}}>{Math.round((g.edgeTimer||0)/50*100)}%</div>
+        </div>
+      )}
+      {gmode==='adventure'&&g.peekDir&&(()=>{
+        const nc=getNextCoord(g.roomCoord,g.peekDir);const rNum=calcRoomNum(nc.x,nc.y);
+        const pr=g.peekInfo;const dirSym={N:'↑ ПІВНІЧ',S:'↓ ПІВДЕНЬ',E:'→ СХІД',W:'← ЗАХІД'}[g.peekDir]||g.peekDir;
+        return(<div style={{position:'fixed',bottom:'8%',left:'50%',transform:'translateX(-50%)',zIndex:20,background:'rgba(1,13,31,0.96)',border:`1px solid ${pr?.isBoss?'#f97316':'#1e4a7f'}`,borderRadius:'9px',padding:'10px 14px',minWidth:'210px',fontFamily:"'Courier New',monospace",animation:'fadeIn .3s ease'}}>
+          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'3px'}}>{dirSym}</div>
+          <div style={{fontSize:'12px',fontWeight:'bold',color:pr?.isBoss?'#f97316':'#60a5fa',marginBottom:'4px'}}>{pr?(pr.isBoss?`👹 КІМНАТА ${rNum} — БОС`:`Кімната ${rNum}`):`? Кімната ${rNum}`}</div>
+          {pr&&<div style={{fontSize:'9px',color:'#94a3b8'}}>
+            {pr.cleared?<span style={{color:'#22c55e'}}>✓ очищена</span>:<span>⚔ {pr.enemies?.length||0} ворогів</span>}
+            {pr.objects?.filter(o=>OBJ_TYPES[o.type]?.isLoot).length>0&&<span style={{color:'#fbbf24'}}> 💎 {pr.objects.filter(o=>OBJ_TYPES[o.type]?.isLoot).map(o=>OBJ_TYPES[o.type]?.sym).join('')}</span>}
+          </div>}
+          <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'4px',textAlign:'center'}}>залишайся на краю → авто-перехід</div>
+        </div>);
+      })()}
+      {gmode==='adventure'&&(g.weaponMods?.reach>1||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1||(g.unlockedSpells?.length||0)>1)&&(
+        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
+          {g.weaponMods?.reach>1&&<span style={{color:'#60a5fa'}}>🔭+{Math.round((g.weaponMods.reach-1)*100)}%</span>}
+          {g.weaponMods?.weight<1&&<span style={{color:'#22c55e'}}>🌬+{Math.round((1-g.weaponMods.weight)*100)}%</span>}
+          {g.weaponMods?.sharpness>1&&<span style={{color:'#f59e0b'}}>⚡+{Math.round((g.weaponMods.sharpness-1)*100)}%</span>}
+          <span style={{color:'#e879f9',marginLeft:'auto'}}>✨{g.unlockedSpells?.length||1}/16</span>
+        </div>
+      )}
 
       {/* GRID */}
-      {/* СІТКА (PANORAMA = full screen perspective) */}
-      <div style={isPanorama?{position:'fixed',inset:0,zIndex:1,display:'grid',gridTemplateColumns:`repeat(${G},1fr)`,gridTemplateRows:`repeat(${G},1fr)`,transform:'perspective(280px) rotateX(40deg)',transformOrigin:'50% 46%'}:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
-        <div style={isPanorama?{display:'contents'}:{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+      <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
             const isP=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
             const en=g.enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
             const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
             const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
-            // Межі ігрового поля
-            let edge=false,outOfBounds=false;
-            if(isRadar){
-              const{gx,gy}=fromScreen(sx,sy,g.player.x,g.player.y,g.compassD);
-              outOfBounds=gx<0||gx>=G||gy<0||gy>=G;
-              edge=!outOfBounds&&isEdgeCell(gx,gy);
-            }else{
-              edge=isEdgeCell(sx,sy);
-            }
+            const isEdge=sx===0||sx===G-1||sy===0||sy===G-1;
             const cellObj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
-            const cellUpg=g.upgrades?.find(u=>{const{sx:ux,sy:uy}=getPos(u.x,u.y);return ux===sx&&uy===sy;});
             const cellBoss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-            let bg=outOfBounds?'#010610':edge?'#030f1f':'#020c1a';
-            let bdr=outOfBounds?'1px solid #050a10':edge?'1px solid #2a4a7f':'1px solid #091c30';
+            let bg=isEdge?'#030f1f':'#020c1a',bdr=isEdge?'1px solid #2a4a7f':'1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
             else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
             else if(cellBoss){bg=cellBoss.col+'22';bdr=`2px solid ${cellBoss.col}`;}
-            else if(cellUpg){bg='#f59e0b22';bdr=`1px solid ${cellUpg.col}`;}
-            else if(cellObj){const ot=OBJ_TYPES[cellObj.type];bg=ot.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot.col}`;}
+            else if(cellObj&&!OBJ_TYPES[cellObj.type]?.isLoot){const ot2=OBJ_TYPES[cellObj.type];bg=ot2.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot2.col}`;}
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
-              <div key={idx} style={isPanorama?{background:bg,border:bdr,display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}:{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
-                {/* Об'єкти */}
-                {!isP&&!en&&(()=>{const obj=g.objects?.find(o=>isRadar?false:o.x===sx&&o.y===sy)||g.objects?.find(o=>{if(!isRadar)return false;const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});if(!obj)return null;const ot=OBJ_TYPES[obj.type];return(<span style={{fontSize:isPanorama?'1.5vw':`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.5+((obj.hp||1)/3)*0.5):1}}>{ot.sym}</span>);})()}
-                {/* Покращення (лут) */}
-                {!isP&&!en&&cellUpg&&!cellObj&&(<div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'1px'}}>
-                  <span style={{fontSize:isPanorama?'1.8vw':`${cellSz*.6}px`,filter:'drop-shadow(0 0 3px '+cellUpg.col+')'}}>{cellUpg.sym}</span>
-                  <span style={{fontSize:isPanorama?'0.7vw':`${Math.max(6,cellSz*.28)}px`,color:cellUpg.col,lineHeight:1}}>{cellUpg.label?.slice(0,4)}</span>
-                </div>)}
-                {/* Боси: відображення всього тіла */}
-                {!isP&&!en&&(()=>{if(!g.enemies)return null;const boss=g.enemies.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));if(!boss)return null;const isCore=getPos(boss.x,boss.y).sx===sx&&getPos(boss.x,boss.y).sy===sy;return(<><div style={{position:'absolute',inset:0,background:boss.col+'33',borderRadius:'2px'}}/><span style={{fontSize:isPanorama?'1.8vw':`${cellSz*.55}px`,color:boss.col,position:'relative',zIndex:1,fontWeight:'bold'}}>{isCore?boss.sym:'·'}</span></>);})()}
+              <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
+                {/* Adventure: objects */}
+                {!isP&&!en&&(()=>{
+                  const obj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
+                  if(!obj)return null;
+                  const ot=OBJ_TYPES[obj.type];
+                  return <span style={{fontSize:`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.5+((obj.hp||1)/3)*0.5):1}}>{ot.sym}</span>;
+                })()}
+                {/* Adventure: boss body */}
+                {!isP&&!en&&(()=>{
+                  const boss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
+                  if(!boss)return null;
+                  const isCore=getPos(boss.x,boss.y).sx===sx&&getPos(boss.x,boss.y).sy===sy;
+                  return <span style={{fontSize:`${cellSz*.6}px`,color:boss.col,fontWeight:'bold'}}>{isCore?boss.sym:'·'}</span>;
+                })()}
                 {isP?(<>
-                  <div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',
+                  <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
                     background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
                     boxShadow:`0 0 5px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:isPanorama?'1.2vw':`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[g.yawIdx]}</div>
-                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:isPanorama?'1.3vw':`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'\u2191':DSYM[g.yawIdx]}</div>
+                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
               </div>
             );
           })}
@@ -1138,307 +946,86 @@ function Game({gmode,settings,sPhase,onDead}){
 
       {/* Beacon */}
       {g.beaconProgress>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
+        <div style={{fontSize:'7px',color:'#22c55e'}}>\u2b07\u041c\u0410\u042f\u041a</div>
         <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.beaconProgress*100}%`,background:'#22c55e',transition:'width .05s'}}/></div>
       </div>}
 
       {/* Companion */}
-      {/* Прев'ю кімнати + статистика зброї в режимі пригоди */}
-      {gmodeRef.current==='adventure'&&g.peekDir&&<RoomPreview peekDir={g.peekDir} peekInfo={g.peekInfo} edgeTimer={g.edgeTimer||0} roomCoord={g.roomCoord||{x:0,y:0}}/>}
-      {gmodeRef.current==='adventure'&&<WeaponStats weaponMods={g.weaponMods} unlockedSpells={g.unlockedSpells}/>}
-      {gmodeRef.current==='adventure'&&g.peekDir&&<RoomPreview peekDir={g.peekDir} peekInfo={g.peekInfo} edgeTimer={g.edgeTimer||0} roomCoord={g.roomCoord||{x:0,y:0}}/>}
-      {gmodeRef.current==='adventure'&&(g.weaponMods?.reach>1||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1)&&<WeaponStats weaponMods={g.weaponMods} unlockedSpells={g.unlockedSpells}/>}
-            {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
+      {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
 
-      {/* MORSE BAR — завжди видимий знизу */}
-      <MorseBar currentSeq={g.morseSeq} unlocked={gmodeRef.current==='adventure'?g.unlockedSpells:null}/>
+      {/* MORSE BAR \u2014 \u0437\u0430\u0432\u0436\u0434\u0438 \u0432\u0438\u0434\u0438\u043c\u0438\u0439 \u0437\u043d\u0438\u0437\u0443 */}
+      <MorseBar currentSeq={g.morseSeq} unlocked={gmode==='adventure'?g.unlockedSpells:null}/>
 
       {/* Status */}
       <div style={{padding:'1px 8px 4px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
         <span style={{color:dc}}>D={Math.round(g.divergence)}%</span>
         <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
         {isRadar&&<span style={{color:'#a78bfa'}}>RADAR</span>}
-        <span>свайп=рух · тап=· · тримай=−</span>
+        <span>\u0441\u0432\u0430\u0439\u043f=\u0440\u0443\u0445 \u00b7 \u0442\u0430\u043f=\u00b7 \u00b7 \u0442\u0440\u0438\u043c\u0430\u0439=\u2212</span>
       </div>
     </div>
   );
 }
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
-// ── WARNING ───────────────────────────────────────────────────────
-// ── COMBINED: ПОПЕРЕДЖЕННЯ + ДАТЧИКИ ─────────────────────────────
-function WarningSensors({sPhase,setSPhase,onContinue}){
+// \u2500\u2500 WARNING \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function Warning({onOk}){
   const[ok,setOk]=useState(false);
-  const reqS=async()=>{
-    setSPhase('req');
-    try{
-      if(typeof DeviceOrientationEvent?.requestPermission==='function')
-        if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;
-      if(typeof DeviceMotionEvent?.requestPermission==='function')
-        if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;
-      setSPhase('active');
-    }catch{setSPhase('denied');}
-  };
-  return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'11px'}}>
-      <div style={{fontSize:'32px'}}>⚠️</div>
-      <div style={{color:'#f59e0b',fontSize:'14px',fontWeight:'bold'}}>МИР 13×13 — СЛІПИЙ БІЙ</div>
-
-      {/* Попередження */}
-      <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:1.9,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'12px',width:'100%'}}>
-        Гра вимагає фізичних рухів смартфоном.<br/>
-        <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
-        Грай в безпечному відкритому місці.<br/>
-        <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
-      </div>
-
-      {/* Датчики */}
-      <div style={{width:'100%',maxWidth:'300px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':sPhase==='denied'?'#7f1d1d':'#1e3a5f'}`,borderRadius:'8px',padding:'12px'}}>
-        <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'8px'}}>ДАТЧИКИ РУХУ</div>
-        {sPhase==='idle'&&(
-          <>
-            <div style={{fontSize:'9px',color:'#334155',marginBottom:'8px',lineHeight:1.7}}>
-              Без датчиків гра не має сенсу.<br/>
-              Компас → напрямок зброї · Нахил → заряд<br/>
-              Мах телефоном → удар · Спокій → Маяк
-            </div>
-            <B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>
-            <button onClick={()=>setSPhase('denied')} style={{width:'100%',marginTop:'6px',padding:'6px',background:'none',border:'none',color:'#1e3a5f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit'}}>
-              продовжити без датчиків (тільки клавіатура)
-            </button>
-          </>
-        )}
-        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px',textAlign:'center'}}>⏳ Очікую дозволу...</div>}
-        {sPhase==='active'&&(
-          <div style={{fontSize:'10px',color:'#22c55e',lineHeight:1.9}}>
-            ◉ ДАТЧИКИ АКТИВНІ<br/>
-            <span style={{fontSize:'9px',color:'#16a34a'}}>
-              Оберти телефону = напрямок зброї<br/>
-              Нахил вгору/вниз = заряд / відпочинок<br/>
-              Різкий мах = удар · Донизу+нерухомо = Маяк
-            </span>
-          </div>
-        )}
-        {sPhase==='denied'&&(
-          <div style={{fontSize:'9px',color:'#ef4444',lineHeight:1.7}}>
-            ⚠ Датчики недоступні<br/>
-            <span style={{color:'#334155'}}>Доступні кнопки: WASD · Q/E · Z/C · Пробіл · B</span><br/>
-            <button onClick={reqS} style={{marginTop:'4px',background:'none',border:'none',color:'#4a6a9f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline'}}>спробувати знову</button>
-          </div>
-        )}
-      </div>
-
-      {/* Підтвердження */}
-      <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
-        <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
-        Я розумію і граю обережно
-      </label>
-      <B2 onClick={(ok&&sPhase!=='idle'&&sPhase!=='req')?onContinue:undefined}
-        col={(ok&&sPhase!=='idle'&&sPhase!=='req')?'#22c55e':'#1e3a5f'}
-        style={{maxWidth:'280px',opacity:(ok&&sPhase!=='idle'&&sPhase!=='req')?1:.4}}>
-        {!ok?'(підтвердь спочатку)':sPhase==='idle'||sPhase==='req'?'(підключи датчики)':'▷ ПРОДОВЖИТИ'}
-      </B2>
+  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
+    <div style={{fontSize:'36px'}}>\u26a0\ufe0f</div>
+    <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>\u0423\u0412\u0410\u0413\u0410!</div>
+    <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:2,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'14px'}}>
+      \u0413\u0440\u0430 \u0432\u0438\u043c\u0430\u0433\u0430\u0454 \u0444\u0456\u0437\u0438\u0447\u043d\u0438\u0445 \u0440\u0443\u0445\u0456\u0432 \u0441\u043c\u0430\u0440\u0442\u0444\u043e\u043d\u043e\u043c.<br/>
+      <span style={{color:'#ef4444',fontWeight:'bold'}}>\u041d\u0415 \u0440\u043e\u0437\u0431\u0438\u0439 \u0442\u0435\u043b\u0435\u0444\u043e\u043d!</span><br/>
+      \u0413\u0440\u0430\u0439 \u0432 \u0431\u0435\u0437\u043f\u0435\u0447\u043d\u043e\u043c\u0443 \u0432\u0456\u0434\u043a\u0440\u0438\u0442\u043e\u043c\u0443 \u043c\u0456\u0441\u0446\u0456.<br/>
+      \u041f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u0439\u0441\u044f \u0449\u043e \u043d\u0430\u0432\u043a\u043e\u043b\u043e \u043d\u0456\u043a\u043e\u0433\u043e \u043d\u0435\u043c\u0430\u0454.<br/>
+      <span style={{color:'#334155'}}>\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0454\u0442\u044c\u0441\u044f \u0440\u0435\u043c\u0456\u043d\u0435\u0446\u044c \u043d\u0430 \u0437\u0430\u043f'\u044f\u0441\u0442\u0456.</span>
     </div>
-  );
-}
-
-// ── ШВИДКІ НАЛАШТУВАННЯ ПЕРЕД ГРОЮ ───────────────────────────────
-function PreGame({s,setS,sPhase,setSPhase,onStart,onBack}){
-  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
-  return(
-    <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
-        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'20px',cursor:'pointer',padding:'4px'}}>←</button>
-        <div style={{color:'#3a6a9f',fontSize:'14px',fontWeight:'bold'}}>◈ ВИЖИВАННЯ</div>
-      </div>
-
-      {/* Датчики */}
-      <Sec title="ДАТЧИКИ">
-        {sPhase==='active'
-          ?<div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{color:'#22c55e',fontSize:'10px'}}>◉ АКТИВНІ</span>
-            <button onClick={()=>setSPhase('idle')} style={{background:'none',border:'1px solid #1e3a5f',color:'#334155',borderRadius:'4px',padding:'3px 8px',cursor:'pointer',fontFamily:'inherit',fontSize:'8px'}}>вимкнути</button>
-          </div>
-          :<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ</B2>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'9px',marginTop:'4px'}}>⚠ Відхилено. WASD доступні.</div>}
-      </Sec>
-
-      {/* Складність */}
-      <Sec title="СКЛАДНІСТЬ">
-        <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
-          {DIFFS.map((d,i)=>(
-            <button key={d.id} onClick={()=>setS(p=>({...p,diff:i}))}
-              style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 10px',
-                background:s.diff===i?d.id==='night'?'#1e3a8a22':d.id==='warrior'?'#16a34a22':d.id==='hunter'?'#f59e0b22':d.id==='berserk'?'#ef444422':'#a855f722':'#060f1e',
-                border:`1px solid ${s.diff===i?d.id==='night'?'#3b82f6':d.id==='warrior'?'#22c55e':d.id==='hunter'?'#f59e0b':d.id==='berserk'?'#ef4444':'#a855f7':'#1e3a5f'}`,
-                borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',
-                color:s.diff===i?'#e2e8f0':'#334155'}}>
-              <span style={{fontWeight:s.diff===i?'bold':'normal'}}>{d.name}</span>
-              <span style={{fontSize:'8px',color:'#4a6a9f'}}>{d.desc}</span>
-            </button>
-          ))}
-        </div>
-      </Sec>
-
-      {/* Режим */}
-      <Sec title="РЕЖИМ ГРАВЦЯ">
-        <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі'],['panorama','Панорама','Перспектива']].map(([val,lbl,desc])=>(
-            <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))}
-              style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
-              <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
-            </button>
-          ))}
-        </div>
-      </Sec>
-
-      {/* Зброя */}
-      <Sec title="ЗБРОЯ">
-        <div style={{display:'flex',flexDirection:'column',gap:'3px'}}>
-          {Object.entries(WPN).map(([k,w])=>(
-            <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))}
-              style={{display:'flex',justifyContent:'space-between',padding:'7px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
-              <span>{w.label}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
-            </button>
-          ))}
-        </div>
-      </Sec>
-
-      <B2 onClick={onStart} col='#60a5fa' style={{marginTop:'4px',fontSize:'14px',fontWeight:'bold'}}>
-        ◈ ПОЧАТИ
-      </B2>
-    </div>
-  );
-}
-
-// ── ROOM PREVIEW (превʼю кімнати перед переходом) ─────────────────
-function RoomPreview({peekData,peekProgress,peekDir,onEnter,onCancel}){
-  if(!peekData||!peekDir)return null;
-  const pd=peekData;const pct=Math.round((peekProgress||0)*100);
-  return(<div style={{position:'fixed',inset:0,zIndex:20,background:'rgba(1,13,31,0.88)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace"}}>
-    <div style={{background:'#060f1e',border:`2px solid ${pd.isBoss?'#f97316':'#3b82f6'}`,borderRadius:'10px',padding:'16px',maxWidth:'260px',width:'100%',textAlign:'center',display:'flex',flexDirection:'column',gap:'8px'}}>
-      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.15em'}}>КІМНАТА {pd.roomNum} · {peekDir==='left'?'←':peekDir==='right'?'→':peekDir==='up'?'↑':'↓'}</div>
-      <div style={{fontSize:'18px',color:pd.isBoss?'#f97316':'#60a5fa',fontWeight:'bold'}}>{pd.isBoss?`👹 ${pd.boss?.name||'БОС'}`:`${pd.enemies.length} ворогів`}</div>
-      {pd.upgrades?.length>0&&<div style={{fontSize:'10px',color:'#22c55e'}}>
-        {pd.upgrades.map((u,i)=><span key={i} style={{margin:'0 3px'}}>{u.pickupType==='spell'?'🔮':UPGRADE_TYPES[u.subtype]?.sym||'?'}</span>)}
-        {' '}<span style={{color:'#1e3a5f',fontSize:'9px'}}>покращення</span>
-      </div>}
-      {pd.objects?.filter(o=>!OBJ_TYPES[o.type].destructible).length>0&&<div style={{fontSize:'9px',color:'#6b7280'}}>⚠ {pd.objects.filter(o=>!OBJ_TYPES[o.type].destructible).length} перешкод</div>}
-      <div style={{height:'4px',background:'#1e3a5f',borderRadius:'2px',overflow:'hidden'}}>
-        <div style={{height:'100%',width:`${pct}%`,background:pd.isBoss?'#f97316':'#3b82f6',transition:'width .08s'}}/>
-      </div>
-      <div style={{display:'flex',gap:'8px'}}>
-        <button onClick={onEnter} style={{flex:2,padding:'9px',background:pd.isBoss?'#f9731622':'#3b82f622',border:`1px solid ${pd.isBoss?'#f97316':'#3b82f6'}`,color:pd.isBoss?'#f97316':'#60a5fa',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px',fontWeight:'bold'}}>УВІЙТИ →</button>
-        <button onClick={onCancel} style={{flex:1,padding:'9px',background:'#020c1a',border:'1px solid #1e3a5f',color:'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px'}}>✕</button>
-      </div>
-    </div>
+    <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
+      <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
+      \u042f \u0440\u043e\u0437\u0443\u043c\u0456\u044e \u0456 \u0433\u0440\u0430\u044e \u043e\u0431\u0435\u0440\u0435\u0436\u043d\u043e
+    </label>
+    <B2 onClick={ok?onOk:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok?1:.5}}>
+      {ok?'\u25b7 \u041f\u0420\u041e\u0414\u041e\u0412\u0416\u0418\u0422\u0418':'(\u043f\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u044c \u0441\u043f\u043e\u0447\u0430\u0442\u043a\u0443)'}
+    </B2>
   </div>);
 }
 
-// ── WEAPON STATS BAR ──────────────────────────────────────────────
-function WeaponStats({mods}){
-  if(!mods)return null;
-  const r=Math.round((mods.reach-1)*100);const w=Math.round((1-mods.weight)*100);const s=Math.round((mods.sharpness-1)*100);
-  if(r===0&&w===0&&s===0)return null;
-  return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
-    {r!==0&&<span style={{color:'#60a5fa'}}>🔭+{r}%</span>}
-    {w!==0&&<span style={{color:'#22c55e'}}>🌬+{w}%</span>}
-    {s!==0&&<span style={{color:'#f59e0b'}}>⚡+{s}%</span>}
-    <span style={{color:'#1e3a5f',marginLeft:'auto'}}>✨перки</span>
-  </div>);
-}
-
-// ── ROOM PREVIEW COMPONENT ────────────────────────────────────────
-function RoomPreview({peekDir,peekInfo,edgeTimer,roomCoord,onCancel}){
-  if(!peekDir)return null;
-  const peekProgress=Math.min(1,(edgeTimer-25)/25);
-  const dirName={N:'ПІВНІЧ ↑',S:'ПІВ.ДЕНЬ ↓',E:'СХІД →',W:'ЗАХІД ←'}[peekDir]||peekDir;
-  const nc=getNextCoord(roomCoord||{x:0,y:0},peekDir);
-  const nextNum=calcRoomNum(nc.x,nc.y);
-  return(
-    <div style={{position:'absolute',bottom:'30%',left:'50%',transform:'translateX(-50%)',zIndex:20,background:'rgba(1,13,31,0.93)',border:`1px solid ${peekInfo?.isBoss?'#f97316':'#1e4a7f'}`,borderRadius:'10px',padding:'12px 16px',minWidth:'220px',fontFamily:"'Courier New',monospace",animation:'fadeIn .3s ease'}}>
-      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'4px'}}>{dirName}</div>
-      <div style={{fontSize:'13px',fontWeight:'bold',color:peekInfo?.isBoss?'#f97316':'#60a5fa',marginBottom:'6px'}}>
-        {peekInfo?.isBoss?`👹 КІМНАТА ${nextNum} — БОС`:`Кімната ${nextNum}`}
-      </div>
-      {peekInfo?(
-        <div style={{fontSize:'9px',color:'#94a3b8',lineHeight:1.8}}>
-          {peekInfo.cleared?<span style={{color:'#22c55e'}}>✓ Вже очищена</span>:<span>⚔ Ворогів: <b style={{color:'#ef4444'}}>{peekInfo.enemies?.length||0}</b></span>}
-          {peekInfo.objects?.filter(o=>OBJ_TYPES[o.type]?.isLoot).length>0&&<span style={{display:'block',color:'#fbbf24'}}>💎 Є лут: {peekInfo.objects.filter(o=>OBJ_TYPES[o.type]?.isLoot).map(o=>OBJ_TYPES[o.type]?.sym).join(' ')}</span>}
-        </div>
-      ):<div style={{fontSize:'9px',color:'#334155'}}>? Невідома кімната</div>}
-      <div style={{marginTop:'8px'}}>
-        <div style={{height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden',border:'1px solid #1e3a5f'}}><div style={{height:'100%',width:`${peekProgress*100}%`,background:'#f97316',transition:'width .08s'}}/></div>
-        <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'3px',textAlign:'center'}}>Залишайся на краю → перехід</div>
-      </div>
-    </div>
-  );
-}
-
-// ── WEAPON STATS COMPONENT (показується лише в пригоді) ───────────
-function WeaponStats({weaponMods,unlockedSpells}){
-  if(!weaponMods)return null;
-  const r=Math.round((weaponMods.reach-1)*100);
-  const w=Math.round((1-weaponMods.weight)*100);
-  const s=Math.round((weaponMods.sharpness-1)*100);
-  const spCount=(unlockedSpells||['.']).length;
-  return(
-    <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
-      {r!==0&&<span>🔭{r>0?'+':''}{ r}%</span>}
-      {w!==0&&<span>🌬{w>0?'+':''}{w}%</span>}
-      {s!==0&&<span>⚡{s>0?'+':''}{s}%</span>}
-      <span style={{color:'#e879f9'}}>✨{spCount}/16</span>
-    </div>
-  );
-}
-
-// ── APP ───────────────────────────────────────────────────────────
+// \u2500\u2500 APP \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function App(){
   const[screen,setScreen]=useState('warning');
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
-  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true,diff:1});
+  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true});
+  // onDead \u2014 \u0441\u0442\u0430\u0431\u0456\u043b\u044c\u043d\u0438\u0439 \u0447\u0435\u0440\u0435\u0437 useCallback \u0449\u043e\u0431 \u043d\u0435 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0442\u0438 \u0433\u0435\u0439\u043c-\u043b\u0443\u043f
   const onDead=useCallback(()=>setScreen('dead'),[]);
   return(
     <>
-      {screen==='warning'&&<WarningSensors sPhase={sPhase} setSPhase={setSPhase} onContinue={()=>setScreen('menu')}/>}
+      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')}/>}
       {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')}/>}
-      {screen==='pregame'&&<PreGame s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onStart={()=>{setGmode('survival');setScreen('game');}} onBack={()=>setScreen('menu')}/>}
       {screen==='game'&&<Game key={`${gmode}-${Math.random()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={onDead}/>}
       {screen==='dead'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
-          <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
+          <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>\u0412\u041f\u0410\u0412</div>
           <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
-            <B2 onClick={()=>setScreen('pregame')}>↻ НАЛАШТУВАННЯ → ЗНОВУ</B2>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>▷ ЩЕ РАЗ (ті ж)</B2>
-            <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>\u21bb \u0429\u0415 \u0420\u0410\u0417</B2>
+            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺️ ПРИГОДА</B2>
+            <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>\u2190 \u041c\u0415\u041d\u042e</B2>
           </div>
         </div>
       )}
       {screen==='menu'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
-          <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
-          <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
-          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар</div>
-
-          {/* Статус */}
-          <div style={{padding:'8px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',width:'100%',maxWidth:'270px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{color:sPhase==='active'?'#22c55e':'#334155'}}>
-                {sPhase==='active'?'◉ Датчики активні':'○ Датчики вимкнені'}
-              </span>
-              <span style={{color:['#60a5fa','#22c55e','#f59e0b','#ef4444','#a855f7'][S.diff??1]}}>
-                {DIFFS[S.diff??1].name}
-              </span>
-            </div>
-            <div style={{color:'#1e3a5f',fontSize:'8px',marginTop:'3px'}}>{WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</div>
+          <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>\u041c\u0418\u0420 13\u00d713</div>
+          <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>\u0421\u041b\u0406\u041f\u0418\u0419 \u0411\u0406\u0419</div>
+          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>\u0441\u0432\u0430\u0439\u043f=\u0440\u0443\u0445 \u00b7 \u0442\u0430\u043f=\u00b7 \u00b7 \u0442\u0440\u0438\u043c\u0430\u0439=\u2212 \u00b7 \u043c\u0430\u0445=\u0443\u0434\u0430\u0440<br/><span style={{color:'#1e3a5f'}}>\u041c\u043e\u0440\u0437\u0435-\u0437\u0430\u043a\u043b\u0438\u043d\u0430\u043d\u043d\u044f \u2014 \u0434\u0438\u0432\u0438\u0441\u044c \u0437\u043d\u0438\u0437\u0443 \u043f\u0456\u0434 \u0441\u0456\u0442\u043a\u043e\u044e</span></div>
+          <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
+            {sPhase==='active'?<span style={{color:'#22c55e'}}>\u25c9 \u0414\u0430\u0442\u0447\u0438\u043a\u0438 \u00b7 {WPN[S.startWpn].label} \u00b7 {S.worldMode==='radar'?'RADAR':'\u041a\u041b\u0410\u0421\u0418\u041a\u0410'}</span>:<span style={{color:'#334155'}}>\u0414\u0430\u0442\u0447\u0438\u043a\u0438 \u0432\u0438\u043c\u043a\u043d\u0435\u043d\u0456 \u2192 \u2699</span>}
           </div>
-
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
-            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
-            <B2 onClick={()=>setScreen('pregame')} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
-            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺 ПРИГОДА (кімнати + боси)</B2>
-            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
+            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>\u25b7 \u0422\u0423\u0422\u041e\u0420\u0406\u0410\u041b</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>\u25c8 \u0412\u0418\u0416\u0418\u0412\u0410\u041d\u041d\u042f</B2>
+            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>\u2699 \u041d\u0410\u041b\u0410\u0428\u0422\u0423\u0412\u0410\u041d\u041d\u042f</B2>
           </div>
         </div>
       )}
@@ -1446,43 +1033,4 @@ function App(){
   );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-</script></body></html>      const handleRoomTransition=useCallback((dir)=>{
-        const g=gs.current;if(!g||g.transitioning)return;
-        g.transitioning=true;g.edgeTimer=0;g.peekDir=null;
-        // Зберегти стан поточної кімнати
-        const curId=coordId(g.roomCoord.x,g.roomCoord.y);
-        if(g.roomMap[curId]){
-          g.roomMap[curId].enemies=[...g.enemies];
-          g.roomMap[curId].objects=[...g.objects];
-          g.roomMap[curId].cleared=g.enemies.length===0;
-        }
-        // Нові координати
-        const nextCoord=getNextCoord(g.roomCoord,dir);
-        const nextId=coordId(nextCoord.x,nextCoord.y);
-        const roomNum=calcRoomNum(nextCoord.x,nextCoord.y);
-        // Спавн гравця на протилежному краї нової кімнати
-        const spawnX=dir==='E'?0:dir==='W'?G-1:g.player.x;
-        const spawnY=dir==='S'?0:dir==='N'?G-1:g.player.y;
-        g.player={...g.player,x:spawnX,y:spawnY};
-        g.roomCoord=nextCoord;
-        g.roomNumber=roomNum;
-        // Відновити або згенерувати кімнату
-        if(g.roomMap[nextId]){
-          const saved=g.roomMap[nextId];
-          g.enemies=saved.enemies||[];
-          g.objects=saved.objects||[];
-          g.isBossRoom=saved.isBoss||false;
-          g.roomMap[nextId].visited=true;
-          setMsgRef.current?.(saved.cleared?`Кімната ${roomNum} (очищена)`:`Кімната ${roomNum} · ${g.enemies.length} ворогів${g.isBossRoom?' 👹':''}`);
-        }else{
-          const ac=generateRoomContent(roomNum,spawnX,spawnY);
-          g.enemies=ac.enemies;g.objects=ac.objects||[];g.isBossRoom=ac.isBoss||false;
-          g.roomMap[nextId]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};
-          setMsgRef.current?.(ac.isBoss?`👹 Кімната ${roomNum} — ${ac.enemies[0]?.name||'БОС'}!`:`Кімната ${roomNum} · ${ac.enemies.length} ворогів`);
-        }
-        g.score+=15;g.flash=[];
-        snd('wave');
-        setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
-        forceRender();
-      },[]);
-      useEffect(()=>{handleRoomTransitionRef.current=handleRoomTransition;},[handleRoomTransition]);
+</script></body></html>
