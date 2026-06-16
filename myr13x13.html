@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
-<title>\u041c\u0418\u0420 13\u00d713</title>
+<title>МИР 13×13</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -25,25 +25,25 @@ const{useState,useEffect,useRef,useCallback,useReducer}=React;
 const G=13,CX=6,CY=6,TICK=80;
 const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
 const DNAM=['N','NE','E','SE','S','SW','W','NW'];
-const DSYM=['\u2191','\u2197','\u2192','\u2198','\u2193','\u2199','\u2190','\u2196'];
+const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const rad=d=>d*Math.PI/180;
 let EID=0;
 
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'\u041a\u0438\u043d\u0434\u0436\u0430\u043b \ud83d\udde1',  desc:'\u0411\u043b\u0438\u0436\u043d\u0456\u0439, \u0448\u0432\u0438\u0434\u043a\u0438\u0439'},
-  sword:     {w:5,reach:2,arc:1,sweep:false,label:'\u041c\u0435\u0447 \u2694',       desc:'\u0411\u0430\u043b\u0430\u043d\u0441'},
-  axe:       {w:8,reach:1,arc:2,sweep:false,label:'\u0421\u043e\u043a\u0438\u0440\u0430 \ud83e\ude93',   desc:'\u0428\u0438\u0440\u043e\u043a\u0438\u0439 \u0437\u0430\u043c\u0430\u0445'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'\u0421\u043f\u0438\u0441 \ud83d\udd31',     desc:'\u0414\u0430\u043b\u0435\u043a\u043e \u043f\u043e \u043f\u0440\u044f\u043c\u0456\u0439'},
-  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'\u0414\u0432\u043e\u0440\u0443\u0447\u043d\u0438\u043a \u2694\u2694',desc:'\u0428\u0438\u0440\u043e\u043a\u043e \u0456 \u0434\u0430\u043b\u0435\u043a\u043e'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'\u0426\u0456\u043f \ud83c\udf00',      desc:'\u0412\u0441\u0456 8 \u043a\u043b\u0456\u0442\u0438\u043d\u043e\u043a'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'\u041b\u0443\u043a \ud83c\udff9',      desc:'5 \u043a\u043b\u0456\u0442\u0438\u043d\u043e\u043a \u043f\u0440\u044f\u043c\u043e'},
+  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал \ud83d\udde1',  desc:'Ближній, швидкий'},
+  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс'},
+  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира \ud83e\ude93',   desc:'Широкий замах'},
+  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис \ud83d\udd31',     desc:'Далеко по прямій'},
+  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широко і далеко'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп \ud83c\udf00',      desc:'Всі 8 клітинок'},
+  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук \ud83c\udff9',      desc:'5 клітинок прямо'},
 };
 const ET={
-  shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'\u25c6',lbl:'\u0422\u0456\u043d\u044c'},
-  warden: {hp:8,ms:800,dmg:20,col:'#dc2626',sym:'\u25c9',lbl:'\u0412\u0430\u0440\u0442\u043e\u0432\u0438\u0439'},
-  berserk:{hp:5,ms:600,dmg:30,col:'#ea580c',sym:'\u25b2',lbl:'\u0411\u0435\u0440\u0441\u0435\u0440\u043a'},
-  ghost:  {hp:2,ms:360,dmg:8, col:'#0ea5e9',sym:'\u25cc',lbl:'\u041f\u0440\u0438\u0432\u0438\u0434'},
+  shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
+  warden: {hp:8,ms:800,dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
+  berserk:{hp:5,ms:600,dmg:30,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
+  ghost:  {hp:2,ms:360,dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
 };
 const WAVES=[
   [{t:'shadow',n:1}],[{t:'shadow',n:2}],
@@ -54,53 +54,53 @@ const WAVES=[
   [{t:'shadow',n:3},{t:'warden',n:1},{t:'berserk',n:1},{t:'ghost',n:1}],
 ];
 
-// \u041a\u043e\u0434\u0438 \u0432\u0456\u0434 \u043f\u0440\u043e\u0441\u0442\u0438\u0445 \u0434\u043e \u0441\u043a\u043b\u0430\u0434\u043d\u0438\u0445
+// Коди від простих до складних
 const SPELLS=[
-  {code:'.',    name:'\u0421\u0438\u043b\u0430',    col:'#60a5fa',desc:'\u0421\u0442\u0430\u043c\u0456\u043d\u0430 +30',           fn:'stamina'},
-  {code:'-',    name:'\u0411\u0440\u043e\u043d\u044f',   col:'#94a3b8',desc:'-60% \u0448\u043a\u043e\u0434\u0438 4\u0441',        fn:'armor'},
-  {code:'.-',   name:'\u0429\u0438\u0442\u0430',   col:'#3b82f6',desc:'\u0411\u043b\u043e\u043a \u0443\u0434\u0430\u0440\u0443',            fn:'shield'},
-  {code:'--',   name:'\u0417\u0446\u0456\u043b\u0435\u043d\u043d\u044f',col:'#a78bfa',desc:'+1 \u043f\u0430\u043b\u0435\u0446\u044c',            fn:'mend'},
-  {code:'..',   name:'\u041a\u0440\u0438\u0433\u0430',   col:'#67e8f9',desc:'\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u0438\u0442\u0438 3\u0441',        fn:'freeze'},
-  {code:'-.',   name:'\u0422\u0456\u043d\u044c',    col:'#6b7280',desc:'\u041d\u0435\u0432\u0438\u0434\u0438\u043c\u0456\u0441\u0442\u044c 3\u0441',       fn:'stealth'},
-  {code:'.-.',  name:'\u041f\u043e\u0440\u0438\u0432\u043e\u043c', col:'#22c55e',desc:'\u0420\u0443\u0445 \u0431\u0435\u0437 \u0441\u0442\u0430\u043c\u0456\u043d\u0438 5\u0441',   fn:'rush'},
-  {code:'...',  name:'\u0421\u043f\u0430\u043b\u0430\u0445',  col:'#f59e0b',desc:'\u0423\u0434\u0430\u0440 \u00d72 5\u0441',           fn:'surge'},
-  {code:'---',  name:'\u0412\u0438\u0445\u043e\u0440',   col:'#e879f9',desc:'\u0423\u0434\u0430\u0440 \u0432\u0441\u0456\u0445 \u043d\u0430\u0432\u043a\u043e\u043b\u043e',    fn:'omni'},
-  {code:'-..',  name:'\u0414\u043e\u043b\u044f',    col:'#f87171',desc:'HP +30',               fn:'heal'},
-  {code:'.-..',  name:'\u0417\u0430\u043c\u043e\u043a',  col:'#fbbf24',desc:'\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u0438\u0442\u0438 \u0432\u0441\u0456\u0445 4\u0441',   fn:'lockall'},
-  {code:'-...',  name:'\u0412\u043e\u0433\u043e\u043d\u044c', col:'#ef4444',desc:'\u0423\u0434\u0430\u0440 \u00d73',              fn:'burn'},
-  {code:'.--.',  name:'\u041f\u0440\u043e\u0431\u0456\u0439', col:'#c084fc',desc:'\u0406\u0433\u043d\u043e\u0440\u0443\u0454 \u0437\u0430\u0445\u0438\u0441\u0442',       fn:'pierce'},
-  {code:'-.-.', name:'\u0426\u0456\u043b\u0435\u043d\u043d\u044f', col:'#34d399',desc:'HP +50',               fn:'cure'},
-  {code:'....',  name:'\u0425\u0430\u043e\u0441',   col:'#fb7185',desc:'\u0412\u043e\u0440\u043e\u0433\u0438 \u0441\u043f\u043e\u0432\u0456\u043b\u044c\u043d\u0435\u043d\u0456 5\u0441',fn:'chaos'},
-  {code:'...-',  name:'\u0412\u0435\u043a\u0442\u043e\u0440', col:'#818cf8',desc:'\u0422\u0435\u043b\u0435\u043f\u043e\u0440\u0442 3 \u043a\u0440\u043e\u043a\u0438',     fn:'teleport'},
+  {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +30',           fn:'stamina'},
+  {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 4с',        fn:'armor'},
+  {code:'.-',   name:'Щита',   col:'#3b82f6',desc:'Блок удару',            fn:'shield'},
+  {code:'--',   name:'Зцілення',col:'#a78bfa',desc:'+1 палець',            fn:'mend'},
+  {code:'..',   name:'Крига',   col:'#67e8f9',desc:'Заморозити 3с',        fn:'freeze'},
+  {code:'-.',   name:'Тінь',    col:'#6b7280',desc:'Невидимість 3с',       fn:'stealth'},
+  {code:'.-.',  name:'Поривом', col:'#22c55e',desc:'Рух без стаміни 5с',   fn:'rush'},
+  {code:'...',  name:'Спалах',  col:'#f59e0b',desc:'Удар ×2 5с',           fn:'surge'},
+  {code:'---',  name:'Вихор',   col:'#e879f9',desc:'Удар всіх навколо',    fn:'omni'},
+  {code:'-..',  name:'Доля',    col:'#f87171',desc:'HP +30',               fn:'heal'},
+  {code:'.-..',  name:'Замок',  col:'#fbbf24',desc:'Заморозити всіх 4с',   fn:'lockall'},
+  {code:'-...',  name:'Вогонь', col:'#ef4444',desc:'Удар ×3',              fn:'burn'},
+  {code:'.--.',  name:'Пробій', col:'#c084fc',desc:'Ігнорує захист',       fn:'pierce'},
+  {code:'-.-.', name:'Цілення', col:'#34d399',desc:'HP +50',               fn:'cure'},
+  {code:'....',  name:'Хаос',   col:'#fb7185',desc:'Вороги сповільнені 5с',fn:'chaos'},
+  {code:'...-',  name:'Вектор', col:'#818cf8',desc:'Телепорт 3 кроки',     fn:'teleport'},
 ];
-// \u0421\u043b\u043e\u0432\u043d\u0438\u043a \u0434\u043b\u044f \u0440\u043e\u0437\u043f\u0456\u0437\u043d\u0430\u0432\u0430\u043d\u043d\u044f
+// Словник для розпізнавання
 const SPELL_MAP={};SPELLS.forEach(s=>{SPELL_MAP[s.code]=s;});
 
 const TUT=[
   {msg:null},
-  {msg:'...\u0442\u0438 \u0442\u0440\u0438\u043c\u0430\u0454\u0448 \u043c\u0435\u043d\u0435 \u043a\u0440\u0438\u0432\u043e. \u0412\u0456\u0434\u0447\u0443\u0432\u0430\u0454\u0448? \u0412\u0456\u0431\u0440\u0430\u0446\u0456\u044f \u2014 \u0446\u0435 \u044f. \u0422\u0438\u0448\u0430 \u2014 \u0446\u0435 \u043c\u0438.'},
-  {msg:'\u0417\u0440\u043e\u0431\u0438 \u043a\u0440\u043e\u043a. \u0421\u0432\u0430\u0439\u043f \u0431\u0443\u0434\u044c-\u0434\u0435 \u043d\u0430 \u0435\u043a\u0440\u0430\u043d\u0456.',req:'move'},
-  {msg:'\u0414\u043e\u0431\u0440\u0435. \u041f\u043e\u0432\u0435\u0440\u043d\u0438 \u043c\u0435\u043d\u0435 \u2014 \u043e\u0431\u0435\u0440\u043d\u0438 \u0441\u043c\u0430\u0440\u0442\u0444\u043e\u043d \u0433\u043e\u0440\u0438\u0437\u043e\u043d\u0442\u0430\u043b\u044c\u043d\u043e.',req:'rotate'},
-  {msg:'\u041e\u043f\u0443\u0441\u0442\u0438 \u0440\u0443\u043a\u0443 \u2014 \u044f \u0432\u0456\u0434\u043f\u043e\u0447\u0438\u0432\u0430\u044e. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u2014 \u0437\u0430\u0440\u044f\u0434\u0436\u0443\u044e\u0441\u044c.',req:'pitch'},
-  {msg:'\u0426\u0456\u043b\u044c \u043f\u043e\u043f\u0435\u0440\u0435\u0434\u0443. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u0456 \u0440\u0456\u0437\u043a\u043e \u043c\u0430\u0445\u043d\u0438 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u043e\u043c.',req:'attack',spawnDummy:true},
-  {msg:'\u0414\u0440\u0435\u0439\u0444\u0443\u044e. \u041e\u043f\u0443\u0441\u0442\u0438 \u0432\u043d\u0438\u0437 \u0456 \u0437\u0430\u043c\u0440\u0438 2 \u0441\u0435\u043a\u0443\u043d\u0434\u0438.',req:'beacon'},
-  {msg:'\u0422\u043e\u0440\u043a\u043d\u0438\u0441\u044c \u043a\u043e\u0440\u043e\u0442\u043a\u043e = \u00b7 \u0442\u0440\u0438\u0432\u0430\u043b\u043e = \u2212 \u041d\u0430\u0431\u0435\u0440\u0438 \u00b7\u2212 \u0434\u043b\u044f \u0429\u0418\u0422\u0410.',req:'morse'},
-  {msg:'Calibrated. \u0422\u0438 \u0432\u043c\u0456\u0454\u0448 \u0432\u0441\u0435 \u0449\u043e \u0442\u0440\u0435\u0431\u0430.'},
+  {msg:'...ти тримаєш мене криво. Відчуваєш? Вібрація — це я. Тиша — це ми.'},
+  {msg:'Зроби крок. Свайп будь-де на екрані.',req:'move'},
+  {msg:'Добре. Поверни мене — оберни смартфон горизонтально.',req:'rotate'},
+  {msg:'Опусти руку — я відпочиваю. Підніми — заряджуюсь.',req:'pitch'},
+  {msg:'Ціль попереду. Підніми і різко махни телефоном.',req:'attack',spawnDummy:true},
+  {msg:'Дрейфую. Опусти вниз і замри 2 секунди.',req:'beacon'},
+  {msg:'Торкнись коротко = · тривало = − Набери ·− для ЩИТА.',req:'morse'},
+  {msg:'Calibrated. Ти вмієш все що треба.'},
 ];
 
-// \u2500\u2500 SPEECH \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── SPEECH ────────────────────────────────────────────────────────
 function speak(text,on){
   if(!on||!text||!window.speechSynthesis)return;
   window.speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(text);
-  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.45; // \u0432\u0434\u0432\u0456\u0447\u0456 \u0442\u0438\u0445\u0456\u0448\u0435
+  u.lang='uk-UA';u.rate=0.85;u.pitch=0.7;u.volume=0.45; // вдвічі тихіше
   const v=window.speechSynthesis.getVoices();
   const uk=v.find(x=>x.lang.startsWith('uk'))||v.find(x=>x.lang.startsWith('ru'));
   if(uk)u.voice=uk;
   window.speechSynthesis.speak(u);
 }
 
-// \u2500\u2500 SOUND \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── SOUND ─────────────────────────────────────────────────────────
 let AC=null;
 function snd(t){
   try{
@@ -121,14 +121,14 @@ function snd(t){
   }catch(e){}
 }
 
-// \u2500\u2500 HELPERS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-// ── ADVENTURE MODE: ОБ'ЄКТИ + БОСИ + КІМНАТИ ─────────────────────
+// ── HELPERS ───────────────────────────────────────────────────────
+// ── ADVENTURE MODE ────────────────────────────────────────────────
 const OBJ_TYPES={
   pillar:{sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,desc:'Стовп'},
   wall:  {sym:'▬',col:'#475569',destructible:false,blocksMove:true,desc:'Стіна'},
-  crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,hp:3,   desc:'Ящик'},
+  crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,hp:3,desc:'Ящик'},
   barrel:{sym:'◉',col:'#b45309',destructible:true, blocksMove:true,hp:1,explodes:true,desc:'Бочка'},
-  upg_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Дальнiсть +20%'},
+  upg_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Дальність +20%'},
   upg_weight:   {sym:'🌬',col:'#22c55e',destructible:false,blocksMove:false,isLoot:true,upg:'weight',   desc:'Вага -15%'},
   upg_sharpness:{sym:'⚡',col:'#f59e0b',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Гострота +25%'},
   upg_hp:       {sym:'❤', col:'#ef4444',destructible:false,blocksMove:false,isLoot:true,upg:'hp',       desc:'MaxHP +20'},
@@ -143,33 +143,22 @@ const BOSS_DEFS={
 const UNLOCKABLE_SPELLS=SPELLS.filter(s=>s.code!=='.'&&s.code!=='-').map(s=>s.code);
 function coordId(x,y){return x+','+y;}
 function calcRoomNum(x,y){return 1+Math.abs(x)+Math.abs(y);}
-function getNextCoord(coord,dir){
-  const{x,y}=coord;
-  if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};
-  if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};
-  return coord;
-}
-function calcBossCells(bx,by,size){
-  const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;
-}
+function getNextCoord(coord,dir){const{x,y}=coord;if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};return coord;}
+function calcBossCells(bx,by,size){const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;}
 function generateRoom(roomNum,spawnX,spawnY){
   const isBoss=roomNum>1&&roomNum%3===0;
   const occ=[{x:spawnX??CX,y:spawnY??CY}];
-  // Objects
   const objects=[];
-  const objKeys=isBoss?['pillar','wall']:Object.keys(OBJ_TYPES);
   const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/2),8);
   for(let i=0;i<objCount*5&&objects.length<objCount;i++){
     const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
     if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<3))continue;
-    const t=objKeys[Math.floor(Math.random()*objKeys.length)];
-    const ot=OBJ_TYPES[t];if(!ot||ot.isLoot)continue;
+    const t=isBoss?'pillar':['pillar','wall','crate','barrel'][Math.floor(Math.random()*4)];
+    const ot=OBJ_TYPES[t];if(!ot)continue;
     objects.push({id:EID++,type:t,x,y,hp:ot.hp??null});occ.push({x,y});
   }
-  // Loot
   if(Math.random()<0.65){
     const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
-    // Only offer spell scrolls if there are unlockable spells remaining
     for(let i=0;i<20;i++){
       const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
       if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
@@ -177,28 +166,17 @@ function generateRoom(roomNum,spawnX,spawnY){
       objects.push({id:EID++,type:t,x,y,hp:null});occ.push({x,y});break;
     }
   }
-  // Enemies or boss
   let enemies=[];
   if(isBoss){
-    const bKeys=Object.keys(BOSS_DEFS);
-    const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
-    const bd=BOSS_DEFS[bType];
-    const scale=Math.max(1,1+(roomNum/3-1)*0.4);
+    const bKeys=Object.keys(BOSS_DEFS);const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
+    const bd=BOSS_DEFS[bType];const scale=Math.max(1,1+(roomNum/3-1)*0.4);
     const bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
     const by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
-    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,
-      hp:Math.round(bd.basehp*scale),maxHp:Math.round(bd.basehp*scale),
-      dmg:Math.round(bd.dmg*scale),ms:Math.round(bd.ms/Math.sqrt(scale)),
-      size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
+    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,hp:Math.round(bd.basehp*scale),maxHp:Math.round(bd.basehp*scale),dmg:Math.round(bd.dmg*scale),ms:Math.round(bd.ms/Math.sqrt(scale)),size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
   }else{
-    const etAll=Object.keys(ET);
-    const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
-    const count=Math.max(1,Math.round(1+roomNum*0.55));
-    const spOcc=[...occ];
-    for(let i=0;i<count;i++){
-      const t=etAvail[Math.floor(Math.random()*etAvail.length)];
-      const e=spawnE(t,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}
-    }
+    const etAll=Object.keys(ET);const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
+    const count=Math.max(1,Math.round(1+roomNum*0.55));const spOcc=[...occ];
+    for(let i=0;i<count;i++){const t=etAvail[Math.floor(Math.random()*etAvail.length)];const e=spawnE(t,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}}
   }
   return{objects,enemies,isBoss};
 }
@@ -222,23 +200,26 @@ function swipeToWorld(sdx,sdy,cDeg){const a=rad(cDeg);return{gdx:Math.round(sdx*
 function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
 function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
-// \u2500\u2500 MORSE BAR (\u0437\u0430\u0432\u0436\u0434\u0438 \u0432\u0438\u0434\u0438\u043c\u0438\u0439) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── MORSE BAR (завжди видимий) ────────────────────────────────────
+function SpellChip({sp,currentSeq,unlocked}){
+  const locked=unlocked&&!unlocked.includes(sp.code);
+  const active=!locked&&currentSeq&&sp.code.startsWith(currentSeq);
+  return(<div style={{width:'calc(12.5% - 3px)',opacity:locked?0.22:1,background:active?sp.col+'22':'#060f1e',border:`1px solid ${active?sp.col:locked?'#0a1628':'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
+    <div style={{fontSize:'8px'}}>{locked?'🔒':sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
+    <div style={{fontSize:'7px',color:locked?'#1e3a5f':sp.col,overflow:'hidden',whiteSpace:'nowrap'}}>{locked?'???':sp.name}</div>
+  </div>);
+}
 function MorseBar({currentSeq,unlocked}){
   return(
     <div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
-      {SPELLS.map(sp=>{
-        const locked=unlocked&&!unlocked.includes(sp.code);
-        const active=!locked&&currentSeq&&sp.code.startsWith(currentSeq);
-        return(<div key={sp.code} style={{width:'calc(12.5% - 3px)',opacity:locked?0.22:1,background:active?sp.col+'22':'#060f1e',border:`1px solid ${active?sp.col:locked?'#0a1628':'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
-          <div style={{fontSize:'8px',letterSpacing:'.05em'}}>{locked?'🔒':sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
-          <div style={{fontSize:'7px',color:locked?'#1e3a5f':sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{locked?'???':sp.name}</div>
-        </div>);
-      })}
+      {SPELLS.map(sp=>(
+        <SpellChip key={sp.code} sp={sp} currentSeq={currentSeq} unlocked={unlocked}/>
+      ))}
     </div>
   );
 }
 
-// \u2500\u2500 SETTINGS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── SETTINGS ──────────────────────────────────────────────────────
 function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
 function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
 
@@ -257,48 +238,48 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
   return(
     <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
-        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>\u2190</button>
-        <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>\u041d\u0410\u041b\u0410\u0428\u0422\u0423\u0412\u0410\u041d\u041d\u042f</div>
+        <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
+        <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
       </div>
-      <Sec title="\u0414\u0410\u0422\u0427\u0418\u041a\u0418">
-        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>\u25b7 \u041f\u0406\u0414\u041a\u041b\u042e\u0427\u0418\u0422\u0418 \u0414\u0410\u0422\u0427\u0418\u041a\u0418</B2>}
-        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>\u23f3 \u041e\u0447\u0456\u043a\u0443\u044e...</div>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>\u26a0 \u0412\u0456\u0434\u0445\u0438\u043b\u0435\u043d\u043e. \u0414\u043e\u0441\u0442\u0443\u043f\u043d\u0456 WASD + \u043a\u043b\u0430\u0432\u0456\u0448\u0456.</div>}
+      <Sec title="ДАТЧИКИ">
+        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>}
+        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую...</div>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Доступні WASD + клавіші.</div>}
         {sPhase==='active'&&<>
-          <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>\u25c9 \u0410\u041a\u0422\u0418\u0412\u041d\u0406</div>
+          <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
-            {[['\u03b2 \u043d\u0430\u0445\u0438\u043b',live.beta.toFixed(1)+'\u00b0',pColor(pv)],['\u043a\u043e\u043c\u043f\u0430\u0441',live.compass.toFixed(0)+'\u00b0','#60a5fa'],['|a|',live.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
+            {[['β нахил',live.beta.toFixed(1)+'°',pColor(pv)],['компас',live.compass.toFixed(0)+'°','#60a5fa'],['|a|',live.mag.toFixed(1),'#f59e0b']].map(([l,v,c])=>(
               <div key={l} style={{background:'#020c1a',borderRadius:'4px',padding:'6px',textAlign:'center'}}><div style={{fontSize:'8px',color:'#1e3a5f'}}>{l}</div><div style={{fontSize:'14px',color:c,fontWeight:'bold'}}>{v}</div></div>
             ))}
           </div>
         </>}
       </Sec>
-      <Sec title="\u0420\u0415\u0416\u0418\u041c">
+      <Sec title="РЕЖИМ">
         <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','\u041a\u043b\u0430\u0441\u0438\u043a\u0430','\u0413\u0440\u0430\u0432\u0435\u0446\u044c \u0440\u0443\u0445\u0430\u0454\u0442\u044c\u0441\u044f'],['radar','\u0420\u0430\u0434\u0430\u0440','\u0413\u0440\u0430\u0432\u0435\u0446\u044c \u0432 \u0446\u0435\u043d\u0442\u0440\u0456']].map(([val,lbl,desc])=>(
+          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
             <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))} style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
               <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
           ))}
         </div>
       </Sec>
-      <Sec title={`\u041f\u041e\u0420\u0406\u0413 \u0423\u0414\u0410\u0420\u0423 \u2014 ${s.strikeThr} m/s\u00b2`}>
+      <Sec title={`ПОРІГ УДАРУ — ${s.strikeThr} m/s²`}>
         <input type="range" min="3" max="20" value={s.strikeThr} onChange={e=>setS(p=>({...p,strikeThr:+e.target.value}))}/>
-        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>\u041b\u0435\u0433\u043a\u0438\u0439 (3)</span><span>\u0421\u0438\u043b\u044c\u043d\u0438\u0439 (20)</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:'8px',color:'#1e3a5f',marginTop:'3px'}}><span>Легкий (3)</span><span>Сильний (20)</span></div>
         {sPhase==='active'&&<div style={{marginTop:'5px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${clamp((live.mag-9.8)/s.strikeThr*100,0,100)}%`,background:'#f59e0b',transition:'width .05s'}}/></div>}
       </Sec>
-      <Sec title={`\u0427\u0423\u0422\u041b\u0418\u0412\u0406\u0421\u0422\u042c \u041d\u0410\u0425\u0418\u041b\u0423 \u2014 \u00b1${s.pitchSens}\u00b0`}>
+      <Sec title={`ЧУТЛИВІСТЬ НАХИЛУ — ±${s.pitchSens}°`}>
         <input type="range" min="15" max="60" value={s.pitchSens} onChange={e=>setS(p=>({...p,pitchSens:+e.target.value}))}/>
         {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}><div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pColor(pv),transition:'width .05s'}}/></div><div style={{fontSize:'9px',color:pColor(pv),minWidth:'46px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div></div>}
       </Sec>
-      <Sec title="\u0413\u041e\u041b\u041e\u0421 \u041a\u041e\u041c\u041f\u0410\u041d\u042c\u0419\u041e\u041d\u0410">
+      <Sec title="ГОЛОС КОМПАНЬЙОНА">
         <div style={{display:'flex',gap:'8px',marginBottom:'6px'}}>
-          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd0a \u0423\u0432\u0456\u043c\u043a\u043d\u0435\u043d\u0438\u0439</button>
-          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd07 \u0412\u0438\u043c\u043a\u043d\u0435\u043d\u0438\u0439</button>
+          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd0a Увімкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>\ud83d\udd07 Вимкнений</button>
         </div>
-        <button onClick={()=>speak('\u042f \u0433\u043e\u0442\u043e\u0432\u0438\u0439. \u041f\u0456\u0434\u043d\u0456\u043c\u0438 \u043c\u0435\u043d\u0435.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>\u25b6 \u0422\u0435\u0441\u0442 \u0433\u043e\u043b\u043e\u0441\u0443</button>
+        <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>▶ Тест голосу</button>
       </Sec>
-      <Sec title="\u0421\u0422\u0410\u0420\u0422\u041e\u0412\u0410 \u0417\u0411\u0420\u041e\u042f">
+      <Sec title="СТАРТОВА ЗБРОЯ">
         <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
           {Object.entries(WPN).map(([k,w])=>(
             <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))} style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
@@ -307,12 +288,12 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
           ))}
         </div>
       </Sec>
-      <B2 onClick={onBack} col='#22c55e' style={{marginTop:'6px'}}>\u2713 \u0413\u041e\u0422\u041e\u0412\u041e</B2>
+      <B2 onClick={onBack} col='#22c55e' style={{marginTop:'6px'}}>✓ ГОТОВО</B2>
     </div>
   );
 }
 
-// \u2500\u2500 GAME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── GAME ──────────────────────────────────────────────────────────
 function Game({gmode,settings,sPhase,onDead}){
   const gs=useRef(null);
   const[,forceRender]=useReducer(x=>x+1,0);
@@ -323,7 +304,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const isRadar=settings.worldMode==='radar';
   const STRENGTH=4;
 
-  // \u2550\u2550 REFS \u0434\u043b\u044f \u0433\u0435\u0439\u043c-\u043b\u0443\u043f\u0443 \u2014 \u0443\u043d\u0438\u043a\u0430\u0454\u043c\u043e stale closure \u2550\u2550
+  // ══ REFS для гейм-лупу — уникаємо stale closure ══
   const onDeadRef=useRef(onDead);
   const settingsRef=useRef(settings);
   const gmodeRef=useRef(gmode);
@@ -342,7 +323,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const setMsgRef=useRef(setMsg);
   useEffect(()=>{setMsgRef.current=setMsg;},[setMsg]);
 
-  // \u2500\u2500 Init \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Init ────────────────────────────────────────────────────
   useEffect(()=>{
     EID=0;
     gs.current={
@@ -352,11 +333,9 @@ function Game({gmode,settings,sPhase,onDead}){
       stamina:100,fingers:5,
       dropped:false,droppedUntil:0,
       wave:0,score:0,
-      // Adventure mode fields
       objects:[],roomCoord:{x:0,y:0},roomMap:{},roomNumber:1,isBossRoom:false,
       transitioning:false,edgeTimer:0,peekDir:null,peekInfo:null,_roomCleared:false,
-      weaponMods:{reach:1,weight:1,sharpness:1},
-      unlockedSpells:['.'],
+      weaponMods:{reach:1,weight:1,sharpness:1},unlockedSpells:['.'],
       divergence:0,highDTicks:0,
       beaconCount:0,beaconProgress:0,
       spell:null,
@@ -372,8 +351,17 @@ function Game({gmode,settings,sPhase,onDead}){
       setTimeout(()=>setMsg(TUT[1].msg),4500);
       setTimeout(()=>{const g=gs.current;if(!g)return;g.tutStep=2;setMsg(TUT[2].msg);},8500);
     }
+    if(gmode==='adventure'){
+      EID=100;const g0=gs.current;
+      const ac=generateRoom(1,CX,CY);
+      g0.enemies=ac.enemies;g0.objects=ac.objects;g0.isBossRoom=ac.isBoss;
+      g0.roomCoord={x:0,y:0};g0.roomNumber=1;
+      g0.roomMap={[coordId(0,0)]:{enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true}};
+      setTimeout(()=>setMsg('Кімната 1 — стань на краю 4с → наступна кімната'),800);
+      forceRender();
+    }
     if(gmode==='survival'){
-      gs.current.wave=1;gs.current.waveMsg='\u0425\u0432\u0438\u043b\u044f 1';snd('wave');forceRender();
+      gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
       gs.current._waveTimer=setTimeout(()=>{gs.current._waveTimer=null;doSpawnWave(1);},2000);
     }
     return()=>{
@@ -382,7 +370,7 @@ function Game({gmode,settings,sPhase,onDead}){
     };
   },[]);// eslint-disable-line
 
-  // \u2500\u2500 Spawn wave \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Spawn wave ───────────────────────────────────────────────
   const doSpawnWave=useCallback((waveNum)=>{
     const g=gs.current;if(!g)return;
     const wi=Math.min(waveNum-1,WAVES.length-1);
@@ -393,13 +381,13 @@ function Game({gmode,settings,sPhase,onDead}){
       for(let i=0;i<tot;i++){const e=spawnE(t,[{x:g.player.x,y:g.player.y},...spawned]);if(e)spawned.push(e);}
     });
     g.enemies=spawned;g.waveMsg='';
-    setMsg(`\u0425\u0432\u0438\u043b\u044f ${waveNum} \u00b7 ${spawned.length} \u0432\u043e\u0440\u043e\u0433\u0456\u0432`);
+    setMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
     snd('wave');forceRender();
   },[setMsg]);
   const doSpawnRef=useRef(doSpawnWave);
   useEffect(()=>{doSpawnRef.current=doSpawnWave;},[doSpawnWave]);
 
-  // \u2500\u2500 Spell \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Spell ────────────────────────────────────────────────────
   const castSpell=useCallback((sp)=>{
     const g=gs.current;if(!g)return;snd('spell');
     const fn=sp.fn,now=Date.now();
@@ -413,14 +401,14 @@ function Game({gmode,settings,sPhase,onDead}){
     else if(fn==='lockall'){g.enemies=g.enemies.map(e=>({...e,frozen:now+4000}));}
     else if(fn==='chaos'){g.enemies=g.enemies.map(e=>({...e,chaosUntil:now+5000}));}
     else{g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    setMsg(`\u2728 ${sp.name}! ${sp.desc}`);
+    setMsg(`✨ ${sp.name}! ${sp.desc}`);
     if(gmodeRef.current==='tutorial'&&!g.tutDone.morsed){
       g.tutDone.morsed=true;if(g.tutStep===7){g.tutStep=8;setTimeout(()=>setMsg(TUT[8].msg),800);}
     }
     forceRender();
   },[setMsg]);
 
-  // \u2500\u2500 Attack \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Attack ────────────────────────────────────────────────────
   function doAttackInternal(omni){
     const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
     snd('swing');
@@ -434,35 +422,20 @@ function Game({gmode,settings,sPhase,onDead}){
     if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
     let hits=0;
     g.enemies=g.enemies.map(e=>{
-      if(e.type==='boss'){
-        // Boss: hit any of its body cells
-        const bc=calcBossCells(e.x,e.y,e.size);
-        if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;
-        hits++;
-        if(e.hp-baseDmg<=0){g.score+=100;snd('wave');return null;}
-        return{...e,hp:e.hp-baseDmg};
-      }
+      if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size);if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;hits++;if(e.hp-baseDmg<=0){g.score+=100;snd('wave');return null;}return{...e,hp:e.hp-baseDmg};}
       const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
       hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
       if(e.hp-dmg<=0){g.score+=10;return null;}
       return{...e,hp:e.hp-dmg};
     }).filter(Boolean);
-    // Adventure: object hits
     if(gmodeRef.current==='adventure'&&g.objects?.length){
       let clank=false;
       g.objects=g.objects.map(obj=>{
         const hit=cells.find(c=>c.x===obj.x&&c.y===obj.y);if(!hit)return obj;
         const ot=OBJ_TYPES[obj.type];if(!ot||ot.isLoot)return obj;
         if(!ot.destructible){clank=true;return obj;}
-        const dmg=hit.main?baseDmg:Math.round(baseDmg*.5);
-        const nhp=(obj.hp||1)-dmg;
-        if(nhp<=0){g.score+=5;
-          if(ot.explodes){// Barrel explodes
-            const area=[{x:obj.x,y:obj.y},{x:obj.x+1,y:obj.y},{x:obj.x-1,y:obj.y},{x:obj.x,y:obj.y+1},{x:obj.x,y:obj.y-1}];
-            g.enemies=g.enemies.map(e=>e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y)?{...e,hp:e.hp-20}:e).filter(e=>e.hp>0);
-            g.flash=[...cells.map(c=>({...c,col:'#f97316',fid:Math.random()}))];g.flashUntil=Date.now()+500;
-          }
-          return null;}
+        const nhp=(obj.hp||1)-(hit.main?baseDmg:Math.round(baseDmg*.5));
+        if(nhp<=0){g.score+=5;if(ot.explodes){const area=[{x:obj.x,y:obj.y},{x:obj.x+1,y:obj.y},{x:obj.x-1,y:obj.y},{x:obj.x,y:obj.y+1},{x:obj.x,y:obj.y-1}];g.enemies=g.enemies.map(e=>e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y)?{...e,hp:e.hp-20}:e).filter(e=>e.hp>0);g.flash=[...cells.map(c=>({...c,col:'#f97316',fid:Math.random()}))];g.flashUntil=Date.now()+500;}return null;}
         return{...obj,hp:nhp};
       }).filter(Boolean);
       if(clank){g.stamina=Math.max(0,g.stamina-25);snd('drop');}
@@ -480,7 +453,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const doAttackRef=useRef(doAttack);
   useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
 
-  // \u2500\u2500 Beacon complete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Beacon complete ────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
     const g=gs.current;if(!g)return;
     snd('beacon');g.stamina=Math.min(100,g.stamina+50);g.divergence=0;g.highDTicks=0;g.dropped=false;g.beaconCount=0;g.beaconProgress=0;
@@ -492,7 +465,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const doBeaconRef=useRef(doBeaconComplete);
   useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
 
-  // \u2500\u2500 Move \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Move ──────────────────────────────────────────────────────
   const doMoveDir=useCallback((sdx,sdy)=>{
     const g=gs.current;if(!g)return;
     let gdx=sdx,gdy=sdy;
@@ -500,29 +473,25 @@ function Game({gmode,settings,sPhase,onDead}){
     if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
     const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
     if(nx===g.player.x&&ny===g.player.y)return;
-    if(gmodeRef.current==='adventure'&&(nx<0||nx>=G||ny<0||ny>=G))return; // wall in adventure
+    if(gmodeRef.current==='adventure'&&(nx<0||nx>=G||ny<0||ny>=G))return;
     if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    // Block movement through objects and boss cells
     if(gmodeRef.current==='adventure'){
       if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return;
       if(g.enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>bc.x===nx&&bc.y===ny)))return;
     }
     g.player={...g.player,x:nx,y:ny};
     if(g.spell?.fn!=='rush'){const cost=Math.max(0,g.pitch)*10;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
-    // Adventure: loot pickup
     if(gmodeRef.current==='adventure'&&g.objects){
       const loot=g.objects.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
       if(loot){
         g.objects=g.objects.filter(o=>o.id!==loot.id);
         const upg=OBJ_TYPES[loot.type]?.upg;
         if(upg==='hp'){g.player={...g.player,hp:Math.min(g.player.maxHp+20,g.player.hp+20),maxHp:g.player.maxHp+20};}
-        else if(upg==='spell'){
-          const avail=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||['.']).includes(s));
-          if(avail.length>0){const ns=avail[Math.floor(Math.random()*avail.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsg('📜 Вивчено: '+(SPELL_MAP[ns]?.name||ns)+'!');}
-        }else if(upg==='reach'){g.weaponMods={...g.weaponMods,reach:g.weaponMods.reach+0.2};}
+        else if(upg==='spell'){const avail=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||['.']).includes(s));if(avail.length>0){const ns=avail[Math.floor(Math.random()*avail.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsg('📜 Вивчено: '+(SPELL_MAP[ns]?.name||ns)+'!');}}
+        else if(upg==='reach'){g.weaponMods={...g.weaponMods,reach:g.weaponMods.reach+0.2};}
         else if(upg==='weight'){g.weaponMods={...g.weaponMods,weight:Math.max(0.3,g.weaponMods.weight-0.15)};}
         else if(upg==='sharpness'){g.weaponMods={...g.weaponMods,sharpness:g.weaponMods.sharpness+0.25};}
-        snd('spell');setMsg(OBJ_TYPES[loot.type]?.desc||'Покращення!');
+        snd('spell');if(upg!=='spell')setMsg(OBJ_TYPES[loot.type]?.desc||'Покращення!');
       }
     }
     if(gmodeRef.current==='tutorial'&&!g.tutDone.moved){
@@ -531,7 +500,7 @@ function Game({gmode,settings,sPhase,onDead}){
     forceRender();
   },[]);
 
-  // \u2500\u2500 Rotate (keyboard/manual) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Rotate (keyboard/manual) ───────────────────────────────────
   const rotateW=useCallback((dir)=>{
     const g=gs.current;if(!g)return;
     const oldYaw=g.yawIdx;g.yawIdx=(g.yawIdx+dir+8)%8;
@@ -541,7 +510,7 @@ function Game({gmode,settings,sPhase,onDead}){
     forceRender();
   },[]);
 
-  // \u2500\u2500 Morse \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Morse ─────────────────────────────────────────────────────
   const handleMorse=useCallback((sym)=>{
     const g=gs.current;if(!g)return;
     snd(sym==='.'?'dot':'dash');g.morseSeq+=sym;forceRender();
@@ -550,12 +519,12 @@ function Game({gmode,settings,sPhase,onDead}){
       const g2=gs.current;if(!g2)return;
       const seq=g2.morseSeq;g2.morseSeq='';
       const sp=SPELL_MAP[seq];
-      if(sp)castSpell(sp);else setMsg(`? "${seq}" \u2014 \u043d\u0435\u0432\u0456\u0434\u043e\u043c\u0435 \u0437\u0430\u043a\u043b\u0438\u043d\u0430\u043d\u043d\u044f`);
+      if(sp)castSpell(sp);else setMsg(`? "${seq}" — невідоме заклинання`);
       forceRender();
     },1000);
   },[castSpell,setMsg]);
 
-  // \u2500\u2500 Sensors \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Sensors ───────────────────────────────────────────────────
   useEffect(()=>{
     if(sPhase!=='active')return;
     const handleCompassChange=(heading)=>{
@@ -608,7 +577,7 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
   },[sPhase]);// eslint-disable-line
 
-  // \u2500\u2500 Keyboard \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Keyboard ──────────────────────────────────────────────────
   useEffect(()=>{
     const held={};let bInt=null;
     const kd=e=>{
@@ -636,10 +605,10 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
   },[sPhase,doMoveDir,rotateW,handleMorse]);
 
-  // \u2500\u2500 Touch (\u0441\u0432\u0430\u0439\u043f \u0441\u043a\u0440\u0456\u0437\u044c, \u0430\u043b\u0435 \u041d\u0415 \u043d\u0430 scroll-\u0435\u043b\u0435\u043c\u0435\u043d\u0442\u0430\u0445) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Touch (свайп скрізь, але НЕ на scroll-елементах) ─────────
   useEffect(()=>{
     const onS=e=>{
-      // \u041d\u0435 \u043f\u0435\u0440\u0435\u0445\u043e\u043f\u043b\u044e\u0454\u043c\u043e \u044f\u043a\u0449\u043e \u0446\u0435 scroll-\u043a\u043e\u043d\u0442\u0435\u0439\u043d\u0435\u0440 (Morse bar)
+      // Не перехоплюємо якщо це scroll-контейнер (Morse bar)
       if(e.target.closest('.morse-scroll'))return;
       e.preventDefault();
       touchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};
@@ -660,9 +629,9 @@ function Game({gmode,settings,sPhase,onDead}){
     return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
   },[doMoveDir,handleMorse]);
 
-  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-  // \u0413\u0415\u0419\u041c \u041b\u0423\u041f \u2014 \u043c\u0456\u043d\u0456\u043c\u0430\u043b\u044c\u043d\u0456 deps, \u0432\u0441\u0435 \u0447\u0435\u0440\u0435\u0437 refs
-  // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  // ════════════════════════════════════════════════════════════════
+  // ГЕЙМ ЛУП — мінімальні deps, все через refs
+  // ════════════════════════════════════════════════════════════════
   useEffect(()=>{
     const id=setInterval(()=>{
       const g=gs.current;if(!g)return;
@@ -672,54 +641,27 @@ function Game({gmode,settings,sPhase,onDead}){
 
       // Flash expire
       if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
-
-      // ── ADVENTURE: edge timer + room transition ──────────────────
+      // ── ADVENTURE: edge timer + transition ──────────────────────
       if(gmodeRef.current==='adventure'&&!g.transitioning){
         const px=g.player.x,py=g.player.y;
-        let eDir=null;
-        if(py===0)eDir='N';else if(py===G-1)eDir='S';
-        else if(px===0)eDir='W';else if(px===G-1)eDir='E';
+        let eDir=null;if(py===0)eDir='N';else if(py===G-1)eDir='S';else if(px===0)eDir='W';else if(px===G-1)eDir='E';
         if(eDir){
           g.edgeTimer=(g.edgeTimer||0)+1;
-          if(g.edgeTimer===25){// ~2s: show preview
-            g.peekDir=eDir;
-            const nc=getNextCoord(g.roomCoord,eDir);
-            g.peekInfo=g.roomMap[coordId(nc.x,nc.y)]||null;
-          }
-          if(g.edgeTimer>=50){// ~4s: auto-transition
+          if(g.edgeTimer===25){g.peekDir=eDir;const nc=getNextCoord(g.roomCoord,eDir);g.peekInfo=g.roomMap[coordId(nc.x,nc.y)]||null;}
+          if(g.edgeTimer>=50){
             g.transitioning=true;g.edgeTimer=0;
-            const dir=eDir;const nc=getNextCoord(g.roomCoord,dir);
-            const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
-            // Save current room
+            const nc=getNextCoord(g.roomCoord,eDir);const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
             const cid=coordId(g.roomCoord.x,g.roomCoord.y);
             if(g.roomMap[cid]){g.roomMap[cid].enemies=[...g.enemies];g.roomMap[cid].objects=[...g.objects];g.roomMap[cid].cleared=g.enemies.length===0;}
-            // Spawn position in new room
-            const sx=dir==='E'?0:dir==='W'?G-1:clamp(g.player.x,0,G-1);
-            const sy=dir==='S'?0:dir==='N'?G-1:clamp(g.player.y,0,G-1);
-            g.player={...g.player,x:sx,y:sy};
-            g.roomCoord=nc;g.roomNumber=rNum;g.peekDir=null;g.peekInfo=null;g._roomCleared=false;
-            if(g.roomMap[nid]){
-              const sv=g.roomMap[nid];
-              g.enemies=sv.enemies||[];g.objects=sv.objects||[];g.isBossRoom=sv.isBoss||false;
-              g.roomMap[nid].visited=true;
-              setMsgRef.current?.(sv.cleared?'Кімната '+rNum+' (очищена)':'Кімната '+rNum+' · '+g.enemies.length+' ворогів'+(g.isBossRoom?' 👹':''));
-            }else{
-              const ac=generateRoom(rNum,sx,sy);
-              g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;
-              g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};
-              setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);
-            }
-            g.score+=15;g.flash=[];snd('wave');
-            setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
+            const sx=eDir==='E'?0:eDir==='W'?G-1:clamp(g.player.x,0,G-1);
+            const sy=eDir==='S'?0:eDir==='N'?G-1:clamp(g.player.y,0,G-1);
+            g.player={...g.player,x:sx,y:sy};g.roomCoord=nc;g.roomNumber=rNum;g.peekDir=null;g.peekInfo=null;g._roomCleared=false;
+            if(g.roomMap[nid]){const sv=g.roomMap[nid];g.enemies=sv.enemies||[];g.objects=sv.objects||[];g.isBossRoom=sv.isBoss||false;g.roomMap[nid].visited=true;setMsgRef.current?.((sv.cleared?'Кімната '+rNum+' (очищена)':'Кімната '+rNum+' · '+g.enemies.length+' ворогів'+(g.isBossRoom?' 👹':'')));}
+            else{const ac=generateRoom(rNum,sx,sy);g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);}
+            g.score+=15;g.flash=[];snd('wave');setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
           }
-        }else{
-          if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}
-        }
-        if(g.enemies.length===0&&!g._roomCleared){
-          g._roomCleared=true;
-          setMsgRef.current?.('✓ Очищено! Стань на краю 4с → наступна кімната');
-          setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);
-        }
+        }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
+        if(g.enemies.length===0&&!g._roomCleared){g._roomCleared=true;setMsgRef.current?.('✓ Очищено! Стань на краю 4с → наступна кімната');setTimeout(()=>{if(gs.current)gs.current._roomCleared=false;},6000);}
       }
 
       // Divergence
@@ -746,7 +688,7 @@ function Game({gmode,settings,sPhase,onDead}){
       }
       g.prevYawIdx=g.yawIdx;
 
-      // \u2500\u2500 \u0412\u041e\u0420\u041e\u0413\u0418 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+      // ── ВОРОГИ ─────────────────────────────────────────────────
       if(!g.dropped&&g.enemies.length>0){
         let dmg=0,flash=false;
         g.enemies=g.enemies.map(e=>{
@@ -762,21 +704,12 @@ function Game({gmode,settings,sPhase,onDead}){
             if(!stealth){const d=armor?Math.round(et.dmg*.4):et.dmg;dmg+=d;flash=true;if(shield)g.spell=null;}
             return{...e,lastMove:now};
           }
-          // Boss: body-aware movement
           if(e.type==='boss'){
-            const bcells=calcBossCells(e.x,e.y,e.size);
-            const adj=bcells.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
+            const bcs=calcBossCells(e.x,e.y,e.size);
+            const adj=bcs.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
             if(adj){dmg+=e.dmg;flash=true;return{...e,lastMove:now};}
-            // Move boss toward player
-            const moveDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]].filter(([mx,my])=>mx||my);
-            const bm=moveDirs.map(([mx,my])=>{
-              const nbx=e.x+mx,nby=e.y+my;
-              if(nbx<0||nby<0||nbx+e.size>G||nby+e.size>G)return null;
-              const nc2=calcBossCells(nbx,nby,e.size);
-              if(nc2.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;
-              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc2.some(c=>c.x===o.x&&c.y===o.y)))return null;
-              return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};
-            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+            const bDirs=[[Math.sign(dx),0],[0,Math.sign(dy)],[Math.sign(dx),Math.sign(dy)]].filter(([mx,my])=>mx||my);
+            const bm=bDirs.map(([mx,my])=>{const nbx=e.x+mx,nby=e.y+my;if(nbx<0||nby<0||nbx+e.size>G||nby+e.size>G)return null;const nc=calcBossCells(nbx,nby,e.size);if(nc.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc.some(c=>c.x===o.x&&c.y===o.y)))return null;return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
             return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
           }
           const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
@@ -785,7 +718,6 @@ function Game({gmode,settings,sPhase,onDead}){
             if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
             if(nx2===g.player.x&&ny2===g.player.y)return null;
             if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
-            // Objects block enemies
             if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2))return null;
             return{x:nx2,y:ny2,d:Math.abs(g.player.x-nx2)+Math.abs(g.player.y-ny2)};
           }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
@@ -799,10 +731,10 @@ function Game({gmode,settings,sPhase,onDead}){
         }
       }
 
-      // \u2500\u2500 \u0425\u0412\u0418\u041b\u042f \u0417\u0410\u0412\u0415\u0420\u0428\u0415\u041d\u0410 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+      // ── ХВИЛЯ ЗАВЕРШЕНА ────────────────────────────────────────
       if(gmodeRef.current==='survival'&&g.wave>0&&g.enemies.length===0&&!g._waveTimer){
         const next=g.wave+1;
-        g.wave=next;g.waveMsg=`\u0425\u0432\u0438\u043b\u044f ${next}`;
+        g.wave=next;g.waveMsg=`Хвиля ${next}`;
         g._waveTimer=setTimeout(()=>{
           if(gs.current)gs.current._waveTimer=null;
           doSpawnRef.current?.(next);
@@ -812,9 +744,9 @@ function Game({gmode,settings,sPhase,onDead}){
       forceRender();
     },TICK);
     return()=>clearInterval(id);
-  },[]);// \u2190 \u041f\u041e\u0420\u041e\u0416\u041d\u0406 DEPS! \u0412\u0441\u0435 \u0447\u0435\u0440\u0435\u0437 refs \u2014 \u043b\u0443\u043f \u043d\u0456\u043a\u043e\u043b\u0438 \u043d\u0435 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0454\u0442\u044c\u0441\u044f.
+  },[]);// ← ПОРОЖНІ DEPS! Все через refs — луп ніколи не перезапускається.
 
-  // \u2500\u2500 Render \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // ── Render ────────────────────────────────────────────────────
   const g=gs.current;
   if(!g)return null;
   const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn);
@@ -830,8 +762,8 @@ function Game({gmode,settings,sPhase,onDead}){
         <Bar v={g.player.hp} max={g.player.maxHp} col={g.player.hp>50?'#22c55e':g.player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
         <Bar v={g.stamina} max={100} col='#60a5fa' lbl="STA"/>
         <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<g.fingers?(g.dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
-        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>\u25c9</div>}
-        <div style={{fontSize:'9px',color:'#60a5fa',minWidth:'26px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:gmode==='survival'?`W${g.wave}`:'TUT'}</div>
+        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
+        <div style={{fontSize:'9px',color:g.isBossRoom?'#f97316':'#60a5fa',minWidth:'30px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:gmode==='survival'?`W${g.wave}`:'TUT'}</div>
         {(gmode==='survival'||gmode==='adventure')&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
       </div>
 
@@ -840,7 +772,7 @@ function Game({gmode,settings,sPhase,onDead}){
         <div style={{fontSize:'7px',color:'#1e3a5f',width:'18px'}}>DIV</div>
         <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:dc,transition:'width .05s'}}/></div>
         {g.spell&&<div style={{fontSize:'8px',color:g.spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{g.spell.name}</div>}
-        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>\u26a0DROP</div>}
+        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
       </div>
 
       {/* Morse input display */}
@@ -850,46 +782,38 @@ function Game({gmode,settings,sPhase,onDead}){
 
       {/* Sensor readout */}
       {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-        <span>\u03b2<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}\u00b0</span></span>
-        <span>\u2694<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
-        {isRadar&&<span>\u21bb<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}\u00b0</span></span>}
+        <span>β<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}°</span></span>
+        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
+        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
         <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
       </div>}
 
       {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
-      {/* Adventure HUD */}
-      {gmode==='adventure'&&g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(
-        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
-          <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
-          <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}>
-            <div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/>
-          </div>
-          <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
-        </div>);})()}
-      {gmode==='adventure'&&(g.edgeTimer||0)>5&&(
-        <div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-          <div style={{fontSize:'7px',color:'#f97316',minWidth:'40px'}}>{g.peekDir?`→${g.peekDir}`:'🚪'}</div>
-          <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
-            <div style={{height:'100%',width:`${Math.min(100,(g.edgeTimer||0)/50*100)}%`,background:'#f97316',transition:'width .08s'}}/>
-          </div>
-          <div style={{fontSize:'7px',color:'#f97316'}}>{Math.round((g.edgeTimer||0)/50*100)}%</div>
-        </div>
-      )}
+      {gmode==='adventure'&&g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
+        <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
+        <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}><div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/></div>
+        <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
+      </div>);})()}
+      {gmode==='adventure'&&(g.edgeTimer||0)>5&&<div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
+        <div style={{fontSize:'7px',color:'#f97316',minWidth:'40px'}}>{g.peekDir?`→${g.peekDir}`:'🚪'}</div>
+        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.min(100,(g.edgeTimer||0)/50*100)}%`,background:'#f97316',transition:'width .08s'}}/></div>
+        <div style={{fontSize:'7px',color:'#f97316'}}>{Math.round((g.edgeTimer||0)/50*100)}%</div>
+      </div>}
       {gmode==='adventure'&&g.peekDir&&(()=>{
-        const nc=getNextCoord(g.roomCoord,g.peekDir);const rNum=calcRoomNum(nc.x,nc.y);
-        const pr=g.peekInfo;const dirSym={N:'↑ ПІВНІЧ',S:'↓ ПІВДЕНЬ',E:'→ СХІД',W:'← ЗАХІД'}[g.peekDir]||g.peekDir;
+        const nc=getNextCoord(g.roomCoord,g.peekDir);const rNum=calcRoomNum(nc.x,nc.y);const pr=g.peekInfo;
+        const dirSym={N:'↑ ПІВНІЧ',S:'↓ ПІВДЕНЬ',E:'→ СХІД',W:'← ЗАХІД'}[g.peekDir]||g.peekDir;
         return(<div style={{position:'fixed',bottom:'8%',left:'50%',transform:'translateX(-50%)',zIndex:20,background:'rgba(1,13,31,0.96)',border:`1px solid ${pr?.isBoss?'#f97316':'#1e4a7f'}`,borderRadius:'9px',padding:'10px 14px',minWidth:'210px',fontFamily:"'Courier New',monospace",animation:'fadeIn .3s ease'}}>
           <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'3px'}}>{dirSym}</div>
           <div style={{fontSize:'12px',fontWeight:'bold',color:pr?.isBoss?'#f97316':'#60a5fa',marginBottom:'4px'}}>{pr?(pr.isBoss?`👹 КІМНАТА ${rNum} — БОС`:`Кімната ${rNum}`):`? Кімната ${rNum}`}</div>
-          {pr&&<div style={{fontSize:'9px',color:'#94a3b8'}}>
-            {pr.cleared?<span style={{color:'#22c55e'}}>✓ очищена</span>:<span>⚔ {pr.enemies?.length||0} ворогів</span>}
+          {pr&&<div style={{fontSize:'9px',color:'#94a3b8'}}>{pr.cleared?<span style={{color:'#22c55e'}}>✓ очищена</span>:<span>⚔ {pr.enemies?.length||0} ворогів</span>}
             {pr.objects?.filter(o=>OBJ_TYPES[o.type]?.isLoot).length>0&&<span style={{color:'#fbbf24'}}> 💎 {pr.objects.filter(o=>OBJ_TYPES[o.type]?.isLoot).map(o=>OBJ_TYPES[o.type]?.sym).join('')}</span>}
           </div>}
-          <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'4px',textAlign:'center'}}>залишайся на краю → авто-перехід</div>
+          {!pr&&<div style={{fontSize:'9px',color:'#334155'}}>невідома кімната</div>}
+          <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'4px',textAlign:'center'}}>залишайся → авто-перехід</div>
         </div>);
       })()}
       {gmode==='adventure'&&(g.weaponMods?.reach>1||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1||(g.unlockedSpells?.length||0)>1)&&(
-        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'6px',fontSize:'8px',color:'#334155'}}>
+        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'5px',fontSize:'8px'}}>
           {g.weaponMods?.reach>1&&<span style={{color:'#60a5fa'}}>🔭+{Math.round((g.weaponMods.reach-1)*100)}%</span>}
           {g.weaponMods?.weight<1&&<span style={{color:'#22c55e'}}>🌬+{Math.round((1-g.weaponMods.weight)*100)}%</span>}
           {g.weaponMods?.sharpness>1&&<span style={{color:'#f59e0b'}}>⚡+{Math.round((g.weaponMods.sharpness-1)*100)}%</span>}
@@ -918,25 +842,13 @@ function Game({gmode,settings,sPhase,onDead}){
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
               <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
-                {/* Adventure: objects */}
-                {!isP&&!en&&(()=>{
-                  const obj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
-                  if(!obj)return null;
-                  const ot=OBJ_TYPES[obj.type];
-                  return <span style={{fontSize:`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.5+((obj.hp||1)/3)*0.5):1}}>{ot.sym}</span>;
-                })()}
-                {/* Adventure: boss body */}
-                {!isP&&!en&&(()=>{
-                  const boss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-                  if(!boss)return null;
-                  const isCore=getPos(boss.x,boss.y).sx===sx&&getPos(boss.x,boss.y).sy===sy;
-                  return <span style={{fontSize:`${cellSz*.6}px`,color:boss.col,fontWeight:'bold'}}>{isCore?boss.sym:'·'}</span>;
-                })()}
+                {!isP&&!en&&cellObj&&(()=>{const ot=OBJ_TYPES[cellObj.type];return <span style={{fontSize:`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.4+((cellObj.hp||1)/3)*0.6):1}}>{ot.sym}</span>;})()}
+                {!isP&&!en&&!cellObj&&cellBoss&&(()=>{const isCore=getPos(cellBoss.x,cellBoss.y).sx===sx&&getPos(cellBoss.x,cellBoss.y).sy===sy;return <span style={{fontSize:`${cellSz*.6}px`,color:cellBoss.col,fontWeight:'bold'}}>{isCore?cellBoss.sym:'·'}</span>;})()}
                 {isP?(<>
                   <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
                     background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
                     boxShadow:`0 0 5px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'\u2191':DSYM[g.yawIdx]}</div>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[g.yawIdx]}</div>
                 </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
               </div>
             );
@@ -946,14 +858,14 @@ function Game({gmode,settings,sPhase,onDead}){
 
       {/* Beacon */}
       {g.beaconProgress>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'7px',color:'#22c55e'}}>\u2b07\u041c\u0410\u042f\u041a</div>
+        <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
         <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.beaconProgress*100}%`,background:'#22c55e',transition:'width .05s'}}/></div>
       </div>}
 
       {/* Companion */}
       {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
 
-      {/* MORSE BAR \u2014 \u0437\u0430\u0432\u0436\u0434\u0438 \u0432\u0438\u0434\u0438\u043c\u0438\u0439 \u0437\u043d\u0438\u0437\u0443 */}
+      {/* MORSE BAR — завжди видимий знизу */}
       <MorseBar currentSeq={g.morseSeq} unlocked={gmode==='adventure'?g.unlockedSpells:null}/>
 
       {/* Status */}
@@ -961,43 +873,43 @@ function Game({gmode,settings,sPhase,onDead}){
         <span style={{color:dc}}>D={Math.round(g.divergence)}%</span>
         <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
         {isRadar&&<span style={{color:'#a78bfa'}}>RADAR</span>}
-        <span>\u0441\u0432\u0430\u0439\u043f=\u0440\u0443\u0445 \u00b7 \u0442\u0430\u043f=\u00b7 \u00b7 \u0442\u0440\u0438\u043c\u0430\u0439=\u2212</span>
+        <span>свайп=рух · тап=· · тримай=−</span>
       </div>
     </div>
   );
 }
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
-// \u2500\u2500 WARNING \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── WARNING ───────────────────────────────────────────────────────
 function Warning({onOk}){
   const[ok,setOk]=useState(false);
   return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
-    <div style={{fontSize:'36px'}}>\u26a0\ufe0f</div>
-    <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>\u0423\u0412\u0410\u0413\u0410!</div>
+    <div style={{fontSize:'36px'}}>⚠️</div>
+    <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>УВАГА!</div>
     <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:2,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'14px'}}>
-      \u0413\u0440\u0430 \u0432\u0438\u043c\u0430\u0433\u0430\u0454 \u0444\u0456\u0437\u0438\u0447\u043d\u0438\u0445 \u0440\u0443\u0445\u0456\u0432 \u0441\u043c\u0430\u0440\u0442\u0444\u043e\u043d\u043e\u043c.<br/>
-      <span style={{color:'#ef4444',fontWeight:'bold'}}>\u041d\u0415 \u0440\u043e\u0437\u0431\u0438\u0439 \u0442\u0435\u043b\u0435\u0444\u043e\u043d!</span><br/>
-      \u0413\u0440\u0430\u0439 \u0432 \u0431\u0435\u0437\u043f\u0435\u0447\u043d\u043e\u043c\u0443 \u0432\u0456\u0434\u043a\u0440\u0438\u0442\u043e\u043c\u0443 \u043c\u0456\u0441\u0446\u0456.<br/>
-      \u041f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u0439\u0441\u044f \u0449\u043e \u043d\u0430\u0432\u043a\u043e\u043b\u043e \u043d\u0456\u043a\u043e\u0433\u043e \u043d\u0435\u043c\u0430\u0454.<br/>
-      <span style={{color:'#334155'}}>\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0454\u0442\u044c\u0441\u044f \u0440\u0435\u043c\u0456\u043d\u0435\u0446\u044c \u043d\u0430 \u0437\u0430\u043f'\u044f\u0441\u0442\u0456.</span>
+      Гра вимагає фізичних рухів смартфоном.<br/>
+      <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
+      Грай в безпечному відкритому місці.<br/>
+      Переконайся що навколо нікого немає.<br/>
+      <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
     </div>
     <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
       <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
-      \u042f \u0440\u043e\u0437\u0443\u043c\u0456\u044e \u0456 \u0433\u0440\u0430\u044e \u043e\u0431\u0435\u0440\u0435\u0436\u043d\u043e
+      Я розумію і граю обережно
     </label>
     <B2 onClick={ok?onOk:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok?1:.5}}>
-      {ok?'\u25b7 \u041f\u0420\u041e\u0414\u041e\u0412\u0416\u0418\u0422\u0418':'(\u043f\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u044c \u0441\u043f\u043e\u0447\u0430\u0442\u043a\u0443)'}
+      {ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
     </B2>
   </div>);
 }
 
-// \u2500\u2500 APP \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── APP ───────────────────────────────────────────────────────────
 function App(){
   const[screen,setScreen]=useState('warning');
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
   const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true});
-  // onDead \u2014 \u0441\u0442\u0430\u0431\u0456\u043b\u044c\u043d\u0438\u0439 \u0447\u0435\u0440\u0435\u0437 useCallback \u0449\u043e\u0431 \u043d\u0435 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0442\u0438 \u0433\u0435\u0439\u043c-\u043b\u0443\u043f
+  // onDead — стабільний через useCallback щоб не перезапускати гейм-луп
   const onDead=useCallback(()=>setScreen('dead'),[]);
   return(
     <>
@@ -1006,26 +918,26 @@ function App(){
       {screen==='game'&&<Game key={`${gmode}-${Math.random()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={onDead}/>}
       {screen==='dead'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
-          <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>\u0412\u041f\u0410\u0412</div>
+          <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
           <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>\u21bb \u0429\u0415 \u0420\u0410\u0417</B2>
-            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺️ ПРИГОДА</B2>
-            <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>\u2190 \u041c\u0415\u041d\u042e</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
+            <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
           </div>
         </div>
       )}
       {screen==='menu'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'18px',gap:'10px'}}>
-          <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>\u041c\u0418\u0420 13\u00d713</div>
-          <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>\u0421\u041b\u0406\u041f\u0418\u0419 \u0411\u0406\u0419</div>
-          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>\u0441\u0432\u0430\u0439\u043f=\u0440\u0443\u0445 \u00b7 \u0442\u0430\u043f=\u00b7 \u00b7 \u0442\u0440\u0438\u043c\u0430\u0439=\u2212 \u00b7 \u043c\u0430\u0445=\u0443\u0434\u0430\u0440<br/><span style={{color:'#1e3a5f'}}>\u041c\u043e\u0440\u0437\u0435-\u0437\u0430\u043a\u043b\u0438\u043d\u0430\u043d\u043d\u044f \u2014 \u0434\u0438\u0432\u0438\u0441\u044c \u0437\u043d\u0438\u0437\u0443 \u043f\u0456\u0434 \u0441\u0456\u0442\u043a\u043e\u044e</span></div>
+          <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
+          <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
+          <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар<br/><span style={{color:'#1e3a5f'}}>Морзе-заклинання — дивись знизу під сіткою</span></div>
           <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
-            {sPhase==='active'?<span style={{color:'#22c55e'}}>\u25c9 \u0414\u0430\u0442\u0447\u0438\u043a\u0438 \u00b7 {WPN[S.startWpn].label} \u00b7 {S.worldMode==='radar'?'RADAR':'\u041a\u041b\u0410\u0421\u0418\u041a\u0410'}</span>:<span style={{color:'#334155'}}>\u0414\u0430\u0442\u0447\u0438\u043a\u0438 \u0432\u0438\u043c\u043a\u043d\u0435\u043d\u0456 \u2192 \u2699</span>}
+            {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙</span>}
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
-            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>\u25b7 \u0422\u0423\u0422\u041e\u0420\u0406\u0410\u041b</B2>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>\u25c8 \u0412\u0418\u0416\u0418\u0412\u0410\u041d\u041d\u042f</B2>
-            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>\u2699 \u041d\u0410\u041b\u0410\u0428\u0422\u0423\u0412\u0410\u041d\u041d\u042f</B2>
+            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
+            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺 ПРИГОДА</B2>
+            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
           </div>
         </div>
       )}
