@@ -843,7 +843,7 @@ function Game({gmode,settings,sPhase,onDead}){
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
             const isP=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
-            const en=g.enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
+            const en=g.enemies.find(e=>{if(e.type==='boss')return false;const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
             const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
             const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
             const isEdge=sx===0||sx===G-1||sy===0||sy===G-1;
@@ -852,7 +852,7 @@ function Game({gmode,settings,sPhase,onDead}){
             let bg=isEdge?'#030f1f':'#020c1a',bdr=isEdge?'1px solid #2a4a7f':'1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
-            else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
+            else if(en&&ET[en.type]){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
             else if(cellBoss){bg=cellBoss.col+'22';bdr=`2px solid ${cellBoss.col}`;}
             else if(cellObj&&!OBJ_TYPES[cellObj.type]?.isLoot){const ot2=OBJ_TYPES[cellObj.type];bg=ot2.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot2.col}`;}
             else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?'#3b82f6':'#1e3a5f'}`;}
@@ -865,7 +865,7 @@ function Game({gmode,settings,sPhase,onDead}){
                     background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
                     boxShadow:`0 0 5px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
                   <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[g.yawIdx]}</div>
-                </>):en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
+                </>):en&&ET[en.type]?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
               </div>
             );
           })}
