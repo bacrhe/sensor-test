@@ -182,11 +182,37 @@ function generateRoom(roomNum,spawnX,spawnY,diff){
   }
   let enemies=[];
   if(isBoss){
-    const bKeys=Object.keys(BOSS_DEFS);const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
-    const bd=BOSS_DEFS[bType];const scale=Math.max(1,1+(roomNum/3-1)*0.4);
-    const bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
-    const by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
-    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,hp:Math.round(bd.basehp*scale*_dCfg.enemyHp),maxHp:Math.round(bd.basehp*scale*_dCfg.enemyHp),dmg:Math.round(bd.dmg*scale*_dCfg.enemyDmg),ms:Math.round(bd.ms/Math.sqrt(scale)),size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
+    const bossRoomIdx=Math.floor(roomNum/3); // 1=room3, 2=room6, 3=room9...
+    const scale=Math.max(1,1+(bossRoomIdx-1)*0.7); // steeper scaling: +70% per boss tier
+    const numBosses=bossRoomIdx>=2?2:1; // 2 bosses from room 6 onward
+    enemies=[];
+    const usedBossPos=[];
+    for(let b=0;b<numBosses;b++){
+      const bKeys=Object.keys(BOSS_DEFS);
+      const bType=bKeys[Math.floor(Math.random()*bKeys.length)];
+      const bd=BOSS_DEFS[bType];
+      // Position: boss 0 top-left area, boss 1 bottom-right area
+      let bx,by;
+      if(numBosses===1){
+        bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
+        by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
+      }else{
+        const offsets=[[1,1],[G-bd.size-1,G-bd.size-1]];
+        const[ox,oy]=offsets[b%2];
+        bx=Math.max(0,Math.min(G-bd.size,ox));
+        by=Math.max(0,Math.min(G-bd.size,oy));
+      }
+      // Avoid overlap with other boss
+      if(usedBossPos.some(p=>Math.abs(p.x-bx)+Math.abs(p.y-by)<4)) bx=Math.min(G-bd.size,bx+3);
+      usedBossPos.push({x:bx,y:by});
+      enemies.push({id:EID++,type:'boss',bossType:bType,x:bx,y:by,
+        hp:Math.round(bd.basehp*scale*_dCfg.enemyHp),
+        maxHp:Math.round(bd.basehp*scale*_dCfg.enemyHp),
+        dmg:Math.round(bd.dmg*scale*_dCfg.enemyDmg),
+        ms:Math.round(bd.ms/Math.sqrt(scale)),
+        size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0,
+        bossRoomIdx}); // store tier for loot scaling
+    }
   }else{
     const etAll=Object.keys(ET);const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
     const count=Math.max(1,Math.round(1+roomNum*0.55));const spOcc=[...occ];
@@ -200,7 +226,16 @@ function generateRoom(roomNum,spawnX,spawnY,diff){
 
 function getWCells(px,py,yi,wk,extraReach=0){
   const w=WPN[wk],cells=[];
-  if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
+  if(w.sweep){
+  for(let d=0;d<8;d++){
+    const[dx,dy]=DIR[d];
+    for(let r=1;r<=1+extraReach;r++){
+      const nx=px+dx*r,ny=py+dy*r;
+      if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r===1,extra:r>1});
+    }
+  }
+  return cells;
+}
   const[dx,dy]=DIR[yi];
   // Base reach + extra cells from upgrades (extra cells deal full damage)
   for(let r=1;r<=w.reach+extraReach;r++){
@@ -292,7 +327,7 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
       </Sec>
       <Sec title="РЕЖИМ">
         <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі']].map(([val,lbl,desc])=>(
+          {[['classic','Класика','Рух гравця'],['radar','Радар','Центр екрану'],['panorama','Панорама','3D вигляд']].map(([val,lbl,desc])=>(
             <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))} style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
               <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
@@ -338,6 +373,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const prevAccMag=useRef(9.8);
   const lastStrikeT=useRef(0);
   const isRadar=settings.worldMode==='radar';
+  const isPanorama=settings.worldMode==='panorama';
   const STRENGTH=4;
 
   // ══ REFS для гейм-лупу — уникаємо stale closure ══
@@ -461,7 +497,25 @@ function Game({gmode,settings,sPhase,onDead}){
     if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
     let hits=0;
     g.enemies=g.enemies.map(e=>{
-      if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size);if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;hits++;if(e.hp-baseDmg<=0){g.score+=100;snd('wave');return null;}return{...e,hp:e.hp-baseDmg};}
+      if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size);if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;hits++;if(e.hp-baseDmg<=0){
+          const bTier=e.bossRoomIdx||1;
+          g.score+=100*bTier;snd('wave');
+          // Drop boss loot based on tier
+          const lKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+          const dropCount=2+bTier; // tier1=3, tier2=4, tier3=5 drops
+          const drops=[...lKeys].sort(()=>Math.random()-.5).slice(0,dropCount);
+          const usedP=[...g.enemies.filter(x=>x.id!==e.id).map(x=>({x:x.x,y:x.y})),...(g.objects||[]).map(o=>({x:o.x,y:o.y}))];
+          const newLoot=[];
+          for(const lt of drops){
+            for(let t=0;t<40;t++){
+              const lx=1+Math.floor(Math.random()*(G-2));const ly=1+Math.floor(Math.random()*(G-2));
+              if(usedP.some(p=>Math.abs(p.x-lx)+Math.abs(p.y-ly)<2))continue;
+              newLoot.push({id:EID++,type:lt,x:lx,y:ly,hp:null});usedP.push({x:lx,y:ly});break;
+            }
+          }
+          if(newLoot.length>0){g.objects=[...(g.objects||[]),...newLoot];setMsgRef.current?.(`👹 Тир ${bTier} переможено! 💎×${newLoot.length}`);}
+          return null;
+        }return{...e,hp:e.hp-baseDmg};}
       const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
       hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
       if(e.hp-dmg<=0){g.score+=10;return null;}
@@ -806,7 +860,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const g=gs.current;
   if(!g)return null;
   const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn,g.weaponMods?.reach||0);
-  const cellSz=Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
+  const cellSz=isPanorama?Math.floor(window.innerWidth/G):Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
   const pc=pColor(g.pitch);const dc=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
   const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
 
@@ -878,8 +932,15 @@ function Game({gmode,settings,sPhase,onDead}){
       )}
 
       {/* GRID */}
-      <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
-        <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+      <div style={isPanorama?{
+          position:'fixed',inset:0,zIndex:1,background:'#010d1f',
+          display:'grid',
+          gridTemplateColumns:`repeat(${G},1fr)`,
+          gridTemplateRows:`repeat(${G},1fr)`,
+          transform:'perspective(320px) rotateX(42deg)',
+          transformOrigin:'50% 46%',
+        }:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
+        <div style={{display:isPanorama?'contents':'grid',gridTemplateColumns:isPanorama?undefined:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
             const isP=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
@@ -902,7 +963,7 @@ const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
             else if(cellObj&&!OBJ_TYPES[cellObj.type]?.isLoot){const ot2=OBJ_TYPES[cellObj.type];bg=ot2.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot2.col}`;}
             else if(wc){bg=wc.extra?'#f9731344':wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.extra?'#f97316':wc.main?'#3b82f6':'#1e3a5f'}`;}
             return(
-              <div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
+              <div key={idx} style={{width:isPanorama?'100%':`${cellSz}px`,height:isPanorama?'100%':`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
                 {!isVoid&&!isP&&!en&&cellObj&&(()=>{const ot=OBJ_TYPES[cellObj.type];return <span style={{fontSize:`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.4+((cellObj.hp||1)/3)*0.6):1}}>{ot.sym}</span>;})()}
                 {!isVoid&&!isP&&!en&&!cellObj&&cellBoss&&(()=>{const isCore=getPos(cellBoss.x,cellBoss.y).sx===sx&&getPos(cellBoss.x,cellBoss.y).sy===sy;return <span style={{fontSize:`${cellSz*.6}px`,color:cellBoss.col,fontWeight:'bold'}}>{isCore?cellBoss.sym:'·'}</span>;})()}
                 {isP?(<>
@@ -1009,7 +1070,7 @@ function App(){
           <div style={{color:'#3a6a9f',fontSize:'24px',fontWeight:'bold'}}>СЛІПИЙ БІЙ</div>
           <div style={{fontSize:'8px',color:'#334155',textAlign:'center',lineHeight:1.9}}>свайп=рух · тап=· · тримай=− · мах=удар<br/><span style={{color:'#1e3a5f'}}>Морзе-заклинання — дивись знизу під сіткою</span></div>
           <div style={{padding:'7px 12px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':'#1e3a5f'}`,borderRadius:'6px',fontSize:'9px',textAlign:'center',width:'100%',maxWidth:'270px'}}>
-            {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙</span>}
+            {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':S.worldMode==='panorama'?'ПАНОРАМА':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙</span>}
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
             <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
