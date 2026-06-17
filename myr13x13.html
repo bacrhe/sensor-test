@@ -868,7 +868,7 @@ function Game({gmode,settings,sPhase,onDead}){
           <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'4px',textAlign:'center'}}>залишайся → авто-перехід</div>
         </div>);
       })()}
-      {gmode==='adventure'&&(g.weaponMods?.reach>1||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1||(g.unlockedSpells?.length||0)>1)&&(
+      {gmode==='adventure'&&((g.weaponMods?.reach||0)>0||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1||(g.unlockedSpells?.length||0)>1)&&(
         <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'5px',fontSize:'8px'}}>
           {(g.weaponMods?.reach||0)>0&&<span style={{color:'#f97316'}}>🔭+{g.weaponMods.reach}кл</span>}
           {g.weaponMods?.weight<1&&<span style={{color:'#22c55e'}}>🌬+{Math.round((1-g.weaponMods.weight)*100)}%</span>}
@@ -893,8 +893,8 @@ const isVoid=isRadar&&(_wc.gx<0||_wc.gx>=G||_wc.gy<0||_wc.gy>=G);
 const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
             const cellObj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
             const cellBoss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-            let bg=isVoid?'#000000':isEdge?'#030f1f':'#020c1a';
-            let bdr=isVoid?'1px solid #000000':isEdge?'1px solid #2a4a7f':'1px solid #091c30';
+            let bg=isVoid?'#000000':isEdge?'#040e1a':'#020c1a';
+            let bdr=isVoid?'none':isEdge?'2px solid #2a5a9f':'1px solid #091c30';
             if(fl)bg=fl.col+'55';
             else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
             else if(en&&ET[en.type]){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
