@@ -1134,10 +1134,16 @@ function Warning({onOk,setSPhase,t=k=>k}){
 }
 
 // ── LOBBY ─────────────────────────────────────────────────────────────────
+// Spawn positions by slot (spread players across room)
+function getSpawnPos(slot){
+  return [{x:2,y:6},{x:10,y:6},{x:6,y:2},{x:6,y:10}][slot]||{x:CX,y:CY};
+}
+
 function Lobby({settings,onStart,t=k=>k}){
   const[phase,setPhase]=useState('menu');
   const[myName,setMyName]=useState('');
   const[code,setCode]=useState('');
+  const[myWpn,setMyWpn]=useState(settings.startWpn||'sword');
   const[roomCode,setRoomCode]=useState('');
   const[myId,setMyId]=useState('');
   const[isHost,setIsHost]=useState(false);
@@ -1153,7 +1159,7 @@ function Lobby({settings,onStart,t=k=>k}){
     const dCfg=DIFFICULTY[settings.difficulty||'normal']||DIFFICULTY.normal;
     fbSet(`mp/${id}`,{
       info:{host:pid,mpMode:settings.mpMode||'coop_adventure',maxPlayers:settings.maxPlayers||2,friendlyFire:!!settings.friendlyFire,difficulty:settings.difficulty||'normal',startWpn:settings.startWpn||'sword',status:'waiting'},
-      players:{[pid]:{name:myName.trim(),slot:0,hp:Math.round(100*dCfg.playerHp),maxHp:Math.round(100*dCfg.playerHp),alive:true,wpn:settings.startWpn||'sword',x:CX,y:CY,yawIdx:0,compassD:0,stamina:100,weaponMods:{reach:0,weight:1,sharpness:1},score:0}},
+      players:{[pid]:{name:myName.trim(),slot:0,hp:Math.round(100*dCfg.playerHp),maxHp:Math.round(100*dCfg.playerHp),alive:true,wwpn:myWpn,...getSpawnPos(0),yawIdx:0,compassD:0,stamina:100,weaponMods:{reach:0,weight:1,sharpness:1},score:0}},
     });
     cln.current.push(fbOn(`mp/${id}/players`,ps=>{if(ps)setWaitPlayers(ps);}));
     setPhase('wait');
@@ -1174,7 +1180,7 @@ function Lobby({settings,onStart,t=k=>k}){
         if(cnt>=(info.maxPlayers||2)){setStatus(`Кімната повна ${cnt}/${info.maxPlayers||2}`);u2();u();return;}
         const pid='p'+Date.now(),slot=cnt;
         const dCfg=DIFFICULTY[info.difficulty||'normal']||DIFFICULTY.normal;
-        fbSet(`mp/${id}/players/${pid}`,{name:myName.trim(),slot,hp:Math.round(100*dCfg.playerHp),maxHp:Math.round(100*dCfg.playerHp),alive:true,wpn:settings.startWpn||'sword',x:G-1-CX,y:CY,yawIdx:4,compassD:180,stamina:100,weaponMods:{reach:0,weight:1,sharpness:1},score:0});
+        fbSet(`mp/${id}/players/${pid}`,{name:myName.trim(),slot,hp:Math.round(100*dCfg.playerHp),maxHp:Math.round(100*dCfg.playerHp),alive:true,wpn:myWpn,...getSpawnPos(slot),yawIdx:slot===1?4:0,compassD:slot===1?180:0,stamina:100,weaponMods:{reach:0,weight:1,sharpness:1},score:0});
         setRoomCode(id);setMyId(pid);setIsHost(false);
         cln.current.push(fbOn(`mp/${id}/players`,ps2=>{if(ps2)setWaitPlayers(ps2);}));
         cln.current.push(fbOn(`mp/${id}/info/status`,st=>{if(st==='playing'){cleanup();onStart({roomId:id,myId:pid,isHost:false,roomInfo:info});}}));
@@ -1188,7 +1194,7 @@ function Lobby({settings,onStart,t=k=>k}){
     if(Object.keys(waitPlayers).length<2){setStatus('Потрібно мін. 2 гравці');return;}
     fbSet(`mp/${roomCode}/info/status`,'playing');
     cleanup();
-    onStart({roomId:roomCode,myId,isHost:true,roomInfo:{mpMode:settings.mpMode||'coop_adventure',maxPlayers:settings.maxPlayers||2,friendlyFire:!!settings.friendlyFire,difficulty:settings.difficulty||'normal',startWpn:settings.startWpn||'sword'}});
+    onStart({roomId:roomCode,myId,isHost:true,roomInfo:{mpMode:settings.mpMode||'coop_adventure',maxPlayers:settings.maxPlayers||2,friendlyFire:!!settings.friendlyFire,difficulty:settings.difficulty||'normal',startWpn:settings.startWpn||'sword',strikeThr:settings.strikeThr||7,pitchSens:settings.pitchSens||40}});
   };
 
   const handleLeave=()=>{
@@ -1216,6 +1222,12 @@ function Lobby({settings,onStart,t=k=>k}){
     {(phase==='create'||phase==='join')&&(<div style={{width:'100%',maxWidth:'360px'}}>
       <div style={{fontSize:'10px',color:'#1e4a7f',letterSpacing:'.1em',marginBottom:'12px'}}>{phase==='create'?'НОВА КІМНАТА':'ПРИЄДНАТИСЬ'}</div>
       <input value={myName} onChange={e=>setMyName(e.target.value)} placeholder="Ваше імʼя" maxLength={12} style={InpStyle}/>
+      <div style={{fontSize:'9px',color:'#1e4a7f',marginBottom:'5px',marginTop:'2px'}}>ЗБРОЯ</div>
+      <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'8px'}}>
+        {Object.entries(WPN).map(([k,w])=>(
+          <button key={k} onClick={()=>setMyWpn(k)} style={{padding:'5px 7px',background:myWpn===k?'#14532d33':'#060f1e',border:`1px solid ${myWpn===k?'#22c55e':'#1e3a5f'}`,color:myWpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',whiteSpace:'nowrap'}}>{w.label}</button>
+        ))}
+      </div>
       {phase==='join'&&<input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="КОД КІМНАТИ" maxLength={5} style={{...InpStyle,fontSize:'18px',letterSpacing:'.35em',textAlign:'center',color:'#60a5fa'}}/>}
       <B2 onClick={phase==='create'?handleCreate:handleJoin} col={phase==='create'?'#22c55e':'#3b82f6'}>{phase==='create'?'✓ СТВОРИТИ':'🔗 ПРИЄДНАТИСЬ'}</B2>
       <B2 onClick={()=>{setPhase('menu');setStatus('');}} col='#4a6a9f' style={{marginTop:'6px'}}>← НАЗАД</B2>
@@ -1285,7 +1297,8 @@ function MPGame({roomId,myId,isHost,roomInfo,onExit}){
     EID=Math.floor(Math.random()*9000)+2000;
 
     const startHp=Math.round(100*dCfg.playerHp);
-    myP.current={x:CX,y:CY,hp:startHp,maxHp:startHp,stamina:100,yawIdx:0,compassD:0,pitch:0,wpn:info.startWpn||'sword',alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,slot:0,name:myId,id:myId};
+    const mySpawn=getSpawnPos(0);
+    myP.current={x:mySpawn.x,y:mySpawn.y,hp:startHp,maxHp:startHp,stamina:100,yawIdx:0,compassD:0,pitch:0,wpn:info.startWpn||'sword',alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,slot:0,name:myId,id:myId};
 
     // Listen my player data
     cln.current.push(fbOn(`mp/${roomId}/players/${myId}`,pd=>{if(!pd)return;if(pd.slot!==undefined)myP.current.slot=pd.slot;if(pd.name)myP.current.name=pd.name;allP.current[myId]=myP.current;fr();}));
@@ -1359,13 +1372,28 @@ function MPGame({roomId,myId,isHost,roomInfo,onExit}){
 
     // Sensors
     const ori=e=>{const p=myP.current;if(!p)return;const h=e.webkitCompassHeading!=null?e.webkitCompassHeading:(360-(e.alpha||0))%360;p.compassD=h;p.yawIdx=Math.round(((h+22.5)%360)/45)%8;fr();};
-    const mot=e=>{const p=myP.current;if(!p)return;const b=e.accelerationIncludingGravity?.beta||0;p.pitch=b>15?1:b<-10?-1:0;};
+    let _lastStrike=0;
+    const mot=e=>{
+      const p=myP.current;if(!p)return;
+      const ag=e.accelerationIncludingGravity;if(!ag)return;
+      // Pitch for stamina
+      const b=ag.beta||0;p.pitch=b>15?1:b<-10?-1:0;
+      // Strike detection — high acceleration = swing attack
+      const mag=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||0)**2);
+      const thr=info.strikeThr||7;
+      const now2=Date.now();
+      if(mag>thr&&now2-_lastStrike>500&&p.alive&&p.stamina>5){
+        _lastStrike=now2;
+        doAttackRef.current?.();
+      }
+    };
     window.addEventListener('deviceorientation',ori,true);window.addEventListener('devicemotion',mot);
     cln.current.push(()=>{window.removeEventListener('deviceorientation',ori,true);window.removeEventListener('devicemotion',mot);});
     fr();
     return()=>{cln.current.forEach(f=>f());cln.current=[];};
   },[]);
 
+  useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
   const doAttack=useCallback(()=>{
     const p=myP.current,g=rs.current;if(!p||!g||p.stamina<5||!p.alive)return;
     p.stamina=Math.max(0,p.stamina-20);
@@ -1421,6 +1449,7 @@ function MPGame({roomId,myId,isHost,roomInfo,onExit}){
     fr();
   },[myId,isHost,info]);
 
+  const doAttackRef=useRef(null);
   const tRef=useRef(null);
   const onTS=useCallback(e=>{AC.resume();const t=e.touches[0];tRef.current={x:t.clientX,y:t.clientY,t:Date.now()};},[]);
   const onTE=useCallback(e=>{
