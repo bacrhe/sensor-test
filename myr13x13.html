@@ -55,6 +55,57 @@ const WAVES=[
 ];
 
 // Коди від простих до складних
+
+// ── ПЕРЕКЛАДИ / TRANSLATIONS ───────────────────────────────────────────
+const TR={
+  uk:{
+    // Menu
+    tutorial:'▷ ТУТОРІАЛ', survival:'◈ ВИЖИВАННЯ', adventure:'🗺 ПРИГОДА',
+    settings:'⚙ НАЛАШТУВАННЯ', playAgain:'↻ ЩЕ РАЗ',
+    // Settings
+    sWorldMode:'РЕЖИМ СВІТУ', sWeapon:'СТАРТОВА ЗБРОЯ', sDiff:'СКЛАДНІСТЬ',
+    sSensors:'ДАТЧИКИ', sVoice:'ГОЛОС КОМПАНЬЙОНА', sLang:'МОВА',
+    voiceOn:'🔊 Увімкнений', voiceOff:'🔇 Вимкнений',
+    classic:'Класика', radar:'Радар', panorama:'Панорама',
+    clDesc:'Гравець рухається', rdDesc:'Гравець в центрі', pnDesc:'3D вигляд',
+    continue:'▷ ПРОДОВЖИТИ', confirmFirst:'(підтвердь спочатку)',
+    understand:'Я розумію',
+    veryEasy:'Дуже легко', easy:'Легко', normal:'Нормально', hard:'Складно', veryHard:'Дуже складно',
+    langUk:'🇺🇦 Українська', langEn:'🇬🇧 English', langRu:'🐷 Поросяча',
+    hold:'HOLD', rest:'REST', beacon:'МАЯК',
+    sensActive:'✓ Активні', sensDenied:'✗ Відмовлено', sensIdle:'Налаштовуються на Warning',
+  },
+  en:{
+    tutorial:'▷ TUTORIAL', survival:'◈ SURVIVAL', adventure:'🗺 ADVENTURE',
+    settings:'⚙ SETTINGS', playAgain:'↻ PLAY AGAIN',
+    sWorldMode:'WORLD MODE', sWeapon:'STARTING WEAPON', sDiff:'DIFFICULTY',
+    sSensors:'SENSORS', sVoice:'COMPANION VOICE', sLang:'LANGUAGE',
+    voiceOn:'🔊 Enabled', voiceOff:'🔇 Disabled',
+    classic:'Classic', radar:'Radar', panorama:'Panorama',
+    clDesc:'Player moves', rdDesc:'Player centered', pnDesc:'3D view',
+    continue:'▷ CONTINUE', confirmFirst:'(confirm first)',
+    understand:'I understand',
+    veryEasy:'Very Easy', easy:'Easy', normal:'Normal', hard:'Hard', veryHard:'Very Hard',
+    langUk:'🇺🇦 Ukrainian', langEn:'🇬🇧 English', langRu:'🐷 Pig Latin',
+    hold:'HOLD', rest:'REST', beacon:'BEACON',
+    sensActive:'✓ Active', sensDenied:'✗ Denied', sensIdle:'Set up on Warning screen',
+  },
+  ru:{
+    tutorial:'▷ ТУТОРИАЛ', survival:'◈ ВЫЖИВАНИЕ', adventure:'🗺 ПРИКЛЮЧЕНИЕ',
+    settings:'⚙ НАСТРОЙКИ', playAgain:'↻ ЕЩЁ РАЗ',
+    sWorldMode:'РЕЖИМ МИРА', sWeapon:'НАЧАЛЬНОЕ ОРУЖИЕ', sDiff:'СЛОЖНОСТЬ',
+    sSensors:'ДАТЧИКИ', sVoice:'ГОЛОС КОМПАНЬОНА', sLang:'ЯЗЫК',
+    voiceOn:'🔊 Включено', voiceOff:'🔇 Отключено',
+    classic:'Классика', radar:'Радар', panorama:'Панорама',
+    clDesc:'Игрок движется', rdDesc:'Игрок в центре', pnDesc:'3D вид',
+    continue:'▷ ПРОДОЛЖИТЬ', confirmFirst:'(подтверди сначала)',
+    understand:'Понятно',
+    veryEasy:'Очень легко', easy:'Легко', normal:'Нормально', hard:'Сложно', veryHard:'Очень сложно',
+    langUk:'🇺🇦 Украинский', langEn:'🇬🇧 English', langRu:'🐷 Хрюшкин',
+    hold:'HOLD', rest:'REST', beacon:'МАЯК',
+    sensActive:'✓ Активны', sensDenied:'✗ Отказано', sensIdle:'Настроится на экране Warning',
+  },
+};
 const SPELLS=[
   {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +30',           fn:'stamina'},
   {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 4с',        fn:'armor'},
@@ -285,7 +336,7 @@ function MorseBar({currentSeq,unlocked}){
 function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'11px',marginBottom:'9px'}}><div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'9px'}}>{title}</div>{children}</div>);}
 function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontFamily:"'Courier New',monospace",letterSpacing:'.06em',...style}}>{children}</button>);}
 
-function Settings({s,setS,sPhase,setSPhase,onBack}){
+function Settings({s,setS,sPhase,setSPhase,onBack,t=k=>k}){
   const[live,setLive]=useState({beta:0,compass:0,mag:9.8});
   useEffect(()=>{
     if(sPhase!=='active')return;
@@ -303,7 +354,7 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
         <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
         <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
       </div>
-      <Sec title="ДАТЧИКИ">
+      <Sec title={t('sSensors')}>
         {sPhase==='active'&&<>
           <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
@@ -313,10 +364,10 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
           </div>
         </>}
         {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Доступні WASD + клавіатура.<br/><span style={{color:'#334155',fontSize:'9px'}}>Перезапусти гру щоб спробувати знову.</span></div>}
-        {(sPhase==='idle'||sPhase==='req')&&<div style={{color:'#4a6a9f',fontSize:'10px'}}>○ Датчики підключаються на екрані попередження при запуску.</div>}
+        {(sPhase==='idle'||sPhase==='req')&&<div style={{color:'#4a6a9f',fontSize:'10px'}}>{`○ ${t('sensIdle')}`}</div>}
       </Sec>
 
-      <Sec title="СКЛАДНІСТЬ">
+      <Sec title={t('sDiff')}>
         <div style={{display:'flex',flexWrap:'wrap',gap:'5px'}}>
           {Object.entries(DIFFICULTY).map(([key,d])=>(
             <button key={key} onClick={()=>setS(p=>({...p,difficulty:key}))} style={{padding:'6px 10px',flex:'1 1 calc(33% - 5px)',background:s.difficulty===key?d.col+'22':'#020c1a',border:`1px solid ${s.difficulty===key?d.col:'#1e3a5f'}`,color:s.difficulty===key?d.col:'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',fontWeight:s.difficulty===key?'bold':'normal'}}>
@@ -325,9 +376,9 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
           ))}
         </div>
       </Sec>
-      <Sec title="РЕЖИМ">
+      <Sec title={t('sWorldMode')}>
         <div style={{display:'flex',gap:'6px'}}>
-          {[['classic','Класика','Рух гравця'],['radar','Радар','Центр екрану'],['panorama','Панорама','3D вигляд']].map(([val,lbl,desc])=>(
+          {[["classic",t('classic'),t('clDesc')],["radar",t('radar'),t('rdDesc')],["panorama",t('panorama'),t('pnDesc')]].map(([val,lbl,desc])=>(
             <button key={val} onClick={()=>setS(p=>({...p,worldMode:val}))} style={{flex:1,padding:'8px 6px',background:s.worldMode===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:s.worldMode===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',lineHeight:1.5,textAlign:'left'}}>
               <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
             </button>
@@ -343,19 +394,26 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
         <input type="range" min="15" max="60" value={s.pitchSens} onChange={e=>setS(p=>({...p,pitchSens:+e.target.value}))}/>
         {sPhase==='active'&&<div style={{marginTop:'5px',display:'flex',alignItems:'center',gap:'6px'}}><div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pv+1)/2)*100}%`,background:pColor(pv),transition:'width .05s'}}/></div><div style={{fontSize:'9px',color:pColor(pv),minWidth:'46px'}}>{pv<-0.3?'REST':pv>0.3?'CHARGE':'HOLD'}</div></div>}
       </Sec>
-      <Sec title="ГОЛОС КОМПАНЬЙОНА">
+      <Sec title={t('sVoice')}>
         <div style={{display:'flex',gap:'8px',marginBottom:'6px'}}>
-          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔊 Увімкнений</button>
-          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔇 Вимкнений</button>
+          <button onClick={()=>setS(p=>({...p,voice:true}))} style={{flex:1,padding:'8px',background:s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${s.voice?'#3b82f6':'#1e3a5f'}`,color:s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>{t('voiceOn')}</button>
+          <button onClick={()=>setS(p=>({...p,voice:false}))} style={{flex:1,padding:'8px',background:!s.voice?'#1e3a8a33':'#060f1e',border:`1px solid ${!s.voice?'#3b82f6':'#1e3a5f'}`,color:!s.voice?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>{t('voiceOff')}</button>
         </div>
         <button onClick={()=>speak('Я готовий. Підніми мене.',true)} style={{width:'100%',padding:'6px',background:'#060f1e',border:'1px solid #1e3a5f',color:'#4a6a9f',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>▶ Тест голосу</button>
       </Sec>
-      <Sec title="СТАРТОВА ЗБРОЯ">
+      <Sec title={t('sWeapon')}>
         <div style={{display:'flex',flexDirection:'column',gap:'4px'}}>
           {Object.entries(WPN).map(([k,w])=>(
             <button key={k} onClick={()=>setS(p=>({...p,startWpn:k}))} style={{display:'flex',justifyContent:'space-between',padding:'8px 10px',background:s.startWpn===k?'#14532d33':'#060f1e',border:`1px solid ${s.startWpn===k?'#22c55e':'#1e3a5f'}`,color:s.startWpn===k?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>
               <span>{w.label}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{w.desc}</span>
             </button>
+          ))}
+        </div>
+      </Sec>
+      <Sec title={t('sLang')}>
+        <div style={{display:'flex',gap:'6px'}}>
+          {[['uk',t('langUk')],['en',t('langEn')],['ru',t('langRu')]].map(([val,lbl])=>(
+            <button key={val} onClick={()=>setS(p=>({...p,language:val}))} style={{flex:1,padding:'7px 4px',background:s.language===val?'#1e3a8a33':'#060f1e',border:`1px solid ${s.language===val?'#60a5fa':'#1e3a5f'}`,color:s.language===val?'#60a5fa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',textAlign:'center'}}>{lbl}</button>
           ))}
         </div>
       </Sec>
@@ -1004,7 +1062,7 @@ const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
 // ── WARNING ───────────────────────────────────────────────────────
-function Warning({onOk,setSPhase}){
+function Warning({onOk,setSPhase,t=k=>k}){
   const[ok,setOk]=useState(false);
   const[asking,setAsking]=useState(false);
 
@@ -1038,7 +1096,7 @@ function Warning({onOk,setSPhase}){
       Я розумію і граю обережно
     </label>
     <B2 onClick={ok&&!asking?handleContinue:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok&&!asking?1:.5}}>
-      {asking?'⏳ Запит дозволів...':ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
+      {asking?'⏳ Запит дозволів...':ok?t('continue'):t('confirmFirst')}
     </B2>
   </div>);
 }
@@ -1048,19 +1106,20 @@ function App(){
   const[screen,setScreen]=useState('warning');
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
-  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true,difficulty:'normal'});
+  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true,difficulty:'normal',language:'uk'});
+  const t=key=>TR[S.language]?.[key]??TR.uk[key]??key;
   // onDead — стабільний через useCallback щоб не перезапускати гейм-луп
   const onDead=useCallback(()=>setScreen('dead'),[]);
   return(
     <>
-      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')} setSPhase={setSPhase}/>}
-      {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')}/>}
+      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')} setSPhase={setSPhase} t={t}/>}
+      {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')} t={t}/>}
       {screen==='game'&&<Game key={`${gmode}-${Math.random()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={onDead}/>}
       {screen==='dead'&&(
         <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'12px',padding:'20px'}}>
           <div style={{color:'#ef4444',fontSize:'34px',fontWeight:'bold',animation:'shake .4s'}}>ВПАВ</div>
           <div style={{display:'flex',flexDirection:'column',gap:'8px',width:'100%',maxWidth:'240px'}}>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>↻ ЩЕ РАЗ</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}}>{t('playAgain')}</B2>
             <B2 onClick={()=>setScreen('menu')} col='#4a6a9f'>← МЕНЮ</B2>
           </div>
         </div>
@@ -1074,10 +1133,10 @@ function App(){
             {sPhase==='active'?<span style={{color:'#22c55e'}}>◉ Датчики · {WPN[S.startWpn].label} · {S.worldMode==='radar'?'RADAR':S.worldMode==='panorama'?'ПАНОРАМА':'КЛАСИКА'}</span>:<span style={{color:'#334155'}}>Датчики вимкнені → ⚙</span>}
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'270px'}}>
-            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>▷ ТУТОРІАЛ</B2>
-            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>◈ ВИЖИВАННЯ</B2>
-            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>🗺 ПРИГОДА</B2>
-            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>⚙ НАЛАШТУВАННЯ</B2>
+            <B2 onClick={()=>{setGmode('tutorial');setScreen('game');}}>{t('tutorial')}</B2>
+            <B2 onClick={()=>{setGmode('survival');setScreen('game');}} col='#60a5fa'>{t('survival')}</B2>
+            <B2 onClick={()=>{setGmode('adventure');setScreen('game');}} col='#f97316'>{t('adventure')}</B2>
+            <B2 onClick={()=>setScreen('settings')} col='#a78bfa'>{t('settings')}</B2>
           </div>
         </div>
       )}

@@ -2,847 +2,726 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>МИР 13×13 — МУЛЬТИПЛЕЄР</title>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<style>*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}body{background:#010d1f;color:#e2e8f0;font-family:'Courier New',monospace;overflow:hidden;height:100dvh;display:flex;flex-direction:column;}</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#010d1f;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
-#root{height:100%;display:flex;flex-direction:column}
-input[type=range]{width:100%;accent-color:#3b82f6}
-@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.ms::-webkit-scrollbar{height:3px}.ms::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:2px}
-</style>
-</head>
-<body><div id="root"></div>
+<script type="module">
+import{initializeApp}from'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import{getDatabase,ref,set,onValue,push,remove,off}from'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+const cfg={apiKey:"AIzaSyBuAf-MhxZVI_T9dx74gZ-Br6W-HpLT8Xg",authDomain:"myr13x13.firebaseapp.com",databaseURL:"https://myr13x13-default-rtdb.firebaseio.com",projectId:"myr13x13",messagingSenderId:"41210335847",appId:"1:41210335847:web:e7d8e171ab5ff97ebfbac2"};
+window._fba=initializeApp(cfg,'mp');
+window._fbd=getDatabase(window._fba);
+window._fbref=ref;window._fbset=set;window._fbonValue=onValue;window._fbpush=push;window._fbremove=remove;window._fboff=off;
+window._fbReady=true;
+</script>
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback,useReducer}=React;
-
-// ── FIREBASE ──────────────────────────────────────────────────────
-const FB_CFG={
-  apiKey:"AIzaSyBuAf-MhxZVI_T9dx74gZ-Br6W-HpLT8Xg",
-  authDomain:"myr13x13.firebaseapp.com",
-  projectId:"myr13x13",
-  storageBucket:"myr13x13.firebasestorage.app",
-  messagingSenderId:"41210335847",
-  appId:"1:41210335847:web:e7d8e171ab5ff97ebfbac2",
-  databaseURL:"https://myr13x13-default-rtdb.firebaseio.com",
-};
-let _db=null;
-function fdb(){if(!_db){firebase.initializeApp(FB_CFG);_db=firebase.database();}return _db;}
-function genCode(){return Math.random().toString(36).slice(2,6).toUpperCase();}
-
-// ── CONSTANTS ─────────────────────────────────────────────────────
-const G=13,CX=6,CY=6,TICK=80;
+const G=13,CX=6,CY=6;
 const DIR=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
-const DNAM=['N','NE','E','SE','S','SW','W','NW'];
 const DSYM=['↑','↗','→','↘','↓','↙','←','↖'];
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const rad=d=>d*Math.PI/180;
-let EID=2000;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let EID=1000;
 
-// Слоти гравців: колір + стартова позиція
-const PSLOTS={
-  p1:{col:'#22c55e',lbl:'P1',sx:2, sy:6, yi:2},
-  p2:{col:'#3b82f6',lbl:'P2',sx:10,sy:6, yi:6},
-  p3:{col:'#f59e0b',lbl:'P3',sx:6, sy:2, yi:4},
-  p4:{col:'#ef4444',lbl:'P4',sx:6, sy:10,yi:0},
-};
+// ── PLAYER COLORS ────────────────────────────────────────────────────────
+const PCOL=['#22c55e','#3b82f6','#f59e0b','#e879f9'];
+const PNAME=['P1','P2','P3','P4'];
 
+// ── WEAPONS ──────────────────────────────────────────────────────────────
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡'},
-  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔'},
-  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱'},
-  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹'},
+  sword:    {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',     desc:'Баланс'},
+  dagger:   {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡', desc:'Швидкий'},
+  axe:      {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓',  desc:'Широкий'},
+  spear:    {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',    desc:'Далеко'},
+  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Потужний'},
+  flail:    {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',     desc:'Навколо'},
+  bow:      {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',     desc:'5 клітинок'},
 };
+
+// ── ENEMIES ──────────────────────────────────────────────────────────────
 const ET={
-  shadow: {hp:3,ms:400,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
-  warden: {hp:8,ms:700,dmg:20,col:'#dc2626',sym:'◉',lbl:'Вартовий'},
-  berserk:{hp:5,ms:500,dmg:28,col:'#ea580c',sym:'▲',lbl:'Берсерк'},
-  ghost:  {hp:2,ms:300,dmg:8, col:'#0ea5e9',sym:'◌',lbl:'Привид'},
+  shadow:  {hp:3, ms:400,dmg:12,sym:'●',col:'#6b7280'},
+  warden:  {hp:8, ms:700,dmg:20,sym:'▣',col:'#dc2626'},
+  berserk: {hp:5, ms:500,dmg:28,sym:'◆',col:'#f97316'},
+  ghost:   {hp:2, ms:300,dmg:8, sym:'◌',col:'#a78bfa'},
 };
-const WAVES=[
-  [{t:'shadow',n:2}],[{t:'shadow',n:3}],
-  [{t:'shadow',n:3},{t:'warden',n:1}],
-  [{t:'shadow',n:4},{t:'warden',n:2}],
-  [{t:'shadow',n:3},{t:'warden',n:1},{t:'berserk',n:1}],
-  [{t:'shadow',n:4},{t:'warden',n:2},{t:'berserk',n:2}],
-  [{t:'shadow',n:5},{t:'warden',n:2},{t:'berserk',n:2},{t:'ghost',n:2}],
-];
 
-// ── MORSE SPELLS (всі 16, як в одиночній) ────────────────────────
-const SPELLS=[
-  {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +30',          fn:'stamina'},
-  {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 4с',       fn:'armor'},
-  {code:'.-',   name:'Щита',   col:'#3b82f6',desc:'Блок удару',           fn:'shield'},
-  {code:'--',   name:'Зцілення',col:'#a78bfa',desc:'+1 палець',           fn:'mend'},
-  {code:'..',   name:'Крига',   col:'#67e8f9',desc:'Заморозити 3с',       fn:'freeze'},
-  {code:'-.',   name:'Тінь',    col:'#6b7280',desc:'Невидимість 3с',      fn:'stealth'},
-  {code:'.-.',  name:'Поривом', col:'#22c55e',desc:'Рух без стаміни 5с',  fn:'rush'},
-  {code:'...',  name:'Спалах',  col:'#f59e0b',desc:'Удар ×2 5с',          fn:'surge'},
-  {code:'---',  name:'Вихор',   col:'#e879f9',desc:'Удар всіх навколо',   fn:'omni'},
-  {code:'-..',  name:'Доля',    col:'#f87171',desc:'HP +30',              fn:'heal'},
-  {code:'.-..',  name:'Замок',  col:'#fbbf24',desc:'Заморозити всіх 4с',  fn:'lockall'},
-  {code:'-...',  name:'Вогонь', col:'#ef4444',desc:'Удар ×3',             fn:'burn'},
-  {code:'.--.',  name:'Пробій', col:'#c084fc',desc:'Ігнорує захист',      fn:'pierce'},
-  {code:'-.-.', name:'Цілення', col:'#34d399',desc:'HP +50',              fn:'cure'},
-  {code:'....',  name:'Хаос',   col:'#fb7185',desc:'Вороги сповільнені',  fn:'chaos'},
-  {code:'...-',  name:'Вектор', col:'#818cf8',desc:'Телепорт 3 кроки',   fn:'teleport'},
-];
-const SPELL_MAP={};SPELLS.forEach(s=>{SPELL_MAP[s.code]=s;});
+// ── BOSS ─────────────────────────────────────────────────────────────────
+const BOSS_DEFS={
+  colossus:  {name:'КОЛОС',    col:'#f97316',sym:'⬡',basehp:60,dmg:22,ms:700,size:2},
+  wraith:    {name:'ПРИМАРА',  col:'#d946ef',sym:'◈',basehp:40,dmg:15,ms:320,size:1},
+  juggernaut:{name:'ДРЕДНОУТ', col:'#dc2626',sym:'◼',basehp:120,dmg:35,ms:950,size:3},
+  devourer:  {name:'ПОЖИРАЧ',  col:'#84cc16',sym:'✦',basehp:80,dmg:28,ms:500,size:2},
+};
 
-// ── HELPERS ───────────────────────────────────────────────────────
-function getWCells(px,py,yi,wk){
-  const w=WPN[wk]||WPN.sword,cells=[];
-  if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];const nx=px+dx,ny=py+dy;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:true});}return cells;}
+// ── OBJECTS ──────────────────────────────────────────────────────────────
+const OBJ_TYPES={
+  pillar:       {sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,desc:'Стовп'},
+  wall:         {sym:'▬',col:'#475569',destructible:false,blocksMove:true,desc:'Стіна'},
+  crate:        {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,hp:3,desc:'Ящик'},
+  barrel:       {sym:'◉',col:'#b45309',destructible:true, blocksMove:true,hp:1,explodes:true,desc:'Бочка'},
+  upg_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Дальність +1 кл'},
+  upg_weight:   {sym:'🌬',col:'#22c55e',destructible:false,blocksMove:false,isLoot:true,upg:'weight',   desc:'Вага -15%'},
+  upg_sharpness:{sym:'⚡',col:'#f59e0b',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Гострота +25%'},
+  upg_hp:       {sym:'❤', col:'#ef4444',destructible:false,blocksMove:false,isLoot:true,upg:'hp',       desc:'MaxHP +20'},
+  upg_spell:    {sym:'📜',col:'#e879f9',destructible:false,blocksMove:false,isLoot:true,upg:'spell',    desc:'Новий рухал'},
+};
+
+// ── DIFFICULTY ───────────────────────────────────────────────────────────
+const DIFFICULTY={
+  very_easy:{name:'Дуже легко', col:'#22c55e',enemyHp:.5, enemyDmg:.5, playerHp:1.5,staminaDrain:.5},
+  easy:     {name:'Легко',      col:'#60a5fa',enemyHp:.75,enemyDmg:.75,playerHp:1.25,staminaDrain:.75},
+  normal:   {name:'Нормально',  col:'#f59e0b',enemyHp:1,  enemyDmg:1,  playerHp:1,   staminaDrain:1},
+  hard:     {name:'Складно',    col:'#f97316',enemyHp:1.5,enemyDmg:1.5,playerHp:.75, staminaDrain:1.25},
+  very_hard:{name:'Дуже складно',col:'#ef4444',enemyHp:2,  enemyDmg:2,  playerHp:.5,  staminaDrain:1.5},
+};
+
+// ── HELPERS ──────────────────────────────────────────────────────────────
+function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
+function fromScreen(sx,sy,px,py,cDeg){const rx=sx-CX,ry=sy-CY,a=rad(cDeg);return{gx:Math.round(px+rx*Math.cos(a)-ry*Math.sin(a)),gy:Math.round(py+rx*Math.sin(a)+ry*Math.cos(a))};}
+function coordId(x,y){return x+','+y;}
+function calcRoomNum(x,y){return 1+Math.abs(x)+Math.abs(y);}
+function getNextCoord(coord,dir){const{x,y}=coord;if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};return coord;}
+function calcBossCells(bx,by,size){const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;}
+
+function getWCells(px,py,yi,wk,extraReach=0){
+  const w=WPN[wk],cells=[];
+  if(w.sweep){for(let d=0;d<8;d++){const[dx,dy]=DIR[d];for(let r=1;r<=1+extraReach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r===1,extra:r>1});}}return cells;}
   const[dx,dy]=DIR[yi];
-  for(let r=1;r<=w.reach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1});}
+  for(let r=1;r<=w.reach+extraReach;r++){const nx=px+dx*r,ny=py+dy*r;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r<=1,extra:r>w.reach});}
   for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
   return cells;
 }
-function spawnE(type,occ){
-  const edges=[];for(let x=0;x<G;x++){edges.push({x,y:0});edges.push({x,y:G-1});}for(let y=1;y<G-1;y++){edges.push({x:0,y});edges.push({x:G-1,y});}
-  const free=edges.filter(c=>!occ.some(o=>o.x===c.x&&o.y===c.y));if(!free.length)return null;
-  const p=free[Math.floor(Math.random()*free.length)];
-  return{id:EID++,type,x:p.x,y:p.y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};
-}
-function toScreen(gx,gy,px,py,cDeg){const rx=gx-px,ry=gy-py,a=-rad(cDeg);return{sx:Math.round(CX+rx*Math.cos(a)-ry*Math.sin(a)),sy:Math.round(CY+rx*Math.sin(a)+ry*Math.cos(a))};}
-function fromScreen(sx,sy,px,py,cDeg){const dsx=sx-CX,dsy=sy-CY,a=rad(cDeg);return{gx:Math.round(px+dsx*Math.cos(a)-dsy*Math.sin(a)),gy:Math.round(py+dsx*Math.sin(a)+dsy*Math.cos(a))};}
-function isEdgeCell(gx,gy){return gx===0||gx===G-1||gy===0||gy===G-1;}
-function betaToPitch(b,sens){return clamp((b-40)/sens,-1,1);}
-function pColor(p){return p<-0.3?'#22c55e':p>0.3?'#ef4444':'#f59e0b';}
 
-// ── SOUND ─────────────────────────────────────────────────────────
-let AC=null;
+function spawnE(type,occ){
+  for(let i=0;i<50;i++){const x=1+Math.floor(Math.random()*(G-2)),y=1+Math.floor(Math.random()*(G-2));if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<3))continue;return{id:EID++,type,x,y,hp:ET[type].hp,maxHp:ET[type].hp,lastMove:0};}
+  return null;
+}
+
+function generateRoom(roomNum,spawnX,spawnY,diff='normal'){
+  const isBoss=roomNum>1&&roomNum%3===0;
+  const _dCfg=DIFFICULTY[diff]||DIFFICULTY.normal;
+  const occ=[{x:spawnX??CX,y:spawnY??CY}];
+  const objects=[];
+  const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/2),8);
+  for(let i=0;i<objCount*5&&objects.length<objCount;i++){
+    const x=1+Math.floor(Math.random()*(G-2)),y=1+Math.floor(Math.random()*(G-2));
+    if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<3))continue;
+    const t=isBoss?'pillar':['pillar','wall','crate','barrel'][Math.floor(Math.random()*4)];
+    const ot=OBJ_TYPES[t];if(!ot)continue;
+    objects.push({id:EID++,type:t,x,y,hp:ot.hp??null});occ.push({x,y});
+  }
+  if(!isBoss){
+    const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+    const picks=[...lootKeys].sort(()=>Math.random()-.5).slice(0,2);
+    for(const lt of picks){
+      for(let i=0;i<40;i++){const x=1+Math.floor(Math.random()*(G-2)),y=1+Math.floor(Math.random()*(G-2));if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;objects.push({id:EID++,type:lt,x,y,hp:null});occ.push({x,y});break;}
+    }
+  }
+  let enemies=[];
+  if(isBoss){
+    const bossRoomIdx=Math.floor(roomNum/3);
+    const scale=Math.max(1,1+(bossRoomIdx-1)*0.7);
+    const numBosses=bossRoomIdx>=2?2:1;
+    for(let b=0;b<numBosses;b++){
+      const bType=Object.keys(BOSS_DEFS)[Math.floor(Math.random()*4)];
+      const bd=BOSS_DEFS[bType];
+      const ox=numBosses===1?Math.floor(G/2)-Math.floor(bd.size/2):(b===0?1:G-bd.size-1);
+      const oy=numBosses===1?Math.floor(G/2)-Math.floor(bd.size/2):(b===0?1:G-bd.size-1);
+      const bx=Math.max(0,Math.min(G-bd.size,ox)),by=Math.max(0,Math.min(G-bd.size,oy));
+      enemies.push({id:EID++,type:'boss',bossType:bType,x:bx,y:by,hp:Math.round(bd.basehp*scale*_dCfg.enemyHp),maxHp:Math.round(bd.basehp*scale*_dCfg.enemyHp),dmg:Math.round(bd.dmg*scale*_dCfg.enemyDmg),ms:Math.round(bd.ms/Math.sqrt(scale)),size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0,bossRoomIdx});
+    }
+  }else{
+    const etAll=Object.keys(ET);
+    const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
+    const count=Math.max(1,Math.round(1+roomNum*0.55));
+    const spOcc=[...occ];
+    for(let i=0;i<count;i++){const t=etAvail[Math.floor(Math.random()*etAvail.length)];const e=spawnE(t,spOcc);if(e){const _hm=_dCfg.enemyHp;e.hp=Math.max(1,Math.round(e.hp*_hm));e.maxHp=e.hp;enemies.push(e);spOcc.push({x:e.x,y:e.y});}}
+  }
+  return{objects,enemies,isBoss};
+}
+
+// ── AUDIO ─────────────────────────────────────────────────────────────────
+const AC=new(window.AudioContext||window.webkitAudioContext)();
 function snd(t){
-  try{if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
-    const C=AC,ts=C.currentTime,o=C.createOscillator(),g=C.createGain();o.connect(g);g.connect(C.destination);
-    if(t==='swing'){o.type='sawtooth';o.frequency.setValueAtTime(200,ts);o.frequency.exponentialRampToValueAtTime(80,ts+.12);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.12);o.start(ts);o.stop(ts+.12);}
-    else if(t==='hit'){const b=C.createBuffer(1,C.sampleRate*.04,C.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/400);const s=C.createBufferSource();s.buffer=b;const gg=C.createGain();gg.gain.value=.4;s.connect(gg);gg.connect(C.destination);s.start(ts);}
-    else if(t==='hurt'){o.type='square';o.frequency.setValueAtTime(100,ts);o.frequency.exponentialRampToValueAtTime(50,ts+.25);g.gain.setValueAtTime(.25,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.25);o.start(ts);o.stop(ts+.25);}
-    else if(t==='death'){o.type='sine';o.frequency.setValueAtTime(440,ts);o.frequency.exponentialRampToValueAtTime(110,ts+.9);g.gain.setValueAtTime(.3,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.9);o.start(ts);o.stop(ts+.9);}
-    else if(t==='wave'){o.type='triangle';o.frequency.setValueAtTime(110,ts);o.frequency.exponentialRampToValueAtTime(220,ts+.45);g.gain.setValueAtTime(.2,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.45);o.start(ts);o.stop(ts+.45);}
-    else if(t==='join'){[440,660,880].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.1;gg.gain.setValueAtTime(.15,st);gg.gain.exponentialRampToValueAtTime(.001,st+.2);oo.start(st);oo.stop(st+.2);});}
-    else if(t==='dot'){o.type='sine';o.frequency.value=880;g.gain.setValueAtTime(.13,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.07);o.start(ts);o.stop(ts+.07);}
-    else if(t==='dash'){o.type='sine';o.frequency.value=660;g.gain.setValueAtTime(.13,ts);g.gain.exponentialRampToValueAtTime(.001,ts+.18);o.start(ts);o.stop(ts+.18);}
-    else if(t==='spell'){[330,440,550,660,550].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.06;gg.gain.setValueAtTime(.18,st);gg.gain.exponentialRampToValueAtTime(.001,st+.12);oo.start(st);oo.stop(st+.12);});}
-    else if(t==='pvpkill'){[660,880,1100].forEach((f,i)=>{const oo=C.createOscillator(),gg=C.createGain();oo.type='sine';oo.frequency.value=f;oo.connect(gg);gg.connect(C.destination);const st=ts+i*.08;gg.gain.setValueAtTime(.2,st);gg.gain.exponentialRampToValueAtTime(.001,st+.15);oo.start(st);oo.stop(st+.15);});}
+  try{const o=AC.createOscillator(),g=AC.createGain();o.connect(g);g.connect(AC.destination);const T=AC.currentTime;
+  if(t==='hit'){o.frequency.setValueAtTime(220,T);o.frequency.exponentialRampToValueAtTime(110,T+.15);g.gain.setValueAtTime(.3,T);g.gain.exponentialRampToValueAtTime(.001,T+.15);o.start(T);o.stop(T+.15);}
+  else if(t==='wave'){o.frequency.setValueAtTime(440,T);o.frequency.exponentialRampToValueAtTime(880,T+.2);g.gain.setValueAtTime(.25,T);g.gain.exponentialRampToValueAtTime(.001,T+.3);o.start(T);o.stop(T+.3);}
+  else if(t==='drop'){o.frequency.setValueAtTime(330,T);g.gain.setValueAtTime(.2,T);g.gain.exponentialRampToValueAtTime(.001,T+.1);o.start(T);o.stop(T+.1);}
+  else if(t==='spell'){o.frequency.setValueAtTime(660,T);o.frequency.setValueAtTime(880,T+.1);g.gain.setValueAtTime(.2,T);g.gain.exponentialRampToValueAtTime(.001,T+.25);o.start(T);o.stop(T+.25);}
   }catch(e){}
 }
 
-// ── UI COMPONENTS ─────────────────────────────────────────────────
-function B2({children,onClick,col='#60a5fa',style={}}){return(<button onClick={onClick} style={{width:'100%',padding:'11px',background:col+'22',border:`1px solid ${col}`,color:col,borderRadius:'6px',cursor:'pointer',fontSize:'11px',fontFamily:"'Courier New',monospace",letterSpacing:'.05em',...style}}>{children}</button>);}
-function Sec({title,children}){return(<div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'7px',padding:'10px',marginBottom:'8px'}}><div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'8px'}}>{title}</div>{children}</div>);}
+// ── FIREBASE HELPERS ──────────────────────────────────────────────────────
+function fbRef(path){return window._fbref(window._fbd,path);}
+function fbSet(path,data){return window._fbset(fbRef(path),data);}
+function fbOn(path,cb){const r=fbRef(path);window._fbonValue(r,snap=>cb(snap.val()));return()=>window._fboff(r);}
+function fbPush(path,data){return window._fbpush(fbRef(path),data);}
+function generateRoomId(){return Math.random().toString(36).slice(2,7).toUpperCase();}
 
-// ── MORSE BAR (як в одиночній) ────────────────────────────────────
-function MorseBar({currentSeq}){
-  return(<div style={{width:'100%',maxWidth:'480px',padding:'3px 8px 4px',display:'flex',flexWrap:'wrap',gap:'3px',flexShrink:0}}>
-    {SPELLS.map(sp=>(<div key={sp.code} style={{width:'calc(12.5% - 3px)',background:currentSeq&&sp.code.startsWith(currentSeq)?sp.col+'22':'#060f1e',border:`1px solid ${currentSeq&&sp.code.startsWith(currentSeq)?sp.col:'#1e3a5f'}`,borderRadius:'3px',padding:'2px 3px',textAlign:'center',transition:'background .2s'}}>
-      <div style={{fontSize:'8px',letterSpacing:'.07em'}}>{sp.code.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>
-      <div style={{fontSize:'7px',color:sp.col,marginTop:'1px',overflow:'hidden',whiteSpace:'nowrap'}}>{sp.name}</div>
-    </div>))}
-  </div>);
+// ── UI COMPONENTS ─────────────────────────────────────────────────────────
+function Btn({onClick,col='#3b82f6',children,style={}}){
+  return(<button onClick={onClick} style={{padding:'12px 16px',background:col+'18',border:`1px solid ${col}`,color:col,borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',fontSize:'12px',letterSpacing:'.08em',width:'100%',marginBottom:'6px',...style}}>{children}</button>);
 }
 
-function WarningSensors({sPhase,setSPhase,onContinue}){
-  const[ok,setOk]=useState(false);
-  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
-  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'11px'}}>
-    <div style={{fontSize:'32px'}}>⚠️</div>
-    <div style={{color:'#f59e0b',fontSize:'14px',fontWeight:'bold'}}>МИР 13×13 — МУЛЬТИПЛЕЄР</div>
-    <div style={{color:'#4a6a9f',fontSize:'10px',textAlign:'center',lineHeight:1.9,maxWidth:'300px',background:'#060f1e',border:'1px solid #78350f',borderRadius:'8px',padding:'12px',width:'100%'}}>
-      Гра вимагає фізичних рухів смартфоном.<br/>
-      <span style={{color:'#ef4444',fontWeight:'bold'}}>НЕ розбий телефон!</span><br/>
-      Грай в безпечному відкритому місці.<br/>
-      <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
-    </div>
-    <div style={{width:'100%',maxWidth:'300px',background:'#060f1e',border:`1px solid ${sPhase==='active'?'#16a34a':sPhase==='denied'?'#7f1d1d':'#1e3a5f'}`,borderRadius:'8px',padding:'12px'}}>
-      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'8px'}}>ДАТЧИКИ РУХУ</div>
-      {sPhase==='idle'&&(<><div style={{fontSize:'9px',color:'#334155',marginBottom:'8px',lineHeight:1.7}}>Без датчиків гра не має сенсу.<br/>Компас → напрямок зброї · Нахил → заряд<br/>Мах телефоном → удар · Спокій → Маяк</div>
-        <B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>
-        <button onClick={()=>setSPhase('denied')} style={{width:'100%',marginTop:'6px',padding:'6px',background:'none',border:'none',color:'#1e3a5f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit'}}>продовжити без датчиків (тільки клавіатура)</button>
-      </>)}
-      {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px',textAlign:'center'}}>⏳ Очікую дозволу...</div>}
-      {sPhase==='active'&&<div style={{fontSize:'10px',color:'#22c55e',lineHeight:1.9}}>◉ ДАТЧИКИ АКТИВНІ<br/><span style={{fontSize:'9px',color:'#16a34a'}}>Оберти телефону = напрямок зброї<br/>Нахил вгору/вниз = заряд / відпочинок<br/>Різкий мах = удар · Донизу+нерухомо = Маяк</span></div>}
-      {sPhase==='denied'&&<div style={{fontSize:'9px',color:'#ef4444',lineHeight:1.7}}>⚠ Датчики недоступні<br/><span style={{color:'#334155'}}>Доступні кнопки: WASD · Q/E · Z/C · Пробіл</span><br/><button onClick={reqS} style={{marginTop:'4px',background:'none',border:'none',color:'#4a6a9f',fontSize:'8px',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline'}}>спробувати знову</button></div>}
-    </div>
-    <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
-      <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
-      Я розумію і граю обережно
-    </label>
-    <B2 onClick={(ok&&sPhase!=='idle'&&sPhase!=='req')?onContinue:undefined} col={(ok&&sPhase!=='idle'&&sPhase!=='req')?'#22c55e':'#1e3a5f'} style={{maxWidth:'280px',opacity:(ok&&sPhase!=='idle'&&sPhase!=='req')?1:.4}}>
-      {!ok?'(підтвердь спочатку)':sPhase==='idle'||sPhase==='req'?'(підключи датчики)':'▷ ПРОДОВЖИТИ'}
-    </B2>
-  </div>);
-}
-
-// ── LOBBY ─────────────────────────────────────────────────────────
-function Lobby({sPhase,onStart}){
-  const[tab,   setTab]  =useState('menu');
-  const[code,  setCode] =useState('');
-  const[input, setInput]=useState('');
+// ── LOBBY SCREEN ──────────────────────────────────────────────────────────
+function Lobby({onJoinGame,settings}){
+  const[mode,setMode]=useState(null); // 'create'|'join'
+  const[roomId,setRoomId]=useState('');
+  const[myName,setMyName]=useState('');
   const[status,setStatus]=useState('');
-  const[cfg,   setCfg]  =useState({mode:'coop',maxPlayers:2,friendlyFire:false,duelLives:3,worldMode:'classic'});
-  const[myWpn, setMyWpn]=useState('sword');
-  const[waiting,setWaiting]=useState(0);
-  const roomRef=useRef(null);
-  const upd=(k,v)=>setCfg(c=>({...c,[k]:v}));
+  const[waitPlayers,setWaitPlayers]=useState(null);
+  const[myId,setMyId]=useState(null);
+  const[isHost,setIsHost]=useState(false);
+  const[roomCode,setRoomCode]=useState('');
+  const cleanupRef=useRef([]);
 
-  const createRoom=async()=>{
-    setStatus('Створюємо...');
-    try{
-      const c=genCode();const sl=PSLOTS.p1;
-      await fdb().ref(`rooms/${c}`).set({status:'waiting',cfg,created:Date.now(),
-        players:{p1:{x:sl.sx,y:sl.sy,hp:100,maxHp:100,yawIdx:sl.yi,lives:cfg.duelLives,scores:0}},
-        slots:{p1:true},enemies:{},scores:{p1:0},wave:0,totalScore:0,waveMsg:'',inputs:{}});
-      roomRef.current=fdb().ref(`rooms/${c}`);
-      setCode(c);setTab('waiting');setStatus('');
-      roomRef.current.child('slots').on('value',snap=>{setWaiting(Object.keys(snap.val()||{}).length);});
-      roomRef.current.child('status').on('value',snap=>{
-        if(snap.val()==='playing'){roomRef.current.child('status').off();roomRef.current.child('slots').off();snd('join');onStart({code:c,mySlot:'p1',isHost:true,cfg,myWpn,sPhase});}
+  const cleanup=useCallback(()=>{cleanupRef.current.forEach(f=>f());cleanupRef.current=[];},[]);
+
+  const handleCreate=useCallback(async()=>{
+    if(!myName.trim()){setStatus('Введіть своє ім\'я');return;}
+    const id=generateRoomId();
+    const pid='host_'+Date.now();
+    setMyId(pid);setIsHost(true);setRoomCode(id);
+    await fbSet(`mp_rooms/${id}`,{
+      info:{host:pid,created:Date.now(),hostName:myName.trim(),diff:settings.difficulty||'normal',status:'waiting'},
+      players:{[pid]:{name:myName.trim(),x:3,y:CY,hp:100,maxHp:100,stamina:100,yawIdx:0,compassD:0,wpn:settings.startWpn||'sword',col:PCOL[0],alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,ready:false}},
+    });
+    setStatus(`Кімната ${id} — чекаємо гравців...`);
+    const unsub=fbOn(`mp_rooms/${id}/players`,players=>{
+      if(!players)return;
+      setWaitPlayers(players);
+    });
+    cleanupRef.current.push(unsub);
+  },[myName,settings]);
+
+  const handleJoin=useCallback(async()=>{
+    if(!myName.trim()||!roomId.trim()){setStatus('Введіть ім\'я і код кімнати');return;}
+    const id=roomId.trim().toUpperCase();
+    // Check room exists
+    let resolved=false;
+    const checkUnsub=fbOn(`mp_rooms/${id}/info`,info=>{
+      if(resolved)return;resolved=true;
+      if(!info){setStatus('Кімнату не знайдено');checkUnsub();return;}
+      if(info.status==='playing'){setStatus('Гра вже почалась');checkUnsub();return;}
+      // Count players
+      fbOn(`mp_rooms/${id}/players`,players=>{
+        if(!players)return;
+        const count=Object.keys(players).length;
+        if(count>=4){setStatus('Кімната заповнена (макс 4)');return;}
+        const pid='p'+Date.now();
+        setMyId(pid);setIsHost(false);setRoomCode(id);
+        fbSet(`mp_rooms/${id}/players/${pid}`,{name:myName.trim(),x:G-3,y:CY,hp:100,maxHp:100,stamina:100,yawIdx:0,compassD:0,wpn:settings.startWpn||'sword',col:PCOL[count],alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,ready:false});
+        setStatus(`Приєднались до ${id}!`);
+        setWaitPlayers(players);
+        const unsub2=fbOn(`mp_rooms/${id}/players`,ps=>setWaitPlayers(ps));
+        cleanupRef.current.push(unsub2);
       });
-    }catch(e){setStatus('Помилка: '+e.message);}
-  };
+      checkUnsub();
+    });
+    cleanupRef.current.push(checkUnsub);
+  },[myName,roomId,settings]);
 
-  const joinRoom=async()=>{
-    const c=input.trim().toUpperCase();
-    if(c.length<4){setStatus('Введи 4-значний код');return;}
-    setStatus('Підключаємось...');
-    try{
-      const snap=await fdb().ref(`rooms/${c}`).get();
-      if(!snap.exists()){setStatus('Кімната не знайдена');return;}
-      const room=snap.val();if(room.status==='ended'){setStatus('Гра завершена');return;}
-      const taken=Object.keys(room.slots||{});
-      const mySlot=['p1','p2','p3','p4'].find(s=>!taken.includes(s));
-      if(!mySlot){setStatus('Кімната заповнена');return;}
-      const sl=PSLOTS[mySlot];
-      await fdb().ref(`rooms/${c}/players/${mySlot}`).set({x:sl.sx,y:sl.sy,hp:100,maxHp:100,yawIdx:sl.yi,lives:(room.cfg?.duelLives||3)});
-      await fdb().ref(`rooms/${c}/slots/${mySlot}`).set(true);
-      await fdb().ref(`rooms/${c}/scores/${mySlot}`).set(0);
-      snd('join');
-      if(room.status==='playing')onStart({code:c,mySlot,isHost:false,cfg:room.cfg,myWpn,sPhase});
-      else{setTab('waitJoin');setStatus(`Підключено як ${PSLOTS[mySlot].lbl}. Чекаємо на хоста...`);
-        fdb().ref(`rooms/${c}/status`).on('value',s=>{if(s.val()==='playing'){fdb().ref(`rooms/${c}/status`).off();onStart({code:c,mySlot,isHost:false,cfg:room.cfg,myWpn,sPhase});}});}
-    }catch(e){setStatus('Помилка: '+e.message);}
-  };
+  const handleStart=useCallback(async()=>{
+    if(!roomCode||!isHost)return;
+    await fbSet(`mp_rooms/${roomCode}/info/status`,'playing');
+    const room=await new Promise(res=>{const u=fbOn(`mp_rooms/${roomCode}`,v=>{u();res(v);});});
+    cleanup();
+    onJoinGame({roomId:roomCode,myId,isHost,players:room.players,settings});
+  },[roomCode,myId,isHost,cleanup,onJoinGame,settings]);
 
-  return(<div style={{background:'#010d1f',flex:1,overflow:'auto',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'16px',gap:'9px'}}>
-    <div style={{color:'#1e3a5f',fontSize:'9px',letterSpacing:'.25em'}}>МИР 13×13</div>
-    <div style={{color:'#3a6a9f',fontSize:'20px',fontWeight:'bold'}}>МУЛЬТИПЛЕЄР</div>
+  const handleJoinStart=useCallback(()=>{
+    const unsub=fbOn(`mp_rooms/${roomCode}/info/status`,status=>{
+      if(status==='playing'){
+        unsub();
+        fbOn(`mp_rooms/${roomCode}`,room=>{
+          if(!room)return;
+          cleanup();
+          onJoinGame({roomId:roomCode,myId,isHost:false,players:room.players,settings:room.info||settings});
+        });
+      }
+    });
+    cleanupRef.current.push(unsub);
+    setStatus('Чекаємо на хоста...');
+  },[roomCode,myId,cleanup,onJoinGame,settings]);
 
-    {tab==='menu'&&(<>
-      <div style={{width:'100%',maxWidth:'300px'}}>
-        <Sec title="РЕЖИМ ГРИ">
-          {[['coop','⚔ КООП','Разом проти ворогів'],['duel','⚔⚔ ДУЕЛЬ','1v1 до вичерпання життів'],['arena','🏆 АРЕНА','PvP + вороги, рейтинг']].map(([m,lbl,desc])=>(
-            <button key={m} onClick={()=>upd('mode',m)} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'7px 10px',marginBottom:'4px',background:cfg.mode===m?'#1e3a8a22':'#020c1a',border:`1px solid ${cfg.mode===m?'#3b82f6':'#1e3a5f'}`,color:cfg.mode===m?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px',fontWeight:cfg.mode===m?'bold':'normal'}}>
-              <span>{lbl}</span><span style={{fontSize:'8px',color:'#1e3a5f'}}>{desc}</span>
-            </button>
-          ))}
-        </Sec>
-        {cfg.mode!=='duel'&&<Sec title="ГРАВЦІВ">
-          <div style={{display:'flex',gap:'6px'}}>{[2,3,4].map(n=><button key={n} onClick={()=>upd('maxPlayers',n)} style={{flex:1,padding:'8px',background:cfg.maxPlayers===n?'#1e3a8a22':'#020c1a',border:`1px solid ${cfg.maxPlayers===n?'#3b82f6':'#1e3a5f'}`,color:cfg.maxPlayers===n?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'14px',fontWeight:'bold'}}>{n}</button>)}</div>
-        </Sec>}
-        {cfg.mode==='coop'&&<Sec title="FRIENDLY FIRE">
-          <div style={{display:'flex',gap:'6px'}}>
-            <button onClick={()=>upd('friendlyFire',false)} style={{flex:1,padding:'7px',background:!cfg.friendlyFire?'#14532d22':'#020c1a',border:`1px solid ${!cfg.friendlyFire?'#22c55e':'#1e3a5f'}`,color:!cfg.friendlyFire?'#22c55e':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🤝 Вимк</button>
-            <button onClick={()=>upd('friendlyFire',true)} style={{flex:1,padding:'7px',background:cfg.friendlyFire?'#ef444422':'#020c1a',border:`1px solid ${cfg.friendlyFire?'#ef4444':'#1e3a5f'}`,color:cfg.friendlyFire?'#ef4444':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🔥 Увімк</button>
-          </div>
-        </Sec>}
-        {cfg.mode==='duel'&&<Sec title="ЖИТТІВ">
-          <div style={{display:'flex',gap:'6px'}}>{[1,3,5].map(n=><button key={n} onClick={()=>upd('duelLives',n)} style={{flex:1,padding:'8px',background:cfg.duelLives===n?'#ef444422':'#020c1a',border:`1px solid ${cfg.duelLives===n?'#ef4444':'#1e3a5f'}`,color:cfg.duelLives===n?'#ef4444':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'13px',fontWeight:'bold'}}>{'❤'.repeat(n)}</button>)}</div>
-        </Sec>}
-        <Sec title="РЕЖИМ ГРАВЦЯ">
-          <div style={{display:'flex',gap:'5px',flexWrap:'wrap'}}>
-            {[['classic','Класика','Гравець рухається'],['radar','Радар','Гравець в центрі'],['panorama','Панорама','Перспектива']].map(([val,lbl,desc])=>(
-              <button key={val} onClick={()=>upd('worldMode',val)} style={{flex:1,padding:'7px 5px',background:cfg.worldMode===val?'#1e3a8a33':'#020c1a',border:`1px solid ${cfg.worldMode===val?'#3b82f6':'#1e3a5f'}`,color:cfg.worldMode===val?'#60a5fa':'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',lineHeight:1.5,textAlign:'left'}}>
-                <div style={{fontWeight:'bold'}}>{lbl}</div><div style={{fontSize:'8px',marginTop:'2px'}}>{desc}</div>
-              </button>
-            ))}
-          </div>
-        </Sec>
-        <Sec title="МОЯ ЗБРОЯ (особиста)">
-          <div style={{fontSize:'8px',color:'#1e3a5f',marginBottom:'5px'}}>Кожен гравець обирає свою зброю незалежно</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:'4px'}}>
-            {Object.entries(WPN).map(([k,w])=><button key={k} onClick={()=>setMyWpn(k)} style={{padding:'5px 8px',background:myWpn===k?'#14532d33':'#020c1a',border:`1px solid ${myWpn===k?'#22c55e':'#1e3a5f'}`,color:myWpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px'}}>{w.label}</button>)}
-          </div>
-        </Sec>
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:'7px',width:'100%',maxWidth:'300px'}}>
-        <B2 onClick={()=>setTab('create')} col='#22c55e'>⚔ СТВОРИТИ КІМНАТУ</B2>
-        <B2 onClick={()=>setTab('join')} col='#60a5fa'>🔗 ПРИЄДНАТИСЬ</B2>
-        <a href="myr13x13.html" style={{textAlign:'center',color:'#1e3a5f',fontSize:'9px',textDecoration:'none',marginTop:'3px'}}>← Одиночна гра</a>
-      </div>
+  const playerList=waitPlayers?Object.values(waitPlayers):[];
+
+  return(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'20px',gap:'12px'}}>
+    <div style={{fontSize:'18px',fontWeight:'bold',color:'#60a5fa',letterSpacing:'.15em',marginBottom:'8px'}}>МИР 13×13</div>
+    <div style={{fontSize:'11px',color:'#3b82f6',letterSpacing:'.2em',marginBottom:'16px'}}>КООП ПРИГОДА</div>
+    {!mode&&!waitPlayers&&(<>
+      <Btn onClick={()=>setMode('create')} col='#22c55e'>⚔ СТВОРИТИ КІМНАТУ</Btn>
+      <Btn onClick={()=>setMode('join')} col='#60a5fa'>🔗 ПРИЄДНАТИСЬ</Btn>
     </>)}
-
-    {tab==='create'&&(<>
-      <Btn2 onClick={createRoom} col='#22c55e'>▷ СТВОРИТИ</Btn2>
-      {status&&<div style={{color:'#f59e0b',fontSize:'10px'}}>{status}</div>}
-      <button onClick={()=>setTab('menu')} style={{background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>← назад</button>
+    {(mode||waitPlayers)&&!waitPlayers&&(<>
+      <input value={myName} onChange={e=>setMyName(e.target.value)} placeholder="Ваше ім'я" maxLength={12} style={{width:'100%',padding:'10px',background:'#060f1e',border:'1px solid #1e4a7f',color:'#e2e8f0',borderRadius:'6px',fontFamily:'inherit',fontSize:'12px',marginBottom:'6px'}}/>
+      {mode==='join'&&<input value={roomId} onChange={e=>setRoomId(e.target.value.toUpperCase())} placeholder="КОД КІМНАТИ" maxLength={5} style={{width:'100%',padding:'10px',background:'#060f1e',border:'1px solid #1e4a7f',color:'#e2e8f0',borderRadius:'6px',fontFamily:'inherit',fontSize:'12px',letterSpacing:'.2em',marginBottom:'6px'}}/>}
+      <Btn onClick={mode==='create'?handleCreate:handleJoin} col={mode==='create'?'#22c55e':'#60a5fa'}>{mode==='create'?'✓ ГОТОВО':'🔗 ПРИЄДНАТИСЬ'}</Btn>
+      <Btn onClick={()=>{setMode(null);setStatus('');}} col='#4a6a9f'>← НАЗАД</Btn>
     </>)}
-
-    {tab==='waiting'&&(<div style={{textAlign:'center'}}>
-      <div style={{color:'#94a3b8',fontSize:'10px',marginBottom:'8px'}}>Надішли код партнерам:</div>
-      <div style={{color:'#22c55e',fontSize:'52px',fontWeight:'bold',letterSpacing:'.2em'}}>{code}</div>
-      <div style={{color:'#334155',fontSize:'9px',marginTop:'8px',lineHeight:2}}>
-        Підключено: <span style={{color:'#60a5fa',fontWeight:'bold'}}>{waiting}</span> / {cfg.mode==='duel'?2:cfg.maxPlayers}
-        {waiting>=2&&<span style={{color:'#22c55e',display:'block'}}>✓ Можна починати!</span>}
+    {waitPlayers&&(<>
+      <div style={{fontSize:'10px',color:'#1e4a7f',letterSpacing:'.2em',marginBottom:'4px'}}>КОД: <span style={{color:'#60a5fa',fontSize:'16px',fontWeight:'bold'}}>{roomCode}</span></div>
+      <div style={{width:'100%',background:'#060f1e',border:'1px solid #1e4a7f',borderRadius:'8px',padding:'10px',marginBottom:'8px'}}>
+        {playerList.map((p,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'center',gap:'8px',padding:'4px 0',borderBottom:i<playerList.length-1?'1px solid #0a1628':'none'}}>
+            <span style={{color:p.col||PCOL[i],fontSize:'12px'}}>●</span>
+            <span style={{color:'#94a3b8',fontSize:'11px'}}>{p.name}</span>
+            <span style={{color:'#3b82f6',fontSize:'9px',marginLeft:'auto'}}>{p.wpn}</span>
+          </div>
+        ))}
+        {playerList.length<4&&<div style={{fontSize:'9px',color:'#1e3a5f',marginTop:'6px',textAlign:'center'}}>Чекаємо ({playerList.length}/4)...</div>}
       </div>
-      {waiting>=2&&<B2 onClick={async()=>{await fdb().ref(`rooms/${code}/status`).set('playing');}} col='#22c55e' style={{marginTop:'8px'}}>▷ ПОЧАТИ ГРУ</B2>}
-      <button onClick={()=>{fdb().ref(`rooms/${code}`).remove();setTab('menu');}} style={{marginTop:'8px',background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>✕ Скасувати</button>
-    </div>)}
-
-    {tab==='join'&&(<>
-      <div style={{color:'#94a3b8',fontSize:'10px'}}>Введи 4-значний код кімнати:</div>
-      <input value={input} onChange={e=>setInput(e.target.value.toUpperCase().slice(0,4))} placeholder="XKJF"
-        style={{width:'150px',padding:'12px',fontSize:'30px',fontWeight:'bold',letterSpacing:'.2em',textAlign:'center',background:'#020c1a',border:'2px solid #1e3a5f',color:'#60a5fa',borderRadius:'6px',fontFamily:"'Courier New',monospace",outline:'none'}}
-        onKeyDown={e=>e.key==='Enter'&&joinRoom()}/>
-      {status&&<div style={{color:status.includes('Підключ')?'#22c55e':'#ef4444',fontSize:'10px',textAlign:'center'}}>{status}</div>}
-      <B2 onClick={joinRoom} col='#60a5fa'>▷ ПРИЄДНАТИСЬ</B2>
-      <button onClick={()=>setTab('menu')} style={{background:'none',border:'none',color:'#1e3a5f',fontSize:'9px',cursor:'pointer',fontFamily:'inherit'}}>← назад</button>
+      {isHost?<Btn onClick={handleStart} col='#22c55e' style={{opacity:playerList.length<2?.4:1}}>▷ РОЗПОЧАТИ ({playerList.length} гравців)</Btn>:<Btn onClick={handleJoinStart} col='#60a5fa'>✓ ГОТОВИЙ</Btn>}
+      <Btn onClick={()=>{cleanup();fbSet(`mp_rooms/${roomCode}`,null);setWaitPlayers(null);setMode(null);}} col='#ef4444'>✕ ПОКИНУТИ</Btn>
     </>)}
-
-    {tab==='waitJoin'&&<div style={{textAlign:'center',color:'#94a3b8',fontSize:'10px',lineHeight:2}}>{status}<br/><span style={{animation:'pulse 1s infinite',display:'inline-block'}}>⏳</span></div>}
+    {status&&<div style={{fontSize:'10px',color:'#4a6a9f',textAlign:'center',marginTop:'4px'}}>{status}</div>}
   </div>);
 }
-// Alias for compatibility
-function Btn2(p){return <B2 {...p}/>;}
 
-// ── MULTIPLAYER GAME (все як в одиночній + Firebase) ──────────────
-function MultiGame({code,mySlot,isHost,cfg,myWpn:_myWpn,sPhase,onEnd}){
-  const gs=useRef(null);
+// ── MP GAME ───────────────────────────────────────────────────────────────
+function MPGame({roomId,myId,isHost,players:initPlayers,settings,onExit}){
   const[,forceRender]=useReducer(x=>x+1,0);
-  const touchSt=useRef({x:0,y:0,t:0});
-  const prevAccMag=useRef(9.8);
-  const lastStrikeT=useRef(0);
-  const waveTimer=useRef(null);
-  const morseTimer=useRef(null);
-  const mode=cfg?.mode||'coop';
-  const wpn=_myWpn||'sword'; // моя особиста зброя
-  const ff=cfg?.friendlyFire||false;
-  const isRadar=cfg?.worldMode==='radar'||cfg?.worldMode==='panorama';const isPanorama=cfg?.worldMode==='panorama';
-  const STRENGTH=4;
-  const mySl=PSLOTS[mySlot]||PSLOTS.p1;
+  const gs=useRef(null);
+  const myPRef=useRef(null); // my player state
+  const allPRef=useRef({}); // all players
+  const roomStateRef=useRef(null); // host game state
+  const cleanupRef=useRef([]);
+  const lastSyncRef=useRef(0);
+  const msgRef=useRef('');
 
-  const roomRef=useRef(fdb().ref(`rooms/${code}`));
-  const myInputRef=useRef(fdb().ref(`rooms/${code}/inputs/${mySlot}`));
-
-  const doAttackRef=useRef(null);
-  const doBeaconRef=useRef(null);
-  const settingsRef=useRef({strikeThr:8,pitchSens:40});
-
-  // ── INIT ────────────────────────────────────────────────────
+  // ── INIT ────────────────────────────────────────────────────────────────
   useEffect(()=>{
-    EID=2000;
-    gs.current={
-      player:{x:mySl.sx,y:mySl.sy,hp:100,maxHp:100,lives:cfg?.duelLives||3,respawnAt:0},
-      yawIdx:mySl.yi,compassD:0,vYaw:0,pitch:0,
-      stamina:100,fingers:5,dropped:false,droppedUntil:0,divergence:0,highDTicks:0,
-      spell:null,
-      remote:{},// інші гравці {slot: {x,y,hp,yawIdx,lives,spell}}
-      enemies:[],wave:0,totalScore:0,waveMsg:'',scores:{},
-      flash:[],flashUntil:0,
-      msg:'',msgKey:0,morseSeq:'',
-      pendingAtks:{},_lastAtkTs:{},
+    const diff=settings.difficulty||'normal';
+    const dCfg=DIFFICULTY[diff]||DIFFICULTY.normal;
+    EID=Math.floor(Math.random()*10000)+1000;
+
+    // Init my player
+    const myInitData=initPlayers[myId];
+    myPRef.current={
+      id:myId,name:myInitData?.name||'?',
+      x:myInitData?.x||CX,y:myInitData?.y||CY,
+      hp:Math.round(100*dCfg.playerHp),maxHp:Math.round(100*dCfg.playerHp),
+      stamina:100,yawIdx:0,compassD:0,pitch:0,
+      wpn:myInitData?.wpn||settings.startWpn||'sword',
+      col:myInitData?.col||PCOL[0],
+      alive:true,weaponMods:{reach:0,weight:1,sharpness:1},
+      score:0,morseSeq:'',spell:null,frozen:0,
     };
 
+    // Init all players from Firebase data
+    allPRef.current={};
+    Object.entries(initPlayers).forEach(([pid,pd])=>{
+      allPRef.current[pid]={...myPRef.current,...pd,id:pid};
+    });
+    allPRef.current[myId]=myPRef.current;
+
+    // Host initializes room state
     if(isHost){
-      if(mode==='coop'||mode==='arena'){
-        gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
-        waveTimer.current=setTimeout(()=>doSpawnWave(1),2500);
-      }
-      // Читаємо інпут від гостей
-      fdb().ref(`rooms/${code}/inputs`).on('value',snap=>{
-        const inp=snap.val()||{};const g=gs.current;if(!g)return;
-        Object.entries(inp).forEach(([slot,d])=>{
-          if(slot===mySlot||!d)return;
-          if(!g.remote[slot])g.remote[slot]={x:PSLOTS[slot].sx,y:PSLOTS[slot].sy,hp:100,yawIdx:PSLOTS[slot].yi,lives:cfg?.duelLives||3};
-          g.remote[slot]={...g.remote[slot],x:d.x??g.remote[slot].x,y:d.y??g.remote[slot].y,yawIdx:d.yawIdx??g.remote[slot].yawIdx,hp:d.hp??g.remote[slot].hp,spell:d.spell??null};
-          if(d.atk&&d.atk.t>(g._lastAtkTs[slot]||0)){g._lastAtkTs[slot]=d.atk.t;if(!g.pendingAtks[slot])g.pendingAtks[slot]=[];g.pendingAtks[slot].push(d.atk);}
-        });
-      });
-    }else{
-      // Guest читає стан від хоста
-      roomRef.current.on('value',snap=>{
-        const room=snap.val();if(!room||!gs.current)return;
-        const g=gs.current;
-        g.enemies=Object.values(room.enemies||{}).filter(Boolean);
-        g.wave=room.wave||0;g.totalScore=room.totalScore||0;
-        g.waveMsg=room.waveMsg||'';g.scores=room.scores||{};
-        const allP=room.players||{};
-        Object.entries(allP).forEach(([slot,pd])=>{
-          if(slot===mySlot){if(pd)g.player={...g.player,hp:pd.hp??g.player.hp,lives:pd.lives??g.player.lives};}
-          else{g.remote[slot]=pd||{};}
-        });
-        if(room.status==='ended'&&!gs.current._ended){gs.current._ended=true;endGame();}
-        forceRender();
-      });
+      const ac=generateRoom(1,CX,CY,diff);
+      roomStateRef.current={
+        enemies:ac.enemies,objects:ac.objects,isBossRoom:ac.isBoss,
+        roomCoord:{x:0,y:0},roomNumber:1,
+        score:0,diff,_roomCleared:false,edgeTimers:{},
+        flash:[],flashUntil:0,msg:'Кімната 1 — стань на краю для переходу',
+      };
+      fbSet(`mp_rooms/${roomId}/state`,JSON.parse(JSON.stringify(roomStateRef.current)));
+      fbSet(`mp_rooms/${roomId}/info/status`,'playing');
     }
 
-    return()=>{
-      clearTimeout(waveTimer.current);clearTimeout(morseTimer.current);
-      fdb().ref(`rooms/${code}/inputs`).off();
-      roomRef.current.off();myInputRef.current.remove();
-      if(isHost)roomRef.current.child('status').set('ended');
-    };
-  },[]);// eslint-disable-line
+    // Subscribe to room state (guest reads, host also reads for safety)
+    const unsubState=fbOn(`mp_rooms/${roomId}/state`,state=>{
+      if(!state)return;
+      if(!isHost){roomStateRef.current=state;}
+      forceRender();
+    });
 
-  const endGame=useCallback(()=>{
-    const g=gs.current;if(!g)return;
-    snd('death');
-    const scores=g.scores||{};scores[mySlot]=(scores[mySlot]||0);
-    onEnd({mode,scores,totalScore:g.totalScore,wave:g.wave,mySlot});
-  },[mode,mySlot,onEnd]);
+    // Subscribe to all players
+    const unsubPlayers=fbOn(`mp_rooms/${roomId}/players`,players=>{
+      if(!players)return;
+      Object.entries(players).forEach(([pid,pd])=>{
+        if(pid!==myId) allPRef.current[pid]={...allPRef.current[pid],...pd,id:pid};
+      });
+      forceRender();
+    });
 
-  const doSpawnWave=useCallback((waveNum)=>{
-    if(!isHost||!gs.current)return;
-    const g=gs.current;
-    const occ=[{x:g.player.x,y:g.player.y},...Object.values(g.remote).filter(Boolean).map(p=>({x:p.x,y:p.y}))];
-    const wi=Math.min(waveNum-1,WAVES.length-1),extra=Math.max(0,waveNum-WAVES.length);
-    const spawned=[];
-    WAVES[wi].forEach(({t,n})=>{const tot=n+(t==='shadow'?extra:0);for(let i=0;i<tot;i++){const e=spawnE(t,[...occ,...spawned]);if(e)spawned.push(e);}});
-    g.enemies=spawned;g.waveMsg='';g.wave=waveNum;
-    showMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);snd('wave');forceRender();
-  },[isHost]);// eslint-disable-line
-
-  const showMsg=useCallback((t)=>{const g=gs.current;if(!g)return;g.msg=t;g.msgKey++;forceRender();},[]);
-
-  // ── APPLY ATTACK ────────────────────────────────────────────
-  const applyAtk=useCallback((g,px,py,yi,wk,bySlot)=>{
-    const C=STRENGTH/(WPN[wk]?.w||5);
-    const pitch=bySlot===mySlot?g.pitch:0;
-    const spellMult=(g.spell?.fn==='burn'?3:g.spell?.fn==='surge'?2:1);
-    const baseDmg=Math.round(12*(1+Math.max(0,pitch)*1.8)*C*spellMult);
-    if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
-    const cells=getWCells(px,py,yi,wk);
-    let hits=0;
-    // Ворожі
-    g.enemies=g.enemies.map(e=>{
-      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
-      hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
-      if(e.hp-dmg<=0){g.scores[bySlot]=(g.scores[bySlot]||0)+10;g.totalScore+=10;snd('hit');return null;}
-      return{...e,hp:e.hp-dmg};
-    }).filter(Boolean);
-    // Friendly fire / PvP
-    if((mode==='coop'&&ff)||mode==='duel'||mode==='arena'){
-      // Мій гравець
-      if(bySlot!==mySlot){const h=cells.find(c=>c.x===g.player.x&&c.y===g.player.y);if(h){const sh=g.spell?.fn==='shield';if(!sh){g.player={...g.player,hp:Math.max(0,g.player.hp-(h.main?baseDmg:Math.round(baseDmg*.5)))};snd('hurt');}else g.spell=null;if(g.player.hp<=0)playerDied(g,mySlot,bySlot);}}
-      // Гості
-      Object.entries(g.remote).forEach(([slot,pd])=>{if(!pd||slot===bySlot)return;const h=cells.find(c=>c.x===pd.x&&c.y===pd.y);if(!h)return;const sh=slot===mySlot&&g.spell?.fn==='shield';if(!sh){g.remote[slot]={...pd,hp:Math.max(0,(pd.hp||100)-(h.main?baseDmg:Math.round(baseDmg*.5)))};snd('hurt');}if((g.remote[slot]?.hp||0)<=0)playerDied(g,slot,bySlot);});
-    }
-    return hits;
-  },[mode,ff,mySlot]);// eslint-disable-line
-
-  function playerDied(g,slot,killedBy){
-    if(slot===mySlot){const nl=Math.max(0,(g.player.lives||0)-1);g.player={...g.player,lives:nl,hp:0};if(nl>0)g.player.respawnAt=Date.now()+3000;else if(mode==='duel')setTimeout(()=>endGame(),1000);}
-    else{if(!g.remote[slot])return;const nl=Math.max(0,(g.remote[slot].lives||0)-1);g.remote[slot]={...g.remote[slot],lives:nl,hp:0};if(nl>0)g.remote[slot].respawnAt=Date.now()+3000;else if(mode==='duel')setTimeout(()=>endGame(),1000);}
-    if(killedBy&&(mode==='duel'||mode==='arena')){snd('pvpkill');g.scores[killedBy]=(g.scores[killedBy]||0)+50;showMsg(`${PSLOTS[killedBy]?.lbl} вбив ${PSLOTS[slot]?.lbl}! +50`);}
-  }
-
-  // ── ATTACK ──────────────────────────────────────────────────
-  const doAttack=useCallback(()=>{
-    const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
-    snd('swing');
+    // Host game loop
+    let hostInterval;
     if(isHost){
-      const hits=applyAtk(g,g.player.x,g.player.y,g.yawIdx,wpn,mySlot);
-      g.flash=getWCells(g.player.x,g.player.y,g.yawIdx,wpn).map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));
-      g.flashUntil=Date.now()+350;
-    }else{
-      const cells=getWCells(g.player.x,g.player.y,g.yawIdx,wpn);
-      myInputRef.current.update({atk:{cells,wk:wpn,yi:g.yawIdx,px:g.player.x,py:g.player.y,t:Date.now()}});
-      g.flash=cells.map(c=>({...c,col:mySl.col+'44',fid:Math.random()}));g.flashUntil=Date.now()+350;
-    }
-    g.stamina=Math.max(0,g.stamina-10);forceRender();
-  },[isHost,wpn,mySlot,applyAtk,mySl.col]);// eslint-disable-line
-  useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
+      hostInterval=setInterval(()=>{
+        const gs=roomStateRef.current;
+        if(!gs)return;
+        const now=Date.now();
+        const allP=allPRef.current;
 
-  // ── BEACON ──────────────────────────────────────────────────
-  const doBeaconComplete=useCallback(()=>{
-    const g=gs.current;if(!g)return;
-    snd('beacon'||'join');g.stamina=Math.min(100,g.stamina+50);g.divergence=0;g.highDTicks=0;g.dropped=false;g.beaconCount=0;g.beaconProgress=0;
-    forceRender();
-  },[]);
-  useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
+        // Flash expire
+        if(gs.flashUntil&&now>gs.flashUntil){gs.flash=[];gs.flashUntil=0;}
 
-  // ── SPELL CAST ──────────────────────────────────────────────
-  const castSpell=useCallback((sp)=>{
-    const g=gs.current;if(!g)return;snd('spell');const now=Date.now();
-    const fn=sp.fn;
-    if(fn==='stamina'){g.stamina=Math.min(100,g.stamina+30);}
-    else if(fn==='mend'){g.fingers=Math.min(5,g.fingers+1);}
-    else if(fn==='heal'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+30)};}
-    else if(fn==='cure'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+50)};}
-    else if(fn==='rush'){g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    else if(fn==='shield'){g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    else if(fn==='armor'){g.spell={fn,col:sp.col,name:sp.name,expires:now+4000};}
-    else if(fn==='burn'){g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    else if(fn==='surge'){g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    else if(fn==='pierce'){g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    else if(fn==='teleport'){const[dx,dy]=DIR[g.yawIdx];g.player={...g.player,x:clamp(g.player.x+dx*3,0,G-1),y:clamp(g.player.y+dy*3,0,G-1)};}
-    else if(fn==='freeze'&&isHost){const near=g.enemies.reduce((b,e)=>{const d=Math.abs(e.x-g.player.x)+Math.abs(e.y-g.player.y);return(!b||d<b.d)?{e,d}:b;},null);if(near)g.enemies=g.enemies.map(e=>e.id===near.e.id?{...e,frozen:now+3000}:e);}
-    else if(fn==='lockall'&&isHost){g.enemies=g.enemies.map(e=>({...e,frozen:now+4000}));}
-    else if(fn==='omni'){doAttackRef.current?.({omni:true});}
-    else if(fn==='chaos'&&isHost){g.enemies=g.enemies.map(e=>({...e,chaosUntil:now+5000}));}
-    showMsg(`✨ ${sp.name}! ${sp.desc}`);forceRender();
-  },[isHost,showMsg]);// eslint-disable-line
+        // Enemy AI
+        let needSync=false;
+        const pList=Object.values(allP).filter(p=>p.alive&&p.id);
+        if(pList.length===0)return;
 
-  // ── MOVE ────────────────────────────────────────────────────
-  const doMoveDir=useCallback((sdx,sdy)=>{
-    const g=gs.current;if(!g||g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
-    let gdx=sdx,gdy=sdy;
-    if(isRadar){const a=rad(g.compassD);gdx=Math.round(sdx*Math.cos(a)-sdy*Math.sin(a));gdy=Math.round(sdx*Math.sin(a)+sdy*Math.cos(a));}
-    const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
-    if(nx===g.player.x&&ny===g.player.y)return;
-    if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    if(Object.values(g.remote).some(p=>p&&p.x===nx&&p.y===ny))return;
-    g.player={...g.player,x:nx,y:ny};
-    if(g.spell?.fn!=='rush')g.stamina=Math.max(0,g.stamina-Math.max(0,g.pitch)*8);
-    forceRender();
-  },[isRadar]);
-
-  const rotateW=useCallback((dir)=>{const g=gs.current;if(!g)return;g.yawIdx=(g.yawIdx+dir+8)%8;forceRender();},[]);
-
-  // ── MORSE ───────────────────────────────────────────────────
-  const handleMorse=useCallback((sym)=>{
-    const g=gs.current;if(!g)return;
-    snd(sym==='.'?'dot':'dash');g.morseSeq+=sym;forceRender();
-    clearTimeout(morseTimer.current);
-    morseTimer.current=setTimeout(()=>{
-      const g2=gs.current;if(!g2)return;
-      const seq=g2.morseSeq;g2.morseSeq='';
-      const sp=SPELL_MAP[seq];
-      if(sp)castSpell(sp);else showMsg(`? "${seq}" — невідоме. Дивись Морзе ↓`);
-      forceRender();
-    },1000);
-  },[castSpell,showMsg]);
-
-  // ── SENSORS ─────────────────────────────────────────────────
-  useEffect(()=>{
-    if(sPhase!=='active')return;
-    const ps=settingsRef.current;
-    const onO=(e)=>{
-      const g=gs.current;if(!g)return;
-      g.pitch=betaToPitch(e.beta??40,ps.pitchSens);
-      if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){g.compassD=e.webkitCompassHeading;g.yawIdx=Math.round(g.compassD/45)%8;}
-      forceRender();
-    };
-    const onOA=(e)=>{if(e.alpha!=null&&!isNaN(e.alpha)){const g=gs.current;if(!g)return;g.compassD=(360-e.alpha)%360;g.yawIdx=Math.round(g.compassD/45)%8;forceRender();}};
-    const onM=(e)=>{
-      const now=Date.now();let struck=false;
-      const a=e.acceleration;
-      if(!struck&&a&&a.x!==null){const amag=Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2);if(amag>7&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}}
-      const rr=e.rotationRate;
-      if(!struck&&rr){const rot=Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0);if(rot>240&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();struck=true;}}
-      if(!struck){const ag=e.accelerationIncludingGravity;if(ag){const gmag=Math.sqrt((ag.x||0)**2+(ag.y||0)**2+(ag.z||9.8)**2);const delta=Math.abs(gmag-prevAccMag.current);if(delta>8&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}prevAccMag.current=gmag;}}
-      // Маяк
-      const still=rr?Math.abs(rr.alpha||0)+Math.abs(rr.beta||0)+Math.abs(rr.gamma||0):999;
-      const g=gs.current;if(!g)return;
-      if(g.pitch<-0.2&&still<22){g.beaconCount=(g.beaconCount||0)+1;g.beaconProgress=clamp(g.beaconCount/120,0,1);if(g.beaconCount>=120)doBeaconRef.current?.();}
-      else{g.beaconCount=Math.max(0,(g.beaconCount||0)-1);g.beaconProgress=clamp((g.beaconCount||0)/120,0,1);}
-      forceRender();
-    };
-    window.addEventListener('deviceorientation',onO,true);
-    window.addEventListener('deviceorientationabsolute',onOA,true);
-    window.addEventListener('devicemotion',onM);
-    return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
-  },[sPhase]);
-
-  // ── KEYBOARD ────────────────────────────────────────────────
-  useEffect(()=>{
-    const held={};let bInt=null;
-    const kd=e=>{
-      if(held[e.key])return;held[e.key]=true;
-      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
-      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
-      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
-      if(sPhase!=='active'){
-        if(e.key==='z'){const g=gs.current;if(g){g.pitch=-1;forceRender();}}
-        if(e.key==='c'){const g=gs.current;if(g){g.pitch=1;forceRender();}}
-        if(e.key==='b'){bInt=setInterval(()=>{const g=gs.current;if(!g)return;g.beaconCount=(g.beaconCount||0)+1;g.beaconProgress=clamp(g.beaconCount/16,0,1);if(g.beaconCount>=16){clearInterval(bInt);doBeaconRef.current?.();}forceRender();},TICK);}
-      }
-      if(e.key===' '){e.preventDefault();doAttackRef.current?.();}
-      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
-    };
-    const ku=e=>{delete held[e.key];if(sPhase!=='active'){if(e.key==='z'||e.key==='c'){const g=gs.current;if(g){g.pitch=0;forceRender();}}if(e.key==='b')clearInterval(bInt);}};
-    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
-    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
-  },[sPhase,doMoveDir,rotateW,handleMorse]);
-
-  // ── TOUCH (свайп + Морзе) ───────────────────────────────────
-  useEffect(()=>{
-    const onS=e=>{e.preventDefault();touchSt.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};};
-    const onE=e=>{
-      e.preventDefault();const{x,y,t}=touchSt.current;
-      const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
-      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
-      if(dist<25)handleMorse(dt<280?'.':'-');
-      else if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);
-      else doMoveDir(0,Math.sign(dy));
-    };
-    const onM=e=>e.preventDefault();
-    document.addEventListener('touchstart',onS,{passive:false});
-    document.addEventListener('touchend',onE,{passive:false});
-    document.addEventListener('touchmove',onM,{passive:false});
-    return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
-  },[doMoveDir,handleMorse]);
-
-  // ════════════════════════════════════════════════════════════
-  // HOST GAME LOOP — та сама логіка що і в одиночній + Firebase
-  // ════════════════════════════════════════════════════════════
-  useEffect(()=>{
-    if(!isHost)return;
-    const id=setInterval(()=>{
-      const g=gs.current;if(!g)return;
-      const now=Date.now();const C=STRENGTH/(WPN[wpn]?.w||5);
-      if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
-      // Дивергенція
-      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
-      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
-      if(g.divergence>65){g.highDTicks++;if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.droppedUntil=now+5000;g.fingers--;snd('drop'||'hurt');}}}else g.highDTicks=0;
-      if(g.dropped&&now>g.droppedUntil)g.dropped=false;
-      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2:g.divergence>40?0.3:0),0,100);
-      if(g.spell&&now>g.spell.expires)g.spell=null;
-      // Respawn
-      if(g.player.hp<=0&&g.player.respawnAt&&now>g.player.respawnAt&&(g.player.lives||0)>0){g.player={...g.player,hp:g.player.maxHp,respawnAt:0,x:mySl.sx,y:mySl.sy};}
-      Object.entries(g.remote).forEach(([slot,pd])=>{if(pd&&pd.hp<=0&&pd.respawnAt&&now>pd.respawnAt&&(pd.lives||0)>0)g.remote[slot]={...pd,hp:100,respawnAt:0,x:PSLOTS[slot].sx,y:PSLOTS[slot].sy};});
-      // Атаки від гостей
-      Object.entries(g.pendingAtks||{}).forEach(([slot,atks])=>{
-        if(!atks?.length)return;
-        atks.forEach(atk=>applyAtk(g,atk.px,atk.py,atk.yi,atk.wk||wpn,slot));
-        delete g.pendingAtks[slot];
-      });
-      // Ворожий AI — мета: найближчий гравець
-      if((mode==='coop'||mode==='arena')&&g.enemies.length>0){
-        const allPl=[{slot:mySlot,x:g.player.x,y:g.player.y,hp:g.player.hp},...Object.entries(g.remote).map(([s,p])=>({slot:s,x:p?.x??0,y:p?.y??0,hp:p?.hp??100}))].filter(p=>p.hp>0);
-        g.enemies=g.enemies.map(e=>{
-          if(e.frozen&&now<e.frozen)return e;
-          const et=ET[e.type];const ms=(e.chaosUntil&&now<e.chaosUntil)?et.ms*2:et.ms;
-          if(now-(e.lastMove||0)<ms)return e;
-          const tgt=allPl.reduce((b,p)=>{const d=Math.abs(e.x-p.x)+Math.abs(e.y-p.y);return(!b||d<b.d)?{...p,d}:b;},null);
-          if(!tgt)return{...e,lastMove:now};
-          const dx=tgt.x-e.x,dy=tgt.y-e.y,dist=Math.abs(dx)+Math.abs(dy);
-          if(dist<=1){
-            const sh=tgt.slot===mySlot&&g.spell?.fn==='shield';
-            if(!sh){
-              if(tgt.slot===mySlot){g.player={...g.player,hp:Math.max(0,g.player.hp-et.dmg)};snd('hurt');g.flash=[{x:g.player.x,y:g.player.y,col:'#ef4444',fid:Math.random()}];g.flashUntil=now+300;if(g.player.hp<=0)playerDied(g,mySlot,null);}
-              else{if(g.remote[tgt.slot]){g.remote[tgt.slot]={...g.remote[tgt.slot],hp:Math.max(0,(g.remote[tgt.slot].hp||100)-et.dmg)};snd('hurt');if(g.remote[tgt.slot].hp<=0)playerDied(g,tgt.slot,null);}}
-            }else g.spell=null;
+        gs.enemies=gs.enemies.map(e=>{
+          if(e.type==='boss'){
+            if(now-(e.lastMove||0)<(e.ms||700))return e;
+            // Find nearest player
+            let nearestP=pList[0],nearestDist=999;
+            pList.forEach(p=>{const d=Math.abs(p.x-e.x)+Math.abs(p.y-e.y);if(d<nearestDist){nearestDist=d;nearestP=p;}});
+            const bcs=calcBossCells(e.x,e.y,e.size||1);
+            if(bcs.some(bc=>Math.abs(bc.x-nearestP.x)+Math.abs(bc.y-nearestP.y)<=1)){
+              // Attack nearest player
+              if(allPRef.current[nearestP.id]){
+                allPRef.current[nearestP.id].hp=Math.max(0,allPRef.current[nearestP.id].hp-(e.dmg||20));
+                if(allPRef.current[nearestP.id].hp<=0){allPRef.current[nearestP.id].alive=false;}
+                fbSet(`mp_rooms/${roomId}/players/${nearestP.id}/hp`,allPRef.current[nearestP.id].hp);
+                fbSet(`mp_rooms/${roomId}/players/${nearestP.id}/alive`,allPRef.current[nearestP.id].hp>0);
+              }
+              return{...e,lastMove:now};
+            }
+            const dx=nearestP.x-e.x,dy=nearestP.y-e.y;
+            const bDirs=[[Math.sign(dx),0],[0,Math.sign(dy)]].filter(([mx,my])=>mx||my);
+            const bm=bDirs.map(([mx,my])=>{const nbx=e.x+mx,nby=e.y+my;if(nbx<0||nby<0||nbx+(e.size||1)>G||nby+(e.size||1)>G)return null;return{x:nbx,y:nby,d:Math.abs(nearestP.x-nbx)+Math.abs(nearestP.y-nby)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+            needSync=true;
+            return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
+          }
+          const et=ET[e.type];if(!et)return e;
+          if(now-(e.lastMove||0)<et.ms)return e;
+          let nearestP=pList[0],nearestDist=999;
+          pList.forEach(p=>{const d=Math.abs(p.x-e.x)+Math.abs(p.y-e.y);if(d<nearestDist){nearestDist=d;nearestP=p;}});
+          const dx=nearestP.x-e.x,dy=nearestP.y-e.y;
+          if(Math.abs(dx)+Math.abs(dy)<=1){
+            if(allPRef.current[nearestP.id]){
+              allPRef.current[nearestP.id].hp=Math.max(0,allPRef.current[nearestP.id].hp-et.dmg);
+              if(allPRef.current[nearestP.id].hp<=0)allPRef.current[nearestP.id].alive=false;
+              fbSet(`mp_rooms/${roomId}/players/${nearestP.id}/hp`,allPRef.current[nearestP.id].hp);
+              fbSet(`mp_rooms/${roomId}/players/${nearestP.id}/alive`,allPRef.current[nearestP.id].hp>0);
+            }
             return{...e,lastMove:now};
           }
-          const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
-          const best=dirs.map(([mx,my])=>{const nx2=e.x+mx,ny2=e.y+my;if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;if(allPl.some(p=>p.x===nx2&&p.y===ny2))return null;if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;return{x:nx2,y:ny2,d:Math.abs(tgt.x-nx2)+Math.abs(tgt.y-ny2)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+          const dirs=e.type==='ghost'?[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]:[[Math.sign(dx),0],[0,Math.sign(dy)]];
+          const best=dirs.map(([mx,my])=>{const nx=e.x+mx,ny=e.y+my;if(nx<0||nx>=G||ny<0||ny>=G)return null;if(pList.some(p=>p.x===nx&&p.y===ny))return null;if(gs.enemies.some(o=>o.id!==e.id&&o.x===nx&&o.y===ny))return null;if(gs.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return null;return{x:nx,y:ny,d:Math.abs(nearestP.x-nx)+Math.abs(nearestP.y-ny)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
+          needSync=true;
           return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
         }).filter(Boolean);
-      }
-      // Хвиля завершена
-      if((mode==='coop'||mode==='arena')&&g.wave>0&&g.enemies.length===0&&!waveTimer.current){
-        const next=g.wave+1;g.wave=next;g.waveMsg=`Хвиля ${next}`;
-        waveTimer.current=setTimeout(()=>{waveTimer.current=null;doSpawnWave(next);},2500);
-      }
-      // Firebase sync
-      const pFb={};
-      pFb[mySlot]={x:g.player.x,y:g.player.y,hp:g.player.hp,maxHp:g.player.maxHp,yawIdx:g.yawIdx,lives:g.player.lives,spell:g.spell?.fn||null};
-      Object.entries(g.remote).forEach(([s,p])=>{if(p)pFb[s]={x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp||100,yawIdx:p.yawIdx||0,lives:p.lives};});
-      roomRef.current.update({wave:g.wave,totalScore:g.totalScore,waveMsg:g.waveMsg,scores:g.scores,players:pFb,
-        enemies:g.enemies.reduce((a,e)=>{a[`e${e.id}`]={type:e.type,x:e.x,y:e.y,hp:e.hp,maxHp:e.maxHp,frozen:e.frozen||0,lastMove:e.lastMove||0};return a;},{})});
-      forceRender();
-    },TICK);
-    return()=>clearInterval(id);
-  },[isHost,wpn,mode,doSpawnWave,applyAtk,mySl.sx,mySl.sy,mySlot]);// eslint-disable-line
 
-  // ── GUEST LOCAL LOOP ────────────────────────────────────────
-  useEffect(()=>{
-    if(isHost)return;
-    const id=setInterval(()=>{
-      const g=gs.current;if(!g)return;
-      const C=STRENGTH/(WPN[wpn]?.w||5);
-      if(g.flashUntil&&Date.now()>g.flashUntil){g.flash=[];g.flashUntil=0;}
-      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
-      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
-      if(g.divergence>65){g.highDTicks++;if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.fingers--;}}}else g.highDTicks=0;
-      if(g.dropped&&Date.now()>g.droppedUntil)g.dropped=false;
-      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2:g.divergence>40?0.3:0),0,100);
-      if(g.spell&&Date.now()>g.spell.expires)g.spell=null;
-      myInputRef.current.update({x:g.player.x,y:g.player.y,yawIdx:g.yawIdx,pitch:g.pitch,hp:g.player.hp,spell:g.spell?.fn||null,stamina:Math.round(g.stamina)});
-      forceRender();
-    },TICK);
-    return()=>clearInterval(id);
-  },[isHost,wpn]);
+        // Edge transition (if all alive players are at an edge)
+        if(gs.enemies.length===0){
+          if(!gs._roomCleared){
+            gs._roomCleared=gs.roomNumber;
+            gs.msg='✓ Очищено! Стань на краю для переходу';
+            needSync=true;
+          }
+          pList.forEach(p=>{
+            let eDir=null;
+            if(p.y===0)eDir='N';else if(p.y===G-1)eDir='S';else if(p.x===0)eDir='W';else if(p.x===G-1)eDir='E';
+            if(eDir){
+              gs.edgeTimers=gs.edgeTimers||{};
+              gs.edgeTimers[p.id]=(gs.edgeTimers[p.id]||0)+1;
+              if(gs.edgeTimers[p.id]>=50){
+                // Transition room
+                gs.edgeTimers={};
+                const nc=getNextCoord(gs.roomCoord,eDir);
+                const nid=coordId(nc.x,nc.y);
+                const rNum=calcRoomNum(nc.x,nc.y);
+                const ac2=generateRoom(rNum,CX,CY,gs.diff||'normal');
+                gs.enemies=ac2.enemies;gs.objects=ac2.objects;gs.isBossRoom=ac2.isBoss;
+                gs.roomCoord=nc;gs.roomNumber=rNum;gs._roomCleared=false;
+                gs.score=(gs.score||0)+15;
+                gs.msg=ac2.isBoss?`👹 Кімната ${rNum} — БОС!`:`Кімната ${rNum} · ${ac2.enemies.length} ворогів`;
+                // Reposition players
+                pList.forEach(p2=>{
+                  const nx2=eDir==='E'?1:eDir==='W'?G-2:p2.x;
+                  const ny2=eDir==='S'?1:eDir==='N'?G-2:p2.y;
+                  if(allPRef.current[p2.id]){allPRef.current[p2.id].x=clamp(nx2,0,G-1);allPRef.current[p2.id].y=clamp(ny2,0,G-1);}
+                  fbSet(`mp_rooms/${roomId}/players/${p2.id}/x`,clamp(nx2,0,G-1));
+                  fbSet(`mp_rooms/${roomId}/players/${p2.id}/y`,clamp(ny2,0,G-1));
+                });
+                snd('wave');needSync=true;
+              }
+            }else{
+              if(gs.edgeTimers?.[p.id]){delete gs.edgeTimers[p.id];needSync=true;}
+            }
+          });
+        }
 
-  // ── RENDER ──────────────────────────────────────────────────
-  const g=gs.current;if(!g)return null;
-  const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,wpn);
-  const cellSz=Math.min(26,Math.floor((Math.min(window.innerWidth,480)-20)/G));
-  const myCol=mySl.col;
-  const pc=pColor(g.pitch);
-  const divCol=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
+        // Sync to Firebase every 150ms
+        if(needSync||now-lastSyncRef.current>150){
+          lastSyncRef.current=now;
+          fbSet(`mp_rooms/${roomId}/state`,{
+            enemies:gs.enemies.map(e=>({...e})),
+            objects:gs.objects.map(o=>({...o})),
+            isBossRoom:gs.isBossRoom,
+            roomCoord:gs.roomCoord,roomNumber:gs.roomNumber,
+            score:gs.score||0,diff:gs.diff||'normal',
+            _roomCleared:gs._roomCleared||false,
+            edgeTimers:gs.edgeTimers||{},
+            flash:gs.flash||[],flashUntil:gs.flashUntil||0,
+            msg:gs.msg||'',
+          });
+        }
+      },80);
+    }
 
-  // Позиція на екрані (з урахуванням радар-режиму)
-  const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
-  const otherPlayers=Object.entries(g.remote).filter(([,p])=>p&&p.x!==undefined);
+    // Player sync to Firebase
+    const playerSyncInterval=setInterval(()=>{
+      const p=myPRef.current;
+      if(!p)return;
+      fbSet(`mp_rooms/${roomId}/players/${myId}`,{
+        name:p.name,x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp,
+        stamina:Math.round(p.stamina),yawIdx:p.yawIdx,compassD:p.compassD,
+        wpn:p.wpn,col:p.col,alive:p.alive,
+        weaponMods:p.weaponMods,score:p.score,
+      });
+    },200);
 
-  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
+    cleanupRef.current.push(()=>{if(hostInterval)clearInterval(hostInterval);});
+    cleanupRef.current.push(()=>clearInterval(playerSyncInterval));
+    cleanupRef.current.push(unsubState);
+    cleanupRef.current.push(unsubPlayers);
 
-    {/* HUD — всі гравці */}
-    <div style={{width:'100%',maxWidth:'480px',padding:'4px 8px 1px',display:'flex',gap:'4px',alignItems:'center',flexWrap:'wrap'}}>
-      <div style={{display:'flex',alignItems:'center',gap:'3px',minWidth:'90px'}}>
-        <span style={{fontSize:'8px',color:myCol,fontWeight:'bold'}}>{PSLOTS[mySlot]?.lbl} {isHost?'[H]':''}</span>
-        <div style={{width:'42px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(g.player.hp/g.player.maxHp)*100}%`,background:g.player.hp>50?myCol:g.player.hp>25?'#f59e0b':'#ef4444',transition:'width .2s'}}/></div>
-        {(mode==='duel'||mode==='arena')&&<span style={{fontSize:'8px',color:'#ef4444'}}>{'❤'.repeat(Math.max(0,g.player.lives||0))}</span>}
+    // Sensors
+    const onOrient=e=>{
+      const p=myPRef.current;if(!p)return;
+      const h=e.alpha||0;
+      p.compassD=h;
+      p.yawIdx=Math.round(((h+22.5)%360)/45)%8;
+    };
+    const onMotion=e=>{
+      const p=myPRef.current;if(!p)return;
+      const b=e.accelerationIncludingGravity?.beta||0;
+      p.pitch=b>15?1:b<-10?-1:0;
+    };
+    window.addEventListener('deviceorientation',onOrient,true);
+    window.addEventListener('devicemotion',onMotion);
+    cleanupRef.current.push(()=>{window.removeEventListener('deviceorientation',onOrient,true);window.removeEventListener('devicemotion',onMotion);});
+
+    forceRender();
+    return()=>{cleanupRef.current.forEach(f=>f());cleanupRef.current=[];};
+  },[]);
+
+  // ── PLAYER ATTACK ────────────────────────────────────────────────────────
+  const doAttack=useCallback(()=>{
+    const p=myPRef.current;const rs=roomStateRef.current;
+    if(!p||!rs||p.stamina<5)return;
+    p.stamina=Math.max(0,p.stamina-20);
+    const cells=getWCells(p.x,p.y,p.yawIdx,p.wpn,p.weaponMods?.reach||0);
+    const baseDmg=Math.round(20*(p.weaponMods?.sharpness||1)/(WPN[p.wpn]?.w||5));
+    let hits=0;
+    rs.enemies=rs.enemies.map(e=>{
+      if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size||1);if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;hits++;const nhp=e.hp-baseDmg;if(nhp<=0){rs.score=(rs.score||0)+100*(e.bossRoomIdx||1);snd('wave');
+        // Boss loot drops
+        const bTier=e.bossRoomIdx||1;const lKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+        const drops=[...lKeys].sort(()=>Math.random()-.5).slice(0,2+bTier);
+        const usedP=[...rs.enemies.filter(x=>x.id!==e.id).map(x=>({x:x.x,y:x.y})),...(rs.objects||[]).map(o=>({x:o.x,y:o.y}))];
+        const newLoot=[];
+        for(const lt of drops){for(let t=0;t<30;t++){const lx=1+Math.floor(Math.random()*(G-2)),ly=1+Math.floor(Math.random()*(G-2));if(usedP.some(q=>Math.abs(q.x-lx)+Math.abs(q.y-ly)<2))continue;newLoot.push({id:EID++,type:lt,x:lx,y:ly,hp:null});usedP.push({x:lx,y:ly});break;}}
+        if(newLoot.length){rs.objects=[...(rs.objects||[]),...newLoot];rs.msg=`👹 Тір ${bTier} переможено! 💎×${newLoot.length}`;}
+        return null;}return{...e,hp:nhp};}
+      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
+      hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);const nhp=e.hp-dmg;
+      if(nhp<=0){rs.score=(rs.score||0)+10;snd('wave');return null;}return{...e,hp:nhp};
+    }).filter(Boolean);
+    if(hits>0)snd('hit');p.score=(p.score||0)+hits*5;
+    if(isHost){lastSyncRef.current=0;} // force sync
+    forceRender();
+  },[isHost]);
+
+  // ── PLAYER MOVE ──────────────────────────────────────────────────────────
+  const doMove=useCallback((sdx,sdy)=>{
+    const p=myPRef.current;const rs=roomStateRef.current;
+    if(!p||!p.alive)return;
+    let gdx=sdx,gdy=sdy;
+    // Convert swipe to world via compass
+    const a=-rad(p.compassD);
+    const wdx=Math.round(sdx*Math.cos(a)-sdy*Math.sin(a));
+    const wdy=Math.round(sdx*Math.sin(a)+sdy*Math.cos(a));
+    gdx=wdx;gdy=wdy;
+    const nx=clamp(p.x+gdx,0,G-1),ny=clamp(p.y+gdy,0,G-1);
+    if(!rs)return;
+    if(rs.enemies?.some(e=>e.x===nx&&e.y===ny))return;
+    if(rs.enemies?.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>bc.x===nx&&bc.y===ny)))return;
+    if(rs.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny)){snd('drop');return;}
+    // Check other players
+    const allP=allPRef.current;
+    if(Object.values(allP).some(op=>op.id!==myId&&op.alive&&op.x===nx&&op.y===ny))return;
+    p.x=nx;p.y=ny;
+    // Loot pickup
+    const loot=rs.objects?.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
+    if(loot){
+      rs.objects=rs.objects.filter(o=>o.id!==loot.id);
+      const upg=OBJ_TYPES[loot.type]?.upg;
+      if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}
+      else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:(p.weaponMods.reach||0)+1};
+      else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,p.weaponMods.weight-0.15)};
+      else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:p.weaponMods.sharpness+0.25};
+      snd('spell');msgRef.current=OBJ_TYPES[loot.type]?.desc||'Покращення!';
+      if(isHost)lastSyncRef.current=0;
+    }
+    forceRender();
+  },[myId,isHost]);
+
+  // ── TOUCH / SWIPE ────────────────────────────────────────────────────────
+  const touchRef=useRef(null);
+  const onTouchStart=useCallback(e=>{
+    AC.resume();
+    const t=e.touches[0];touchRef.current={x:t.clientX,y:t.clientY,time:Date.now()};
+  },[]);
+  const onTouchEnd=useCallback(e=>{
+    if(!touchRef.current)return;
+    const t=e.changedTouches[0];
+    const dx=t.clientX-touchRef.current.x,dy=t.clientY-touchRef.current.y;
+    const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-touchRef.current.time;
+    if(dist<8&&dt<300){doAttack();}
+    else if(dist>20){
+      const adx=Math.abs(dx),ady=Math.abs(dy);
+      if(adx>ady)doMove(dx>0?1:-1,0);else doMove(0,dy>0?1:-1);
+    }
+    touchRef.current=null;
+  },[doAttack,doMove]);
+
+  // ── RENDER ───────────────────────────────────────────────────────────────
+  const myP=myPRef.current;
+  const allP=allPRef.current;
+  const rs=roomStateRef.current;
+  if(!myP||!rs)return(<div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#3b82f6',fontSize:'12px'}}>Завантаження...</div>);
+
+  const wCells=getWCells(myP.x,myP.y,myP.yawIdx,myP.wpn,myP.weaponMods?.reach||0);
+  const cellSz=Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
+  const pList=Object.values(allP).filter(p=>p.id);
+  const allDead=pList.every(p=>!p.alive);
+
+  return(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",background:'#010d1f'}}
+    onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    {/* HUD */}
+    <div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',gap:'6px',alignItems:'center',flexShrink:0}}>
+      <div style={{flex:1}}>
+        <div style={{height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',marginBottom:'2px'}}>
+          <div style={{height:'100%',width:`${(myP.hp/myP.maxHp)*100}%`,background:myP.hp>30?'#22c55e':'#ef4444',transition:'width .1s'}}/>
+        </div>
+        <div style={{height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${myP.stamina}%`,background:'#3b82f6',transition:'width .08s'}}/>
+        </div>
       </div>
-      {otherPlayers.map(([slot,pd])=>(<div key={slot} style={{display:'flex',alignItems:'center',gap:'3px',minWidth:'80px'}}>
-        <span style={{fontSize:'8px',color:PSLOTS[slot]?.col,fontWeight:'bold'}}>{PSLOTS[slot]?.lbl}</span>
-        <div style={{width:'38px',height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${((pd.hp||0)/(pd.maxHp||100))*100}%`,background:PSLOTS[slot]?.col,transition:'width .2s'}}/></div>
-        {(mode==='duel'||mode==='arena')&&<span style={{fontSize:'8px',color:'#ef4444'}}>{'❤'.repeat(Math.max(0,pd.lives||0))}</span>}
-      </div>))}
-      <div style={{marginLeft:'auto',display:'flex',gap:'6px',alignItems:'center'}}>
-        {mode==='coop'&&<span style={{fontSize:'8px',color:'#f59e0b'}}>{g.totalScore}</span>}
-        {mode!=='duel'&&<span style={{fontSize:'8px',color:'#60a5fa'}}>W{g.wave}</span>}
-        {sPhase==='active'&&<span style={{fontSize:'7px',color:'#22c55e'}}>◉</span>}
-        {isRadar&&<span style={{fontSize:'7px',color:'#a78bfa'}}>R</span>}
+      <div style={{fontSize:'8px',color:'#1e4a7f',textAlign:'right'}}>
+        <div style={{color:'#4a6a9f'}}>R{rs.roomNumber||1}{rs.isBossRoom?'👹':''}</div>
+        <div style={{color:'#f59e0b'}}>{rs.score||0}pts</div>
       </div>
     </div>
-
-    {/* Очки PvP */}
-    {(mode==='arena'||mode==='duel')&&Object.keys(g.scores||{}).length>0&&(
-      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'8px'}}>
-        {Object.entries(g.scores).sort(([,a],[,b])=>b-a).map(([slot,sc])=>(
-          <span key={slot} style={{color:PSLOTS[slot]?.col}}>{PSLOTS[slot]?.lbl}:{sc}</span>
-        ))}
-      </div>
-    )}
-
-    {/* STA + DIV */}
-    <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',gap:'5px',alignItems:'center'}}>
-      <div style={{fontSize:'7px',color:'#1e3a5f',width:'20px'}}>STA</div>
-      <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.stamina}%`,background:'#60a5fa',transition:'width .08s'}}/></div>
-      <div style={{fontSize:'7px',color:'#1e3a5f',width:'20px',textAlign:'right'}}>DIV</div>
-      <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:divCol,transition:'width .08s'}}/></div>
-      {g.dropped&&<span style={{fontSize:'7px',color:'#f59e0b',animation:'pulse .5s infinite'}}>DROP</span>}
-      {g.spell&&<span style={{fontSize:'7px',color:g.spell.col,animation:'pulse .5s infinite'}}>{g.spell.name}</span>}
-      {ff&&mode==='coop'&&<span style={{fontSize:'7px',color:'#ef4444'}}>FF🔥</span>}
+    {/* Other players HPs */}
+    <div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',gap:'6px',flexShrink:0}}>
+      {pList.filter(p=>p.id!==myId).map((p,i)=>(
+        <div key={p.id} style={{flex:1,display:'flex',gap:'3px',alignItems:'center'}}>
+          <span style={{color:p.col||PCOL[i+1],fontSize:'8px'}}>●</span>
+          <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${((p.hp||0)/(p.maxHp||100))*100}%`,background:p.alive?p.col||PCOL[i+1]:'#1e3a5f',transition:'width .1s'}}/>
+          </div>
+        </div>
+      ))}
     </div>
-
-    {g.morseSeq&&<div style={{fontSize:'11px',letterSpacing:'.2em',padding:'0 8px 1px'}}>{g.morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}</div>}
-    {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-      <span>β<span style={{color:pc}}>{Math.round(g.pitch*40+40)}°</span></span>
-      <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
-      {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
-      <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
-    </div>}
-    {g.waveMsg&&<div style={{fontSize:'15px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
-
-    {/* СІТКА (з рамкою як в одиночній + radar + edge detection) */}
-    <div style={isPanorama?{position:'fixed',inset:0,zIndex:1,display:'grid',gridTemplateColumns:`repeat(${G},1fr)`,gridTemplateRows:`repeat(${G},1fr)`,transform:'perspective(280px) rotateX(40deg)',transformOrigin:'50% 46%'}:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
-      <div style={isPanorama?{display:'contents'}:{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
+    {/* Boss HP bars */}
+    {rs.enemies?.filter(e=>e.type==='boss').map(boss=>(
+      <div key={boss.id} style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',gap:'4px',alignItems:'center',flexShrink:0}}>
+        <span style={{fontSize:'8px',color:boss.col,minWidth:'50px'}}>👹{boss.name}</span>
+        <div style={{flex:1,height:'5px',background:'#020c1a',borderRadius:'2px',overflow:'hidden',border:`1px solid ${boss.col}44`}}>
+          <div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/>
+        </div>
+        <span style={{fontSize:'7px',color:boss.col}}>{boss.hp}</span>
+      </div>
+    ))}
+    {/* MSG */}
+    {(rs.msg||msgRef.current)&&<div style={{fontSize:'10px',color:'#60a5fa',padding:'1px 8px',width:'100%',maxWidth:'480px',flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{msgRef.current||rs.msg}</div>}
+    {/* GRID */}
+    <div style={{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',flexShrink:0}}>
+      <div style={{display:'grid',gridTemplateColumns:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
         {Array.from({length:G*G},(_,idx)=>{
           const sx=idx%G,sy=Math.floor(idx/G);
-          const isMe=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
-          let edge=false,outOfBounds=false;
-          if(isRadar){const{gx,gy}=fromScreen(sx,sy,g.player.x,g.player.y,g.compassD);outOfBounds=gx<0||gx>=G||gy<0||gy>=G;edge=!outOfBounds&&isEdgeCell(gx,gy);}
-          else{edge=isEdgeCell(sx,sy);}
-          const en=g.enemies.find(e=>{const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
-          const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
-          const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
-          const otherP=otherPlayers.find(([,p])=>{const{sx:px2,sy:py2}=getPos(p.x,p.y);return px2===sx&&py2===sy;});
-          let bg=outOfBounds?'#010610':edge?'#030f1f':'#020c1a';
-          let bdr=outOfBounds?'1px solid #050a10':edge?'1px solid #2a4a7f':'1px solid #091c30';
-          if(fl)bg=fl.col+'55';
-          else if(isMe){bg='#14532d';bdr=`1px solid ${myCol}`;}
-          else if(otherP){const[slot]=otherP;bg='#1e3a8a33';bdr=`1px solid ${PSLOTS[slot]?.col}`;}
-          else if(en){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
-          else if(wc){bg=wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.main?myCol+'88':'#1e3a5f'}`;}
-          return(<div key={idx} style={isPanorama?{background:bg,border:bdr,display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}:{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
-            {isMe?(<><div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',background:g.player.hp<=0?'#334155':g.spell?.fn==='shield'?'#3b82f6':myCol,boxShadow:`0 0 5px ${myCol}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:myCol,lineHeight:1}}>{isRadar?'↑':DSYM[g.yawIdx]}</div></>)
-            :otherP?(()=>{const[slot,pd]=otherP;const pc2=PSLOTS[slot]?.col||'#60a5fa';return(<><div style={{width:isPanorama?'44%':`${cellSz*.44}px`,height:isPanorama?'44%':`${cellSz*.44}px`,borderRadius:'50%',background:pd.hp<=0?'#334155':pc2,boxShadow:`0 0 5px ${pc2}`}}/><div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.5}px`,color:pc2,lineHeight:1}}>{DSYM[pd.yawIdx||0]}</div></>);})()
-            :en?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):null}
+          const isEdge=sx===0||sx===G-1||sy===0||sy===G-1;
+          // Players
+          const cellPlayers=pList.filter(p=>p.x===sx&&p.y===sy&&p.alive);
+          const myHere=myP.x===sx&&myP.y===sy&&myP.alive;
+          const en=rs.enemies?.find(e=>e.type!=='boss'&&e.x===sx&&e.y===sy);
+          const cellBoss=rs.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>bc.x===sx&&bc.y===sy));
+          const cellObj=rs.objects?.find(o=>o.x===sx&&o.y===sy);
+          const wc=wCells.find(c=>c.x===sx&&c.y===sy);
+          let bg=isEdge?'#030f1f':'#020c1a',bdr=isEdge?'2px solid #2a5a9f':'1px solid #091c30';
+          if(en){bg=ET[en.type]?.col+'22';bdr=`1px solid ${ET[en.type]?.col}`;}
+          else if(cellBoss){bg=cellBoss.col+'22';bdr=`2px solid ${cellBoss.col}`;}
+          else if(cellObj&&!OBJ_TYPES[cellObj.type]?.isLoot){const ot=OBJ_TYPES[cellObj.type];bg=ot.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot.col}`;}
+          else if(wc){bg=wc.extra?'#f9731344':wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.extra?'#f97316':wc.main?'#3b82f6':'#1e3a5f'}`;}
+          return(<div key={idx} style={{width:`${cellSz}px`,height:`${cellSz}px`,background:bg,border:bdr,borderRadius:'2px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',fontSize:`${cellSz*.45}px`}}>
+            {en&&<span style={{color:ET[en.type]?.col}}>{ET[en.type]?.sym}</span>}
+            {!en&&cellBoss&&<span style={{color:cellBoss.col,fontWeight:'bold'}}>{calcBossCells(cellBoss.x,cellBoss.y,cellBoss.size).find(b=>b.x===sx&&b.y===sy)&&(cellBoss.x===sx&&cellBoss.y===sy)?cellBoss.sym:'·'}</span>}
+            {!en&&!cellBoss&&cellObj&&(()=>{const ot=OBJ_TYPES[cellObj.type];return<span style={{color:ot.col}}>{ot.sym}</span>;})()}
+            {/* Other players */}
+            {cellPlayers.filter(p=>p.id!==myId).map((p,i)=>(
+              <div key={p.id} style={{position:'absolute',width:`${cellSz*.4}px`,height:`${cellSz*.4}px`,borderRadius:'50%',background:p.col,top:'10%',left:'10%',border:'1px solid rgba(255,255,255,.4)',fontSize:`${cellSz*.22}px`,display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:'bold'}}>{(p.name||'?')[0]}</div>
+            ))}
+            {/* My player */}
+            {myHere&&<div style={{position:'absolute',width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',background:myP.col,border:'2px solid rgba(255,255,255,.8)',boxShadow:`0 0 ${cellSz*.3}px ${myP.col}`,zIndex:2}}/>}
           </div>);
         })}
       </div>
     </div>
-
-    {/* Маяк */}
-    {(g.beaconProgress||0)>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-      <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
-      <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${(g.beaconProgress||0)*100}%`,background:'#22c55e',transition:'width .05s'}}/></div>
+    {/* CONTROLS hint */}
+    <div style={{fontSize:'8px',color:'#1e3a5f',padding:'2px 8px',flexShrink:0}}>
+      свайп-рух · тап-удар · {myP.wpn}
+    </div>
+    {/* DEAD overlay */}
+    {!myP.alive&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.85)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30}}>
+      <div style={{color:'#ef4444',fontSize:'20px',fontWeight:'bold',letterSpacing:'.2em'}}>ЗАГИНУВ</div>
+      <div style={{color:'#4a6a9f',fontSize:'10px',marginTop:'8px'}}>Спостерігай за союзниками...</div>
     </div>}
-
-    {/* Компаньйон */}
-    {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'5px 8px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'5px',fontSize:'9px',color:'#94a3b8',fontStyle:'italic',width:'100%',maxWidth:'440px',animation:'fadeIn .3s ease'}}>{g.msg}</div>}
-
-    {/* МОРЗЕ БАР (всі 16 заклинань, як в одиночній) */}
-    <MorseBar currentSeq={g.morseSeq}/>
-
-    {/* Статус */}
-    <div style={{padding:'1px 8px 5px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
-      <span style={{color:divCol}}>D={Math.round(g.divergence)}%</span>
-      <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
-      <span>⚔{WPN[wpn]?.label}</span>
-      <span>{mode==='coop'?'КООП':mode==='duel'?'ДУЕЛЬ':'АРЕНА'}</span>
-      <span>свайп=рух · тап=· · тримай=− · мах=удар</span>
-    </div>
+    {allDead&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.9)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:31,gap:'12px'}}>
+      <div style={{color:'#ef4444',fontSize:'18px',fontWeight:'bold',letterSpacing:'.2em'}}>КОМАНДА ЗАГИНУЛА</div>
+      <div style={{color:'#f59e0b',fontSize:'12px'}}>Кімната {rs.roomNumber} · Рахунок: {rs.score}</div>
+      <button onClick={onExit} style={{padding:'10px 20px',background:'#1e3a5f',border:'1px solid #3b82f6',color:'#60a5fa',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'11px',marginTop:'8px'}}>← ВИХІД</button>
+    </div>}
   </div>);
 }
 
-// ── END SCREEN (хто переміг + рахунок) ───────────────────────────
-function EndScreen({result,onBack}){
-  const{mode,scores={},totalScore=0,wave=0,mySlot}=result||{};
-  const sorted=Object.entries(scores).sort(([,a],[,b])=>b-a);
-  const winner=sorted[0]?.[0];
-  const winnerScore=sorted[0]?.[1]||0;
-  const iWon=winner===mySlot;
-
-  return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",gap:'10px',padding:'20px'}}>
-    <div style={{fontSize:'36px'}}>{iWon?'🏆':'⚔'}</div>
-    <div style={{color:iWon?'#f59e0b':'#94a3b8',fontSize:'20px',fontWeight:'bold',textAlign:'center'}}>
-      {mode==='coop'?`ВИЖИЛИ ${wave} хвиль`:
-       mode==='duel'&&winner?`${PSLOTS[winner]?.lbl} ПЕРЕМІГ!`:
-       mode==='arena'&&winner?`${PSLOTS[winner]?.lbl} ПЕРЕМІГ АРЕНУ!`:'ГРА ЗАВЕРШЕНА'}
-    </div>
-    {mode==='coop'&&<div style={{color:'#f59e0b',fontSize:'14px'}}>Рахунок: {totalScore}</div>}
-
-    {/* Таблиця результатів */}
-    <div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'8px',padding:'14px',width:'100%',maxWidth:'280px'}}>
-      <div style={{fontSize:'9px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'10px'}}>РЕЗУЛЬТАТИ</div>
-      {sorted.map(([slot,sc],i)=>(
-        <div key={slot} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #091c30'}}>
-          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-            <span style={{fontSize:'14px'}}>{i===0?'🥇':i===1?'🥈':i===2?'🥉':'  '}</span>
-            <span style={{color:PSLOTS[slot]?.col||'#60a5fa',fontWeight:i===0?'bold':'normal'}}>{PSLOTS[slot]?.lbl}</span>
-            {slot===mySlot&&<span style={{fontSize:'8px',color:'#1e3a5f'}}>(ти)</span>}
-          </div>
-          <span style={{color:i===0?'#f59e0b':'#60a5fa',fontWeight:i===0?'bold':'normal',fontSize:'13px'}}>{sc}</span>
-        </div>
-      ))}
-      {mode==='coop'&&<div style={{marginTop:'8px',fontSize:'9px',color:'#334155',textAlign:'center'}}>Разом: {totalScore} очок · Хвиля {wave}</div>}
-    </div>
-
-    <B2 onClick={onBack} col='#60a5fa' style={{maxWidth:'240px'}}>← НОВА ГРА</B2>
-    <a href="myr13x13.html" style={{color:'#1e3a5f',fontSize:'9px',textDecoration:'none'}}>← Одиночна гра</a>
-  </div>);
-}
-
-// ── APP ───────────────────────────────────────────────────────────
+// ── APP ───────────────────────────────────────────────────────────────────
 function App(){
-  const[screen,setScreen]=useState('warning');
-  const[sPhase,setSPhase]=useState('idle');
-  const[mpCfg, setMpCfg] =useState(null);
-  const[result,setResult]=useState(null);
-  const handleStart=useCallback((cfg)=>{setMpCfg(cfg);setScreen('game');},[]);
-  const handleEnd=useCallback((res)=>{setResult(res);setScreen('ended');},[]);
-  return(<>
-    {screen==='warning'&&<WarningSensors sPhase={sPhase} setSPhase={setSPhase} onContinue={()=>setScreen('lobby')}/>}
-    {screen==='lobby'&&<Lobby sPhase={sPhase} onStart={handleStart}/>}
-    {screen==='game'&&mpCfg&&<MultiGame key={mpCfg.code+mpCfg.mySlot} code={mpCfg.code} mySlot={mpCfg.mySlot} isHost={mpCfg.isHost} cfg={mpCfg.cfg} sPhase={mpCfg.sPhase} onEnd={handleEnd}/>}
-    {screen==='ended'&&<EndScreen result={result} onBack={()=>setScreen('lobby')}/>}
-  </>);
+  const[screen,setScreen]=useState('lobby'); // 'lobby'|'game'
+  const[gameParams,setGameParams]=useState(null);
+  const[S,setS]=useState({startWpn:'sword',difficulty:'normal'});
+  const[fbReady,setFbReady]=useState(false);
+
+  useEffect(()=>{
+    const check=setInterval(()=>{if(window._fbReady){setFbReady(true);clearInterval(check);}},100);
+    return()=>clearInterval(check);
+  },[]);
+
+  const handleJoinGame=useCallback((params)=>{setGameParams(params);setScreen('game');},[]);
+  const handleExit=useCallback(()=>{setScreen('lobby');setGameParams(null);},[]);
+
+  if(!fbReady)return(<div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:'8px'}}>
+    <div style={{color:'#3b82f6',fontSize:'12px',letterSpacing:'.15em'}}>МИР 13×13 МП</div>
+    <div style={{color:'#1e4a7f',fontSize:'9px'}}>Підключення...</div>
+  </div>);
+
+  if(screen==='game'&&gameParams)return(<MPGame {...gameParams} onExit={handleExit}/>);
+
+  return(<div style={{flex:1,display:'flex',flexDirection:'column'}}>
+    {/* Settings bar */}
+    <div style={{padding:'6px 12px',background:'#060f1e',borderBottom:'1px solid #1e3a5f',display:'flex',gap:'6px',alignItems:'center',flexShrink:0}}>
+      <span style={{fontSize:'9px',color:'#1e3a5f'}}>Зброя:</span>
+      <select value={S.startWpn} onChange={e=>setS(p=>({...p,startWpn:e.target.value}))} style={{background:'#020c1a',border:'1px solid #1e3a5f',color:'#60a5fa',borderRadius:'4px',fontSize:'9px',padding:'2px 4px',fontFamily:'inherit'}}>
+        {Object.entries(WPN).map(([k,w])=><option key={k} value={k}>{w.label}</option>)}
+      </select>
+      <span style={{fontSize:'9px',color:'#1e3a5f',marginLeft:'8px'}}>Склад.:</span>
+      <select value={S.difficulty} onChange={e=>setS(p=>({...p,difficulty:e.target.value}))} style={{background:'#020c1a',border:'1px solid #1e3a5f',color:'#f59e0b',borderRadius:'4px',fontSize:'9px',padding:'2px 4px',fontFamily:'inherit'}}>
+        {Object.entries(DIFFICULTY).map(([k,d])=><option key={k} value={k}>{d.name}</option>)}
+      </select>
+    </div>
+    <Lobby onJoinGame={handleJoinGame} settings={S}/>
+  </div>);
 }
+
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-</script></body></html>
+</script>
+<body><div id="root" style="display:flex;flex-direction:column;height:100dvh;"></div></body>
+</html>
