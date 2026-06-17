@@ -374,6 +374,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const lastStrikeT=useRef(0);
   const isRadar=settings.worldMode==='radar';
   const isPanorama=settings.worldMode==='panorama';
+  const isRotated=isRadar||isPanorama; // both modes: player centered, world rotates
   const STRENGTH=4;
 
   // ══ REFS для гейм-лупу — уникаємо stale closure ══
@@ -384,7 +385,7 @@ function Game({gmode,settings,sPhase,onDead}){
   useEffect(()=>{onDeadRef.current=onDead;},[onDead]);
   useEffect(()=>{settingsRef.current=settings;},[settings]);
   useEffect(()=>{gmodeRef.current=gmode;},[gmode]);
-  useEffect(()=>{isRadarRef.current=isRadar;},[isRadar]);
+  useEffect(()=>{isRadarRef.current=isRadar;},[isRadar,isPanorama]);
 
   const setMsg=useCallback((text)=>{
     const g=gs.current;if(!g)return;
@@ -562,7 +563,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const doMoveDir=useCallback((sdx,sdy)=>{
     const g=gs.current;if(!g)return;
     let gdx=sdx,gdy=sdy;
-    if(isRadarRef.current){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
+    if(isRadarRef.current||settingsRef.current.worldMode==='panorama'){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
     if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
     const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
     if(nx===g.player.x&&ny===g.player.y)return;
@@ -862,7 +863,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn,g.weaponMods?.reach||0);
   const cellSz=isPanorama?Math.floor(window.innerWidth/G):Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
   const pc=pColor(g.pitch);const dc=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
-  const getPos=(gx,gy)=>isRadar?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
+  const getPos=(gx,gy)=>isRotated?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
 
   return(
     <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
@@ -894,7 +895,7 @@ function Game({gmode,settings,sPhase,onDead}){
       {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
         <span>β<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}°</span></span>
         <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
-        {isRadar&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
+        {(isRadar||isPanorama)&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
         <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
       </div>}
 
@@ -943,14 +944,14 @@ function Game({gmode,settings,sPhase,onDead}){
         <div style={{display:isPanorama?'contents':'grid',gridTemplateColumns:isPanorama?undefined:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
           {Array.from({length:G*G},(_,idx)=>{
             const sx=idx%G,sy=Math.floor(idx/G);
-            const isP=isRadar?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
+            const isP=isRotated?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
             const en=g.enemies.find(e=>{if(e.type==='boss')return false;const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
             const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
-            const fl=g.flash.find(c=>{const pos=isRadar?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
+            const fl=g.flash.find(c=>{const pos=isRotated?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
             // In radar mode: find world-space coords for this screen cell
-const _wc=isRadar?fromScreen(sx,sy,g.player.x,g.player.y,g.compassD):{gx:sx,gy:sy};
+const _wc=isRotated?fromScreen(sx,sy,g.player.x,g.player.y,g.compassD):{gx:sx,gy:sy};
 // Void = outside the world (only happens in radar when player is off-center)
-const isVoid=isRadar&&(_wc.gx<0||_wc.gx>=G||_wc.gy<0||_wc.gy>=G);
+const isVoid=isRotated&&(_wc.gx<0||_wc.gx>=G||_wc.gy<0||_wc.gy>=G);
 const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
             const cellObj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
             const cellBoss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
@@ -970,7 +971,7 @@ const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
                   <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
                     background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
                     boxShadow:`0 0 5px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRadar?'↑':DSYM[g.yawIdx]}</div>
+                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRotated?'↑':DSYM[g.yawIdx]}</div>
                 </>):en&&ET[en.type]?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):wc?.extra?<span style={{color:'#f9731688',fontSize:`${cellSz*.35}px`}}>+</span>:null}
               </div>
             );
@@ -994,7 +995,7 @@ const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
       <div style={{padding:'1px 8px 4px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
         <span style={{color:dc}}>D={Math.round(g.divergence)}%</span>
         <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
-        {isRadar&&<span style={{color:'#a78bfa'}}>RADAR</span>}
+        {(isRadar||isPanorama)&&<span style={{color:'#a78bfa'}}>{isPanorama?'PANORAMA':'RADAR'}</span>}
         <span>свайп=рух · тап=· · тримай=−</span>
       </div>
     </div>
