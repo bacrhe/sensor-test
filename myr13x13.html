@@ -122,6 +122,15 @@ function snd(t){
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────
+// ── СКЛАДНІСТЬ ────────────────────────────────────────────────────
+const DIFFICULTY={
+  very_easy:{name:'Дуже легко',  col:'#22c55e',enemyHp:0.5, enemyDmg:0.5, playerHp:1.5, staminaDrain:0.5},
+  easy:     {name:'Легко',       col:'#60a5fa',enemyHp:0.75,enemyDmg:0.75,playerHp:1.25,staminaDrain:0.75},
+  normal:   {name:'Нормально',   col:'#f59e0b',enemyHp:1.0, enemyDmg:1.0, playerHp:1.0, staminaDrain:1.0},
+  hard:     {name:'Складно',     col:'#f97316',enemyHp:1.5, enemyDmg:1.5, playerHp:0.75,staminaDrain:1.25},
+  very_hard:{name:'Дуже складно',col:'#ef4444',enemyHp:2.0, enemyDmg:2.0, playerHp:0.5, staminaDrain:1.5},
+};
+
 // ── ADVENTURE MODE ────────────────────────────────────────────────
 const OBJ_TYPES={
   pillar:{sym:'▪',col:'#6b7280',destructible:false,blocksMove:true,desc:'Стовп'},
@@ -145,8 +154,9 @@ function coordId(x,y){return x+','+y;}
 function calcRoomNum(x,y){return 1+Math.abs(x)+Math.abs(y);}
 function getNextCoord(coord,dir){const{x,y}=coord;if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};return coord;}
 function calcBossCells(bx,by,size){const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;}
-function generateRoom(roomNum,spawnX,spawnY){
+function generateRoom(roomNum,spawnX,spawnY,diff){
   const isBoss=roomNum>1&&roomNum%3===0;
+  const _dCfg=DIFFICULTY[diff||'normal']||DIFFICULTY.normal;
   const occ=[{x:spawnX??CX,y:spawnY??CY}];
   const objects=[];
   const objCount=isBoss?4:Math.min(2+Math.floor(roomNum/2),8);
@@ -157,13 +167,17 @@ function generateRoom(roomNum,spawnX,spawnY){
     const ot=OBJ_TYPES[t];if(!ot)continue;
     objects.push({id:EID++,type:t,x,y,hp:ot.hp??null});occ.push({x,y});
   }
-  if(Math.random()<0.65){
+  if(!isBoss){
+    // 2 guaranteed unique loot items per room, no duplicate types
     const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
-    for(let i=0;i<20;i++){
-      const x=1+Math.floor(Math.random()*(G-2));const y=1+Math.floor(Math.random()*(G-2));
-      if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
-      const t=lootKeys[Math.floor(Math.random()*lootKeys.length)];
-      objects.push({id:EID++,type:t,x,y,hp:null});occ.push({x,y});break;
+    const picks=[...lootKeys].sort(()=>Math.random()-.5).slice(0,2);
+    for(const lt of picks){
+      for(let i=0;i<40;i++){
+        const x=1+Math.floor(Math.random()*(G-2));
+        const y=1+Math.floor(Math.random()*(G-2));
+        if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
+        objects.push({id:EID++,type:lt,x,y,hp:null});occ.push({x,y});break;
+      }
     }
   }
   let enemies=[];
@@ -172,11 +186,14 @@ function generateRoom(roomNum,spawnX,spawnY){
     const bd=BOSS_DEFS[bType];const scale=Math.max(1,1+(roomNum/3-1)*0.4);
     const bx=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
     const by=Math.max(0,Math.min(G-bd.size,Math.floor(G/2)-Math.floor(bd.size/2)));
-    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,hp:Math.round(bd.basehp*scale),maxHp:Math.round(bd.basehp*scale),dmg:Math.round(bd.dmg*scale),ms:Math.round(bd.ms/Math.sqrt(scale)),size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
+    enemies=[{id:EID++,type:'boss',bossType:bType,x:bx,y:by,hp:Math.round(bd.basehp*scale*_dCfg.enemyHp),maxHp:Math.round(bd.basehp*scale*_dCfg.enemyHp),dmg:Math.round(bd.dmg*scale*_dCfg.enemyDmg),ms:Math.round(bd.ms/Math.sqrt(scale)),size:bd.size,col:bd.col,sym:bd.sym,name:bd.name,lastMove:0}];
   }else{
     const etAll=Object.keys(ET);const etAvail=etAll.slice(0,Math.min(etAll.length,1+Math.floor(roomNum/2)));
     const count=Math.max(1,Math.round(1+roomNum*0.55));const spOcc=[...occ];
     for(let i=0;i<count;i++){const t=etAvail[Math.floor(Math.random()*etAvail.length)];const e=spawnE(t,spOcc);if(e){enemies.push(e);spOcc.push({x:e.x,y:e.y});}}
+    // Apply difficulty HP scaling
+    const _hm=_dCfg.enemyHp;
+    enemies=enemies.map(e=>({...e,hp:Math.max(1,Math.round(e.hp*_hm)),maxHp:Math.max(1,Math.round(e.hp*_hm))}));
   }
   return{objects,enemies,isBoss};
 }
@@ -234,17 +251,14 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
     return()=>{window.removeEventListener('deviceorientation',o,true);window.removeEventListener('deviceorientationabsolute',oa,true);window.removeEventListener('devicemotion',m);};
   },[sPhase]);
   const pv=betaToPitch(live.beta,s.pitchSens);
-  const reqS=async()=>{setSPhase('req');try{if(typeof DeviceOrientationEvent?.requestPermission==='function')if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;if(typeof DeviceMotionEvent?.requestPermission==='function')if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;setSPhase('active');}catch{setSPhase('denied');}};
-  return(
+  // sensor request moved to Warning component
+    return(
     <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
         <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
         <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
       </div>
       <Sec title="ДАТЧИКИ">
-        {sPhase==='idle'&&<B2 onClick={reqS} col='#22c55e'>▷ ПІДКЛЮЧИТИ ДАТЧИКИ</B2>}
-        {sPhase==='req'&&<div style={{color:'#f59e0b',fontSize:'10px'}}>⏳ Очікую...</div>}
-        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Доступні WASD + клавіші.</div>}
         {sPhase==='active'&&<>
           <div style={{color:'#22c55e',fontSize:'10px',marginBottom:'6px'}}>◉ АКТИВНІ</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px'}}>
@@ -253,6 +267,18 @@ function Settings({s,setS,sPhase,setSPhase,onBack}){
             ))}
           </div>
         </>}
+        {sPhase==='denied'&&<div style={{color:'#ef4444',fontSize:'10px'}}>⚠ Відхилено. Доступні WASD + клавіатура.<br/><span style={{color:'#334155',fontSize:'9px'}}>Перезапусти гру щоб спробувати знову.</span></div>}
+        {(sPhase==='idle'||sPhase==='req')&&<div style={{color:'#4a6a9f',fontSize:'10px'}}>○ Датчики підключаються на екрані попередження при запуску.</div>}
+      </Sec>
+
+      <Sec title="СКЛАДНІСТЬ">
+        <div style={{display:'flex',flexWrap:'wrap',gap:'5px'}}>
+          {Object.entries(DIFFICULTY).map(([key,d])=>(
+            <button key={key} onClick={()=>setS(p=>({...p,difficulty:key}))} style={{padding:'6px 10px',flex:'1 1 calc(33% - 5px)',background:s.difficulty===key?d.col+'22':'#020c1a',border:`1px solid ${s.difficulty===key?d.col:'#1e3a5f'}`,color:s.difficulty===key?d.col:'#334155',borderRadius:'5px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',fontWeight:s.difficulty===key?'bold':'normal'}}>
+              {d.name}
+            </button>
+          ))}
+        </div>
       </Sec>
       <Sec title="РЕЖИМ">
         <div style={{display:'flex',gap:'6px'}}>
@@ -327,7 +353,7 @@ function Game({gmode,settings,sPhase,onDead}){
   useEffect(()=>{
     EID=0;
     gs.current={
-      player:{x:CX,y:CY,hp:100,maxHp:100},
+      player:(()=>{const dCfg=DIFFICULTY[settings.difficulty||'normal']||DIFFICULTY.normal;const hp=Math.round(100*dCfg.playerHp);return{x:CX,y:CY,hp,maxHp:hp};})(),
       enemies:[],
       yawIdx:0,compassD:0,vYaw:0,pitch:0,prevYawIdx:0,
       stamina:100,fingers:5,
@@ -353,7 +379,7 @@ function Game({gmode,settings,sPhase,onDead}){
     }
     if(gmode==='adventure'){
       EID=100;const g0=gs.current;
-      const ac=generateRoom(1,CX,CY);
+      const ac=generateRoom(1,CX,CY,settings.difficulty);
       g0.enemies=ac.enemies;g0.objects=ac.objects;g0.isBossRoom=ac.isBoss;
       g0.roomCoord={x:0,y:0};g0.roomNumber=1;
       g0.roomMap={[coordId(0,0)]:{enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true}};
@@ -380,7 +406,10 @@ function Game({gmode,settings,sPhase,onDead}){
       const tot=n+(t==='shadow'?extra:0);
       for(let i=0;i<tot;i++){const e=spawnE(t,[{x:g.player.x,y:g.player.y},...spawned]);if(e)spawned.push(e);}
     });
-    g.enemies=spawned;g.waveMsg='';
+    // Apply difficulty scaling to wave enemies
+    const _wdCfg=DIFFICULTY[settingsRef.current.difficulty||'normal']||DIFFICULTY.normal;
+    g.enemies=spawned.map(e=>({...e,hp:Math.max(1,Math.round(e.hp*_wdCfg.enemyHp)),maxHp:Math.max(1,Math.round(e.hp*_wdCfg.enemyHp))}));
+    g.waveMsg='';
     setMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
     snd('wave');forceRender();
   },[setMsg]);
@@ -657,7 +686,7 @@ function Game({gmode,settings,sPhase,onDead}){
             const sy=eDir==='S'?0:eDir==='N'?G-1:clamp(g.player.y,0,G-1);
             g.player={...g.player,x:sx,y:sy};g.roomCoord=nc;g.roomNumber=rNum;g.peekDir=null;g.peekInfo=null;g._roomCleared=false;
             if(g.roomMap[nid]){const sv=g.roomMap[nid];g.enemies=sv.enemies||[];g.objects=sv.objects||[];g.isBossRoom=sv.isBoss||false;g.roomMap[nid].visited=true;setMsgRef.current?.((sv.cleared?'Кімната '+rNum+' (очищена)':'Кімната '+rNum+' · '+g.enemies.length+' ворогів'+(g.isBossRoom?' 👹':'')));}
-            else{const ac=generateRoom(rNum,sx,sy);g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);}
+            else{const ac=generateRoom(rNum,sx,sy,settingsRef.current.difficulty);g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);}
             g.score+=15;g.flash=[];snd('wave');setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
           }
         }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
@@ -677,7 +706,8 @@ function Game({gmode,settings,sPhase,onDead}){
       if(g.dropped&&now>g.droppedUntil)g.dropped=false;
 
       // Stamina
-      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2:g.divergence>40?0.3:0),0,100);
+      const sdMult=DIFFICULTY[settingsRef.current.difficulty||'normal']?.staminaDrain||1;
+      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2*sdMult:g.divergence>40?0.3*sdMult:0),0,100);
 
       // Spell expire
       if(g.spell&&now>g.spell.expires)g.spell=null;
@@ -725,7 +755,7 @@ function Game({gmode,settings,sPhase,onDead}){
           const dist=Math.abs(dx)+Math.abs(dy);
           if(dist<=1){
             const shield=g.spell?.fn==='shield',armor=g.spell?.fn==='armor',stealth=g.spell?.fn==='stealth';
-            if(!stealth){const d=armor?Math.round(et.dmg*.4):et.dmg;dmg+=d;flash=true;if(shield)g.spell=null;}
+            if(!stealth){const dmgM=DIFFICULTY[settingsRef.current.difficulty||'normal']?.enemyDmg||1;const d=armor?Math.round(et.dmg*dmgM*.4):Math.round(et.dmg*dmgM);dmg+=d;flash=true;if(shield)g.spell=null;}
             return{...e,lastMove:now};
           }
           const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
@@ -897,8 +927,24 @@ function Game({gmode,settings,sPhase,onDead}){
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
 // ── WARNING ───────────────────────────────────────────────────────
-function Warning({onOk}){
+function Warning({onOk,setSPhase}){
   const[ok,setOk]=useState(false);
+  const[asking,setAsking]=useState(false);
+
+  const handleContinue=async()=>{
+    if(!ok||asking)return;
+    setAsking(true);
+    try{
+      if(typeof DeviceOrientationEvent?.requestPermission==='function')
+        if(await DeviceOrientationEvent.requestPermission()!=='granted')throw 0;
+      if(typeof DeviceMotionEvent?.requestPermission==='function')
+        if(await DeviceMotionEvent.requestPermission()!=='granted')throw 0;
+      setSPhase('active');
+    }catch{setSPhase('denied');}
+    setAsking(false);
+    onOk();
+  };
+
   return(<div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',fontFamily:"'Courier New',monospace",padding:'20px',gap:'12px'}}>
     <div style={{fontSize:'36px'}}>⚠️</div>
     <div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'bold'}}>УВАГА!</div>
@@ -909,12 +955,13 @@ function Warning({onOk}){
       Переконайся що навколо нікого немає.<br/>
       <span style={{color:'#334155'}}>Рекомендується ремінець на зап'ясті.</span>
     </div>
+    {asking&&<div style={{color:'#f59e0b',fontSize:'11px',animation:'pulse .5s infinite'}}>⏳ Підключення датчиків...</div>}
     <label style={{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',color:'#4a6a9f',fontSize:'11px'}}>
       <input type="checkbox" checked={ok} onChange={e=>setOk(e.target.checked)} style={{width:'18px',height:'18px',cursor:'pointer'}}/>
       Я розумію і граю обережно
     </label>
-    <B2 onClick={ok?onOk:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok?1:.5}}>
-      {ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
+    <B2 onClick={ok&&!asking?handleContinue:undefined} col={ok?'#22c55e':'#1e3a5f'} style={{maxWidth:'260px',opacity:ok&&!asking?1:.5}}>
+      {asking?'⏳ Запит дозволів...':ok?'▷ ПРОДОВЖИТИ':'(підтвердь спочатку)'}
     </B2>
   </div>);
 }
@@ -924,12 +971,12 @@ function App(){
   const[screen,setScreen]=useState('warning');
   const[gmode, setGmode] =useState('tutorial');
   const[sPhase,setSPhase]=useState('idle');
-  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true});
+  const[S,setS]=useState({worldMode:'classic',strikeThr:7,pitchSens:40,startWpn:'sword',voice:true,difficulty:'normal'});
   // onDead — стабільний через useCallback щоб не перезапускати гейм-луп
   const onDead=useCallback(()=>setScreen('dead'),[]);
   return(
     <>
-      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')}/>}
+      {screen==='warning'&&<Warning onOk={()=>setScreen('menu')} setSPhase={setSPhase}/>}
       {screen==='settings'&&<Settings s={S} setS={setS} sPhase={sPhase} setSPhase={setSPhase} onBack={()=>setScreen('menu')}/>}
       {screen==='game'&&<Game key={`${gmode}-${Math.random()}`} gmode={gmode} settings={S} sPhase={sPhase} onDead={onDead}/>}
       {screen==='dead'&&(
