@@ -369,7 +369,7 @@ function Settings({s,setS,sPhase,setSPhase,onBack,t=k=>k,isMp=false}){
   const pv=betaToPitch(live.beta,s.pitchSens);
   // sensor request moved to Warning component
     return(
-    <div style={{background:'#010d1f',flex:1,overflow:'auto',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
+    <div style={{background:'#010d1f',flex:1,overflowY:'auto',minHeight:0,WebkitOverflowScrolling:'touch',fontFamily:"'Courier New',monospace",padding:'14px',color:'#c5d8f0'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
         <button onClick={onBack} style={{background:'none',border:'none',color:'#4a6a9f',fontSize:'22px',cursor:'pointer',padding:'4px'}}>←</button>
         <div style={{color:'#3a6a9f',fontSize:'15px',fontWeight:'bold'}}>НАЛАШТУВАННЯ</div>
@@ -650,6 +650,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const doAttack=useCallback(()=>doAttackInternal(false),[]);
   const doAttackRef=useRef(doAttack);
   useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
+  useEffect(()=>{doMoveRef.current=doMove;},[doMove]);
 
   // ── Beacon complete ────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
@@ -1363,7 +1364,22 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     };
     window.addEventListener('deviceorientation',onOri,true);
     window.addEventListener('devicemotion',onMot);
-    cln.current.push(()=>{window.removeEventListener('deviceorientation',onOri,true);window.removeEventListener('devicemotion',onMot);});
+    // ── Document-level touch (like single-player) ──
+    const touchSt={x:0,y:0,t:0};
+    const onTouchS=e=>{if(e.target.closest('.morse-scroll'))return;AC.resume();const t=e.touches[0];touchSt.x=t.clientX;touchSt.y=t.clientY;touchSt.t=Date.now();};
+    const onTouchE=e=>{
+      if(e.target.closest('.morse-scroll'))return;
+      e.preventDefault();
+      const dx=e.changedTouches[0].clientX-touchSt.x,dy=e.changedTouches[0].clientY-touchSt.y;
+      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-touchSt.t;
+      if(dist<25){handleMorse(dt<280?'.':'-');}
+      else{const p=myP.current;if(p){p.morseSeq='';}clearTimeout(morseTimer.current);if(Math.abs(dx)>Math.abs(dy))doMoveRef.current?.(Math.sign(dx),0);else doMoveRef.current?.(0,Math.sign(dy));}
+    };
+    const onTouchM=e=>{if(!e.target.closest('.morse-scroll'))e.preventDefault();};
+    document.addEventListener('touchstart',onTouchS,{passive:false});
+    document.addEventListener('touchend',onTouchE,{passive:false});
+    document.addEventListener('touchmove',onTouchM,{passive:false});
+    cln.current.push(()=>{window.removeEventListener('deviceorientation',onOri,true);window.removeEventListener('devicemotion',onMot);document.removeEventListener('touchstart',onTouchS);document.removeEventListener('touchend',onTouchE);document.removeEventListener('touchmove',onTouchM);});
     fr();
     return()=>{cln.current.forEach(f=>f());cln.current=[];if(msgTimer.current)clearTimeout(msgTimer.current);};
   },[]);
@@ -1397,7 +1413,9 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
 
   const doMove=useCallback((sdx,sdy)=>{
     const p=myP.current,g=rs.current;if(!p||!p.alive)return;
-    const a=-rad(p.compassD);const gdx=Math.round(sdx*Math.cos(a)-sdy*Math.sin(a));const gdy=Math.round(sdx*Math.sin(a)+sdy*Math.cos(a));
+    let gdx=sdx,gdy=sdy;
+    // Only rotate swipe-to-world in radar/panorama (player-centered modes)
+    if(isRotated){const a=rad(p.compassD||0);gdx=Math.round(sdx*Math.cos(a)-sdy*Math.sin(a));gdy=Math.round(sdx*Math.sin(a)+sdy*Math.cos(a));}
     const nx=clamp((p.x||0)+gdx,0,G-1),ny=clamp((p.y||0)+gdy,0,G-1);
     if(!g)return;
     if((g.enemies||[]).some(e=>e.x===nx&&e.y===ny))return;
@@ -1410,17 +1428,31 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     fr();
   },[myId,isHost]);
 
-  // Touch — ONLY swipe for move; attack via accelerometer or tap with short distance
+  // Morse spell handler
+  const morseTimer=useRef(null);
+  const doMoveRef=useRef(null);
+  const handleMorse=useCallback((sym)=>{
+    const p=myP.current;if(!p||!p.alive)return;
+    snd(sym==='.'?'hit':'drop');p.morseSeq=(p.morseSeq||'')+sym;fr();
+    clearTimeout(morseTimer.current);
+    morseTimer.current=setTimeout(()=>{
+      const seq=p.morseSeq||'';p.morseSeq='';
+      const spell=SPELL_MAP[seq];
+      if(spell)castSpell(spell);else if(seq)setMsg(`? "${seq}" — невідомо`);
+      fr();
+    },1000);
+  },[]);
+  const castSpell=useCallback((spell)=>{
+    const p=myP.current;if(!p)return;const fn=spell.fn;
+    if(fn==='stamina')p.stamina=Math.min(100,p.stamina+30);
+    else if(fn==='heal'||fn==='mend')p.hp=Math.min(p.maxHp,p.hp+25);
+    else if(fn==='surge'){p.stamina=100;}
+    else if(fn==='rush'){p.spell={fn:'rush',until:Date.now()+3000};}
+    else p.spell={fn,until:Date.now()+4000};
+    snd('spell');setMsg(`✨ ${spell.name}!`);fr();
+  },[]);
+  // Touch refs
   const tRef=useRef(null);
-  const onTS=useCallback(e=>{AC.resume();const t=e.touches[0];tRef.current={x:t.clientX,y:t.clientY,t:Date.now()};},[]);
-  const onTE=useCallback(e=>{
-    if(!tRef.current)return;const t=e.changedTouches[0];
-    const dx=t.clientX-tRef.current.x,dy=t.clientY-tRef.current.y;
-    const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-tRef.current.t;
-    if(dist<10&&dt<300)doAttack(); // tap = attack (for devices without good accel)
-    else if(dist>20){const ax=Math.abs(dx),ay=Math.abs(dy);doMove(ax>ay?Math.sign(dx):0,ax>ay?0:Math.sign(dy));}
-    tRef.current=null;
-  },[doAttack,doMove]);
 
   // Render
   const p=myP.current,g=rs.current;
@@ -1435,7 +1467,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
   const allDead=pList.length>0&&pList.every(q=>!q.alive);
   const pc=pColor(p.pi||0);
 
-  return(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",background:'#010d1f',position:isPanorama?'relative':'static'}} onTouchStart={onTS} onTouchEnd={onTE}>
+  return(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",background:'#010d1f',position:isPanorama?'relative':'static'}}>
     {/* TOP HUD — same style as SP */}
     <div style={{width:'100%',maxWidth:'480px',padding:'2px 8px 0',flexShrink:0}}>
       <div style={{display:'flex',gap:'8px',alignItems:'center',marginBottom:'1px'}}>
@@ -1475,7 +1507,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
           const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
           const cellObj=(g.objects||[]).find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
           const cellBoss=(g.enemies||[]).find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-          const otherPs=pList.filter(q=>(q.id||q.name)!==myId&&q.alive&&(q.x||0)===sx&&(q.y||0)===sy);
+          const otherPs=pList.filter(q=>{if((q.id||q.name)===myId||!q.alive)return false;const{sx:qsx,sy:qsy}=getPos(q.x||0,q.y||0);return qsx===sx&&qsy===sy;});
           let bg=isVoid?'#000000':isEdge?'#040e1a':'#020c1a';
           let bdr=isVoid?'none':isEdge?'2px solid #2a5a9f':'1px solid #091c30';
           if(fl)bg=fl.col+'55';
@@ -1501,7 +1533,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
       <span style={{fontSize:'8px',color:'#334155'}}>{p.wpn}{(p.weaponMods?.reach||0)>0?` 🔭+${p.weaponMods.reach}кл`:''}</span>
     </div>
     {/* MorseBar */}
-    <MorseBar currentSeq={''} unlocked={null}/>
+    <MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>
     {/* Dead overlay */}
     {!p.alive&&!allDead&&!g.gameOver&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.82)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30,fontFamily:"'Courier New',monospace"}}>
       <div style={{color:'#ef4444',fontSize:'22px',fontWeight:'bold',letterSpacing:'.2em',animation:'shake .4s'}}>ЗАГИНУВ</div>
@@ -1539,7 +1571,7 @@ function App(){
 
   // Settings screen — identical to SP, with isMp=true adds MP sections
   if(screen==='settings')return(
-    <div style={{flex:1,display:'flex',flexDirection:'column',background:'#010d1f'}}>
+    <div style={{flex:1,display:'flex',flexDirection:'column',background:'#010d1f',minHeight:0,height:'100%'}}>
       <div style={{padding:'6px 12px',background:'#060f1e',borderBottom:'1px solid #1e3a5f',flexShrink:0,display:'flex',alignItems:'center',gap:'8px',cursor:'pointer'}} onClick={()=>setScreen(screen==='settings'?'lobby':'settings')}>
         <span style={{fontSize:'10px',color:'#4a6a9f'}}>←</span>
         <span style={{fontSize:'10px',color:'#3b82f6',letterSpacing:'.1em'}}>НАЗАД</span>
