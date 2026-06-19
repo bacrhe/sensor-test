@@ -651,6 +651,7 @@ function Game({gmode,settings,sPhase,onDead}){
   const doAttackRef=useRef(doAttack);
   useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
   useEffect(()=>{doMoveRef.current=doMove;},[doMove]);
+  useEffect(()=>{handleMorseRef.current=handleMorse;},[handleMorse]);
 
   // ── Beacon complete ────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
@@ -818,7 +819,7 @@ function Game({gmode,settings,sPhase,onDead}){
       const{x,y,t}=touchStart.current;
       const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
       const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
-      if(dist<25){handleMorse(dt<280?'.':'-');}
+      if(dist<25){handleMorseRef.current?.(dt<280?'.':'-');}
       else{clearTimeout(morseTimer.current);const g=gs.current;if(g){g.morseSeq='';forceRender();}if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);else doMoveDir(0,Math.sign(dy));}
     };
     const onM=e=>{if(!e.target.closest('.morse-scroll'))e.preventDefault();};
@@ -1281,6 +1282,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
   const prevAccMag=useRef(9.8);
   const lastStrikeT=useRef(0);
   const doAttackRef=useRef(null);
+  const localFlash=useRef({cells:[],until:0});
   const info=roomInfo||{};
   const diff=info.difficulty||settings?.difficulty||'normal';
   const dCfg=DIFFICULTY[diff]||DIFFICULTY.normal;
@@ -1347,7 +1349,11 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     }else{
       cln.current.push(fbOn(`mp/${roomId}/state`,state=>{if(state){rs.current=state;fr();}}));
     }
-    const pSync=setInterval(()=>{const p=myP.current;if(!p)return;fbSet(`mp/${roomId}/players/${myId}`,{x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp,stamina:Math.round(p.stamina),yawIdx:p.yawIdx,compassD:p.compassD,wpn:p.wpn,alive:p.alive,weaponMods:p.weaponMods,score:p.score||0,slot:p.slot||0,name:p.name||myId,id:myId});},200);
+    const pSync=setInterval(()=>{const p=myP.current;if(!p)return;
+      // Stamina regen: tilt back (pitch<0) recovers faster, neutral slow regen
+      const regen=p.pitch<0?3.5:p.pitch>0?0.5:1.5;
+      p.stamina=Math.min(100,p.stamina+regen);
+      fbSet(`mp/${roomId}/players/${myId}`,{x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp,stamina:Math.round(p.stamina),yawIdx:p.yawIdx,compassD:p.compassD,wpn:p.wpn,alive:p.alive,weaponMods:p.weaponMods,score:p.score||0,slot:p.slot||0,name:p.name||myId,id:myId});},200);
     cln.current.push(()=>clearInterval(pSync));
     // Sensors — orientation (compass for world rotation)
     const onOri=e=>{const p=myP.current;if(!p)return;const h=e.webkitCompassHeading!=null?e.webkitCompassHeading:(360-(e.alpha||0))%360;p.compassD=h;p.yawIdx=Math.round(((h+22.5)%360)/45)%8;fr();};
@@ -1366,16 +1372,16 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     window.addEventListener('devicemotion',onMot);
     // ── Document-level touch (like single-player) ──
     const touchSt={x:0,y:0,t:0};
-    const onTouchS=e=>{if(e.target.closest('.morse-scroll'))return;AC.resume();const t=e.touches[0];touchSt.x=t.clientX;touchSt.y=t.clientY;touchSt.t=Date.now();};
+    const onTouchS=e=>{if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;AC.resume&&AC.resume();const t=e.touches[0];touchSt.x=t.clientX;touchSt.y=t.clientY;touchSt.t=Date.now();touchSt.valid=true;};
     const onTouchE=e=>{
-      if(e.target.closest('.morse-scroll'))return;
-      e.preventDefault();
+      if(!touchSt.valid)return;touchSt.valid=false;
+      if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
       const dx=e.changedTouches[0].clientX-touchSt.x,dy=e.changedTouches[0].clientY-touchSt.y;
       const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-touchSt.t;
-      if(dist<25){handleMorse(dt<280?'.':'-');}
+      if(dist<25){handleMorseRef.current?.(dt<280?'.':'-');}
       else{const p=myP.current;if(p){p.morseSeq='';}clearTimeout(morseTimer.current);if(Math.abs(dx)>Math.abs(dy))doMoveRef.current?.(Math.sign(dx),0);else doMoveRef.current?.(0,Math.sign(dy));}
     };
-    const onTouchM=e=>{if(!e.target.closest('.morse-scroll'))e.preventDefault();};
+    const onTouchM=e=>{if(!e.target.closest('button')&&!e.target.closest('input')&&!e.target.closest('select'))e.preventDefault();};
     document.addEventListener('touchstart',onTouchS,{passive:false});
     document.addEventListener('touchend',onTouchE,{passive:false});
     document.addEventListener('touchmove',onTouchM,{passive:false});
@@ -1390,6 +1396,11 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     const wm=p.weaponMods||{reach:0,weight:1,sharpness:1};
     const cells=getWCells(p.x,p.y,p.yawIdx,p.wpn,wm.reach||0);
     const baseDmg=Math.max(5,Math.round(20*(wm.sharpness||1)/((WPN[p.wpn]?.w||5)*(wm.weight||1))));
+    // Flash the attack zone red (visual feedback like single-player)
+    g.flash=cells.map(cc=>({x:cc.x,y:cc.y,col:'#ef4444'}));
+    g.flashUntil=Date.now()+200;
+    localFlash.current={cells:cells.map(cc=>({x:cc.x,y:cc.y,col:'#ef4444'})),until:Date.now()+200};
+    snd('hit');
     let hits=0;
     if(mpMode!=='duel_1v1'){
       g.enemies=(g.enemies||[]).map(e=>{
@@ -1404,7 +1415,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
         if(cells.find(c=>c.x===(op.x||0)&&c.y===(op.y||0))){hits++;hitPlayer(pid,baseDmg);}
       });
     }
-    if(hits>0){snd('hit');p.score=(p.score||0)+hits*5;}
+    if(hits>0){snd('hit');p.score=(p.score||0)+hits*5;speak(hits>1?`Влучив у ${hits} ціль!`:'Удар!',settings?.voice!==false);}
     if(isHost){lastSync.current=0;syncState();}
     fr();
   },[isHost,myId,ff,mpMode]);
@@ -1424,13 +1435,14 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     if(Object.values(allP.current).some(op=>op.id!==myId&&op.alive&&(op.x||0)===nx&&(op.y||0)===ny))return;
     p.x=nx;p.y=ny;
     const loot=(g.objects||[]).find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
-    if(loot){g.objects=(g.objects||[]).filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:(p.weaponMods.reach||0)+1};else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,(p.weaponMods.weight||1)-0.15)};else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:(p.weaponMods.sharpness||1)+0.25};snd('spell');setMsg(OBJ_TYPES[loot.type]?.desc||'Покращення!');if(isHost){lastSync.current=0;syncState();}}
+    if(loot){g.objects=(g.objects||[]).filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:(p.weaponMods.reach||0)+1};else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,(p.weaponMods.weight||1)-0.15)};else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:(p.weaponMods.sharpness||1)+0.25};snd('spell');const _d=OBJ_TYPES[loot.type]?.desc||'Покращення!';setMsg(_d);speak(_d,settings?.voice!==false);if(isHost){lastSync.current=0;syncState();}}
     fr();
   },[myId,isHost]);
 
   // Morse spell handler
   const morseTimer=useRef(null);
   const doMoveRef=useRef(null);
+  const handleMorseRef=useRef(null);
   const handleMorse=useCallback((sym)=>{
     const p=myP.current;if(!p||!p.alive)return;
     snd(sym==='.'?'hit':'drop');p.morseSeq=(p.morseSeq||'')+sym;fr();
@@ -1449,7 +1461,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     else if(fn==='surge'){p.stamina=100;}
     else if(fn==='rush'){p.spell={fn:'rush',until:Date.now()+3000};}
     else p.spell={fn,until:Date.now()+4000};
-    snd('spell');setMsg(`✨ ${spell.name}!`);fr();
+    snd('spell');setMsg(`✨ ${spell.name}!`);speak(spell.name,settings?.voice!==false);fr();
   },[]);
   // Touch refs
   const tRef=useRef(null);
@@ -1501,7 +1513,8 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
           const isP=isRotated?(sx===CX&&sy===CY):(sx===(p.x||0)&&sy===(p.y||0));
           const en=(g.enemies||[]).find(e=>{if(e.type==='boss')return false;const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
           const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
-          const fl=(g.flash||[]).find(c=>{const pos=isRotated?toScreen(c.x,c.y,p.x||0,p.y||0,p.compassD||0):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
+          const _allFlash=[...(g.flash||[]),...(localFlash.current.until>Date.now()?localFlash.current.cells:[])];
+          const fl=_allFlash.find(c=>{const pos=isRotated?toScreen(c.x,c.y,p.x||0,p.y||0,p.compassD||0):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
           const _wc=isRotated?fromScreen(sx,sy,p.x||0,p.y||0,p.compassD||0):{gx:sx,gy:sy};
           const isVoid=isRotated&&(_wc.gx<0||_wc.gx>=G||_wc.gy<0||_wc.gy>=G);
           const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
