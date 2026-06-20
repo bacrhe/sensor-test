@@ -653,6 +653,7 @@ function Game({gmode,settings,sPhase,onDead}){
   useEffect(()=>{doMoveRef.current=doMove;},[doMove]);
   useEffect(()=>{handleMorseRef.current=handleMorse;},[handleMorse]);
 
+
   // ── Beacon complete ────────────────────────────────────────────
   const doBeaconComplete=useCallback(()=>{
     const g=gs.current;if(!g)return;
@@ -1350,9 +1351,9 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
       cln.current.push(fbOn(`mp/${roomId}/state`,state=>{if(state){rs.current=state;fr();}}));
     }
     const pSync=setInterval(()=>{const p=myP.current;if(!p)return;
-      // Stamina regen: tilt back (pitch<0) recovers faster, neutral slow regen
-      const regen=p.pitch<0?3.5:p.pitch>0?0.5:1.5;
-      p.stamina=Math.min(100,p.stamina+regen);
+      // Stamina regen — same formula as single-player: tilt back = rest/recover
+      const sdMult=DIFFICULTY[diff]?.staminaDrain||1;
+      p.stamina=clamp(p.stamina+(1-((p.pitch||0)+1)/2)*1.8*sdMult,0,100);
       fbSet(`mp/${roomId}/players/${myId}`,{x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp,stamina:Math.round(p.stamina),yawIdx:p.yawIdx,compassD:p.compassD,wpn:p.wpn,alive:p.alive,weaponMods:p.weaponMods,score:p.score||0,slot:p.slot||0,name:p.name||myId,id:myId});},200);
     cln.current.push(()=>clearInterval(pSync));
     // Sensors — orientation (compass for world rotation)
@@ -1361,7 +1362,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     const onMot=e=>{
       const p=myP.current;if(!p||!p.alive)return;
       const ag=e.accelerationIncludingGravity;if(!ag)return;
-      const b=ag.beta||0;p.pitch=b>15?1:b<-10?-1:0;
+      const b=ag.beta||0;p.pitch=betaToPitch(b,info.pitchSens||settings?.pitchSens||40);p.beta=b;
       const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
       const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
       const thr=info.strikeThr||settings?.strikeThr||7;
@@ -1370,22 +1371,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     };
     window.addEventListener('deviceorientation',onOri,true);
     window.addEventListener('devicemotion',onMot);
-    // ── Document-level touch (like single-player) ──
-    const touchSt={x:0,y:0,t:0};
-    const onTouchS=e=>{if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;AC.resume&&AC.resume();const t=e.touches[0];touchSt.x=t.clientX;touchSt.y=t.clientY;touchSt.t=Date.now();touchSt.valid=true;};
-    const onTouchE=e=>{
-      if(!touchSt.valid)return;touchSt.valid=false;
-      if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
-      const dx=e.changedTouches[0].clientX-touchSt.x,dy=e.changedTouches[0].clientY-touchSt.y;
-      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-touchSt.t;
-      if(dist<25){handleMorseRef.current?.(dt<280?'.':'-');}
-      else{const p=myP.current;if(p){p.morseSeq='';}clearTimeout(morseTimer.current);if(Math.abs(dx)>Math.abs(dy))doMoveRef.current?.(Math.sign(dx),0);else doMoveRef.current?.(0,Math.sign(dy));}
-    };
-    const onTouchM=e=>{if(!e.target.closest('button')&&!e.target.closest('input')&&!e.target.closest('select'))e.preventDefault();};
-    document.addEventListener('touchstart',onTouchS,{passive:false});
-    document.addEventListener('touchend',onTouchE,{passive:false});
-    document.addEventListener('touchmove',onTouchM,{passive:false});
-    cln.current.push(()=>{window.removeEventListener('deviceorientation',onOri,true);window.removeEventListener('devicemotion',onMot);document.removeEventListener('touchstart',onTouchS);document.removeEventListener('touchend',onTouchE);document.removeEventListener('touchmove',onTouchM);});
+    cln.current.push(()=>{window.removeEventListener('deviceorientation',onOri,true);window.removeEventListener('devicemotion',onMot);});
     fr();
     return()=>{cln.current.forEach(f=>f());cln.current=[];if(msgTimer.current)clearTimeout(msgTimer.current);};
   },[]);
@@ -1438,6 +1424,29 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     if(loot){g.objects=(g.objects||[]).filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:(p.weaponMods.reach||0)+1};else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,(p.weaponMods.weight||1)-0.15)};else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:(p.weaponMods.sharpness||1)+0.25};snd('spell');const _d=OBJ_TYPES[loot.type]?.desc||'Покращення!';setMsg(_d);speak(_d,settings?.voice!==false);if(isHost){lastSync.current=0;syncState();}}
     fr();
   },[myId,isHost]);
+// ── TOUCH (separate effect, re-binds with handlers — like single-player) ──
+  useEffect(()=>{
+    const touchStart={x:0,y:0,t:0};
+    const onS=e=>{
+      if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
+      e.preventDefault();
+      if(AC.state==='suspended')AC.resume();
+      touchStart.x=e.touches[0].clientX;touchStart.y=e.touches[0].clientY;touchStart.t=Date.now();
+    };
+    const onE=e=>{
+      if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
+      e.preventDefault();
+      const dx=e.changedTouches[0].clientX-touchStart.x,dy=e.changedTouches[0].clientY-touchStart.y;
+      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-touchStart.t;
+      if(dist<25){handleMorse(dt<280?'.':'-');}
+      else{const p=myP.current;if(p)p.morseSeq='';clearTimeout(morseTimer.current);if(Math.abs(dx)>Math.abs(dy))doMove(Math.sign(dx),0);else doMove(0,Math.sign(dy));}
+    };
+    const onM=e=>{if(!e.target.closest('button')&&!e.target.closest('input')&&!e.target.closest('select'))e.preventDefault();};
+    document.addEventListener('touchstart',onS,{passive:false});
+    document.addEventListener('touchend',onE,{passive:false});
+    document.addEventListener('touchmove',onM,{passive:false});
+    return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
+  },[doMove,handleMorse]);
 
   // Morse spell handler
   const morseTimer=useRef(null);
