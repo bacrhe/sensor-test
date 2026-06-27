@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Метасітка Стилів 13×13 — Карта Свідомості</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#010206;color:#c5d8f0;font-family:'Courier New',monospace;padding:16px;line-height:1.5}
+h1{font-size:18px;color:#60a5fa;letter-spacing:.1em;margin-bottom:4px}
+.sub{font-size:11px;color:#4a6a9f;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(13,1fr);gap:2px;max-width:680px;margin:0 auto 20px}
+.cell{aspect-ratio:1;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;position:relative;cursor:pointer;transition:transform .15s}
+.cell:hover{transform:scale(1.15);z-index:5}
+.cell .sym{font-size:13px}
+.cell .nm{font-size:5px;opacity:.7;white-space:nowrap;overflow:hidden;max-width:100%}
+.legend{max-width:680px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.lg{background:#060f1e;border:1px solid #1e3a5f;border-radius:6px;padding:8px}
+.lg .t{font-size:11px;font-weight:bold;margin-bottom:2px}
+.lg .d{font-size:9px;color:#4a6a9f}
+.axes{max-width:680px;margin:16px auto;font-size:10px;color:#4a6a9f;text-align:center;background:#060f1e;border:1px solid #1e3a5f;border-radius:6px;padding:10px}
+.math{max-width:680px;margin:0 auto 16px;font-size:10px;color:#94a3b8;background:#0a1018;border:1px solid #1e3a5f;border-radius:6px;padding:10px}
+.math code{color:#fbbf24}
+#tip{position:fixed;background:#0a1428;border:1px solid #3b82f6;border-radius:6px;padding:8px;font-size:10px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:100;max-width:200px}
+</style>
+</head>
+<body>
+<h1>МЕТАСІТКА СТИЛІВ 13×13</h1>
+<div class="sub">Градієнтне зміщення від Чистої Свідомості (центр) до екстремальних станів</div>
+
+<div class="math">
+<b style="color:#60a5fa">Математична модель:</b><br>
+dX = X − 6 &nbsp; dY = Y − 6 &nbsp;&nbsp; Weight = <code>(|d|/6)²</code><br>
+Вертикаль Y: dY&gt;0 = Сходження(Світло) · dY&lt;0 = Спуск(Ерозія)<br>
+Горизонталь X: dX&gt;0 = Відлуння(Порядок) · dX&lt;0 = Шум(Хаос)
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="axes">
+↑ ПІВНІЧ: Спуск/Ерозія &nbsp;|&nbsp; ↓ ПІВДЕНЬ: Сходження/Світло<br>
+← ЗАХІД: Шум/Хаос &nbsp;|&nbsp; → СХІД: Відлуння/Порядок
+</div>
+
+<div class="legend" id="legend"></div>
+
+<div id="tip"></div>
+
+<script>
+const META_CENTER=6;
+function roomStyle(rx,ry){
+  const dX=rx-META_CENTER,dY=ry-META_CENTER;
+  const wX=Math.pow(Math.abs(dX)/6,2),wY=Math.pow(Math.abs(dY)/6,2);
+  const weight=Math.min(1,(wX+wY)/2);
+  const axisV=dY/6,axisH=dX/6;
+  const absV=Math.abs(axisV),absH=Math.abs(axisH);
+  let archetype='center';
+  if(absV<0.18&&absH<0.18)archetype='center';
+  else if(absV>=absH)archetype=axisV>0?'ascension':'descent';
+  else archetype=axisH>0?'echo':'noise';
+  const isDiagonal=Math.abs(absV-absH)<0.25&&absV>0.18&&absH>0.18;
+  if(isDiagonal){
+    if(axisV>0&&axisH>0)archetype='ascension_echo';
+    else if(axisV>0&&axisH<0)archetype='ascension_noise';
+    else if(axisV<0&&axisH>0)archetype='descent_echo';
+    else archetype='descent_noise';
+  }
+  const PAL={
+    center:{bg:'#020c1a',edge:'#2a5a9f',accent:'#60a5fa',name:'Чиста Свідомість',sym:'◌'},
+    ascension:{bg:'#0a1410',edge:'#4ade80',accent:'#bbf7d0',name:'Сходження',sym:'▲'},
+    descent:{bg:'#140a0a',edge:'#7f1d1d',accent:'#fca5a5',name:'Спуск',sym:'▼'},
+    echo:{bg:'#0a0f16',edge:'#3b82f6',accent:'#93c5fd',name:'Відлуння',sym:'◈'},
+    noise:{bg:'#160a14',edge:'#a21caf',accent:'#f0abfc',name:'Шум',sym:'※'},
+    ascension_echo:{bg:'#0a1416',edge:'#22d3ee',accent:'#a5f3fc',name:'Храм Світла',sym:'✦'},
+    ascension_noise:{bg:'#141014',edge:'#fbbf24',accent:'#fde68a',name:'Спалах',sym:'❋'},
+    descent_echo:{bg:'#0f0c14',edge:'#6366f1',accent:'#c7d2fe',name:'Механізм',sym:'⬢'},
+    descent_noise:{bg:'#120608',edge:'#dc2626',accent:'#fecaca',name:'Безодня',sym:'✖'},
+  };
+  const pal=PAL[archetype]||PAL.center;
+  return{archetype,weight,axisV,axisH,...pal,
+    enemyDensity:0.5+weight*2.5,orderFactor:(axisH+1)/2,lightFactor:(axisV+1)/2,
+    bossChance:weight>0.6?0.35:weight>0.35?0.15:0};
+}
+
+const grid=document.getElementById('grid');
+const tip=document.getElementById('tip');
+for(let y=0;y<13;y++)for(let x=0;x<13;x++){
+  const s=roomStyle(x,y);
+  const d=document.createElement('div');
+  d.className='cell';
+  d.style.background=s.bg;d.style.border='1px solid '+s.edge;
+  d.innerHTML=`<span class="sym" style="color:${s.accent}">${s.sym}</span>`;
+  d.onmouseenter=e=>{tip.style.opacity='1';tip.innerHTML=`<b style="color:${s.accent}">${s.name}</b><br>(${x},${y}) вага=${s.weight.toFixed(2)}<br>вороги:${s.enemyDensity.toFixed(1)} · бос:${(s.bossChance*100).toFixed(0)}%<br>порядок:${(s.orderFactor*100).toFixed(0)}% світло:${(s.lightFactor*100).toFixed(0)}%`;};
+  d.onmousemove=e=>{tip.style.left=Math.min(e.pageX+12,window.innerWidth-210)+'px';tip.style.top=(e.pageY+12)+'px';};
+  d.onmouseleave=()=>tip.style.opacity='0';
+  grid.appendChild(d);
+}
+
+// Legend — unique archetypes
+const seen={};
+const legend=document.getElementById('legend');
+for(let y=0;y<13;y++)for(let x=0;x<13;x++){const s=roomStyle(x,y);if(seen[s.archetype])continue;seen[s.archetype]=s;}
+Object.values(seen).forEach(s=>{
+  const l=document.createElement('div');l.className='lg';
+  l.style.borderColor=s.edge;
+  l.innerHTML=`<div class="t" style="color:${s.accent}">${s.sym} ${s.name}</div><div class="d">${s.archetype}</div>`;
+  legend.appendChild(l);
+});
+</script>
+</body>
+</html>

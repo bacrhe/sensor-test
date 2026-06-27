@@ -268,6 +268,125 @@ function coordId(x,y){return x+','+y;}
 function calcRoomNum(x,y){return 1+Math.abs(x)+Math.abs(y);}
 function getNextCoord(coord,dir){const{x,y}=coord;if(dir==='N')return{x,y:y-1};if(dir==='S')return{x,y:y+1};if(dir==='E')return{x:x+1,y};if(dir==='W')return{x:x-1,y};return coord;}
 function calcBossCells(bx,by,size){const c=[];for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++)c.push({x:bx+dx,y:by+dy});return c;}
+
+// ── МОДУЛЬ ГЕНЕРАЦІЇ СТИЛІВ КІМНАТ (13×13 метасітка) ─────────────────────
+// Градієнтне зміщення від "Чистої Свідомості" (центр 6,6) до екстремальних
+// станів. Weight=(|d|/6)² — квадратичне віддалення.
+// Вертикаль Y: dY>0=Сходження(Світло), dY<0=Спуск(Ерозія)
+// Горизонталь X: dX>0=Відлуння(Порядок), dX<0=Шум(Хаос)
+const META_CENTER=6; // центр метасітки 13×13 (індекси 0..12)
+function roomStyle(rx,ry){
+  const dX=rx-META_CENTER, dY=ry-META_CENTER;
+  const wX=Math.pow(Math.abs(dX)/6,2); // 0 в центрі → 1 на краю
+  const wY=Math.pow(Math.abs(dY)/6,2);
+  const weight=Math.min(1,(wX+wY)/2);   // загальна "спотвореність"
+  // Осі (-1..+1)
+  const axisV=dY/6; // +сходження / -спуск
+  const axisH=dX/6; // +відлуння(порядок) / -шум(хаос)
+  // Архетип за домінантною віссю
+  const absV=Math.abs(axisV),absH=Math.abs(axisH);
+  let archetype='center';
+  if(absV<0.18&&absH<0.18)archetype='center';
+  else if(absV>=absH)archetype=axisV>0?'ascension':'descent';
+  else archetype=axisH>0?'echo':'noise';
+  // Діагональні гібриди (де осі співмірні)
+  const isDiagonal=Math.abs(absV-absH)<0.25&&absV>0.18&&absH>0.18;
+  if(isDiagonal){
+    if(axisV>0&&axisH>0)archetype='ascension_echo';   // Світло+Порядок: Храм
+    else if(axisV>0&&axisH<0)archetype='ascension_noise'; // Світло+Хаос: Спалах
+    else if(axisV<0&&axisH>0)archetype='descent_echo';   // Ерозія+Порядок: Механізм
+    else archetype='descent_noise';                       // Ерозія+Хаос: Безодня
+  }
+  // Палітри за архетипом
+  const PAL={
+    center:        {bg:'#020c1a',edge:'#2a5a9f',accent:'#60a5fa',name:'Чиста Свідомість',sym:'◌'},
+    ascension:     {bg:'#0a1410',edge:'#4ade80',accent:'#bbf7d0',name:'Сходження',sym:'▲'},
+    descent:       {bg:'#140a0a',edge:'#7f1d1d',accent:'#fca5a5',name:'Спуск',sym:'▼'},
+    echo:          {bg:'#0a0f16',edge:'#3b82f6',accent:'#93c5fd',name:'Відлуння',sym:'◈'},
+    noise:         {bg:'#160a14',edge:'#a21caf',accent:'#f0abfc',name:'Шум',sym:'※'},
+    ascension_echo:{bg:'#0a1416',edge:'#22d3ee',accent:'#a5f3fc',name:'Храм Світла',sym:'✦'},
+    ascension_noise:{bg:'#141014',edge:'#fbbf24',accent:'#fde68a',name:'Спалах',sym:'❋'},
+    descent_echo:  {bg:'#0f0c14',edge:'#6366f1',accent:'#c7d2fe',name:'Механізм',sym:'⬢'},
+    descent_noise: {bg:'#120608',edge:'#dc2626',accent:'#fecaca',name:'Безодня',sym:'✖'},
+  };
+  const pal=PAL[archetype]||PAL.center;
+  return{
+    archetype,weight,axisV,axisH,
+    bg:pal.bg,edge:pal.edge,accent:pal.accent,name:pal.name,sym:pal.sym,
+    // Геймплейні модифікатори:
+    enemyDensity:0.5+weight*2.5,         // більше ворогів на периферії
+    orderFactor:(axisH+1)/2,             // 1=порядок(рівні стіни), 0=хаос(розкидано)
+    lightFactor:(axisV+1)/2,             // 1=світло(менше перешкод), 0=ерозія(руїни)
+    bossChance:weight>0.6?0.35:weight>0.35?0.15:0,
+  };
+}
+
+// ── ГЕНЕРАЦІЯ КІМНАТИ ЗА КООРДИНАТОЮ МЕТАСІТКИ (зі стилем) ───────────────
+function generateRoomAt(mx,my,diff){
+  const st=roomStyle(mx,my);
+  const _dCfg=DIFFICULTY[diff||'normal']||DIFFICULTY.normal;
+  const occ=[{x:CX,y:CY}];
+  const objects=[];
+  // Кількість ворогів за щільністю стилю
+  const enemyCount=Math.round(st.enemyDensity*(0.7+_dCfg.enemyHp*0.4));
+  const isBoss=Math.random()<st.bossChance;
+  // Перешкоди: порядок→рівні стіни, хаос→розкидані руїни
+  const objCount=Math.round(2+st.weight*6);
+  const orderly=st.orderFactor>0.6;
+  for(let i=0;i<objCount*6&&objects.length<objCount;i++){
+    let x,y;
+    if(orderly){
+      // Порядок: вирівняні по сітці (парні координати)
+      x=2+2*Math.floor(Math.random()*5);y=2+2*Math.floor(Math.random()*5);
+    }else{
+      x=1+Math.floor(Math.random()*(G-2));y=1+Math.floor(Math.random()*(G-2));
+    }
+    if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<(orderly?2:3)))continue;
+    // Ерозія(низький light)→більше руйнівних(crate/barrel), Світло→стовпи/стіни
+    const ruinPool=st.lightFactor<0.4?['crate','barrel','crate','wall']:['pillar','wall','pillar'];
+    const t=isBoss?'pillar':ruinPool[Math.floor(Math.random()*ruinPool.length)];
+    const ot=OBJ_TYPES[t];if(!ot)continue;
+    objects.push({id:EID++,type:t,x,y,hp:ot.hp??null});occ.push({x,y});
+  }
+  // Лут: 2 предмети (більше на периферії)
+  const lootCount=st.weight>0.5?3:2;
+  const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+  const picks=[...lootKeys].sort(()=>Math.random()-.5).slice(0,lootCount);
+  for(const lt of picks){
+    for(let i=0;i<40;i++){
+      const x=1+Math.floor(Math.random()*(G-2)),y=1+Math.floor(Math.random()*(G-2));
+      if(occ.some(o=>Math.abs(o.x-x)+Math.abs(o.y-y)<2))continue;
+      objects.push({id:EID++,type:lt,x,y,hp:null});occ.push({x,y});break;
+    }
+  }
+  let enemies=[];
+  if(isBoss){
+    const bossKeys=Object.keys(BOSS_DEFS);
+    // Архетип впливає на тип боса
+    const bk=st.archetype.includes('descent')?'juggernaut':st.archetype.includes('ascension')?'wraith':st.archetype.includes('echo')?'colossus':'devourer';
+    const bd=BOSS_DEFS[bk]||BOSS_DEFS.colossus;
+    const hp=Math.round(bd.basehp*_dCfg.enemyHp*(0.8+st.weight));
+    const bx=CX-Math.floor((bd.size-1)/2),by=CY-Math.floor((bd.size-1)/2);
+    enemies.push({id:EID++,type:'boss',bossKind:bk,x:clamp(bx,0,G-bd.size),y:clamp(by,0,G-bd.size),hp,maxHp:hp,dmg:Math.round(bd.dmg*_dCfg.enemyDmg),ms:bd.ms,size:bd.size,sym:bd.sym,col:bd.col,name:bd.name,bossRoomIdx:Math.ceil(st.weight*3),lastMove:0});
+  }else{
+    const types=Object.keys(ET);
+    for(let i=0;i<enemyCount;i++){
+      const t=types[Math.floor(Math.random()*types.length)];const e=spawnE(t,occ);
+      if(e){e.hp=Math.max(1,Math.round(e.hp*_dCfg.enemyHp));e.maxHp=e.hp;enemies.push(e);occ.push({x:e.x,y:e.y});}
+    }
+  }
+  return{enemies,objects,isBoss,style:st};
+}
+
+// ── ХАБ (нульова кімната) — без ворогів, вибір напрямку ──────────────────
+function generateHub(){
+  const objects=[];
+  // Декоративні стовпи по кутах внутрішнього простору
+  const deco=[[3,3],[9,3],[3,9],[9,9]];
+  deco.forEach(([x,y])=>objects.push({id:EID++,type:'pillar',x,y,hp:null}));
+  return{enemies:[],objects,isBoss:false,isHub:true,style:roomStyle(META_CENTER,META_CENTER)};
+}
+
 function generateRoom(roomNum,spawnX,spawnY,diff){
   const isBoss=roomNum>1&&roomNum%3===0;
   const _dCfg=DIFFICULTY[diff||'normal']||DIFFICULTY.normal;
@@ -613,13 +732,42 @@ function botThink(bot,rs,allP,roomId){
     if(loot.length){let nl=loot[0],nd=999;loot.forEach(l=>{const d=Math.abs(l.x-bot.x)+Math.abs(l.y-bot.y);if(d<nd){nd=d;nl=l;}});targets=[{x:nl.x,y:nl.y,isLoot:true}];}
   }
   if(!targets.length){
-    // Wander toward center or edge for room transition
+    // ── COORDINATED EDGE GATHERING (coop adventure, room cleared) ──
     if(mpMode==='coop_adventure'&&!enemies.length){
-      // Move to nearest edge to trigger transition
-      const edges=[{x:bot.x,y:0},{x:bot.x,y:G-1},{x:0,y:bot.y},{x:G-1,y:bot.y}];
-      let ne=edges[0],nd=999;edges.forEach(e=>{const d=Math.abs(e.x-bot.x)+Math.abs(e.y-bot.y);if(d<nd){nd=d;ne=e;}});
-      targets=[{x:ne.x,y:ne.y,isEdge:true}];
-    }else return;
+      const all=Object.values(allP).filter(p=>p.alive&&!p.isSpectator);
+      const humans=all.filter(p=>!p.isBot);
+      const edgeOf=p=>{const px=p.x||0,py=p.y||0;if(py===0)return'N';if(py===G-1)return'S';if(px===0)return'W';if(px===G-1)return'E';return null;};
+      // Decide TARGET edge for the whole team:
+      let teamEdge=null;
+      // 1) If any human is on an edge → bots follow to THAT edge
+      const humanOnEdge=humans.map(edgeOf).find(e=>e!==null);
+      if(humanOnEdge)teamEdge=humanOnEdge;
+      // 2) Else if humans exist (not on edge) → bots follow nearest human, don't pick edge yet
+      else if(humans.length>0){
+        let nh=humans[0],nd=999;humans.forEach(h=>{const d=Math.abs(h.x-bot.x)+Math.abs(h.y-bot.y);if(d<nd){nd=d;nh=h;}});
+        targets=[{x:nh.x,y:nh.y,isFollow:true}];
+      }
+      // 3) No humans (all bots) → team picks ONE edge by consensus (lowest bot id decides)
+      else{
+        const bots=all.filter(p=>p.isBot).sort((a,b)=>(a.id<b.id?-1:1));
+        const leader=bots[0];
+        // Leader picks its nearest edge; everyone targets it. Store on rs for stability.
+        if(!rs._botTeamEdge||rs._botTeamEdgeTs<now-8000){
+          const lead=leader||bot;
+          const dists={N:lead.y,S:G-1-lead.y,W:lead.x,E:G-1-lead.x};
+          rs._botTeamEdge=Object.keys(dists).sort((a,b)=>dists[a]-dists[b])[0];
+          rs._botTeamEdgeTs=now;
+        }
+        teamEdge=rs._botTeamEdge;
+      }
+      // Move toward chosen team edge
+      if(teamEdge&&!targets.length){
+        const ex=teamEdge==='W'?0:teamEdge==='E'?G-1:bot.x;
+        const ey=teamEdge==='N'?0:teamEdge==='S'?G-1:bot.y;
+        targets=[{x:ex,y:ey,isEdge:true}];
+      }
+    }
+    if(!targets.length)return;
   }
 
   // Nearest target
@@ -840,6 +988,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
   const doAttackRef=useRef(null);
   const localFlash=useRef({cells:[],until:0});
   const comboRef=useRef({count:0,last:0});
+  const spellCdRef=useRef(0);
   const progRef=useRef(loadProg());
   const sessionStats=useRef({kills:0,deaths:0});
   const allDeadAtEnd=useRef(false);
@@ -860,7 +1009,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
     if(!rs.current||!isHost)return;
     lastSync.current=Date.now();
     const g=rs.current;
-    fbSet(`mp/${roomId}/state`,{enemies:(g.enemies||[]).map(e=>({...e})),objects:(g.objects||[]).map(o=>({...o})),isBossRoom:!!g.isBossRoom,roomCoord:g.roomCoord||{x:0,y:0},roomNumber:g.roomNumber||1,score:g.score||0,mpMode,ff,_roomCleared:g._roomCleared||false,edgeTimers:g.edgeTimers||{},msg:g.msg||'',wave:g.wave||1,gameOver:!!g.gameOver,winner:g.winner||null,flash:g.flash||[],flashUntil:g.flashUntil||0,transitionDir:g.transitionDir||null,transitionTimer:g.transitionTimer||0,transitionHint:g.transitionHint||null,peekHint:g.peekHint||null,paused:!!g.paused});
+    fbSet(`mp/${roomId}/state`,{enemies:(g.enemies||[]).map(e=>({...e})),objects:(g.objects||[]).map(o=>({...o})),isBossRoom:!!g.isBossRoom,roomCoord:g.roomCoord||{x:0,y:0},roomNumber:g.roomNumber||1,score:g.score||0,mpMode,ff,_roomCleared:g._roomCleared||false,edgeTimers:g.edgeTimers||{},msg:g.msg||'',wave:g.wave||1,gameOver:!!g.gameOver,winner:g.winner||null,flash:g.flash||[],flashUntil:g.flashUntil||0,transitionDir:g.transitionDir||null,transitionTimer:g.transitionTimer||0,transitionHint:g.transitionHint||null,peekHint:g.peekHint||null,paused:!!g.paused,roomStyle:g.roomStyle||null,isHub:!!g.isHub,roomCoord:g.roomCoord||{x:META_CENTER,y:META_CENTER}});
   }
   function hitPlayer(pid,dmg){
     const t=allP.current[pid];if(!t||!t.alive)return;
@@ -890,6 +1039,24 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
           if(bot._reactMs===undefined){bot._reactMs=280+Math.random()*220;bot._lastAct=0;bot.stamina=bot.stamina??100;}
           // Stamina regen for bots
           bot.stamina=clamp((bot.stamina||100)+2,0,100);
+          // ── Bot spell casting (with cooldown) ──
+          if(!bot._spellCd)bot._spellCd=0;
+          if(now>bot._spellCd){
+            const enemyNear=(g.enemies||[]).some(e=>Math.abs(e.x-bot.x)+Math.abs(e.y-bot.y)<=3);
+            let spell=null;
+            if((bot.hp/bot.maxHp)<0.4&&Math.random()<0.3)spell=SPELLS.find(s=>s.fn==='heal');
+            else if(enemyNear&&Math.random()<0.2)spell=SPELLS.find(s=>s.fn==='surge')||SPELLS.find(s=>s.fn==='freeze');
+            else if(bot.stamina<25&&Math.random()<0.25)spell=SPELLS.find(s=>s.fn==='stamina');
+            if(spell){
+              bot._spellCd=now+5000;
+              const fn=spell.fn;
+              if(fn==='stamina')bot.stamina=Math.min(100,bot.stamina+40);
+              else if(fn==='heal')bot.hp=Math.min(bot.maxHp,bot.hp+40);
+              else if(fn==='surge')bot.spell={fn:'surge',until:now+5000};
+              else if(fn==='freeze'){g.enemies=(g.enemies||[]).map(e=>({...e,frozen:now+3000}));}
+              g.msg=`🤖 ${bot.name}: ✨${spell.name}`;
+            }
+          }
           botThink(bot,g,allP.current,roomId);
           // Bot attack
           if(bot._wantAttack&&bot.stamina>15){
@@ -936,7 +1103,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
           if(e.frozen&&e.frozen>now)return e; // frozen by spelllet np=pList[0],nd=999;pList.forEach(p=>{const d=Math.abs((p.x||0)-e.x)+Math.abs((p.y||0)-e.y);if(d<nd){nd=d;np=p;}});const dx=(np.x||0)-e.x,dy=(np.y||0)-e.y;if(Math.abs(dx)+Math.abs(dy)<=1){hitPlayer(np.id||myId,et.dmg*dCfg.enemyDmg);changed=true;return{...e,lastMove:now};}const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];const best=dirs.map(([mx,my])=>{const nx=e.x+mx,ny=e.y+my;if(nx<0||nx>=G||ny<0||ny>=G)return null;if(pList.some(p=>(p.x||0)===nx&&(p.y||0)===ny))return null;if((g.enemies||[]).some(o=>o.id!==e.id&&o.x===nx&&o.y===ny))return null;if((g.objects||[]).some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return null;return{x:nx,y:ny,d:Math.abs((np.x||0)-nx)+Math.abs((np.y||0)-ny)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];changed=true;return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
         }).filter(Boolean);
         if(mpMode==='coop_adventure'&&!g.enemies.length){
-          if(g._roomCleared!==g.roomNumber){g._roomCleared=g.roomNumber;g.msg='✓ Очищено! Зберіть усіх на одному краю';changed=true;}
+          if(g._roomCleared!==g.roomNumber){g._roomCleared=g.roomNumber;g.msg=g.isHub?'🏠 ДІМ — оберіть напрямок (зберіть усіх на краю)':'✓ Очищено! Зберіть усіх на одному краю';changed=true;}
           // Determine each player's current edge
           const edgeOf=p=>{const px=p.x||0,py=p.y||0;if(py===0)return'N';if(py===G-1)return'S';if(px===0)return'W';if(px===G-1)return'E';return null;};
           // Which edge is everyone on? All active players must be on the SAME edge
@@ -951,43 +1118,41 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
             g.transitionTimer=(g.transitionTimer||0)+1;changed=true;
             const HALF=25,FULL=50;
             if(g.transitionTimer===HALF){
-              // Generate preview of adjacent room at half-time
               const nc=getNextCoord(g.roomCoord,dir);const nid=coordId(nc.x,nc.y);
-              const rNum=calcRoomNum(nc.x,nc.y);
+              const ns=roomStyle(nc.x,nc.y);
               const cached=g.roomCache&&g.roomCache[nid];
-              const isBossRoom=!cached&&rNum>1&&rNum%3===0;
-              g.transitionHint=cached?`Кімната ${rNum}${cached.isBoss?' — 👹 БОС':` · ${(cached.enemies||[]).length} ворогів`}`:isBossRoom?`Кімната ${rNum} — 👹 БОС попереду!`:`Кімната ${rNum} — нова територія`;
+              g.transitionHint=cached?`${ns.sym} ${ns.name}${cached.isBoss?' 👹':cached.cleared?' (очищено)':''}`:`${ns.sym} ${ns.name}${ns.bossChance>0.2?' — небезпечно':''}`;
             }
             if(g.transitionTimer>=FULL){
               g.transitionTimer=0;g.transitionDir=null;g.transitionHint=null;
-              // Save current room to cache before leaving
+              // Save current room to cache before leaving (hub never cached as enemy room)
               g.roomCache=g.roomCache||{};
-              g.roomCache[coordId(g.roomCoord.x,g.roomCoord.y)]={enemies:[],objects:g.objects,isBoss:false,cleared:true};
-              const nc=getNextCoord(g.roomCoord,dir);const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
+              if(!g.isHub)g.roomCache[coordId(g.roomCoord.x,g.roomCoord.y)]={objects:g.objects,isBoss:!!g.isBossRoom,cleared:true,style:g.roomStyle};
+              const nc=getNextCoord(g.roomCoord,dir);const nid=coordId(nc.x,nc.y);
+              const nStyle=roomStyle(nc.x,nc.y);
               let ac2;
               if(g.roomCache[nid]){
-                // Returning to visited room — restore (cleared rooms stay cleared)
-                ac2={enemies:g.roomCache[nid].cleared?[]:g.roomCache[nid].enemies,objects:g.roomCache[nid].objects,isBoss:g.roomCache[nid].isBoss};
+                ac2={enemies:g.roomCache[nid].cleared?[]:(g.roomCache[nid].enemies||[]),objects:g.roomCache[nid].objects,isBoss:g.roomCache[nid].isBoss,style:g.roomCache[nid].style};
               }else{
-                ac2=generateRoom(rNum,CX,CY,diff);
-                g.roomCache[nid]={enemies:ac2.enemies,objects:ac2.objects,isBoss:ac2.isBoss,cleared:false};
+                ac2=generateRoomAt(nc.x,nc.y,diff);
+                g.roomCache[nid]={enemies:ac2.enemies,objects:ac2.objects,isBoss:ac2.isBoss,cleared:false,style:ac2.style};
                 g.score=(g.score||0)+15;
               }
-              g.enemies=ac2.enemies;g.objects=ac2.objects;g.isBossRoom=ac2.isBoss;
-              g.roomCoord=nc;g.roomNumber=rNum;g._roomCleared=ac2.enemies.length===0?rNum:false;
-              g.msg=ac2.isBoss?`👹 Кімната ${rNum} — БОС!`:ac2.enemies.length?`Кімната ${rNum} · ${ac2.enemies.length} ворогів`:`Кімната ${rNum} (очищена)`;
+              g.enemies=ac2.enemies;g.objects=ac2.objects;g.isBossRoom=ac2.isBoss;g.roomStyle=ac2.style||nStyle;g.isHub=false;
+              g.roomCoord=nc;g.roomNumber=(g.roomNumber||0)+1;g._roomCleared=(ac2.enemies.length===0)?g.roomNumber:false;
+              g.msg=ac2.isBoss?`👹 ${nStyle.name} — БОС!`:ac2.enemies.length?`${nStyle.sym} ${nStyle.name} · ${ac2.enemies.length} ворогів`:`${nStyle.name} (порожньо)`;
               snd('wave');
-              // Reposition all players to opposite edge of where they entered
               pList.forEach(p2=>{const nx=dir==='E'?1:dir==='W'?G-2:clamp(p2.x||0,0,G-1);const ny=dir==='S'?1:dir==='N'?G-2:clamp(p2.y||0,0,G-1);fbSet(`mp/${roomId}/players/${p2.id||myId}/x`,nx);fbSet(`mp/${roomId}/players/${p2.id||myId}/y`,ny);});
             }
           }else{
             // Not all on same edge — reset timer, but still show hint for the edge someone is on
             if(g.transitionTimer){g.transitionTimer=0;g.transitionDir=null;g.transitionHint=null;changed=true;}
             if(anyEdge){
-              const nc=getNextCoord(g.roomCoord,anyEdge);const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
+              const nc=getNextCoord(g.roomCoord,anyEdge);const nid=coordId(nc.x,nc.y);
+              const ns=roomStyle(nc.x,nc.y);
+              const dirName={N:'↑Пн',S:'↓Пд',E:'→Сх',W:'←Зх'}[anyEdge];
               const cached=g.roomCache&&g.roomCache[nid];
-              const isBossRoom=!cached&&rNum>1&&rNum%3===0;
-              const peekHint=cached?`◄ ${anyEdge}: Кімната ${rNum}${cached.isBoss?' 👹':` (${(cached.objects||[]).filter(o=>OBJ_TYPES[o.type]?.isLoot).length}💎)`}`:isBossRoom?`◄ ${anyEdge}: 👹 БОС`:`◄ ${anyEdge}: нова кімната`;
+              const peekHint=`${dirName} ${ns.sym} ${ns.name}${cached?(cached.isBoss?' 👹':cached.cleared?' ✓':''):(ns.bossChance>0.2?' ⚠':'')}`;
               if(g.peekHint!==peekHint){g.peekHint=peekHint;changed=true;}
             }else if(g.peekHint){g.peekHint=null;changed=true;}
           }
@@ -1010,9 +1175,9 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       if(isHost){
         // Spectator-HOST: drive the simulation (enemies, bots) but don't play
         let initE=[],initO=[],isBoss=false;
-        if(mpMode==='coop_adventure'){const ac=generateRoom(1,CX,CY,diff);initE=ac.enemies;initO=ac.objects;isBoss=ac.isBoss;}
+        if(mpMode==='coop_adventure'){const hub=generateHub();initE=hub.enemies;initO=hub.objects;isBoss=false;}
         else if(mpMode==='coop_survival'){initE=spawnWave(1);}
-        rs.current={enemies:initE,objects:initO,isBossRoom:isBoss,roomCoord:{x:0,y:0},roomNumber:1,diff,mpMode,ff,score:0,_roomCleared:false,edgeTimers:{},msg:'Бій!',wave:1,gameOver:false,winner:null,flash:[],flashUntil:0,roomCache:{}};
+        rs.current={enemies:initE,objects:initO,isBossRoom:isBoss,roomCoord:{x:META_CENTER,y:META_CENTER},roomNumber:0,isHub:mpMode==='coop_adventure',diff,mpMode,ff,score:0,_roomCleared:0,edgeTimers:{},roomStyle:roomStyle(META_CENTER,META_CENTER),msg:mpMode==='coop_adventure'?'🏠 ДІМ — оберіть напрямок':'Бій!',wave:1,gameOver:false,winner:null,flash:[],flashUntil:0,roomCache:{}};
         syncState();
         const sLoop=setInterval(()=>{runHostTick();},80);
         const sHb=setInterval(()=>fbSet(`mp/${roomId}/info/hostHeartbeat`,Date.now()),200);
@@ -1038,9 +1203,9 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
 
     if(isHost){
       let initE=[],initO=[],isBoss=false;
-      if(mpMode==='coop_adventure'){const ac=generateRoom(1,CX,CY,diff);initE=ac.enemies;initO=ac.objects;isBoss=ac.isBoss;}
+      if(mpMode==='coop_adventure'){const hub=generateHub();initE=hub.enemies;initO=hub.objects;isBoss=false;}
       else if(mpMode==='coop_survival'){initE=spawnWave(1);}
-      rs.current={enemies:initE,objects:initO,isBossRoom:isBoss,roomCoord:{x:0,y:0},roomNumber:1,diff,mpMode,ff,score:0,_roomCleared:false,edgeTimers:{},msg:mpMode==='coop_adventure'?'Кімната 1 — стань на краю для переходу':mpMode==='coop_survival'?'Хвиля 1!':'Бій!',wave:1,gameOver:false,winner:null,flash:[],flashUntil:0};
+      rs.current={enemies:initE,objects:initO,isBossRoom:isBoss,roomCoord:{x:META_CENTER,y:META_CENTER},roomNumber:0,isHub:mpMode==='coop_adventure',diff,mpMode,ff,score:0,_roomCleared:0,edgeTimers:{},roomStyle:roomStyle(META_CENTER,META_CENTER),msg:mpMode==='coop_adventure'?'🏠 ДІМ — оберіть напрямок дослідження (стань на край)':mpMode==='coop_survival'?'Хвиля 1!':'Бій!',wave:1,gameOver:false,winner:null,flash:[],flashUntil:0,roomCache:{}};
       syncState();
       const loop=setInterval(()=>{runHostTick();},80);
       cln.current.push(()=>clearInterval(loop));
@@ -1194,8 +1359,11 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       fr();
     },1000);
   },[]);
+  const SPELL_CD=4000; // 4s cooldown
   const castSpell=useCallback((spell)=>{
     const p=myP.current,g=rs.current;if(!p)return;const fn=spell.fn,now=Date.now();
+    if(now<spellCdRef.current){const left=Math.ceil((spellCdRef.current-now)/1000);setMsg(`⏳ Заклинання перезаряджається (${left}с)`);return;}
+    spellCdRef.current=now+SPELL_CD;
     if(fn==='stamina')p.stamina=Math.min(100,p.stamina+40);
     else if(fn==='heal')p.hp=Math.min(p.maxHp,p.hp+40);
     else if(fn==='armor')p.spell={fn:'armor',until:now+5000};
@@ -1235,7 +1403,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       <div style={{display:'flex',gap:'8px',alignItems:'center',marginBottom:'1px'}}>
         {spectator?<div style={{flex:1,fontSize:'11px',color:'#a78bfa',letterSpacing:'.1em'}}>👁 СПОСТЕРІГАЧ</div>:<><div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,((p.hp||0)/(p.maxHp||100))*100)}%`,background:(p.hp||0)>(p.maxHp||100)*.3?pc:'#ef4444',transition:'width .1s'}}/></div>
         <div style={{width:'40px',height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${p.stamina||0}%`,background:'#3b82f6',transition:'width .08s'}}/></div></>}
-        <div style={{fontSize:'8px',color:'#1e4a7f',minWidth:'36px',textAlign:'right'}}>{mpMode==='coop_adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:mpMode==='coop_survival'?`W${g.wave||1}`:'ДУЕЛЬ'}</div>
+        <div style={{fontSize:'8px',color:'#1e4a7f',minWidth:'36px',textAlign:'right'}}>{mpMode==='coop_adventure'?(g.isHub?'🏠ДІМ':`${g.roomStyle?.sym||''}${g.roomNumber||0}${g.isBossRoom?'👹':''}`):mpMode==='coop_survival'?`W${g.wave||1}`:'ДУЕЛЬ'}</div>
         <div style={{fontSize:'8px',color:pc,minWidth:'30px',textAlign:'right'}}>{(p.pitch||0)>0.3?'⬆СИЛА':(p.pitch||0)<-0.3?'⬇ВІДП':'—'}</div>{p.spell?.until>Date.now()&&<div style={{fontSize:'8px',color:'#e879f9',minWidth:'20px'}}>{p.spell.fn==='surge'?'⚡×2':p.spell.fn==='armor'?'🛡':p.spell.fn==='stealth'?'👻':''}</div>}<div style={{fontSize:'8px',color:'#f59e0b',minWidth:'24px',textAlign:'right'}}>{g.score||0}</div>
       </div>
       {/* Other players HPs */}
@@ -1260,8 +1428,15 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       <div style={{height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${(g.transitionTimer/50)*100}%`,background:'#22c55e',transition:'width .1s'}}/></div>
     </div>}
     {!g.transitionDir&&g.peekHint&&<div style={{fontSize:'9px',color:'#a78bfa',padding:'1px 8px',width:'100%',maxWidth:'480px',flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.peekHint} <span style={{color:'#334155'}}>· зберіть усіх</span></div>}
+    {/* HUB direction compass — 4 archetypes */}
+    {g.isHub&&!g.transitionDir&&(()=>{const rc=g.roomCoord||{x:META_CENTER,y:META_CENTER};const dirs=[['N','↑'],['W','←'],['E','→'],['S','↓']];return(<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',flexShrink:0,display:'flex',gap:'3px',justifyContent:'center'}}>
+      {dirs.map(([d,arrow])=>{const nc=getNextCoord(rc,d);const ns=roomStyle(nc.x,nc.y);return(<div key={d} style={{flex:1,textAlign:'center',padding:'3px 2px',background:ns.bg,border:`1px solid ${ns.edge}`,borderRadius:'4px'}}>
+        <div style={{fontSize:'11px',color:ns.accent}}>{arrow}{ns.sym}</div>
+        <div style={{fontSize:'6px',color:ns.edge,whiteSpace:'nowrap',overflow:'hidden'}}>{ns.name}</div>
+      </div>);})}
+    </div>);})()}
     {/* GRID — IDENTICAL to single-player (worldMode/isRotated/isPanorama) */}
-    <div style={isPanorama?{position:'fixed',inset:0,zIndex:1,background:'#010d1f',display:'grid',gridTemplateColumns:`repeat(${G},1fr)`,gridTemplateRows:`repeat(${G},1fr)`,transform:'perspective(600px) rotateX(55deg) scale(1.15)',transformOrigin:'50% 50%'}:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
+    <div style={isPanorama?{position:'fixed',inset:0,zIndex:1,background:'#010d1f',display:'grid',gridTemplateColumns:`repeat(${G},1fr)`,gridTemplateRows:`repeat(${G},1fr)`,transform:'perspective(600px) rotateX(55deg) scale(1.15)',transformOrigin:'50% 50%'}:{padding:'3px',background:g.roomStyle?.bg||'#010d1f',border:`2px solid ${g.roomStyle?.edge||'#1e4a7f'}`,borderRadius:'6px',margin:'2px 0',boxShadow:`0 0 12px ${(g.roomStyle?.edge||'#1e3a5f')}44`,transition:'all .5s'}}>
       <div style={{display:isPanorama?'contents':'grid',gridTemplateColumns:isPanorama?undefined:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
         {Array.from({length:G*G},(_,idx2)=>{
           const sx=idx2%G,sy=Math.floor(idx2/G);
@@ -1301,7 +1476,12 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       <span style={{fontSize:'8px',color:'#334155'}}>{spectator?`${Object.values(allP).filter(x=>x.alive&&!x.isSpectator).length} живих`:`${p.wpn}${(p.weaponMods?.reach||0)>0?` 🔭+${p.weaponMods.reach}кл`:''}`}</span>
     </div>
     {/* MorseBar */}
-    {!spectator&&<MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>}
+    {!spectator&&<>
+      {spellCdRef.current>Date.now()&&<div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',flexShrink:0}}>
+        <div style={{height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,100-((spellCdRef.current-Date.now())/SPELL_CD)*100)}%`,background:'#a78bfa',transition:'width .1s'}}/></div>
+      </div>}
+      <MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>
+    </>}
     {/* Dead overlay */}
     {!spectator&&!p.alive&&!allDead&&!g.gameOver&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.82)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30,fontFamily:"'Courier New',monospace"}}>
       <div style={{color:'#ef4444',fontSize:'22px',fontWeight:'bold',letterSpacing:'.2em',animation:'shake .4s'}}>ЗАГИНУВ</div>
