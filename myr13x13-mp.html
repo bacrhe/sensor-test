@@ -469,645 +469,7 @@ function Settings({s,setS,sPhase,setSPhase,onBack,t=k=>k,isMp=false}){
 }
 
 // ── GAME ──────────────────────────────────────────────────────────
-function Game({gmode,settings,sPhase,onDead}){
-  const gs=useRef(null);
-  const[,forceRender]=useReducer(x=>x+1,0);
-  const morseTimer=useRef(null);
-  const touchStart=useRef({x:0,y:0,t:0,onBtn:false});
-  const prevAccMag=useRef(9.8);
-  const lastStrikeT=useRef(0);
-  const isRadar=settings.worldMode==='radar';
-  const isPanorama=settings.worldMode==='panorama';
-  const isRotated=isRadar||isPanorama; // both modes: player centered, world rotates
-  const STRENGTH=4;
 
-  // ══ REFS для гейм-лупу — уникаємо stale closure ══
-  const onDeadRef=useRef(onDead);
-  const settingsRef=useRef(settings);
-  const gmodeRef=useRef(gmode);
-  const isRadarRef=useRef(isRadar);
-  useEffect(()=>{onDeadRef.current=onDead;},[onDead]);
-  useEffect(()=>{settingsRef.current=settings;},[settings]);
-  useEffect(()=>{gmodeRef.current=gmode;},[gmode]);
-  useEffect(()=>{isRadarRef.current=isRadar;},[isRadar,isPanorama]);
-
-  const setMsg=useCallback((text)=>{
-    const g=gs.current;if(!g)return;
-    g.msg=text;g.msgKey=(g.msgKey||0)+1;
-    speak(text,settingsRef.current.voice);
-    forceRender();
-  },[]);
-  const setMsgRef=useRef(setMsg);
-  useEffect(()=>{setMsgRef.current=setMsg;},[setMsg]);
-
-  // ── Init ────────────────────────────────────────────────────
-  useEffect(()=>{
-    EID=0;
-    gs.current={
-      player:(()=>{const dCfg=DIFFICULTY[settings.difficulty||'normal']||DIFFICULTY.normal;const hp=Math.round(100*dCfg.playerHp);return{x:CX,y:CY,hp,maxHp:hp};})(),
-      enemies:[],
-      yawIdx:0,compassD:0,vYaw:0,pitch:0,prevYawIdx:0,
-      stamina:100,fingers:5,
-      dropped:false,droppedUntil:0,
-      wave:0,score:0,
-      objects:[],roomCoord:{x:0,y:0},roomMap:{},roomNumber:1,isBossRoom:false,
-      transitioning:false,edgeTimer:0,peekDir:null,peekInfo:null,_roomCleared:false,
-      weaponMods:{reach:0,weight:1,sharpness:1},unlockedSpells:['.'],
-      divergence:0,highDTicks:0,
-      beaconCount:0,beaconProgress:0,
-      spell:null,
-      flash:[],flashUntil:0,
-      msg:'',msgKey:0,waveMsg:'',
-      tutStep:0,tutDone:{moved:false,rotated:false,pitched:false,attacked:false,beaconed:false,morsed:false},
-      morseSeq:'',
-      _waveTimer:null,
-    };
-
-    if(gmode==='tutorial'){
-      setTimeout(()=>setMsg('...'),1500);
-      setTimeout(()=>setMsg(TUT[1].msg),4500);
-      setTimeout(()=>{const g=gs.current;if(!g)return;g.tutStep=2;setMsg(TUT[2].msg);},8500);
-    }
-    if(gmode==='adventure'){
-      EID=100;const g0=gs.current;
-      const ac=generateRoom(1,CX,CY,settings.difficulty);
-      g0.enemies=ac.enemies;g0.objects=ac.objects;g0.isBossRoom=ac.isBoss;
-      g0.roomCoord={x:0,y:0};g0.roomNumber=1;
-      g0.roomMap={[coordId(0,0)]:{enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true}};
-      setTimeout(()=>setMsg('Кімната 1 — стань на краю 4с → наступна кімната'),800);
-      forceRender();
-    }
-    if(gmode==='survival'){
-      gs.current.wave=1;gs.current.waveMsg='Хвиля 1';snd('wave');forceRender();
-      gs.current._waveTimer=setTimeout(()=>{gs.current._waveTimer=null;doSpawnWave(1);},2000);
-    }
-    return()=>{
-      const g=gs.current;if(g&&g._waveTimer){clearTimeout(g._waveTimer);g._waveTimer=null;}
-      clearTimeout(morseTimer.current);
-    };
-  },[]);// eslint-disable-line
-
-  // ── Spawn wave ───────────────────────────────────────────────
-  const doSpawnWave=useCallback((waveNum)=>{
-    const g=gs.current;if(!g)return;
-    const wi=Math.min(waveNum-1,WAVES.length-1);
-    const extra=Math.max(0,waveNum-WAVES.length);
-    const spawned=[];
-    WAVES[wi].forEach(({t,n})=>{
-      const tot=n+(t==='shadow'?extra:0);
-      for(let i=0;i<tot;i++){const e=spawnE(t,[{x:g.player.x,y:g.player.y},...spawned]);if(e)spawned.push(e);}
-    });
-    // Apply difficulty scaling to wave enemies
-    const _wdCfg=DIFFICULTY[settingsRef.current.difficulty||'normal']||DIFFICULTY.normal;
-    g.enemies=spawned.map(e=>({...e,hp:Math.max(1,Math.round(e.hp*_wdCfg.enemyHp)),maxHp:Math.max(1,Math.round(e.hp*_wdCfg.enemyHp))}));
-    g.waveMsg='';
-    setMsg(`Хвиля ${waveNum} · ${spawned.length} ворогів`);
-    snd('wave');forceRender();
-  },[setMsg]);
-  const doSpawnRef=useRef(doSpawnWave);
-  useEffect(()=>{doSpawnRef.current=doSpawnWave;},[doSpawnWave]);
-
-  // ── Spell ────────────────────────────────────────────────────
-  const castSpell=useCallback((sp)=>{
-    const g=gs.current;if(!g)return;snd('spell');
-    const fn=sp.fn,now=Date.now();
-    if(fn==='stamina'){g.stamina=Math.min(100,g.stamina+30);}
-    else if(fn==='mend'){g.fingers=Math.min(5,g.fingers+1);}
-    else if(fn==='heal'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+30)};}
-    else if(fn==='cure'){g.player={...g.player,hp:Math.min(g.player.maxHp,g.player.hp+50)};}
-    else if(fn==='omni'){doAttackInternal(true);}
-    else if(fn==='teleport'){const[dx,dy]=DIR[g.yawIdx];g.player={...g.player,x:clamp(g.player.x+dx*3,0,G-1),y:clamp(g.player.y+dy*3,0,G-1)};}
-    else if(fn==='freeze'){const near=g.enemies.reduce((b,e)=>{const d=Math.abs(e.x-g.player.x)+Math.abs(e.y-g.player.y);return(!b||d<b.d)?{e,d}:b;},null);if(near)g.enemies=g.enemies.map(e=>e.id===near.e.id?{...e,frozen:now+3000}:e);}
-    else if(fn==='lockall'){g.enemies=g.enemies.map(e=>({...e,frozen:now+4000}));}
-    else if(fn==='chaos'){g.enemies=g.enemies.map(e=>({...e,chaosUntil:now+5000}));}
-    else{g.spell={fn,col:sp.col,name:sp.name,expires:now+5000};}
-    setMsg(`✨ ${sp.name}! ${sp.desc}`);
-    if(gmodeRef.current==='tutorial'&&!g.tutDone.morsed){
-      g.tutDone.morsed=true;if(g.tutStep===7){g.tutStep=8;setTimeout(()=>setMsg(TUT[8].msg),800);}
-    }
-    forceRender();
-  },[setMsg]);
-
-  // ── Attack ────────────────────────────────────────────────────
-  function doAttackInternal(omni){
-    const g=gs.current;if(!g||g.dropped||g.stamina<4)return;
-    snd('swing');
-    const yi=omni?0:g.yawIdx;const wk=omni?'flail':settingsRef.current.startWpn;
-    const cells=getWCells(g.player.x,g.player.y,yi,wk,gs.current?.weaponMods?.reach||0);
-    const wMods=gs.current?.weaponMods||{reach:1,weight:1,sharpness:1};
-    const C=STRENGTH*wMods.sharpness/(WPN[settingsRef.current.startWpn].w*wMods.weight);
-    const chargeMult=1+Math.max(0,g.pitch)*1.8;
-    const spellMult=(g.spell?.fn==='burn'?3:g.spell?.fn==='surge'?2:1);
-    const baseDmg=Math.round(12*chargeMult*C*spellMult);
-    if(g.spell?.fn==='burn'||g.spell?.fn==='surge')g.spell=null;
-    let hits=0;
-    g.enemies=g.enemies.map(e=>{
-      if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size);if(!bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y)))return e;hits++;if(e.hp-baseDmg<=0){
-          const bTier=e.bossRoomIdx||1;
-          g.score+=100*bTier;snd('wave');
-          // Drop boss loot based on tier
-          const lKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
-          const dropCount=2+bTier; // tier1=3, tier2=4, tier3=5 drops
-          const drops=[...lKeys].sort(()=>Math.random()-.5).slice(0,dropCount);
-          const usedP=[...g.enemies.filter(x=>x.id!==e.id).map(x=>({x:x.x,y:x.y})),...(g.objects||[]).map(o=>({x:o.x,y:o.y}))];
-          const newLoot=[];
-          for(const lt of drops){
-            for(let t=0;t<40;t++){
-              const lx=1+Math.floor(Math.random()*(G-2));const ly=1+Math.floor(Math.random()*(G-2));
-              if(usedP.some(p=>Math.abs(p.x-lx)+Math.abs(p.y-ly)<2))continue;
-              newLoot.push({id:EID++,type:lt,x:lx,y:ly,hp:null});usedP.push({x:lx,y:ly});break;
-            }
-          }
-          if(newLoot.length>0){g.objects=[...(g.objects||[]),...newLoot];setMsgRef.current?.(`👹 Тир ${bTier} переможено! 💎×${newLoot.length}`);}
-          return null;
-        }return{...e,hp:e.hp-baseDmg};}
-      const cell=cells.find(c=>c.x===e.x&&c.y===e.y);if(!cell)return e;
-      hits++;const dmg=cell.main?baseDmg:Math.round(baseDmg*.5);
-      if(e.hp-dmg<=0){g.score+=10;return null;}
-      return{...e,hp:e.hp-dmg};
-    }).filter(Boolean);
-    if(gmodeRef.current==='adventure'&&g.objects?.length){
-      let clank=false;
-      g.objects=g.objects.map(obj=>{
-        const hit=cells.find(c=>c.x===obj.x&&c.y===obj.y);if(!hit)return obj;
-        const ot=OBJ_TYPES[obj.type];if(!ot||ot.isLoot)return obj;
-        if(!ot.destructible){clank=true;return obj;}
-        const nhp=(obj.hp||1)-(hit.main?baseDmg:Math.round(baseDmg*.5));
-        if(nhp<=0){g.score+=5;if(ot.explodes){const area=[{x:obj.x,y:obj.y},{x:obj.x+1,y:obj.y},{x:obj.x-1,y:obj.y},{x:obj.x,y:obj.y+1},{x:obj.x,y:obj.y-1}];g.enemies=g.enemies.map(e=>e.type!=='boss'&&area.find(a=>a.x===e.x&&a.y===e.y)?{...e,hp:e.hp-20}:e).filter(e=>e.hp>0);g.flash=[...cells.map(c=>({...c,col:'#f97316',fid:Math.random()}))];g.flashUntil=Date.now()+500;}return null;}
-        return{...obj,hp:nhp};
-      }).filter(Boolean);
-      if(clank){g.stamina=Math.max(0,g.stamina-25);snd('drop');}
-    }
-    g.stamina=Math.max(0,g.stamina-10);
-    g.flash=cells.map(c=>({...c,col:hits>0?'#22c55e':'#ef4444',fid:Math.random()}));g.flashUntil=Date.now()+350;
-    if(hits>0)snd('hit');
-    if(gmodeRef.current==='tutorial'&&!g.tutDone.attacked&&hits>0){
-      g.tutDone.attacked=true;
-      if(g.tutStep===5){setTimeout(()=>{const g2=gs.current;if(g2)g2.enemies=[];},300);g.tutStep=6;setTimeout(()=>setMsgRef.current?.(TUT[6].msg),900);}
-    }
-    forceRender();
-  }
-  const doAttack=useCallback(()=>doAttackInternal(false),[]);
-  const doAttackRef=useRef(doAttack);
-  useEffect(()=>{doAttackRef.current=doAttack;},[doAttack]);
-  useEffect(()=>{doMoveRef.current=doMove;},[doMove]);
-  useEffect(()=>{handleMorseRef.current=handleMorse;},[handleMorse]);
-
-
-  // ── Beacon complete ────────────────────────────────────────────
-  const doBeaconComplete=useCallback(()=>{
-    const g=gs.current;if(!g)return;
-    snd('beacon');g.stamina=Math.min(100,g.stamina+50);g.divergence=0;g.highDTicks=0;g.dropped=false;g.beaconCount=0;g.beaconProgress=0;
-    if(gmodeRef.current==='tutorial'&&!g.tutDone.beaconed){
-      g.tutDone.beaconed=true;if(g.tutStep===6){g.tutStep=7;setTimeout(()=>setMsgRef.current?.(TUT[7].msg),600);}
-    }
-    forceRender();
-  },[]);
-  const doBeaconRef=useRef(doBeaconComplete);
-  useEffect(()=>{doBeaconRef.current=doBeaconComplete;},[doBeaconComplete]);
-
-  // ── Move ──────────────────────────────────────────────────────
-  const doMoveDir=useCallback((sdx,sdy)=>{
-    const g=gs.current;if(!g)return;
-    let gdx=sdx,gdy=sdy;
-    if(isRadarRef.current||settingsRef.current.worldMode==='panorama'){const w=swipeToWorld(sdx,sdy,g.compassD);gdx=w.gdx;gdy=w.gdy;}
-    if(g.dropped||(g.stamina<4&&g.spell?.fn!=='rush'))return;
-    const nx=clamp(g.player.x+gdx,0,G-1),ny=clamp(g.player.y+gdy,0,G-1);
-    if(nx===g.player.x&&ny===g.player.y)return;
-    if(gmodeRef.current==='adventure'&&(nx<0||nx>=G||ny<0||ny>=G))return;
-    if(g.enemies.some(e=>e.x===nx&&e.y===ny))return;
-    if(gmodeRef.current==='adventure'){
-      if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return;
-      if(g.enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>bc.x===nx&&bc.y===ny)))return;
-    }
-    g.player={...g.player,x:nx,y:ny};
-    if(g.spell?.fn!=='rush'){const cost=Math.max(0,g.pitch)*10;if(cost>0)g.stamina=Math.max(0,g.stamina-cost);}
-    if(gmodeRef.current==='adventure'&&g.objects){
-      const loot=g.objects.find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
-      if(loot){
-        g.objects=g.objects.filter(o=>o.id!==loot.id);
-        const upg=OBJ_TYPES[loot.type]?.upg;
-        if(upg==='hp'){g.player={...g.player,hp:Math.min(g.player.maxHp+20,g.player.hp+20),maxHp:g.player.maxHp+20};}
-        else if(upg==='spell'){const avail=UNLOCKABLE_SPELLS.filter(s=>!(g.unlockedSpells||['.']).includes(s));if(avail.length>0){const ns=avail[Math.floor(Math.random()*avail.length)];g.unlockedSpells=[...(g.unlockedSpells||['.']),ns];setMsg('📜 Вивчено: '+(SPELL_MAP[ns]?.name||ns)+'!');}}
-        else if(upg==='reach'){g.weaponMods={...g.weaponMods,reach:(g.weaponMods.reach||0)+1};}
-        else if(upg==='weight'){g.weaponMods={...g.weaponMods,weight:Math.max(0.3,g.weaponMods.weight-0.15)};}
-        else if(upg==='sharpness'){g.weaponMods={...g.weaponMods,sharpness:g.weaponMods.sharpness+0.25};}
-        snd('spell');if(upg!=='spell')setMsg(OBJ_TYPES[loot.type]?.desc||'Покращення!');
-      }
-    }
-    if(gmodeRef.current==='tutorial'&&!g.tutDone.moved){
-      g.tutDone.moved=true;if(g.tutStep===2){g.tutStep=3;setTimeout(()=>setMsgRef.current?.(TUT[3].msg),600);}
-    }
-    forceRender();
-  },[]);
-
-  // ── Rotate (keyboard/manual) ───────────────────────────────────
-  const rotateW=useCallback((dir)=>{
-    const g=gs.current;if(!g)return;
-    const oldYaw=g.yawIdx;g.yawIdx=(g.yawIdx+dir+8)%8;
-    if(gmodeRef.current==='tutorial'&&!g.tutDone.rotated&&g.tutStep===3&&g.yawIdx!==oldYaw){
-      g.tutDone.rotated=true;g.tutStep=4;setTimeout(()=>setMsgRef.current?.(TUT[4].msg),600);
-    }
-    forceRender();
-  },[]);
-
-  // ── Morse ─────────────────────────────────────────────────────
-  const handleMorse=useCallback((sym)=>{
-    const g=gs.current;if(!g)return;
-    snd(sym==='.'?'dot':'dash');g.morseSeq+=sym;forceRender();
-    clearTimeout(morseTimer.current);
-    morseTimer.current=setTimeout(()=>{
-      const g2=gs.current;if(!g2)return;
-      const seq=g2.morseSeq;g2.morseSeq='';
-      const sp=SPELL_MAP[seq];
-      if(sp)castSpell(sp);else setMsg(`? "${seq}" — невідоме заклинання`);
-      forceRender();
-    },1000);
-  },[castSpell,setMsg]);
-
-  // ── Sensors ───────────────────────────────────────────────────
-  useEffect(()=>{
-    if(sPhase!=='active')return;
-    const handleCompassChange=(heading)=>{
-      const g=gs.current;if(!g)return;
-      const newYaw=Math.round(heading/45)%8;
-      const oldYaw=g.yawIdx;
-      g.compassD=heading;g.yawIdx=newYaw;
-      // Tutorial rotate detection
-      if(gmodeRef.current==='tutorial'&&!g.tutDone.rotated&&g.tutStep===3&&newYaw!==oldYaw){
-        g.tutDone.rotated=true;g.tutStep=4;
-        setTimeout(()=>setMsgRef.current?.(TUT[4].msg),600);
-      }
-    };
-    const onO=(e)=>{
-      const g=gs.current;if(!g)return;
-      const beta=e.beta??0;g.pitch=betaToPitch(beta,settingsRef.current.pitchSens);
-      if(e.webkitCompassHeading!=null&&!isNaN(e.webkitCompassHeading)){
-        handleCompassChange(e.webkitCompassHeading);
-      }
-      // Tutorial pitch detection
-      if(gmodeRef.current==='tutorial'&&!g.tutDone.pitched&&g.tutStep===4&&(g.pitch<-0.4||g.pitch>0.4)){
-        g.tutDone.pitched=true;
-        const[dx,dy]=DIR[g.yawIdx];
-        g.enemies=[{id:EID++,type:'shadow',x:clamp(g.player.x+dx*2,0,G-1),y:clamp(g.player.y+dy*2,0,G-1),hp:3,maxHp:3,lastMove:0,dummy:true}];
-        g.tutStep=5;setTimeout(()=>setMsgRef.current?.(TUT[5].msg),600);
-      }
-      forceRender();
-    };
-    const onOA=(e)=>{
-      if(e.alpha!=null&&!isNaN(e.alpha))handleCompassChange((360-e.alpha)%360);
-      forceRender();
-    };
-    const onM=(e)=>{
-      const g=gs.current;if(!g)return;
-      const ag=e.accelerationIncludingGravity;if(!ag)return;
-      const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
-      const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
-      if(delta>settingsRef.current.strikeThr&&now-lastStrikeT.current>500){lastStrikeT.current=now;doAttackRef.current?.();}
-      prevAccMag.current=mag;
-      const rr=e.rotationRate;const still=rr?Math.abs(rr.alpha??0)+Math.abs(rr.beta??0)+Math.abs(rr.gamma??0):999;
-      if(g.pitch<-0.4&&still<18&&(gmodeRef.current==='tutorial'||gmodeRef.current==='survival')){
-        g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/120,0,1);
-        if(g.beaconCount>=120)doBeaconRef.current?.();
-      }else{g.beaconCount=Math.max(0,g.beaconCount-1);g.beaconProgress=clamp(g.beaconCount/120,0,1);}
-      forceRender();
-    };
-    window.addEventListener('deviceorientation',onO,true);
-    window.addEventListener('deviceorientationabsolute',onOA,true);
-    window.addEventListener('devicemotion',onM);
-    return()=>{window.removeEventListener('deviceorientation',onO,true);window.removeEventListener('deviceorientationabsolute',onOA,true);window.removeEventListener('devicemotion',onM);};
-  },[sPhase]);// eslint-disable-line
-
-  // ── Keyboard ──────────────────────────────────────────────────
-  useEffect(()=>{
-    const held={};let bInt=null;
-    const kd=e=>{
-      if(held[e.key])return;held[e.key]=true;
-      if(e.key==='ArrowUp'||e.key==='w')doMoveDir(0,-1);if(e.key==='ArrowDown'||e.key==='s')doMoveDir(0,1);
-      if(e.key==='ArrowLeft'||e.key==='a')doMoveDir(-1,0);if(e.key==='ArrowRight'||e.key==='d')doMoveDir(1,0);
-      if(e.key==='q')rotateW(-1);if(e.key==='e')rotateW(1);
-      if(sPhase!=='active'){
-        if(e.key==='z'){const g=gs.current;if(g){g.pitch=-1;forceRender();}}
-        if(e.key==='c'){const g=gs.current;if(g){g.pitch=1;forceRender();}}
-        if(e.key==='b'){bInt=setInterval(()=>{const g=gs.current;if(!g)return;g.beaconCount++;g.beaconProgress=clamp(g.beaconCount/16,0,1);if(g.beaconCount>=16){clearInterval(bInt);doBeaconRef.current?.();}forceRender();},TICK);}
-      }
-      if(e.key===' '){e.preventDefault();doAttackRef.current?.();}
-      if(e.key==='.')handleMorse('.');if(e.key==='-')handleMorse('-');
-    };
-    const ku=e=>{
-      delete held[e.key];
-      if(sPhase!=='active'){
-        if(e.key==='z'){const g=gs.current;if(g){g.pitch=0;forceRender();}}
-        if(e.key==='c'){const g=gs.current;if(g){g.pitch=0;forceRender();}}
-        if(e.key==='b'){clearInterval(bInt);}
-      }
-    };
-    window.addEventListener('keydown',kd);window.addEventListener('keyup',ku);
-    return()=>{window.removeEventListener('keydown',kd);window.removeEventListener('keyup',ku);clearInterval(bInt);};
-  },[sPhase,doMoveDir,rotateW,handleMorse]);
-
-  // ── Touch (свайп скрізь, але НЕ на scroll-елементах) ─────────
-  useEffect(()=>{
-    const onS=e=>{
-      // Не перехоплюємо якщо це scroll-контейнер (Morse bar)
-      if(e.target.closest('.morse-scroll'))return;
-      e.preventDefault();
-      touchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now()};
-    };
-    const onE=e=>{
-      if(e.target.closest('.morse-scroll'))return;
-      e.preventDefault();
-      const{x,y,t}=touchStart.current;
-      const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;
-      const dist=Math.sqrt(dx*dx+dy*dy),dt=Date.now()-t;
-      if(dist<25){handleMorseRef.current?.(dt<280?'.':'-');}
-      else{clearTimeout(morseTimer.current);const g=gs.current;if(g){g.morseSeq='';forceRender();}if(Math.abs(dx)>Math.abs(dy))doMoveDir(Math.sign(dx),0);else doMoveDir(0,Math.sign(dy));}
-    };
-    const onM=e=>{if(!e.target.closest('.morse-scroll'))e.preventDefault();};
-    document.addEventListener('touchstart',onS,{passive:false});
-    document.addEventListener('touchend',onE,{passive:false});
-    document.addEventListener('touchmove',onM,{passive:false});
-    return()=>{document.removeEventListener('touchstart',onS);document.removeEventListener('touchend',onE);document.removeEventListener('touchmove',onM);};
-  },[doMoveDir,handleMorse]);
-
-  // ════════════════════════════════════════════════════════════════
-  // ГЕЙМ ЛУП — мінімальні deps, все через refs
-  // ════════════════════════════════════════════════════════════════
-  useEffect(()=>{
-    const id=setInterval(()=>{
-      const g=gs.current;if(!g)return;
-      const now=Date.now();
-      const wpn=settingsRef.current.startWpn;
-      const C=STRENGTH/WPN[wpn].w;
-
-      // Flash expire
-      if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
-      // ── ADVENTURE: edge timer + transition ──────────────────────
-      if(gmodeRef.current==='adventure'&&!g.transitioning){
-        const px=g.player.x,py=g.player.y;
-        let eDir=null;if(py===0)eDir='N';else if(py===G-1)eDir='S';else if(px===0)eDir='W';else if(px===G-1)eDir='E';
-        if(eDir){
-          g.edgeTimer=(g.edgeTimer||0)+1;
-          if(g.edgeTimer===25){g.peekDir=eDir;const nc=getNextCoord(g.roomCoord,eDir);g.peekInfo=g.roomMap[coordId(nc.x,nc.y)]||null;}
-          if(g.edgeTimer>=50){
-            g.transitioning=true;g.edgeTimer=0;
-            const nc=getNextCoord(g.roomCoord,eDir);const nid=coordId(nc.x,nc.y);const rNum=calcRoomNum(nc.x,nc.y);
-            const cid=coordId(g.roomCoord.x,g.roomCoord.y);
-            if(g.roomMap[cid]){g.roomMap[cid].enemies=[...g.enemies];g.roomMap[cid].objects=[...g.objects];g.roomMap[cid].cleared=g.enemies.length===0;}
-            const sx=eDir==='E'?0:eDir==='W'?G-1:clamp(g.player.x,0,G-1);
-            const sy=eDir==='S'?0:eDir==='N'?G-1:clamp(g.player.y,0,G-1);
-            g.player={...g.player,x:sx,y:sy};g.roomCoord=nc;g.roomNumber=rNum;g.peekDir=null;g.peekInfo=null;g._roomCleared=false;
-            if(g.roomMap[nid]){const sv=g.roomMap[nid];g.enemies=sv.enemies||[];g.objects=sv.objects||[];g.isBossRoom=sv.isBoss||false;g.roomMap[nid].visited=true;setMsgRef.current?.((sv.cleared?'Кімната '+rNum+' (очищена)':'Кімната '+rNum+' · '+g.enemies.length+' ворогів'+(g.isBossRoom?' 👹':'')));}
-            else{const ac=generateRoom(rNum,sx,sy,settingsRef.current.difficulty);g.enemies=ac.enemies;g.objects=ac.objects;g.isBossRoom=ac.isBoss;g.roomMap[nid]={enemies:ac.enemies,objects:ac.objects,isBoss:ac.isBoss,cleared:false,visited:true};setMsgRef.current?.(ac.isBoss?'👹 Кімната '+rNum+' — '+ac.enemies[0]?.name+'!':`Кімната ${rNum} · ${ac.enemies.length} ворогів`);}
-            g.score+=15;g.flash=[];snd('wave');setTimeout(()=>{if(gs.current)gs.current.transitioning=false;},600);
-          }
-        }else{if(g.edgeTimer>0){g.edgeTimer=0;g.peekDir=null;g.peekInfo=null;}}
-        if(g.enemies.length===0&&g._roomCleared!==g.roomNumber){
-          g._roomCleared=g.roomNumber; // tied to room, not a timer
-          setMsgRef.current?.('✓ Кімнату очищено! Стань на краю 4с → перехід');
-        }
-      }
-
-      // Divergence
-      let diff=g.yawIdx*45-g.vYaw;if(diff>180)diff-=360;if(diff<-180)diff+=360;
-      g.vYaw+=diff*(C*0.09);g.divergence=Math.min(100,Math.abs(diff)*(1/C));
-
-      // High divergence
-      if(g.divergence>65){g.highDTicks++;if(g.highDTicks>20){g.highDTicks=0;g.stamina-=25;if(g.stamina<=0){g.dropped=true;g.droppedUntil=now+5000;g.fingers--;snd('drop');if(g.fingers<=0){snd('death');onDeadRef.current?.();return;}}}}
-      else{g.highDTicks=0;}
-      if(g.dropped&&now>g.droppedUntil)g.dropped=false;
-
-      // Stamina
-      const sdMult=DIFFICULTY[settingsRef.current.difficulty||'normal']?.staminaDrain||1;
-      g.stamina=clamp(g.stamina+(1-(g.pitch+1)/2)*1.8-(g.divergence>65?1.2*sdMult:g.divergence>40?0.3*sdMult:0),0,100);
-
-      // Spell expire
-      if(g.spell&&now>g.spell.expires)g.spell=null;
-
-      // Tutorial rotate detection (keyboard/fallback)
-      if(gmodeRef.current==='tutorial'&&!g.tutDone.rotated&&g.tutStep===3){
-        if(g.yawIdx!==g.prevYawIdx){
-          g.tutDone.rotated=true;g.tutStep=4;
-          setTimeout(()=>setMsgRef.current?.(TUT[4].msg),600);
-        }
-      }
-      g.prevYawIdx=g.yawIdx;
-
-      // ── ВОРОГИ ─────────────────────────────────────────────────
-      if(!g.dropped&&g.enemies.length>0){
-        let dmg=0,flash=false;
-        g.enemies=g.enemies.map(e=>{
-          if(e.dummy)return e;
-          // ── BOSS: handle BEFORE ET lookup (ET has no 'boss' key) ──
-          if(e.type==='boss'){
-            if(e.frozen&&now<e.frozen)return e;
-            if(now-(e.lastMove||0)<(e.ms||700))return e;
-            const bcs=calcBossCells(e.x,e.y,e.size||1);
-            const adjToPlayer=bcs.some(bc=>Math.abs(bc.x-g.player.x)+Math.abs(bc.y-g.player.y)<=1);
-            if(adjToPlayer){dmg+=e.dmg||20;flash=true;return{...e,lastMove:now};}
-            const bdx=g.player.x-e.x,bdy=g.player.y-e.y;
-            const bDirs=[[Math.sign(bdx),0],[0,Math.sign(bdy)],[Math.sign(bdx),Math.sign(bdy)]].filter(([mx,my])=>mx||my);
-            const bm=bDirs.map(([mx,my])=>{
-              const nbx=e.x+mx,nby=e.y+my;
-              if(nbx<0||nby<0||nbx+(e.size||1)>G||nby+(e.size||1)>G)return null;
-              const nc=calcBossCells(nbx,nby,e.size||1);
-              if(nc.some(c=>c.x===g.player.x&&c.y===g.player.y))return null;
-              if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&nc.some(c=>c.x===o.x&&c.y===o.y)))return null;
-              return{x:nbx,y:nby,d:Math.abs(g.player.x-nbx)+Math.abs(g.player.y-nby)};
-            }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
-            return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};
-          }
-          // ── Regular enemy ──────────────────────────────────────────
-          if(e.frozen&&now<e.frozen)return e;
-          const et=ET[e.type];
-          if(!et)return e; // safety: unknown type
-          const ms=(e.chaosUntil&&now<e.chaosUntil)?et.ms*2:et.ms;
-          if(now-(e.lastMove||0)<ms)return e;
-          const dx=g.player.x-e.x,dy=g.player.y-e.y;
-          const dist=Math.abs(dx)+Math.abs(dy);
-          if(dist<=1){
-            const shield=g.spell?.fn==='shield',armor=g.spell?.fn==='armor',stealth=g.spell?.fn==='stealth';
-            if(!stealth){const dmgM=DIFFICULTY[settingsRef.current.difficulty||'normal']?.enemyDmg||1;const d=armor?Math.round(et.dmg*dmgM*.4):Math.round(et.dmg*dmgM);dmg+=d;flash=true;if(shield)g.spell=null;}
-            return{...e,lastMove:now};
-          }
-          const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];
-          const best=dirs.map(([mx,my])=>{
-            const nx2=e.x+mx,ny2=e.y+my;
-            if(nx2<0||nx2>=G||ny2<0||ny2>=G)return null;
-            if(nx2===g.player.x&&ny2===g.player.y)return null;
-            if(g.enemies.some(o=>o.id!==e.id&&o.x===nx2&&o.y===ny2))return null;
-            if(g.objects?.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2))return null;
-            return{x:nx2,y:ny2,d:Math.abs(g.player.x-nx2)+Math.abs(g.player.y-ny2)};
-          }).filter(Boolean).sort((a,b)=>a.d-b.d)[0];
-          return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
-        }).filter(Boolean);
-
-        if(dmg>0){
-          g.player={...g.player,hp:Math.max(0,g.player.hp-dmg)};
-          if(flash){snd('hurt');g.flash=[{x:g.player.x,y:g.player.y,col:'#ef4444',fid:Math.random()}];g.flashUntil=now+300;}
-          if(g.player.hp<=0){snd('death');onDeadRef.current?.();return;}
-        }
-      }
-
-      // ── ХВИЛЯ ЗАВЕРШЕНА ────────────────────────────────────────
-      if(gmodeRef.current==='survival'&&g.wave>0&&g.enemies.length===0&&!g._waveTimer){
-        const next=g.wave+1;
-        g.wave=next;g.waveMsg=`Хвиля ${next}`;
-        g._waveTimer=setTimeout(()=>{
-          if(gs.current)gs.current._waveTimer=null;
-          doSpawnRef.current?.(next);
-        },2500);
-      }
-
-      forceRender();
-    },TICK);
-    return()=>clearInterval(id);
-  },[]);// ← ПОРОЖНІ DEPS! Все через refs — луп ніколи не перезапускається.
-
-  // ── Render ────────────────────────────────────────────────────
-  const g=gs.current;
-  if(!g)return null;
-  const wCells=getWCells(g.player.x,g.player.y,g.yawIdx,settings.startWpn,g.weaponMods?.reach||0);
-  const cellSz=isPanorama?Math.floor(window.innerWidth/G):Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
-  const pc=pColor(g.pitch);const dc=g.divergence>70?'#ef4444':g.divergence>40?'#f59e0b':'#22c55e';
-  const getPos=(gx,gy)=>isRotated?toScreen(gx,gy,g.player.x,g.player.y,g.compassD):{sx:gx,sy:gy};
-
-  return(
-    <div style={{background:'#010d1f',flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace"}}>
-
-      {/* HUD */}
-      <div style={{width:'100%',maxWidth:'480px',padding:'5px 8px 1px',display:'flex',gap:'5px',alignItems:'center'}}>
-        <Bar v={g.player.hp} max={g.player.maxHp} col={g.player.hp>50?'#22c55e':g.player.hp>25?'#f59e0b':'#ef4444'} lbl="HP"/>
-        <Bar v={g.stamina} max={100} col='#60a5fa' lbl="STA"/>
-        <div style={{display:'flex',gap:'2px'}}>{Array.from({length:5},(_,i)=><div key={i} style={{width:'4px',height:'11px',borderRadius:'2px',background:i<g.fingers?(g.dropped?'#f59e0b':'#22c55e'):'#1e293b'}}/>)}</div>
-        {sPhase==='active'&&<div style={{fontSize:'7px',color:'#22c55e'}}>◉</div>}
-        <div style={{fontSize:'9px',color:g.isBossRoom?'#f97316':'#60a5fa',minWidth:'30px',textAlign:'right'}}>{gmode==='adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:gmode==='survival'?`W${g.wave}`:'TUT'}</div>
-        {(gmode==='survival'||gmode==='adventure')&&<div style={{fontSize:'9px',color:'#f59e0b',minWidth:'20px',textAlign:'right'}}>{g.score}</div>}
-      </div>
-
-      {/* DIV + spell */}
-      <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',alignItems:'center',gap:'4px'}}>
-        <div style={{fontSize:'7px',color:'#1e3a5f',width:'18px'}}>DIV</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.divergence}%`,background:dc,transition:'width .05s'}}/></div>
-        {g.spell&&<div style={{fontSize:'8px',color:g.spell.col,animation:'pulse .5s infinite',marginLeft:'4px'}}>{g.spell.name}</div>}
-        {g.dropped&&<div style={{fontSize:'8px',color:'#f59e0b',animation:'pulse .5s infinite'}}>⚠DROP</div>}
-      </div>
-
-      {/* Morse input display */}
-      {g.morseSeq&&<div style={{fontSize:'12px',letterSpacing:'.2em',padding:'0 8px 1px'}}>
-        {g.morseSeq.split('').map((s,i)=><span key={i} style={{color:s==='.'?'#60a5fa':'#f59e0b'}}>{s}</span>)}
-      </div>}
-
-      {/* Sensor readout */}
-      {sPhase==='active'&&<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'8px',fontSize:'7px',color:'#1e3a5f'}}>
-        <span>β<span style={{color:pc}}>{Math.round(g.pitch*settingsRef.current.pitchSens+40)}°</span></span>
-        <span>⚔<span style={{color:'#60a5fa'}}>{DNAM[g.yawIdx]}</span></span>
-        {(isRadar||isPanorama)&&<span>↻<span style={{color:'#a78bfa'}}>{g.compassD.toFixed(0)}°</span></span>}
-        <span style={{color:pc}}>{g.pitch<-0.3?'REST':g.pitch>0.3?'CHARGE':'HOLD'}</span>
-      </div>}
-
-      {g.waveMsg&&<div style={{fontSize:'16px',color:'#f59e0b',fontWeight:'bold',padding:'1px',letterSpacing:'.1em'}}>{g.waveMsg}</div>}
-      {gmode==='adventure'&&g.enemies?.some(e=>e.type==='boss')&&(()=>{const boss=g.enemies.find(e=>e.type==='boss');return(<div style={{width:'100%',maxWidth:'480px',padding:'0 8px 2px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'8px',color:boss.col,minWidth:'60px'}}>👹{boss.name}</div>
-        <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden',border:`1px solid ${boss.col}44`}}><div style={{height:'100%',width:`${(boss.hp/boss.maxHp)*100}%`,background:boss.col,transition:'width .1s'}}/></div>
-        <div style={{fontSize:'8px',color:boss.col}}>{boss.hp}/{boss.maxHp}</div>
-      </div>);})()}
-      {gmode==='adventure'&&(g.edgeTimer||0)>5&&<div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'7px',color:'#f97316',minWidth:'40px'}}>{g.peekDir?`→${g.peekDir}`:'🚪'}</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.min(100,(g.edgeTimer||0)/50*100)}%`,background:'#f97316',transition:'width .08s'}}/></div>
-        <div style={{fontSize:'7px',color:'#f97316'}}>{Math.round((g.edgeTimer||0)/50*100)}%</div>
-      </div>}
-      {gmode==='adventure'&&g.peekDir&&(()=>{
-        const nc=getNextCoord(g.roomCoord,g.peekDir);const rNum=calcRoomNum(nc.x,nc.y);const pr=g.peekInfo;
-        const dirSym={N:'↑ ПІВНІЧ',S:'↓ ПІВДЕНЬ',E:'→ СХІД',W:'← ЗАХІД'}[g.peekDir]||g.peekDir;
-        return(<div style={{position:'fixed',bottom:'8%',left:'50%',transform:'translateX(-50%)',zIndex:20,background:'rgba(1,13,31,0.96)',border:`1px solid ${pr?.isBoss?'#f97316':'#1e4a7f'}`,borderRadius:'9px',padding:'10px 14px',minWidth:'210px',fontFamily:"'Courier New',monospace",animation:'fadeIn .3s ease'}}>
-          <div style={{fontSize:'8px',color:'#1e3a5f',letterSpacing:'.12em',marginBottom:'3px'}}>{dirSym}</div>
-          <div style={{fontSize:'12px',fontWeight:'bold',color:pr?.isBoss?'#f97316':'#60a5fa',marginBottom:'4px'}}>{pr?(pr.isBoss?`👹 КІМНАТА ${rNum} — БОС`:`Кімната ${rNum}`):`? Кімната ${rNum}`}</div>
-          {pr&&<div style={{fontSize:'9px',color:'#94a3b8'}}>{pr.cleared?<span style={{color:'#22c55e'}}>✓ очищена</span>:<span>⚔ {pr.enemies?.length||0} ворогів</span>}
-            {pr.objects?.filter(o=>OBJ_TYPES[o.type]?.isLoot).length>0&&<span style={{color:'#fbbf24'}}> 💎 {pr.objects.filter(o=>OBJ_TYPES[o.type]?.isLoot).map(o=>OBJ_TYPES[o.type]?.sym).join('')}</span>}
-          </div>}
-          {!pr&&<div style={{fontSize:'9px',color:'#334155'}}>невідома кімната</div>}
-          <div style={{fontSize:'7px',color:'#1e3a5f',marginTop:'4px',textAlign:'center'}}>залишайся → авто-перехід</div>
-        </div>);
-      })()}
-      {gmode==='adventure'&&((g.weaponMods?.reach||0)>0||g.weaponMods?.sharpness>1||g.weaponMods?.weight<1||(g.unlockedSpells?.length||0)>1)&&(
-        <div style={{width:'100%',maxWidth:'480px',padding:'0 8px 1px',display:'flex',gap:'5px',fontSize:'8px'}}>
-          {(g.weaponMods?.reach||0)>0&&<span style={{color:'#f97316'}}>🔭+{g.weaponMods.reach}кл</span>}
-          {g.weaponMods?.weight<1&&<span style={{color:'#22c55e'}}>🌬+{Math.round((1-g.weaponMods.weight)*100)}%</span>}
-          {g.weaponMods?.sharpness>1&&<span style={{color:'#f59e0b'}}>⚡+{Math.round((g.weaponMods.sharpness-1)*100)}%</span>}
-          <span style={{color:'#e879f9',marginLeft:'auto'}}>✨{g.unlockedSpells?.length||1}/16</span>
-        </div>
-      )}
-
-      {/* GRID */}
-      <div style={isPanorama?{
-          position:'fixed',inset:0,zIndex:1,background:'#010d1f',
-          display:'grid',
-          gridTemplateColumns:`repeat(${G},1fr)`,
-          gridTemplateRows:`repeat(${G},1fr)`,
-          transform:'perspective(320px) rotateX(42deg)',
-          transformOrigin:'50% 46%',
-        }:{padding:'3px',background:'#010d1f',border:'2px solid #1e4a7f',borderRadius:'6px',margin:'2px 0',boxShadow:'0 0 8px #1e3a5f44'}}>
-        <div style={{display:isPanorama?'contents':'grid',gridTemplateColumns:isPanorama?undefined:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
-          {Array.from({length:G*G},(_,idx)=>{
-            const sx=idx%G,sy=Math.floor(idx/G);
-            const isP=isRotated?(sx===CX&&sy===CY):(sx===g.player.x&&sy===g.player.y);
-            const en=g.enemies.find(e=>{if(e.type==='boss')return false;const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
-            const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
-            const fl=g.flash.find(c=>{const pos=isRotated?toScreen(c.x,c.y,g.player.x,g.player.y,g.compassD):{sx:c.x,sy:c.y};return pos.sx===sx&&pos.sy===sy;});
-            // In radar mode: find world-space coords for this screen cell
-const _wc=isRotated?fromScreen(sx,sy,g.player.x,g.player.y,g.compassD):{gx:sx,gy:sy};
-// Void = outside the world (only happens in radar when player is off-center)
-const isVoid=isRotated&&(_wc.gx<0||_wc.gx>=G||_wc.gy<0||_wc.gy>=G);
-const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
-            const cellObj=g.objects?.find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
-            const cellBoss=g.enemies?.find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-            let bg=isVoid?'#000000':isEdge?'#040e1a':'#020c1a';
-            let bdr=isVoid?'none':isEdge?'2px solid #2a5a9f':'1px solid #091c30';
-            if(fl)bg=fl.col+'55';
-            else if(isP){bg='#14532d';bdr='1px solid #22c55e';}
-            else if(en&&ET[en.type]){bg=ET[en.type].col+'22';bdr=`1px solid ${ET[en.type].col}`;}
-            else if(cellBoss){bg=cellBoss.col+'22';bdr=`2px solid ${cellBoss.col}`;}
-            else if(cellObj&&!OBJ_TYPES[cellObj.type]?.isLoot){const ot2=OBJ_TYPES[cellObj.type];bg=ot2.destructible?'#92400e33':'#37415144';bdr=`1px solid ${ot2.col}`;}
-            else if(wc){bg=wc.extra?'#f9731344':wc.main?'#1e3a8a44':'#1e3a8a18';bdr=`1px solid ${wc.extra?'#f97316':wc.main?'#3b82f6':'#1e3a5f'}`;}
-            return(
-              <div key={idx} style={{width:isPanorama?'100%':`${cellSz}px`,height:isPanorama?'100%':`${cellSz}px`,background:bg,border:bdr,borderRadius:'1px',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',transition:'background .05s'}}>
-                {!isVoid&&!isP&&!en&&cellObj&&(()=>{const ot=OBJ_TYPES[cellObj.type];return <span style={{fontSize:`${cellSz*.55}px`,color:ot.col,opacity:ot.destructible?(0.4+((cellObj.hp||1)/3)*0.6):1}}>{ot.sym}</span>;})()}
-                {!isVoid&&!isP&&!en&&!cellObj&&cellBoss&&(()=>{const isCore=getPos(cellBoss.x,cellBoss.y).sx===sx&&getPos(cellBoss.x,cellBoss.y).sy===sy;return <span style={{fontSize:`${cellSz*.6}px`,color:cellBoss.col,fontWeight:'bold'}}>{isCore?cellBoss.sym:'·'}</span>;})()}
-                {isP?(<>
-                  <div style={{width:`${cellSz*.44}px`,height:`${cellSz*.44}px`,borderRadius:'50%',
-                    background:g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e',
-                    boxShadow:`0 0 5px ${g.dropped?'#f59e0b':g.spell?.fn==='shield'?'#3b82f6':'#22c55e'}`}}/>
-                  <div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',fontSize:`${cellSz*.52}px`,color:'#22c55e',lineHeight:1,pointerEvents:'none'}}>{isRotated?'↑':DSYM[g.yawIdx]}</div>
-                </>):en&&ET[en.type]?(<span style={{color:ET[en.type].col+(en.frozen&&Date.now()<en.frozen?'77':'ff'),fontSize:`${cellSz*.48}px`}}>{ET[en.type].sym}</span>):wc?.extra?<span style={{color:'#f9731688',fontSize:`${cellSz*.35}px`}}>+</span>:null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Beacon */}
-      {g.beaconProgress>0&&<div style={{width:'100%',maxWidth:'480px',padding:'2px 8px',display:'flex',alignItems:'center',gap:'5px'}}>
-        <div style={{fontSize:'7px',color:'#22c55e'}}>⬇МАЯК</div>
-        <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${g.beaconProgress*100}%`,background:'#22c55e',transition:'width .05s'}}/></div>
-      </div>}
-
-      {/* Companion */}
-      {g.msg&&<div key={g.msgKey} style={{margin:'2px 8px',padding:'6px 9px',background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'6px',fontSize:'10px',color:'#94a3b8',fontStyle:'italic',maxWidth:'440px',width:'100%',lineHeight:1.6,animation:'fadeIn .3s ease'}}>{g.msg}</div>}
-
-      {/* MORSE BAR — завжди видимий знизу */}
-      <MorseBar currentSeq={g.morseSeq} unlocked={gmode==='adventure'?g.unlockedSpells:null}/>
-
-      {/* Status */}
-      <div style={{padding:'1px 8px 4px',fontSize:'7px',color:'#1e3a5f',display:'flex',gap:'6px',flexWrap:'wrap'}}>
-        <span style={{color:dc}}>D={Math.round(g.divergence)}%</span>
-        <span>HP<span style={{color:g.player.hp>50?'#22c55e':'#ef4444'}}>{g.player.hp}</span></span>
-        {(isRadar||isPanorama)&&<span style={{color:'#a78bfa'}}>{isPanorama?'PANORAMA':'RADAR'}</span>}
-        <span>свайп=рух · тап=· · тримай=−</span>
-      </div>
-    </div>
-  );
-}
 function Bar({v,max,col,lbl}){return(<div style={{flex:1}}><div style={{fontSize:'7px',color:'#1e3a5f',marginBottom:'2px'}}>{lbl}</div><div style={{height:'5px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${(v/max)*100}%`,background:col,transition:'width .2s'}}/></div></div>);}
 
 // ── WARNING ───────────────────────────────────────────────────────
@@ -1157,11 +519,82 @@ function fbOn(path,cb){const r=window._fbref(window._fbd,path);window._fbonValue
 function generateRoomId(){return Math.random().toString(36).slice(2,7).toUpperCase();}
 function getSpawnPos(slot){return[{x:2,y:6},{x:10,y:6},{x:6,y:2},{x:6,y:10}][slot]||{x:CX,y:CY};}
 
+// ── BOT AI ──────────────────────────────────────────────────────────────
+// Bots imitate player behavior: seek enemies/loot, attack, dodge
+const BOT_NAMES=['Бот-Альфа','Бот-Браво','Бот-Чарлі','Бот-Дельта'];
+function botThink(bot,rs,allP,roomId){
+  if(!bot.alive)return;
+  const now=Date.now();
+  if(now-(bot._lastAct||0)<bot._reactMs)return;
+  bot._lastAct=now;
+  const enemies=rs.enemies||[];
+  const objects=rs.objects||[];
+  const mpMode=rs.mpMode;
+
+  // Find target: nearest enemy OR (in duel) nearest opponent player
+  let targets=[];
+  if(mpMode==='duel_1v1'||mpMode==='duel_2v2'){
+    targets=Object.values(allP).filter(p=>p.alive&&p.id!==bot.id&&(mpMode==='duel_1v1'||((p.slot||0)<2)!==((bot.slot||0)<2))).map(p=>({x:p.x,y:p.y,isPlayer:true,id:p.id}));
+  }else{
+    targets=enemies.map(e=>({x:e.x,y:e.y,isPlayer:false,e}));
+  }
+  if(!targets.length){
+    // No targets — seek loot
+    const loot=objects.filter(o=>OBJ_TYPES[o.type]?.isLoot);
+    if(loot.length){let nl=loot[0],nd=999;loot.forEach(l=>{const d=Math.abs(l.x-bot.x)+Math.abs(l.y-bot.y);if(d<nd){nd=d;nl=l;}});targets=[{x:nl.x,y:nl.y,isLoot:true}];}
+  }
+  if(!targets.length){
+    // Wander toward center or edge for room transition
+    if(mpMode==='coop_adventure'&&!enemies.length){
+      // Move to nearest edge to trigger transition
+      const edges=[{x:bot.x,y:0},{x:bot.x,y:G-1},{x:0,y:bot.y},{x:G-1,y:bot.y}];
+      let ne=edges[0],nd=999;edges.forEach(e=>{const d=Math.abs(e.x-bot.x)+Math.abs(e.y-bot.y);if(d<nd){nd=d;ne=e;}});
+      targets=[{x:ne.x,y:ne.y,isEdge:true}];
+    }else return;
+  }
+
+  // Nearest target
+  let tgt=targets[0],td=999;
+  targets.forEach(t=>{const d=Math.abs(t.x-bot.x)+Math.abs(t.y-bot.y);if(d<td){td=d;tgt=t;}});
+
+  // If adjacent to enemy/opponent → attack
+  const wpn=WPN[bot.wpn]||WPN.sword;
+  const reach=wpn.reach+(bot.weaponMods?.reach||0);
+  if(td<=reach&&!tgt.isLoot&&!tgt.isEdge&&bot.stamina>15){
+    // Aim yawIdx toward target
+    const dx=tgt.x-bot.x,dy=tgt.y-bot.y;
+    bot.yawIdx=dirToYaw(dx,dy);
+    bot._wantAttack=true;
+    return;
+  }
+  // Move toward target
+  const dx=Math.sign(tgt.x-bot.x),dy=Math.sign(tgt.y-bot.y);
+  let mx=0,my=0;
+  if(Math.abs(tgt.x-bot.x)>Math.abs(tgt.y-bot.y)){mx=dx;}else{my=dy;}
+  const nx=clamp(bot.x+mx,0,G-1),ny=clamp(bot.y+my,0,G-1);
+  // Avoid obstacles/other entities
+  const blocked=enemies.some(e=>e.x===nx&&e.y===ny)||enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>bc.x===nx&&bc.y===ny))||objects.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny)||Object.values(allP).some(p=>p.id!==bot.id&&p.alive&&p.x===nx&&p.y===ny);
+  if(!blocked){bot.x=nx;bot.y=ny;bot.yawIdx=dirToYaw(mx,my);}
+  else{
+    // Try perpendicular
+    const ax=my!==0?Math.sign(tgt.x-bot.x):0,ay=mx!==0?Math.sign(tgt.y-bot.y):0;
+    const nx2=clamp(bot.x+ax,0,G-1),ny2=clamp(bot.y+ay,0,G-1);
+    const blocked2=enemies.some(e=>e.x===nx2&&e.y===ny2)||objects.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2);
+    if(!blocked2&&(ax||ay)){bot.x=nx2;bot.y=ny2;}
+  }
+}
+function dirToYaw(dx,dy){
+  // 8-direction from dx,dy
+  if(dx===0&&dy<0)return 0;if(dx>0&&dy<0)return 1;if(dx>0&&dy===0)return 2;if(dx>0&&dy>0)return 3;
+  if(dx===0&&dy>0)return 4;if(dx<0&&dy>0)return 5;if(dx<0&&dy===0)return 6;return 7;
+}
+
 // ── LOBBY ─────────────────────────────────────────────────────────────────
 function Lobby({settings,onStart,t=k=>k}){
   const[phase,setPhase]=useState('menu');
   const[myName,setMyName]=useState('');
   const[myWpn,setMyWpn]=useState(settings.startWpn||'sword');
+  const[asSpectator,setAsSpectator]=useState(false);
   const[codeInput,setCodeInput]=useState('');
   const[roomCode,setRoomCode]=useState('');
   const[myId,setMyId]=useState('');
@@ -1189,8 +622,18 @@ function Lobby({settings,onStart,t=k=>k}){
     const u=fbOn(`mp/${id}/info`,info=>{
       if(done)return;
       if(!info){setStatus('Кімнату не знайдено');u();return;}
-      if(info.status==='playing'){setStatus('Гра вже почалась');u();return;}
       done=true;
+      // Spectator can join even mid-game
+      if(asSpectator){
+        const sid='spec_'+Date.now();
+        setRoomCode(id);setMyId(sid);setIsHost(false);
+        u();
+        if(info.status==='playing'){cleanup();onStart({roomId:id,myId:sid,isHost:false,roomInfo:info,spectator:true});}
+        else{const u3=fbOn(`mp/${id}/info/status`,st=>{if(st==='playing'){u3();cleanup();onStart({roomId:id,myId:sid,isHost:false,roomInfo:info,spectator:true});}});cln.current.push(u3);
+          const u4=fbOn(`mp/${id}/players`,ps=>{if(ps)setWaitPlayers(ps);});cln.current.push(u4);setPhase('wait');setStatus('Спостерігач — очікуємо старту');}
+        return;
+      }
+      if(info.status==='playing'){setStatus('Гра вже почалась (можна як 👁 спостерігач)');return;}
       const u2=fbOn(`mp/${id}/players`,ps=>{
         if(!ps)return;
         const cnt=Object.keys(ps).length;
@@ -1208,8 +651,23 @@ function Lobby({settings,onStart,t=k=>k}){
     cln.current.push(u);
   };
 
+  const handleAddBot=()=>{
+    const players=waitPlayers;const cnt=Object.keys(players).length;
+    if(cnt>=(settings.maxPlayers||2)){setStatus('Кімната повна');return;}
+    const bid='bot_'+Date.now()+'_'+Math.floor(Math.random()*999);
+    const dCfg=DIFFICULTY[settings.difficulty||'normal']||DIFFICULTY.normal;
+    const hp=Math.round(100*dCfg.playerHp);
+    const usedSlots=Object.values(players).map(p=>p.slot??0);
+    let slot=0;while(usedSlots.includes(slot))slot++;
+    const wpns=Object.keys(WPN);
+    fbSet(`mp/${roomCode}/players/${bid}`,{name:BOT_NAMES[slot%4]||'Бот',slot,hp,maxHp:hp,alive:true,wpn:wpns[Math.floor(Math.random()*wpns.length)],...getSpawnPos(slot),yawIdx:0,compassD:0,stamina:100,weaponMods:{reach:0,weight:1,sharpness:1},score:0,isBot:true});
+  };
+  const handleRemoveBot=()=>{
+    const bots=Object.entries(waitPlayers).filter(([id,p])=>p.isBot);
+    if(bots.length){fbSet(`mp/${roomCode}/players/${bots[bots.length-1][0]}`,null);}
+  };
   const handleStart=()=>{
-    if(Object.keys(waitPlayers).length<2){setStatus('Потрібно мін. 2 гравці');return;}
+    if(Object.keys(waitPlayers).length<1){setStatus('Потрібно хоча б 1 учасник');return;}
     fbSet(`mp/${roomCode}/info/status`,'playing');
     cleanup();
     onStart({roomId:roomCode,myId,isHost:true,roomInfo:{mpMode:settings.mpMode||'coop_adventure',maxPlayers:settings.maxPlayers||2,friendlyFire:!!settings.friendlyFire,difficulty:settings.difficulty||'normal',startWpn:myWpn,strikeThr:settings.strikeThr||7,pitchSens:settings.pitchSens||40}});
@@ -1240,10 +698,11 @@ function Lobby({settings,onStart,t=k=>k}){
       <div style={{fontSize:'10px',color:'#1e4a7f',letterSpacing:'.1em',marginBottom:'12px'}}>{phase==='create'?'НОВА КІМНАТА':'ПРИЄДНАТИСЬ'}</div>
       <input value={myName} onChange={e=>setMyName(e.target.value)} placeholder="Ваше ім'я" maxLength={12} style={InpSt}/>
       {phase==='join'&&<input value={codeInput} onChange={e=>setCodeInput(e.target.value.toUpperCase())} placeholder="КОД КІМНАТИ" maxLength={5} style={{...InpSt,fontSize:'18px',letterSpacing:'.35em',textAlign:'center',color:'#60a5fa'}}/>}
-      <div style={{fontSize:'9px',color:'#1e4a7f',marginBottom:'5px'}}>ЗБРОЯ</div>
+      {phase==='join'&&<button onClick={()=>setAsSpectator(!asSpectator)} style={{width:'100%',padding:'9px',marginBottom:'8px',background:asSpectator?'#1e3a8a33':'#060f1e',border:`1px solid ${asSpectator?'#a78bfa':'#1e3a5f'}`,color:asSpectator?'#a78bfa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>{asSpectator?'👁 СПОСТЕРІГАЧ (увімкнено)':'👁 Приєднатись як спостерігач'}</button>}
+      {!asSpectator&&<><div style={{fontSize:'9px',color:'#1e4a7f',marginBottom:'5px'}}>ЗБРОЯ</div>
       <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'10px'}}>
         {Object.entries(WPN).map(([k,w])=>(<button key={k} onClick={()=>setMyWpn(k)} style={{padding:'5px 7px',background:myWpn===k?'#14532d33':'#060f1e',border:`1px solid ${myWpn===k?'#22c55e':'#1e3a5f'}`,color:myWpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',whiteSpace:'nowrap'}}>{w.label}</button>))}
-      </div>
+      </div></>}
       <B2 onClick={phase==='create'?handleCreate:handleJoin} col={phase==='create'?'#22c55e':'#3b82f6'}>{phase==='create'?'✓ СТВОРИТИ':'🔗 ПРИЄДНАТИСЬ'}</B2>
       <B2 onClick={()=>{setPhase('menu');setStatus('');}} col='#4a6a9f' style={{marginTop:'6px'}}>← НАЗАД</B2>
       {status&&<div style={{fontSize:'10px',color:'#ef4444',textAlign:'center',marginTop:'6px'}}>{status}</div>}
@@ -1257,13 +716,17 @@ function Lobby({settings,onStart,t=k=>k}){
       <div style={{background:'#060f1e',border:'1px solid #1e3a5f',borderRadius:'8px',padding:'10px',marginBottom:'10px'}}>
         {pList.map((p,i)=>(<div key={i} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0',borderBottom:i<pList.length-1?'1px solid #0a1628':'none'}}>
           <span style={{color:PCOL[p.slot??i],fontSize:'16px'}}>●</span>
-          <span style={{color:'#94a3b8',fontSize:'12px',flex:1}}>{p.name}</span>
+          <span style={{color:p.isBot?'#60a5fa':'#94a3b8',fontSize:'12px',flex:1}}>{p.isBot?'🤖 ':''}{p.name}</span>
           <span style={{color:'#334155',fontSize:'9px'}}>{p.wpn}</span>
           {settings.mpMode==='duel_2v2'&&<span style={{fontSize:'8px',color:(p.slot??i)<2?'#22c55e':'#ef4444',background:(p.slot??i)<2?'#14532d33':'#7f1d1d33',padding:'1px 5px',borderRadius:'3px'}}>{(p.slot??i)<2?'A':'B'}</span>}
         </div>))}
         <div style={{fontSize:'9px',color:'#1e3a5f',marginTop:'6px',textAlign:'center'}}>Гравців: {pList.length}/{settings.maxPlayers||2}</div>
       </div>
-      {isHost?<B2 onClick={handleStart} col='#22c55e' style={{opacity:pList.length<2?.35:1}}>▷ РОЗПОЧАТИ ({pList.length} гравців)</B2>:<div style={{fontSize:'10px',color:'#3b82f6',textAlign:'center',padding:'10px'}}>⏳ Очікуємо хоста...</div>}
+      {isHost&&pList.length<(settings.maxPlayers||2)&&<div style={{display:'flex',gap:'6px',marginBottom:'6px'}}>
+        <button onClick={handleAddBot} style={{flex:1,padding:'9px',background:'#1e3a8a22',border:'1px solid #3b82f6',color:'#60a5fa',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🤖 + БОТ</button>
+        {pList.some(p=>p.isBot)&&<button onClick={handleRemoveBot} style={{flex:1,padding:'9px',background:'#7f1d1d22',border:'1px solid #ef4444',color:'#ef4444',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>🤖 − БОТ</button>}
+      </div>}
+      {isHost?<B2 onClick={handleStart} col='#22c55e' style={{opacity:pList.length<1?.35:1}}>▷ РОЗПОЧАТИ ({pList.length})</B2>:<div style={{fontSize:'10px',color:'#3b82f6',textAlign:'center',padding:'10px'}}>⏳ Очікуємо хоста...</div>}
       <B2 onClick={handleLeave} col='#ef4444' style={{marginTop:'6px'}}>✕ ПОКИНУТИ</B2>
       {status&&<div style={{fontSize:'10px',color:'#f59e0b',textAlign:'center',marginTop:'4px'}}>{status}</div>}
     </div>)}
@@ -1271,7 +734,7 @@ function Lobby({settings,onStart,t=k=>k}){
 }
 
 // ── MP GAME ────────────────────────────────────────────────────────────────
-function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
+function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false}){
   const[,fr]=useReducer(x=>x+1,0);
   const myP=useRef(null);
   const allP=useRef({});
@@ -1317,10 +780,22 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
   useEffect(()=>{
     EID=Math.floor(Math.random()*9000)+2000;
     const hp=Math.round(100*dCfg.playerHp);
+    if(spectator){
+      // Spectator: no player entity, just watch
+      myP.current={x:CX,y:CY,hp:0,maxHp:hp,stamina:0,yawIdx:0,compassD:0,pitch:0,wpn:'sword',alive:false,weaponMods:{},score:0,slot:-1,name:'Спостерігач',id:myId,isSpectator:true};
+      const u3=fbOn(`mp/${roomId}/state`,state=>{if(state)rs.current=state;fr();});
+      const uP=fbOn(`mp/${roomId}/players`,ps=>{if(!ps){allP.current={};return;}Object.keys(allP.current).forEach(pid=>{if(!ps[pid])delete allP.current[pid];});Object.entries(ps).forEach(([pid,pd])=>{allP.current[pid]={...allP.current[pid],...pd,id:pid};});fr();});
+      cln.current.push(u3,uP);
+      fr();
+      return()=>{cln.current.forEach(f=>f());cln.current=[];};
+    }
     myP.current={x:CX,y:CY,hp,maxHp:hp,stamina:100,yawIdx:0,compassD:0,pitch:0,wpn:info.startWpn||settings?.startWpn||'sword',alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,slot:0,name:myId,id:myId};
 
     cln.current.push(fbOn(`mp/${roomId}/players/${myId}`,pd=>{if(!pd)return;myP.current={...myP.current,...pd,id:myId};allP.current[myId]=myP.current;fr();}));
-    cln.current.push(fbOn(`mp/${roomId}/players`,ps=>{if(!ps)return;Object.entries(ps).forEach(([pid,pd])=>{if(pid===myId){myP.current.hp=pd.hp??myP.current.hp;myP.current.alive=pd.alive??true;myP.current.slot=pd.slot??0;if(pd.name)myP.current.name=pd.name;}else{allP.current[pid]={...allP.current[pid],...pd,id:pid};}});fr();}));
+    cln.current.push(fbOn(`mp/${roomId}/players`,ps=>{if(!ps){allP.current={};return;}
+      // Remove ghosts: players no longer in Firebase
+      Object.keys(allP.current).forEach(pid=>{if(pid!==myId&&!ps[pid])delete allP.current[pid];});
+      Object.entries(ps).forEach(([pid,pd])=>{if(pid===myId){myP.current.hp=pd.hp??myP.current.hp;myP.current.alive=pd.alive??true;myP.current.slot=pd.slot??0;if(pd.name)myP.current.name=pd.name;}else{allP.current[pid]={...allP.current[pid],...pd,id:pid};}});fr();}));
 
     if(isHost){
       let initE=[],initO=[],isBoss=false;
@@ -1330,8 +805,39 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
       syncState();
       const loop=setInterval(()=>{
         const g=rs.current;if(!g||g.gameOver)return;
-        const now=Date.now();const pList=Object.values(allP.current).filter(p=>p.alive&&p.x!==undefined);
+        const now=Date.now();const pList=Object.values(allP.current).filter(p=>p.alive&&p.x!==undefined&&!p.isSpectator);
         if(!pList.length)return;
+        // ── BOT CONTROL (host drives all bots) ──
+        Object.values(allP.current).forEach(bot=>{
+          if(!bot.isBot||!bot.alive)return;
+          if(bot._reactMs===undefined){bot._reactMs=280+Math.random()*220;bot._lastAct=0;bot.stamina=bot.stamina??100;}
+          // Stamina regen for bots
+          bot.stamina=clamp((bot.stamina||100)+2,0,100);
+          botThink(bot,g,allP.current,roomId);
+          // Bot attack
+          if(bot._wantAttack&&bot.stamina>15){
+            bot._wantAttack=false;bot.stamina=Math.max(0,bot.stamina-20);
+            const wm=bot.weaponMods||{reach:0,weight:1,sharpness:1};
+            const cells=getWCells(bot.x,bot.y,bot.yawIdx,bot.wpn,wm.reach||0);
+            const bDmg=Math.max(8,Math.round(34*(wm.sharpness||1)/((WPN[bot.wpn]?.w||5)*(wm.weight||1))));
+            const bMode=g.mpMode;
+            if(bMode!=='duel_1v1'){
+              g.enemies=(g.enemies||[]).map(e=>{
+                if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size||1);if(!bc.some(b=>cells.find(cc=>cc.x===b.x&&cc.y===b.y)))return e;const nhp=e.hp-bDmg;if(nhp<=0){g.score=(g.score||0)+100*(e.bossRoomIdx||1);return null;}return{...e,hp:nhp};}
+                const cell=cells.find(cc=>cc.x===e.x&&cc.y===e.y);if(!cell)return e;const nhp=e.hp-(cell.main?bDmg:Math.round(bDmg*.5));if(nhp<=0){g.score=(g.score||0)+10;return null;}return{...e,hp:nhp};
+              }).filter(Boolean);
+            }
+            if(bMode==='duel_1v1'||bMode==='duel_2v2'){
+              Object.entries(allP.current).forEach(([pid,op])=>{if(pid===bot.id||!op.alive)return;if(bMode==='duel_2v2'&&((bot.slot||0)<2)===((op.slot||0)<2))return;if(cells.find(cc=>cc.x===op.x&&cc.y===op.y))hitPlayer(pid,bDmg);});
+            }
+            g.flash=cells.map(cc=>({x:cc.x,y:cc.y,col:'#f59e0b'}));g.flashUntil=now+200;
+          }
+          // Bot loot pickup
+          const loot=(g.objects||[]).find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===bot.x&&o.y===bot.y);
+          if(loot){g.objects=g.objects.filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){bot.hp=Math.min(bot.maxHp+20,bot.hp+20);bot.maxHp+=20;}else if(upg==='reach')bot.weaponMods={...bot.weaponMods,reach:(bot.weaponMods?.reach||0)+1};else if(upg==='sharpness')bot.weaponMods={...bot.weaponMods,sharpness:(bot.weaponMods?.sharpness||1)+0.25};}
+          // Sync bot to Firebase
+          fbSet(`mp/${roomId}/players/${bot.id}`,{name:bot.name,slot:bot.slot,hp:bot.hp,maxHp:bot.maxHp,alive:bot.alive,wpn:bot.wpn,x:bot.x,y:bot.y,yawIdx:bot.yawIdx,stamina:Math.round(bot.stamina),weaponMods:bot.weaponMods,score:bot.score||0,isBot:true,id:bot.id});
+        });
         if(g.flashUntil&&now>g.flashUntil){g.flash=[];g.flashUntil=0;}
         let changed=false;
         g.enemies=(g.enemies||[]).map(e=>{
@@ -1343,7 +849,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
           pList.forEach(p=>{const pid=p.id||myId;let eDir=null;const px=p.x||0,py=p.y||0;if(py===0)eDir='N';else if(py===G-1)eDir='S';else if(px===0)eDir='W';else if(px===G-1)eDir='E';if(eDir){g.edgeTimers=g.edgeTimers||{};g.edgeTimers[pid]=(g.edgeTimers[pid]||0)+1;changed=true;if(g.edgeTimers[pid]>=50){g.edgeTimers={};const nc=getNextCoord(g.roomCoord,eDir);const rNum=calcRoomNum(nc.x,nc.y);const ac2=generateRoom(rNum,CX,CY,diff);g.enemies=ac2.enemies;g.objects=ac2.objects;g.isBossRoom=ac2.isBoss;g.roomCoord=nc;g.roomNumber=rNum;g._roomCleared=false;g.score=(g.score||0)+15;g.msg=ac2.isBoss?`👹 Кімната ${rNum} — БОС!`:`Кімната ${rNum} · ${ac2.enemies.length} ворогів`;snd('wave');pList.forEach(p2=>{const nx=eDir==='E'?1:eDir==='W'?G-2:clamp(p2.x||0,0,G-1);const ny=eDir==='S'?1:eDir==='N'?G-2:clamp(p2.y||0,0,G-1);fbSet(`mp/${roomId}/players/${p2.id||myId}/x`,nx);fbSet(`mp/${roomId}/players/${p2.id||myId}/y`,ny);});}}else if(g.edgeTimers?.[pid]){delete g.edgeTimers[pid];changed=true;}});
         }
         if(mpMode==='coop_survival'&&!g.enemies.length&&!g._waveTimer){g._waveTimer=true;const w=(g.wave||1)+1;g.msg=`Хвиля ${g.wave||1} очищена! +3с...`;changed=true;setTimeout(()=>{if(!rs.current)return;rs.current.wave=w;rs.current._waveTimer=false;rs.current.enemies=spawnWave(w);rs.current.msg=`⚡ Хвиля ${w}!`;syncState();fr();},3000);}
-        if((mpMode==='duel_1v1'||mpMode==='duel_2v2')&&!g.gameOver){const all=Object.values(allP.current);const alive=all.filter(p=>p.alive);if(alive.length<=1&&all.length>=2){if(mpMode==='duel_2v2'){const t0=alive.filter(p=>(p.slot||0)<2).length,t1=alive.filter(p=>(p.slot||0)>=2).length;g.winner=t0>t1?'Команда A':t1>t0?'Команда B':'Нічия';}else g.winner=alive.length===1?alive[0].name:'Нічия';g.gameOver=true;changed=true;}}
+        if((mpMode==='duel_1v1'||mpMode==='duel_2v2')&&!g.gameOver){const all=Object.values(allP.current).filter(p=>!p.isSpectator);const alive=all.filter(p=>p.alive);if(alive.length<=1&&all.length>=2){if(mpMode==='duel_2v2'){const t0=alive.filter(p=>(p.slot||0)<2).length,t1=alive.filter(p=>(p.slot||0)>=2).length;g.winner=t0>t1?'Команда A':t1>t0?'Команда B':'Нічия';}else g.winner=alive.length===1?alive[0].name:'Нічия';g.gameOver=true;changed=true;}}
         if(changed||now-lastSync.current>150)syncState();
       },80);
       cln.current.push(()=>clearInterval(loop));
@@ -1369,7 +875,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
       const mag=Math.sqrt((ag.x??0)**2+(ag.y??0)**2+(ag.z??9.8)**2);
       const delta=Math.abs(mag-prevAccMag.current);const now=Date.now();
       const thr=info.strikeThr||settings?.strikeThr||7;
-      if(delta>thr&&now-lastStrikeT.current>500&&p.stamina>5){lastStrikeT.current=now;doAttackRef.current?.();}
+      if(!spectator&&delta>thr&&now-lastStrikeT.current>500&&p.stamina>5){lastStrikeT.current=now;doAttackRef.current?.();}
       prevAccMag.current=mag;
     };
     window.addEventListener('deviceorientation',onOri,true);
@@ -1434,12 +940,14 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
   useEffect(()=>{
     const touchStart={x:0,y:0,t:0};
     const onS=e=>{
+      if(spectator)return;
       if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
       e.preventDefault();
       if(AC.state==='suspended')AC.resume();
       touchStart.x=e.touches[0].clientX;touchStart.y=e.touches[0].clientY;touchStart.t=Date.now();
     };
     const onE=e=>{
+      if(spectator)return;
       if(e.target.closest('button')||e.target.closest('input')||e.target.closest('select'))return;
       e.preventDefault();
       const dx=e.changedTouches[0].clientX-touchStart.x,dy=e.changedTouches[0].clientY-touchStart.y;
@@ -1487,25 +995,25 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
   if(!p||!g)return(<div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#3b82f6',fontSize:'11px',letterSpacing:'.1em',background:'#010d1f',fontFamily:"'Courier New',monospace"}}>ЗАВАНТАЖЕННЯ...</div>);
 
   // Exact same rendering variables as single-player Game
-  const getPos=(gx,gy)=>isRotated?toScreen(gx,gy,p.x||0,p.y||0,p.compassD||0):{sx:gx,sy:gy};
+  const getPos=(gx,gy)=>(isRotated&&!spectator)?toScreen(gx,gy,p.x||0,p.y||0,p.compassD||0):{sx:gx,sy:gy};
   const wCells=getWCells(p.x||0,p.y||0,p.yawIdx||0,p.wpn||'sword',p.weaponMods?.reach||0);
   const cellSz=isPanorama?Math.floor(window.innerWidth/G):Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
   const pColor2=pv=>pv>0?'#3b82f6':pv<0?'#f59e0b':'#334155';
-  const allDead=pList.length>0&&pList.every(q=>!q.alive);
+  const realPlayers=pList.filter(q=>!q.isSpectator);const allDead=realPlayers.length>0&&realPlayers.every(q=>!q.alive);
   const pc=pColor(p.pitch||0);
 
   return(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',overflow:'hidden',fontFamily:"'Courier New',monospace",background:'#010d1f',position:isPanorama?'relative':'static'}}>
     {/* TOP HUD — same style as SP */}
     <div style={{width:'100%',maxWidth:'480px',padding:'2px 8px 0',flexShrink:0}}>
       <div style={{display:'flex',gap:'8px',alignItems:'center',marginBottom:'1px'}}>
-        <div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,((p.hp||0)/(p.maxHp||100))*100)}%`,background:(p.hp||0)>(p.maxHp||100)*.3?pc:'#ef4444',transition:'width .1s'}}/></div>
-        <div style={{width:'40px',height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${p.stamina||0}%`,background:'#3b82f6',transition:'width .08s'}}/></div>
+        {spectator?<div style={{flex:1,fontSize:'11px',color:'#a78bfa',letterSpacing:'.1em'}}>👁 СПОСТЕРІГАЧ</div>:<><div style={{flex:1,height:'6px',background:'#020c1a',borderRadius:'3px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,((p.hp||0)/(p.maxHp||100))*100)}%`,background:(p.hp||0)>(p.maxHp||100)*.3?pc:'#ef4444',transition:'width .1s'}}/></div>
+        <div style={{width:'40px',height:'4px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${p.stamina||0}%`,background:'#3b82f6',transition:'width .08s'}}/></div></>}
         <div style={{fontSize:'8px',color:'#1e4a7f',minWidth:'36px',textAlign:'right'}}>{mpMode==='coop_adventure'?`R${g.roomNumber||1}${g.isBossRoom?'👹':''}`:mpMode==='coop_survival'?`W${g.wave||1}`:'ДУЕЛЬ'}</div>
         <div style={{fontSize:'8px',color:pc,minWidth:'30px',textAlign:'right'}}>{(p.pitch||0)>0.3?'⬆СИЛА':(p.pitch||0)<-0.3?'⬇ВІДП':'—'}</div><div style={{fontSize:'8px',color:'#f59e0b',minWidth:'24px',textAlign:'right'}}>{g.score||0}</div>
       </div>
       {/* Other players HPs */}
-      {pList.filter(q=>(q.id||q.name)!==myId).length>0&&<div style={{display:'flex',gap:'5px',marginBottom:'1px'}}>
-        {pList.filter(q=>(q.id||q.name)!==myId).map((q,i)=>(<div key={q.id||i} style={{flex:1,display:'flex',gap:'3px',alignItems:'center'}}>
+      {pList.filter(q=>!q.isSpectator&&(spectator||(q.id||q.name)!==myId)).length>0&&<div style={{display:'flex',gap:'5px',marginBottom:'1px'}}>
+        {pList.filter(q=>!q.isSpectator&&(spectator||(q.id||q.name)!==myId)).map((q,i)=>(<div key={q.id||i} style={{flex:1,display:'flex',gap:'3px',alignItems:'center'}}>
           <span style={{color:PCOL[q.slot??i+1],fontSize:'10px'}}>●</span>
           <span style={{fontSize:'7px',color:'#334155',minWidth:'22px'}}>{(q.name||'?').slice(0,4)}</span>
           <div style={{flex:1,height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,((q.hp||0)/(q.maxHp||100))*100)}%`,background:q.alive?PCOL[q.slot??i+1]:'#1e3a5f',transition:'width .1s'}}/></div>
@@ -1525,7 +1033,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
       <div style={{display:isPanorama?'contents':'grid',gridTemplateColumns:isPanorama?undefined:`repeat(${G},${cellSz}px)`,gap:'1px'}}>
         {Array.from({length:G*G},(_,idx2)=>{
           const sx=idx2%G,sy=Math.floor(idx2/G);
-          const isP=isRotated?(sx===CX&&sy===CY):(sx===(p.x||0)&&sy===(p.y||0));
+          const isP=!spectator&&(isRotated?(sx===CX&&sy===CY):(sx===(p.x||0)&&sy===(p.y||0)));
           const en=(g.enemies||[]).find(e=>{if(e.type==='boss')return false;const{sx:ex,sy:ey}=getPos(e.x,e.y);return ex===sx&&ey===sy;});
           const wc=wCells.find(c=>{const{sx:wx,sy:wy}=getPos(c.x,c.y);return wx===sx&&wy===sy;});
           const _allFlash=[...(g.flash||[]),...(localFlash.current.until>Date.now()?localFlash.current.cells:[])];
@@ -1535,7 +1043,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
           const isEdge=!isVoid&&(_wc.gx===0||_wc.gx===G-1||_wc.gy===0||_wc.gy===G-1);
           const cellObj=(g.objects||[]).find(o=>{const{sx:ox,sy:oy}=getPos(o.x,o.y);return ox===sx&&oy===sy;});
           const cellBoss=(g.enemies||[]).find(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>{const{sx:bsx,sy:bsy}=getPos(bc.x,bc.y);return bsx===sx&&bsy===sy;}));
-          const otherPs=pList.filter(q=>{if((q.id||q.name)===myId||!q.alive)return false;const{sx:qsx,sy:qsy}=getPos(q.x||0,q.y||0);return qsx===sx&&qsy===sy;});
+          const otherPs=pList.filter(q=>{if(q.isSpectator||!q.alive)return false;if(!spectator&&(q.id||q.name)===myId)return false;const{sx:qsx,sy:qsy}=getPos(q.x||0,q.y||0);return qsx===sx&&qsy===sy;});
           let bg=isVoid?'#000000':isEdge?'#040e1a':'#020c1a';
           let bdr=isVoid?'none':isEdge?'2px solid #2a5a9f':'1px solid #091c30';
           if(fl)bg=fl.col+'55';
@@ -1557,13 +1065,13 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit}){
     </div>
     {/* Bottom bar */}
     <div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',flexShrink:0,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <span style={{fontSize:'8px',color:'#1e3a5f'}}>свайп-рух · мах/тап-удар</span>
-      <span style={{fontSize:'8px',color:'#334155'}}>{p.wpn}{(p.weaponMods?.reach||0)>0?` 🔭+${p.weaponMods.reach}кл`:''}</span>
+      <span style={{fontSize:'8px',color:spectator?'#a78bfa':'#1e3a5f'}}>{spectator?'👁 РЕЖИМ СПОСТЕРІГАЧА':'свайп-рух · мах/тап-удар'}</span>
+      <span style={{fontSize:'8px',color:'#334155'}}>{spectator?`${Object.values(allP).filter(x=>x.alive&&!x.isSpectator).length} живих`:`${p.wpn}${(p.weaponMods?.reach||0)>0?` 🔭+${p.weaponMods.reach}кл`:''}`}</span>
     </div>
     {/* MorseBar */}
-    <MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>
+    {!spectator&&<MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>}
     {/* Dead overlay */}
-    {!p.alive&&!allDead&&!g.gameOver&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.82)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30,fontFamily:"'Courier New',monospace"}}>
+    {!spectator&&!p.alive&&!allDead&&!g.gameOver&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.82)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30,fontFamily:"'Courier New',monospace"}}>
       <div style={{color:'#ef4444',fontSize:'22px',fontWeight:'bold',letterSpacing:'.2em',animation:'shake .4s'}}>ЗАГИНУВ</div>
       <div style={{color:'#4a6a9f',fontSize:'10px',marginTop:'8px'}}>Спостерігай за союзниками...</div>
     </div>}
@@ -1609,7 +1117,7 @@ function App(){
   );
 
   // MP Game screen
-  if(screen==='mpgame'&&gameParams)return(<MPGame {...gameParams} settings={S} onExit={()=>{setGameParams(null);setScreen('lobby');}}/>);
+  if(screen==='mpgame'&&gameParams)return(<MPGame {...gameParams} settings={S} spectator={gameParams.spectator||false} onExit={()=>{setGameParams(null);setScreen('lobby');}}/>);
 
   // Lobby / Menu
   return(
