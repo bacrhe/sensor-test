@@ -832,15 +832,29 @@ function botThink(bot,rs,allP,roomId){
         }
         teamEdge=rs._botTeamEdge;
       }
-      // Move toward chosen team edge — spread bots along the edge by slot
+      // Move toward chosen team edge. Each bot claims the nearest FREE cell on that edge.
       if(teamEdge&&!targets.length){
-        const slotOffset=(bot.slot||0)*3-4; // spread: -4,-1,2,5 along edge
-        let ex,ey;
-        if(teamEdge==='W'){ex=0;ey=clamp(CY+slotOffset,1,G-2);}
-        else if(teamEdge==='E'){ex=G-1;ey=clamp(CY+slotOffset,1,G-2);}
-        else if(teamEdge==='N'){ey=0;ex=clamp(CX+slotOffset,1,G-2);}
-        else{ey=G-1;ex=clamp(CX+slotOffset,1,G-2);}
-        targets=[{x:ex,y:ey,isEdge:true}];
+        // Build the line of cells along the chosen edge (excluding corners)
+        const edgeCells=[];
+        for(let i=1;i<=G-2;i++){
+          if(teamEdge==='W')edgeCells.push({x:0,y:i});
+          else if(teamEdge==='E')edgeCells.push({x:G-1,y:i});
+          else if(teamEdge==='N')edgeCells.push({x:i,y:0});
+          else edgeCells.push({x:i,y:G-1});
+        }
+        // Cells occupied by OTHER alive entities
+        const occupied=(x,y)=>all.some(p=>p.id!==bot.id&&(p.x||0)===x&&(p.y||0)===y);
+        // If bot is already standing on the target edge in a free spot — done
+        const botOnEdge=(teamEdge==='W'&&bot.x===0)||(teamEdge==='E'&&bot.x===G-1)||(teamEdge==='N'&&bot.y===0)||(teamEdge==='S'&&bot.y===G-1);
+        if(botOnEdge){targets=[{x:bot.x,y:bot.y,isEdge:true}];}
+        else{
+          // Pick nearest FREE edge cell to this bot
+          const freeCells=edgeCells.filter(ec=>!occupied(ec.x,ec.y));
+          const pool=freeCells.length?freeCells:edgeCells;
+          let best=pool[0],bd=999;
+          pool.forEach(ec=>{const d=Math.abs(ec.x-bot.x)+Math.abs(ec.y-bot.y);if(d<bd){bd=d;best=ec;}});
+          targets=[{x:best.x,y:best.y,isEdge:true}];
+        }
       }
     }
     if(!targets.length)return;
@@ -1169,7 +1183,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
         const now=Date.now();const pList=Object.values(allP.current).filter(p=>p.alive&&p.x!==undefined&&!p.isSpectator);
         if(!pList.length)return;
         // ── BOT CONTROL (host drives all bots) ──
-        Object.values(allP.current).forEach(bot=>{
+        Object.values(allP.current).sort((a,b)=>((a.id||'')<(b.id||'')?-1:1)).forEach(bot=>{
           if(!bot.isBot||!bot.alive)return;
           if(bot._reactMs===undefined){bot._reactMs=450+Math.random()*400;bot._lastAct=0;bot.stamina=bot.stamina??100;}
           // Stamina regen for bots
