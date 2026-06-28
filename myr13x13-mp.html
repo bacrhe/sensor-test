@@ -819,15 +819,30 @@ function botThink(bot,rs,allP,roomId){
         let nh=humans[0],nd=999;humans.forEach(h=>{const d=Math.abs(h.x-bot.x)+Math.abs(h.y-bot.y);if(d<nd){nd=d;nh=h;}});
         targets=[{x:nh.x,y:nh.y,isFollow:true}];
       }
-      // 3) No humans (all bots) → team picks ONE edge by consensus (lowest bot id decides)
+      // 3) No humans (all bots) → team picks ONE edge, preferring UNVISITED rooms, never backtracking
       else{
         const bots=all.filter(p=>p.isBot).sort((a,b)=>(a.id<b.id?-1:1));
-        const leader=bots[0];
-        // Leader picks its nearest edge; everyone targets it. Store on rs for stability.
-        if(!rs._botTeamEdge||rs._botTeamEdgeTs<now-8000){
-          const lead=leader||bot;
-          const dists={N:lead.y,S:G-1-lead.y,W:lead.x,E:G-1-lead.x};
-          rs._botTeamEdge=Object.keys(dists).sort((a,b)=>dists[a]-dists[b])[0];
+        const leader=bots[0]||bot;
+        // Pick a new edge only if none chosen yet (stable until they actually reach it)
+        if(!rs._botTeamEdge){
+          const rc=rs.roomCoord||{x:META_CENTER,y:META_CENTER};
+          const cameFrom=rs._cameFrom; // direction we should NOT go back to
+          // Score each of 4 directions
+          const dirInfo=['N','S','E','W'].map(d=>{
+            const nc=getNextCoord(rc,d);const nid=coordId(nc.x,nc.y);
+            const cached=rs.roomCache&&rs.roomCache[nid];
+            const lead=leader;
+            const dist={N:lead.y,S:G-1-lead.y,W:lead.x,E:G-1-lead.x}[d];
+            const visited=!!cached;
+            const isBackedge=(d===cameFrom);
+            return{d,dist,visited,isBackedge};
+          });
+          // Priority: unvisited & not backtrack > unvisited > any not-backtrack > anything
+          const unvisitedFwd=dirInfo.filter(i=>!i.visited&&!i.isBackedge).sort((a,b)=>a.dist-b.dist);
+          const unvisited=dirInfo.filter(i=>!i.visited).sort((a,b)=>a.dist-b.dist);
+          const notBack=dirInfo.filter(i=>!i.isBackedge).sort((a,b)=>a.dist-b.dist);
+          const chosen=unvisitedFwd[0]||unvisited[0]||notBack[0]||dirInfo[0];
+          rs._botTeamEdge=chosen.d;
           rs._botTeamEdgeTs=now;
         }
         teamEdge=rs._botTeamEdge;
@@ -1290,6 +1305,9 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
               }
               g.enemies=ac2.enemies;g.objects=ac2.objects;g.isBossRoom=ac2.isBoss;g.roomStyle=ac2.style||nStyle;g.isHub=false;
               g.roomCoord=nc;g.roomNumber=(g.roomNumber||0)+1;g._roomCleared=(ac2.enemies.length===0)?g.roomNumber:false;
+              // Record where bots CAME FROM (opposite of travel dir) so they don't immediately backtrack
+              g._cameFrom={N:'S',S:'N',E:'W',W:'E'}[dir];
+              g._botTeamEdge=null;g._botTeamEdgeTs=0; // reset edge choice for new room
               g.msg=ac2.isBoss?`👹 ${nStyle.name} — БОС!`:ac2.enemies.length?`${nStyle.sym} ${nStyle.name} · ${ac2.enemies.length} ворогів`:`${nStyle.name} (порожньо)`;
               snd('wave');
               pList.forEach(p2=>{const nx=dir==='E'?1:dir==='W'?G-2:clamp(p2.x||0,0,G-1);const ny=dir==='S'?1:dir==='N'?G-2:clamp(p2.y||0,0,G-1);fbSet(`mp/${roomId}/players/${p2.id||myId}/x`,nx);fbSet(`mp/${roomId}/players/${p2.id||myId}/y`,ny);});
