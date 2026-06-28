@@ -873,37 +873,63 @@ function botThink(bot,rs,allP,roomId){
   const curD=Math.abs(tdx)+Math.abs(tdy);
   // ── STOP CONDITION: if at edge target, HOLD POSITION (don't jitter) ──
   if(tgt.isEdge){
-    // Bot is gathering on an edge — once it reaches the edge line, stop moving
     const onTargetEdge=(bot.x===0&&tgt.x===0)||(bot.x===G-1&&tgt.x===G-1)||(bot.y===0&&tgt.y===0)||(bot.y===G-1&&tgt.y===G-1);
-    if(onTargetEdge){bot._stuck=0;return;} // already on the right edge — HOLD
-    if(curD===0){bot._stuck=0;return;}      // exactly at target — HOLD
+    if(onTargetEdge){bot._stuck=0;return;}
+    if(curD===0){bot._stuck=0;return;}
   }
-  if(tgt.isFollow&&curD<=1){bot._stuck=0;return;} // adjacent to followed player — HOLD
-  if(curD===0){bot._stuck=0;return;}               // at any target — HOLD
-  // Candidate moves toward target
-  const candidates=[
-    [Math.sign(tdx),0],[0,Math.sign(tdy)],
-    [Math.sign(tdx),Math.sign(tdy)],
-    [0,1],[0,-1],[1,0],[-1,0],
-    [1,1],[1,-1],[-1,1],[-1,-1],
-  ].filter(([mx,my])=>mx!==0||my!==0);
-  let moved=false;
-  const scored=candidates.map(([mx,my])=>{
-    const nx=bot.x+mx,ny=bot.y+my;
-    if(isBlocked(nx,ny))return null;
-    return{mx,my,nx,ny,d:Math.abs(tgt.x-nx)+Math.abs(tgt.y-ny)};
-  }).filter(Boolean).sort((a,b)=>a.d-b.d);
-  if(scored.length){
-    let pick=scored[0];
-    // Only move if it gets us strictly closer (prevents oscillation)
-    if(pick.d<curD){bot.x=pick.nx;bot.y=pick.ny;bot.yawIdx=dirToYaw(pick.mx,pick.my);moved=true;bot._stuck=0;}
-    else{
-      // Can't get closer — bot is stuck behind obstacle
-      bot._stuck=(bot._stuck||0)+1;
-      // Only after being stuck several ticks, try a sidestep (once), then hold
-      if(bot._stuck===3){const side=scored.find(s=>s.d===curD);if(side){bot.x=side.nx;bot.y=side.ny;bot.yawIdx=dirToYaw(side.mx,side.my);moved=true;}}
-      // After that, HOLD (don't keep jittering)
+  if(tgt.isFollow&&curD<=1){bot._stuck=0;return;}
+  if(curD===0){bot._stuck=0;return;}
+
+  // ── BFS PATHFINDING: finds shortest path around ANY obstacle (walls, bots, bosses) ──
+  const tx=clamp(tgt.x,0,G-1),ty=clamp(tgt.y,0,G-1);
+  const key=(x,y)=>y*G+x;
+  const startK=key(bot.x,bot.y);
+  // 4-directional BFS (orthogonal moves) from bot to target
+  const queue=[[bot.x,bot.y]];
+  const cameFrom=new Map();cameFrom.set(startK,null);
+  let found=false;
+  const ORTHO=[[0,-1],[0,1],[-1,0],[1,0]];
+  let head=0;
+  while(head<queue.length){
+    const[cx,cy]=queue[head++];
+    if(cx===tx&&cy===ty){found=true;break;}
+    // Explore neighbors (shuffle order slightly for natural movement)
+    const dirs=ORTHO;
+    for(const[mx,my]of dirs){
+      const nx=cx+mx,ny=cy+my;const nk=key(nx,ny);
+      if(cameFrom.has(nk))continue;
+      // Target cell is always enterable even if "blocked" (so bot can reach an occupied-looking goal)
+      const isTarget=(nx===tx&&ny===ty);
+      if(!isTarget&&isBlocked(nx,ny))continue;
+      cameFrom.set(nk,[cx,cy]);
+      queue.push([nx,ny]);
     }
+  }
+  let moved=false;
+  if(found){
+    // Reconstruct path, find FIRST step from bot
+    let cur=[tx,ty];const path=[];
+    while(cur){path.push(cur);const prev=cameFrom.get(key(cur[0],cur[1]));cur=prev;}
+    path.reverse(); // path[0]=bot position, path[1]=first step
+    if(path.length>=2){
+      const[nx,ny]=path[1];
+      if(!isBlocked(nx,ny)||(nx===tx&&ny===ty&&path.length===2)){
+        // Don't step onto the target if it's an occupied entity (stop adjacent)
+        if(isBlocked(nx,ny)&&!(nx===bot.x&&ny===bot.y)){
+          // Target itself is blocked (e.g. another player) — we're adjacent, hold
+          bot._stuck=0;
+        }else{
+          bot.x=nx;bot.y=ny;bot.yawIdx=dirToYaw(nx-path[0][0],ny-path[0][1]);moved=true;bot._stuck=0;
+        }
+      }
+    }else{bot._stuck=0;} // already at target
+  }
+  if(!found||!moved){
+    // No path found (fully surrounded) — try greedy fallback to at least not freeze
+    bot._stuck=(bot._stuck||0)+1;
+    const fallback=[[Math.sign(tdx),0],[0,Math.sign(tdy)],[0,1],[0,-1],[1,0],[-1,0]].filter(([mx,my])=>mx||my);
+    const opts=fallback.map(([mx,my])=>{const nx=bot.x+mx,ny=bot.y+my;if(isBlocked(nx,ny))return null;return{nx,ny,mx,my,d:Math.abs(tx-nx)+Math.abs(ty-ny)};}).filter(Boolean).sort((a,b)=>a.d-b.d);
+    if(opts.length&&bot._stuck>=2){const o=opts[0];bot.x=o.nx;bot.y=o.ny;bot.yawIdx=dirToYaw(o.mx,o.my);}
   }
 }
 function dirToYaw(dx,dy){
