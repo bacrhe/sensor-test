@@ -870,14 +870,23 @@ function botThink(bot,rs,allP,roomId){
     return false;
   };
   const tdx=tgt.x-bot.x,tdy=tgt.y-bot.y;
-  // Candidate moves sorted by how much closer they get to target
+  const curD=Math.abs(tdx)+Math.abs(tdy);
+  // ── STOP CONDITION: if at edge target, HOLD POSITION (don't jitter) ──
+  if(tgt.isEdge){
+    // Bot is gathering on an edge — once it reaches the edge line, stop moving
+    const onTargetEdge=(bot.x===0&&tgt.x===0)||(bot.x===G-1&&tgt.x===G-1)||(bot.y===0&&tgt.y===0)||(bot.y===G-1&&tgt.y===G-1);
+    if(onTargetEdge){bot._stuck=0;return;} // already on the right edge — HOLD
+    if(curD===0){bot._stuck=0;return;}      // exactly at target — HOLD
+  }
+  if(tgt.isFollow&&curD<=1){bot._stuck=0;return;} // adjacent to followed player — HOLD
+  if(curD===0){bot._stuck=0;return;}               // at any target — HOLD
+  // Candidate moves toward target
   const candidates=[
-    [Math.sign(tdx),0],[0,Math.sign(tdy)], // primary axes toward target
-    [Math.sign(tdx),Math.sign(tdy)],        // diagonal toward target
-    [0,1],[0,-1],[1,0],[-1,0],              // all 4 directions as fallback
-    [1,1],[1,-1],[-1,1],[-1,-1],            // all diagonals
+    [Math.sign(tdx),0],[0,Math.sign(tdy)],
+    [Math.sign(tdx),Math.sign(tdy)],
+    [0,1],[0,-1],[1,0],[-1,0],
+    [1,1],[1,-1],[-1,1],[-1,-1],
   ].filter(([mx,my])=>mx!==0||my!==0);
-  // Score each candidate by resulting distance to target
   let moved=false;
   const scored=candidates.map(([mx,my])=>{
     const nx=bot.x+mx,ny=bot.y+my;
@@ -885,16 +894,17 @@ function botThink(bot,rs,allP,roomId){
     return{mx,my,nx,ny,d:Math.abs(tgt.x-nx)+Math.abs(tgt.y-ny)};
   }).filter(Boolean).sort((a,b)=>a.d-b.d);
   if(scored.length){
-    // Anti-stuck: if best move doesn't reduce distance and bot was stuck, pick random valid
-    const curD=Math.abs(tdx)+Math.abs(tdy);
     let pick=scored[0];
-    if(pick.d>=curD){
+    // Only move if it gets us strictly closer (prevents oscillation)
+    if(pick.d<curD){bot.x=pick.nx;bot.y=pick.ny;bot.yawIdx=dirToYaw(pick.mx,pick.my);moved=true;bot._stuck=0;}
+    else{
+      // Can't get closer — bot is stuck behind obstacle
       bot._stuck=(bot._stuck||0)+1;
-      if(bot._stuck>2){pick=scored[Math.floor(Math.random()*scored.length)];bot._stuck=0;}
-    }else bot._stuck=0;
-    bot.x=pick.nx;bot.y=pick.ny;bot.yawIdx=dirToYaw(pick.mx,pick.my);moved=true;
+      // Only after being stuck several ticks, try a sidestep (once), then hold
+      if(bot._stuck===3){const side=scored.find(s=>s.d===curD);if(side){bot.x=side.nx;bot.y=side.ny;bot.yawIdx=dirToYaw(side.mx,side.my);moved=true;}}
+      // After that, HOLD (don't keep jittering)
+    }
   }
-  if(!moved)bot._stuck=(bot._stuck||0)+1;
 }
 function dirToYaw(dx,dy){
   // 8-direction from dx,dy
@@ -1529,7 +1539,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
 
   // Exact same rendering variables as single-player Game
   const getPos=(gx,gy)=>(isRotated&&!spectator)?toScreen(gx,gy,p.x||0,p.y||0,p.compassD||0):{sx:gx,sy:gy};
-  const wCells=getWCells(p.x||0,p.y||0,p.yawIdx||0,p.wpn||'sword',p.weaponMods?.reach||0);
+  const wCells=spectator?[]:getWCells(p.x||0,p.y||0,p.yawIdx||0,p.wpn||'sword',p.weaponMods?.reach||0);
   const cellSz=isPanorama?Math.floor(window.innerWidth/G):Math.min(27,Math.floor((Math.min(window.innerWidth,480)-20)/G));
   const pColor2=pv=>pv>0?'#3b82f6':pv<0?'#f59e0b':'#334155';
   const realPlayers=pList.filter(q=>!q.isSpectator);const allDead=realPlayers.length>0&&realPlayers.every(q=>!q.alive);
