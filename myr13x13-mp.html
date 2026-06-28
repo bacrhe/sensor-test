@@ -51,13 +51,13 @@ const rad=d=>d*Math.PI/180;
 let EID=0;
 
 const WPN={
-  dagger:    {w:2,reach:1,arc:1,sweep:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий'},
-  sword:     {w:5,reach:2,arc:1,sweep:false,label:'Меч ⚔',       desc:'Баланс'},
-  axe:       {w:8,reach:1,arc:2,sweep:false,label:'Сокира 🪓',   desc:'Широкий замах'},
-  spear:     {w:4,reach:3,arc:0,sweep:false,label:'Спис 🔱',     desc:'Далеко по прямій'},
-  greatsword:{w:7,reach:2,arc:2,sweep:false,label:'Дворучник ⚔⚔',desc:'Широко і далеко'},
-  flail:     {w:6,reach:1,arc:0,sweep:true, label:'Ціп 🌀',      desc:'Всі 8 клітинок'},
-  bow:       {w:3,reach:5,arc:0,sweep:false,label:'Лук 🏹',      desc:'5 клітинок прямо'},
+  dagger:    {w:2,reach:1,arc:1,sweep:false,ranged:false,label:'Кинджал 🗡',  desc:'Ближній, швидкий замах'},
+  sword:     {w:5,reach:2,arc:1,sweep:false,ranged:false,label:'Меч ⚔',       desc:'Баланс лінії й дуги'},
+  axe:       {w:8,reach:1,arc:2,sweep:false,ranged:false,label:'Сокира 🪓',   desc:'Широка дуга замаху'},
+  spear:     {w:4,reach:2,arc:0,sweep:false,ranged:false,label:'Спис 🔱',     desc:'Суцільна лінія вперед'},
+  greatsword:{w:7,reach:2,arc:2,sweep:false,ranged:false,label:'Дворучник ⚔⚔',desc:'Широка глибока дуга'},
+  flail:     {w:6,reach:1,arc:0,sweep:true, ranged:false,label:'Ціп 🌀',      desc:'Коло навколо (8 клітинок)'},
+  bow:       {w:3,reach:4,arc:0,sweep:false,ranged:true, label:'Лук 🏹',      desc:'Постріл — лише далека клітинка'},
 };
 const ET={
   shadow: {hp:3,ms:480,dmg:12,col:'#7c3aed',sym:'◆',lbl:'Тінь'},
@@ -127,14 +127,26 @@ const TR={
   },
 };
 const SPELLS=[
-  {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +40',      fn:'stamina'},
-  {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 5с',    fn:'armor'},
-  {code:'..',   name:'Зцілення',col:'#34d399',desc:'HP +40',           fn:'heal'},
-  {code:'--',   name:'Крига',   col:'#67e8f9',desc:'Заморозити ворогів 3с',fn:'freeze'},
-  {code:'.-',   name:'Спалах',  col:'#f59e0b',desc:'Удар ×2 на 5с',    fn:'surge'},
-  {code:'-.',   name:'Тінь',    col:'#a78bfa',desc:'Невидимість 4с',   fn:'stealth'},
-  {code:'...',  name:'Вихор',   col:'#e879f9',desc:'Удар всіх навколо',fn:'omni'},
-  {code:'---',  name:'Ривок',   col:'#22c55e',desc:'Телепорт 3 кроки', fn:'teleport'},
+  // ── Базові (доступні з початку) ──
+  {code:'.',    name:'Сила',    col:'#60a5fa',desc:'Стаміна +40',         fn:'stamina',  tier:0},
+  {code:'-',    name:'Броня',   col:'#94a3b8',desc:'-60% шкоди 5с',       fn:'armor',    tier:0},
+  {code:'..',   name:'Зцілення',col:'#34d399',desc:'HP +40',              fn:'heal',     tier:0},
+  {code:'--',   name:'Крига',   col:'#67e8f9',desc:'Заморозити ворогів 3с',fn:'freeze',  tier:0},
+  {code:'.-',   name:'Спалах',  col:'#f59e0b',desc:'Удар ×2 на 5с',       fn:'surge',    tier:0},
+  {code:'-.',   name:'Тінь',    col:'#a78bfa',desc:'Невидимість 4с',      fn:'stealth',  tier:0},
+  {code:'...',  name:'Вихор',   col:'#e879f9',desc:'Удар всіх навколо',   fn:'omni',     tier:0},
+  {code:'---',  name:'Ривок',   col:'#22c55e',desc:'Телепорт 3 кроки',    fn:'teleport', tier:0},
+  // ── Складні (треба знайти 📜 сувій) ──
+  {code:'..-',  name:'Лють',    col:'#ef4444',desc:'Сила×3, але -стаміна',fn:'berserk',  tier:1},
+  {code:'-..',  name:'Бар\'єр', col:'#fbbf24',desc:'Невразливість 2с',    fn:'invuln',   tier:1},
+  {code:'.--',  name:'Блискавка',col:'#22d3ee',desc:'Промінь по прямій',  fn:'bolt',     tier:1},
+  {code:'-.-',  name:'Зцілення+',col:'#4ade80',desc:'Повне HP',           fn:'fullheal', tier:1},
+  {code:'.-.',  name:'Відбиття',col:'#a5f3fc',desc:'Відбити шкоду 4с',    fn:'reflect',  tier:2},
+  {code:'--..', name:'Метеор',  col:'#f97316',desc:'Удар 5×5 навколо',    fn:'meteor',   tier:2},
+  {code:'..--', name:'Час',     col:'#c4b5fd',desc:'Заморозити всіх 5с',  fn:'timestop', tier:2},
+  {code:'.-.-', name:'Воскресіння',col:'#fde047',desc:'Відродити союзника',fn:'resurrect',tier:3},
+  {code:'...--',name:'Апокаліпсис',col:'#dc2626',desc:'Знищити всіх ворогів',fn:'apocalypse',tier:3},
+  {code:'---..',name:'Безсмертя',col:'#fef08a',desc:'Невразливість 6с',   fn:'immortal', tier:3},
 ];
 // Словник для розпізнавання
 const SPELL_MAP={};SPELLS.forEach(s=>{SPELL_MAP[s.code]=s;});
@@ -251,7 +263,7 @@ const OBJ_TYPES={
   wall:  {sym:'▬',col:'#475569',destructible:false,blocksMove:true,desc:'Стіна'},
   crate: {sym:'⊡',col:'#92400e',destructible:true, blocksMove:true,hp:3,desc:'Ящик'},
   barrel:{sym:'◉',col:'#b45309',destructible:true, blocksMove:true,hp:1,explodes:true,desc:'Бочка'},
-  upg_reach:    {sym:'🔭',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Дальність +1 клітинка'},
+  upg_reach:    {sym:'🔧',col:'#60a5fa',destructible:false,blocksMove:false,isLoot:true,upg:'reach',    desc:'Уламок: +1 клітинка зони'},
   upg_weight:   {sym:'🌬',col:'#22c55e',destructible:false,blocksMove:false,isLoot:true,upg:'weight',   desc:'Вага -15%'},
   upg_sharpness:{sym:'⚡',col:'#f59e0b',destructible:false,blocksMove:false,isLoot:true,upg:'sharpness',desc:'Гострота +25%'},
   upg_hp:       {sym:'❤', col:'#ef4444',destructible:false,blocksMove:false,isLoot:true,upg:'hp',       desc:'MaxHP +20'},
@@ -314,7 +326,7 @@ function roomStyle(rx,ry){
     archetype,weight,axisV,axisH,
     bg:pal.bg,edge:pal.edge,accent:pal.accent,name:pal.name,sym:pal.sym,
     // Геймплейні модифікатори:
-    enemyDensity:0.5+weight*2.5,         // більше ворогів на периферії
+    enemyDensity:3+weight*6,              // 3 в центрі → 9 на периферії
     orderFactor:(axisH+1)/2,             // 1=порядок(рівні стіни), 0=хаос(розкидано)
     lightFactor:(axisV+1)/2,             // 1=світло(менше перешкод), 0=ерозія(руїни)
     bossChance:weight>0.6?0.35:weight>0.35?0.15:0,
@@ -328,7 +340,7 @@ function generateRoomAt(mx,my,diff){
   const occ=[{x:CX,y:CY}];
   const objects=[];
   // Кількість ворогів за щільністю стилю
-  const enemyCount=Math.round(st.enemyDensity*(0.7+_dCfg.enemyHp*0.4));
+  const enemyCount=Math.max(2,Math.round(st.enemyDensity*(0.6+_dCfg.enemyHp*0.3)));
   const isBoss=Math.random()<st.bossChance;
   // Перешкоди: порядок→рівні стіни, хаос→розкидані руїни
   const objCount=Math.round(2+st.weight*6);
@@ -351,7 +363,9 @@ function generateRoomAt(mx,my,diff){
   // Лут: 2 предмети (більше на периферії)
   const lootCount=st.weight>0.5?3:2;
   const lootKeys=Object.keys(OBJ_TYPES).filter(k=>OBJ_TYPES[k].isLoot);
+  // 40% chance to guarantee a spell scroll
   const picks=[...lootKeys].sort(()=>Math.random()-.5).slice(0,lootCount);
+  if(Math.random()<0.4&&!picks.includes('upg_spell'))picks[0]='upg_spell';
   for(const lt of picks){
     for(let i=0;i<40;i++){
       const x=1+Math.floor(Math.random()*(G-2)),y=1+Math.floor(Math.random()*(G-2));
@@ -459,24 +473,82 @@ function generateRoom(roomNum,spawnX,spawnY,diff){
 
 function getWCells(px,py,yi,wk,extraReach=0){
   const w=WPN[wk],cells=[];
-  if(w.sweep){
-  for(let d=0;d<8;d++){
-    const[dx,dy]=DIR[d];
-    for(let r=1;r<=1+extraReach;r++){
-      const nx=px+dx*r,ny=py+dy*r;
-      if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:r===1,extra:r>1});
-    }
-  }
-  return cells;
-}
+  const inB=(x,y)=>x>=0&&x<G&&y>=0&&y<G;
+  const add=(x,y,main,extra)=>{if(inB(x,y)&&!cells.some(c=>c.x===x&&c.y===y))cells.push({x,y,main,extra});};
   const[dx,dy]=DIR[yi];
-  // Base reach + extra cells from upgrades (extra cells deal full damage)
-  for(let r=1;r<=w.reach+extraReach;r++){
-    const nx=px+dx*r,ny=py+dy*r;
-    if(nx>=0&&nx<G&&ny>=0&&ny<G)
-      cells.push({x:nx,y:ny,main:r<=1,extra:r>w.reach});
+
+  // ── ЛУК (ranged): постріл лише в ОДНУ далеку клітинку (снаряд) ──
+  // Кожен артефакт = +1 дальність пострілу. Б'є тільки кінцеву клітинку.
+  if(w.ranged){
+    const dist=w.reach+extraReach;
+    let tx=px,ty=py;
+    for(let r=1;r<=dist;r++){const nx=px+dx*r,ny=py+dy*r;if(!inB(nx,ny))break;tx=nx;ty=ny;}
+    if(tx!==px||ty!==py)add(tx,ty,true,extraReach>0);
+    return cells;
   }
-  for(let s=-w.arc;s<=w.arc;s++){if(!s)continue;const ai=(yi+s+8)%8;const[ax,ay]=DIR[ai];const nx=px+ax,ny=py+ay;if(nx>=0&&nx<G&&ny>=0&&ny<G)cells.push({x:nx,y:ny,main:false});}
+
+  // ── ЦІП (sweep): будує коло навколо ПО 1 КЛІТИНЦІ за артефакт ──
+  // Спочатку внутрішнє кільце (8 клітинок), потім зовнішнє. Кожне кільце
+  // потребує все більше артефактів (повільніше, але щільніше).
+  if(w.sweep){
+    // Порядок клітинок кілець: спочатку напрямок погляду, потім за годинниковою
+    const ringCells=(r)=>{
+      const out=[];
+      for(let a=0;a<8;a++){const[ax,ay]=DIR[a];out.push({x:px+ax*r,y:py+ay*r,ringIdx:a});}
+      // Почати з напрямку погляду yi, далі по колу
+      return out.sort((p,q)=>((p.ringIdx-yi+8)%8)-((q.ringIdx-yi+8)%8));
+    };
+    // Базова форма: 1 клітинка спереду (radius 1)
+    let budget=1+extraReach; // всього клітинок = база(1) + артефакти
+    let r=1;
+    while(budget>0&&r<=6){
+      const ring=ringCells(r);
+      // Скільки клітинок цього кільця можна додати
+      const take=Math.min(budget,ring.length);
+      for(let i=0;i<take;i++){add(ring[i].x,ring[i].y,r===1,r>1);}
+      budget-=take;
+      // Наступне кільце "дорожче": пропускаємо частину бюджету (повільніше зростання)
+      if(budget>0&&take===ring.length){budget-=Math.floor(r/2);} // штраф за глибину
+      r++;
+    }
+    return cells;
+  }
+
+  // ── СПИС (arc=0, не ranged): суцільна ЛІНІЯ вперед, +1 клітинка/артефакт ──
+  if(w.arc===0){
+    const len=w.reach+extraReach;
+    for(let r=1;r<=len;r++){add(px+dx*r,py+dy*r,r<=1,r>w.reach);}
+    return cells;
+  }
+
+  // ── СОКИРА/ДВОРУЧНИК/МЕЧ/КИНДЖАЛ (arc>=1): дуга, що росте ПО 1 КЛІТИНЦІ ──
+  // Базова дуга на reach. Кожен артефакт додає 1 клітинку наступного шару,
+  // заповнюючи форму поступово (порушуючи симетрію), поки шар не завершиться.
+  // Спочатку будуємо базову форму (всі клітинки на дистанції <= reach в дузі)
+  const arcDirs=[];
+  arcDirs.push(yi); // центр (погляд)
+  for(let s=1;s<=w.arc;s++){arcDirs.push((yi+s+8)%8);arcDirs.push((yi-s+8)%8);}
+  // Базові клітинки: кожен напрям дуги на кожній відстані 1..reach
+  for(let r=1;r<=w.reach;r++){
+    for(const ad of arcDirs){const[ax,ay]=DIR[ad];add(px+ax*r,py+ay*r,r<=1,false);}
+  }
+  // Артефакти: додаємо клітинки наступних шарів ПО ОДНІЙ.
+  // Порядок: для кожного нового шару r=reach+1, reach+2... проходимо дугу від центру.
+  let remaining=extraReach;
+  let layer=w.reach+1;
+  while(remaining>0&&layer<=8){
+    // Клітинки цього шару в порядку: центр, потім розширення дуги
+    const layerCells=[];
+    for(const ad of arcDirs){const[ax,ay]=DIR[ad];layerCells.push({x:px+ax*layer,y:py+ay*layer});}
+    // Додаємо по одній клітинці, поки є артефакти або шар не вичерпано
+    for(let i=0;i<layerCells.length&&remaining>0;i++){
+      const lc=layerCells[i];
+      if(inB(lc.x,lc.y)&&!cells.some(c=>c.x===lc.x&&c.y===lc.y)){
+        add(lc.x,lc.y,false,true);remaining--;
+      }
+    }
+    layer++;
+  }
   return cells;
 }
 function spawnE(type,occ){
@@ -760,10 +832,14 @@ function botThink(bot,rs,allP,roomId){
         }
         teamEdge=rs._botTeamEdge;
       }
-      // Move toward chosen team edge
+      // Move toward chosen team edge — spread bots along the edge by slot
       if(teamEdge&&!targets.length){
-        const ex=teamEdge==='W'?0:teamEdge==='E'?G-1:bot.x;
-        const ey=teamEdge==='N'?0:teamEdge==='S'?G-1:bot.y;
+        const slotOffset=(bot.slot||0)*3-4; // spread: -4,-1,2,5 along edge
+        let ex,ey;
+        if(teamEdge==='W'){ex=0;ey=clamp(CY+slotOffset,1,G-2);}
+        else if(teamEdge==='E'){ex=G-1;ey=clamp(CY+slotOffset,1,G-2);}
+        else if(teamEdge==='N'){ey=0;ex=clamp(CX+slotOffset,1,G-2);}
+        else{ey=G-1;ex=clamp(CX+slotOffset,1,G-2);}
         targets=[{x:ex,y:ey,isEdge:true}];
       }
     }
@@ -784,21 +860,41 @@ function botThink(bot,rs,allP,roomId){
     bot._wantAttack=true;
     return;
   }
-  // Move toward target
-  const dx=Math.sign(tgt.x-bot.x),dy=Math.sign(tgt.y-bot.y);
-  let mx=0,my=0;
-  if(Math.abs(tgt.x-bot.x)>Math.abs(tgt.y-bot.y)){mx=dx;}else{my=dy;}
-  const nx=clamp(bot.x+mx,0,G-1),ny=clamp(bot.y+my,0,G-1);
-  // Avoid obstacles/other entities
-  const blocked=enemies.some(e=>e.x===nx&&e.y===ny)||enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>bc.x===nx&&bc.y===ny))||objects.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny)||Object.values(allP).some(p=>p.id!==bot.id&&p.alive&&p.x===nx&&p.y===ny);
-  if(!blocked){bot.x=nx;bot.y=ny;bot.yawIdx=dirToYaw(mx,my);}
-  else{
-    // Try perpendicular
-    const ax=my!==0?Math.sign(tgt.x-bot.x):0,ay=mx!==0?Math.sign(tgt.y-bot.y):0;
-    const nx2=clamp(bot.x+ax,0,G-1),ny2=clamp(bot.y+ay,0,G-1);
-    const blocked2=enemies.some(e=>e.x===nx2&&e.y===ny2)||objects.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx2&&o.y===ny2);
-    if(!blocked2&&(ax||ay)){bot.x=nx2;bot.y=ny2;}
+  // ── Move toward target with robust obstacle avoidance ──
+  const isBlocked=(nx,ny)=>{
+    if(nx<0||nx>=G||ny<0||ny>=G)return true;
+    if(enemies.some(e=>e.type!=='boss'&&e.x===nx&&e.y===ny))return true;
+    if(enemies.some(e=>e.type==='boss'&&calcBossCells(e.x,e.y,e.size||1).some(bc=>bc.x===nx&&bc.y===ny)))return true;
+    if(objects.some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return true;
+    if(Object.values(allP).some(p=>p.id!==bot.id&&p.alive&&!p.isSpectator&&p.x===nx&&p.y===ny))return true;
+    return false;
+  };
+  const tdx=tgt.x-bot.x,tdy=tgt.y-bot.y;
+  // Candidate moves sorted by how much closer they get to target
+  const candidates=[
+    [Math.sign(tdx),0],[0,Math.sign(tdy)], // primary axes toward target
+    [Math.sign(tdx),Math.sign(tdy)],        // diagonal toward target
+    [0,1],[0,-1],[1,0],[-1,0],              // all 4 directions as fallback
+    [1,1],[1,-1],[-1,1],[-1,-1],            // all diagonals
+  ].filter(([mx,my])=>mx!==0||my!==0);
+  // Score each candidate by resulting distance to target
+  let moved=false;
+  const scored=candidates.map(([mx,my])=>{
+    const nx=bot.x+mx,ny=bot.y+my;
+    if(isBlocked(nx,ny))return null;
+    return{mx,my,nx,ny,d:Math.abs(tgt.x-nx)+Math.abs(tgt.y-ny)};
+  }).filter(Boolean).sort((a,b)=>a.d-b.d);
+  if(scored.length){
+    // Anti-stuck: if best move doesn't reduce distance and bot was stuck, pick random valid
+    const curD=Math.abs(tdx)+Math.abs(tdy);
+    let pick=scored[0];
+    if(pick.d>=curD){
+      bot._stuck=(bot._stuck||0)+1;
+      if(bot._stuck>2){pick=scored[Math.floor(Math.random()*scored.length)];bot._stuck=0;}
+    }else bot._stuck=0;
+    bot.x=pick.nx;bot.y=pick.ny;bot.yawIdx=dirToYaw(pick.mx,pick.my);moved=true;
   }
+  if(!moved)bot._stuck=(bot._stuck||0)+1;
 }
 function dirToYaw(dx,dy){
   // 8-direction from dx,dy
@@ -940,9 +1036,10 @@ function Lobby({settings,onStart,t=k=>k}){
       {phase==='join'&&<input value={codeInput} onChange={e=>setCodeInput(e.target.value.toUpperCase())} placeholder="КОД КІМНАТИ" maxLength={5} style={{...InpSt,fontSize:'18px',letterSpacing:'.35em',textAlign:'center',color:'#60a5fa'}}/>}
       {phase==='join'&&<button onClick={()=>setAsSpectator(!asSpectator)} style={{width:'100%',padding:'9px',marginBottom:'8px',background:asSpectator?'#1e3a8a33':'#060f1e',border:`1px solid ${asSpectator?'#a78bfa':'#1e3a5f'}`,color:asSpectator?'#a78bfa':'#334155',borderRadius:'6px',cursor:'pointer',fontFamily:'inherit',fontSize:'10px'}}>{asSpectator?'👁 СПОСТЕРІГАЧ (увімкнено)':'👁 Приєднатись як спостерігач'}</button>}
       {!asSpectator&&phase!=='create_spec'&&<><div style={{fontSize:'9px',color:'#1e4a7f',marginBottom:'5px'}}>ЗБРОЯ</div>
-      <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'10px'}}>
+      <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'4px'}}>
         {Object.entries(WPN).map(([k,w])=>(<button key={k} onClick={()=>setMyWpn(k)} style={{padding:'5px 7px',background:myWpn===k?'#14532d33':'#060f1e',border:`1px solid ${myWpn===k?'#22c55e':'#1e3a5f'}`,color:myWpn===k?'#22c55e':'#334155',borderRadius:'4px',cursor:'pointer',fontFamily:'inherit',fontSize:'9px',whiteSpace:'nowrap'}}>{w.label}</button>))}
-      </div></>}
+      </div>
+      <div style={{fontSize:'8px',color:'#4a6a9f',marginBottom:'10px',minHeight:'12px'}}>{WPN[myWpn]?.desc} · вага {WPN[myWpn]?.w}</div></>}
       <B2 onClick={phase==='create'?()=>handleCreate(false):phase==='create_spec'?()=>handleCreate(true):handleJoin} col={phase==='join'?'#3b82f6':phase==='create_spec'?'#a78bfa':'#22c55e'}>{phase==='join'?'🔗 ПРИЄДНАТИСЬ':phase==='create_spec'?'👁 СТВОРИТИ':'✓ СТВОРИТИ'}</B2>
       <B2 onClick={()=>{setPhase('menu');setStatus('');}} col='#4a6a9f' style={{marginTop:'6px'}}>← НАЗАД</B2>
       {status&&<div style={{fontSize:'10px',color:'#ef4444',textAlign:'center',marginTop:'6px'}}>{status}</div>}
@@ -1016,6 +1113,8 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
     const now=Date.now();
     // Stealth: enemy attacks miss
     if(t.spell?.fn==='stealth'&&t.spell.until>now)return;
+    // Invuln/immortal: no damage at all
+    if(t.spell?.fn==='invuln'&&t.spell.until>now)return;
     // Armor: -60% damage
     let realDmg=dmg;
     if(t.spell?.fn==='armor'&&t.spell.until>now)realDmg=Math.round(dmg*0.4);
@@ -1036,7 +1135,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
         // ── BOT CONTROL (host drives all bots) ──
         Object.values(allP.current).forEach(bot=>{
           if(!bot.isBot||!bot.alive)return;
-          if(bot._reactMs===undefined){bot._reactMs=280+Math.random()*220;bot._lastAct=0;bot.stamina=bot.stamina??100;}
+          if(bot._reactMs===undefined){bot._reactMs=450+Math.random()*400;bot._lastAct=0;bot.stamina=bot.stamina??100;}
           // Stamina regen for bots
           bot.stamina=clamp((bot.stamina||100)+2,0,100);
           // ── Bot spell casting (with cooldown) ──
@@ -1063,7 +1162,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
             bot._wantAttack=false;bot.stamina=Math.max(0,bot.stamina-20);
             const wm=bot.weaponMods||{reach:0,weight:1,sharpness:1};
             const cells=getWCells(bot.x,bot.y,bot.yawIdx,bot.wpn,wm.reach||0);
-            const bDmg=Math.max(8,Math.round(34*(wm.sharpness||1)/((WPN[bot.wpn]?.w||5)*(wm.weight||1))));
+            const bDmg=Math.max(4,Math.round(20*(wm.sharpness||1)/((WPN[bot.wpn]?.w||5)*(wm.weight||1)))); // bots hit weaker
             const bMode=g.mpMode;
             if(bMode!=='duel_1v1'){
               g.enemies=(g.enemies||[]).map(e=>{
@@ -1072,13 +1171,13 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
               }).filter(Boolean);
             }
             if(bMode==='duel_1v1'||bMode==='duel_2v2'){
-              Object.entries(allP.current).forEach(([pid,op])=>{if(pid===bot.id||!op.alive)return;if(bMode==='duel_2v2'&&((bot.slot||0)<2)===((op.slot||0)<2))return;if(cells.find(cc=>cc.x===op.x&&cc.y===op.y))hitPlayer(pid,bDmg);});
+              Object.entries(allP.current).forEach(([pid,op])=>{if(pid===bot.id||!op.alive)return;if(bMode==='duel_2v2'&&((bot.slot||0)<2)===((op.slot||0)<2))return;if(cells.find(cc=>cc.x===op.x&&cc.y===op.y)){if(Math.random()<0.25)return;hitPlayer(pid,bDmg);}});
             }
             g.flash=cells.map(cc=>({x:cc.x,y:cc.y,col:'#f59e0b'}));g.flashUntil=now+200;
           }
           // Bot loot pickup
           const loot=(g.objects||[]).find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===bot.x&&o.y===bot.y);
-          if(loot){g.objects=g.objects.filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){bot.hp=Math.min(bot.maxHp+20,bot.hp+20);bot.maxHp+=20;}else if(upg==='reach')bot.weaponMods={...bot.weaponMods,reach:(bot.weaponMods?.reach||0)+1};else if(upg==='sharpness')bot.weaponMods={...bot.weaponMods,sharpness:(bot.weaponMods?.sharpness||1)+0.25};}
+          if(loot){g.objects=g.objects.filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){bot.hp=Math.min(bot.maxHp+20,bot.hp+20);bot.maxHp+=20;}else if(upg==='reach')bot.weaponMods={...bot.weaponMods,reach:Math.min(8,(bot.weaponMods?.reach||0)+1)};else if(upg==='sharpness')bot.weaponMods={...bot.weaponMods,sharpness:(bot.weaponMods?.sharpness||1)+0.25};}
           // Sync bot to Firebase
           fbSet(`mp/${roomId}/players/${bot.id}`,{name:bot.name,slot:bot.slot,hp:bot.hp,maxHp:bot.maxHp,alive:bot.alive,wpn:bot.wpn,x:bot.x,y:bot.y,yawIdx:bot.yawIdx,stamina:Math.round(bot.stamina),weaponMods:bot.weaponMods,score:bot.score||0,isBot:true,id:bot.id});
         });
@@ -1100,7 +1199,8 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
         g.enemies=(g.enemies||[]).map(e=>{
           if(e.type==='boss'){if(now-(e.lastMove||0)<(e.ms||700))return e;if(e.frozen&&e.frozen>now)return e;let np=pList[0],nd=999;pList.forEach(p=>{const d=Math.abs((p.x||0)-e.x)+Math.abs((p.y||0)-e.y);if(d<nd){nd=d;np=p;}});const bcs=calcBossCells(e.x,e.y,e.size||1);if(bcs.some(bc=>Math.abs(bc.x-(np.x||0))+Math.abs(bc.y-(np.y||0))<=1)){hitPlayer(np.id||myId,e.dmg||20);changed=true;return{...e,lastMove:now};}const dx=(np.x||0)-e.x,dy=(np.y||0)-e.y;const bm=[[Math.sign(dx),0],[0,Math.sign(dy)]].map(([mx,my])=>{const nbx=e.x+mx,nby=e.y+my;if(nbx<0||nby<0||nbx+(e.size||1)>G||nby+(e.size||1)>G)return null;return{x:nbx,y:nby,d:Math.abs((np.x||0)-nbx)+Math.abs((np.y||0)-nby)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];changed=true;return bm?{...e,x:bm.x,y:bm.y,lastMove:now}:{...e,lastMove:now};}
           const et=ET[e.type];if(!et||now-(e.lastMove||0)<et.ms)return e;
-          if(e.frozen&&e.frozen>now)return e; // frozen by spelllet np=pList[0],nd=999;pList.forEach(p=>{const d=Math.abs((p.x||0)-e.x)+Math.abs((p.y||0)-e.y);if(d<nd){nd=d;np=p;}});const dx=(np.x||0)-e.x,dy=(np.y||0)-e.y;if(Math.abs(dx)+Math.abs(dy)<=1){hitPlayer(np.id||myId,et.dmg*dCfg.enemyDmg);changed=true;return{...e,lastMove:now};}const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];const best=dirs.map(([mx,my])=>{const nx=e.x+mx,ny=e.y+my;if(nx<0||nx>=G||ny<0||ny>=G)return null;if(pList.some(p=>(p.x||0)===nx&&(p.y||0)===ny))return null;if((g.enemies||[]).some(o=>o.id!==e.id&&o.x===nx&&o.y===ny))return null;if((g.objects||[]).some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return null;return{x:nx,y:ny,d:Math.abs((np.x||0)-nx)+Math.abs((np.y||0)-ny)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];changed=true;return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
+          if(e.frozen&&e.frozen>now)return e;
+          let np=pList[0],nd=999;pList.forEach(p=>{const d=Math.abs((p.x||0)-e.x)+Math.abs((p.y||0)-e.y);if(d<nd){nd=d;np=p;}});const dx=(np.x||0)-e.x,dy=(np.y||0)-e.y;if(Math.abs(dx)+Math.abs(dy)<=1){hitPlayer(np.id||myId,et.dmg*dCfg.enemyDmg);changed=true;return{...e,lastMove:now};}const dirs=e.type==='ghost'?DIR:[[Math.sign(dx),0],[0,Math.sign(dy)]];const best=dirs.map(([mx,my])=>{const nx=e.x+mx,ny=e.y+my;if(nx<0||nx>=G||ny<0||ny>=G)return null;if(pList.some(p=>(p.x||0)===nx&&(p.y||0)===ny))return null;if((g.enemies||[]).some(o=>o.id!==e.id&&o.x===nx&&o.y===ny))return null;if((g.objects||[]).some(o=>OBJ_TYPES[o.type]?.blocksMove&&o.x===nx&&o.y===ny))return null;return{x:nx,y:ny,d:Math.abs((np.x||0)-nx)+Math.abs((np.y||0)-ny)};}).filter(Boolean).sort((a,b)=>a.d-b.d)[0];changed=true;return best?{...e,x:best.x,y:best.y,lastMove:now}:{...e,lastMove:now};
         }).filter(Boolean);
         if(mpMode==='coop_adventure'&&!g.enemies.length){
           if(g._roomCleared!==g.roomNumber){g._roomCleared=g.roomNumber;g.msg=g.isHub?'🏠 ДІМ — оберіть напрямок (зберіть усіх на краю)':'✓ Очищено! Зберіть усіх на одному краю';changed=true;}
@@ -1189,7 +1289,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       fr();
       return()=>{stopBGM();cln.current.forEach(f=>f());cln.current=[];};
     }
-    myP.current={x:CX,y:CY,hp,maxHp:hp,stamina:100,yawIdx:0,compassD:0,pitch:0,wpn:info.startWpn||settings?.startWpn||'sword',alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,slot:0,name:myId,id:myId};
+    myP.current={x:CX,y:CY,hp,maxHp:hp,stamina:100,yawIdx:0,compassD:0,pitch:0,wpn:info.startWpn||settings?.startWpn||'sword',alive:true,weaponMods:{reach:0,weight:1,sharpness:1},score:0,slot:0,name:myId,id:myId,unlocked:SPELLS.filter(s=>s.tier===0).map(s=>s.code)};
     if(reconnect){
       // Restore existing player data from Firebase (one-time read)
       const ru=fbOn(`mp/${roomId}/players/${myId}`,pd=>{if(pd){myP.current={...myP.current,...pd,id:myId};}ru();fr();});
@@ -1219,7 +1319,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       const sdMult=DIFFICULTY[diff]?.staminaDrain||1;
       // pitch=+1 (upright) drains, pitch=-1 (flat/tilted back) recovers strongly
       const pit=p.pitch||0;
-      const staminaRate=pit>0?(-pit*2.5*sdMult):(-pit*3.5);
+      const staminaRate=pit>0?(-pit*1.5*sdMult):(-pit*3.0);
       p.stamina=clamp(p.stamina+staminaRate,0,100);
       fbSet(`mp/${roomId}/players/${myId}`,{x:p.x,y:p.y,hp:p.hp,maxHp:p.maxHp,stamina:Math.round(p.stamina),yawIdx:p.yawIdx,compassD:p.compassD,wpn:p.wpn,alive:p.alive,weaponMods:p.weaponMods,score:p.score||0,slot:p.slot||0,name:p.name||myId,id:myId});},200);
     cln.current.push(()=>clearInterval(pSync));
@@ -1268,7 +1368,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
     // Pitch power: upright phone (pitch>0) = stronger strike (up to +80%)
     const pitchPower=1+Math.max(0,(p.pitch||0))*0.8;
     // Surge spell: ×2 damage
-    const surgeMult=(p.spell?.fn==='surge'&&p.spell.until>nowA)?2:1;
+    const surgeMult=(p.spell?.fn==='surge'&&p.spell.until>nowA)?2:(p.spell?.fn==='berserk'&&p.spell.until>nowA)?3:1;
     const baseDmg=Math.max(8,Math.round(34*(wm.sharpness||1)*pitchPower*comboMult*surgeMult/((WPN[p.wpn]?.w||5)*(wm.weight||1))));
     // Flash the attack zone red (visual feedback like single-player)
     g.flash=cells.map(cc=>({x:cc.x,y:cc.y,col:'#ef4444'}));
@@ -1312,10 +1412,20 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
     p.x=nx;p.y=ny;
     // ── Movement stamina cost: weapon weight + pitch (upright = drains fast) ──
     const wWeight=(WPN[p.wpn]?.w||5)/5; // sword=1.0 baseline, dagger=0.4, axe=1.6
-    const pitchCost=(p.pitch||0)>0.2?6+((p.pitch||0)*8):2; // upright phone: ~6-14, flat: ~2
+    // Рух: телефон вниз = мала трата, вгору (заряджений) = величезна (3-4 кроки)
+    const pit=p.pitch||0;
+    const pitchCost=pit>0.1?(12+pit*18):4; // вгору: 12-30 за крок, вниз: 4
     p.stamina=Math.max(0,p.stamina-pitchCost*wWeight*(p.spell?.fn==='rush'&&p.spell.until>Date.now()?0:1));
     const loot=(g.objects||[]).find(o=>OBJ_TYPES[o.type]?.isLoot&&o.x===nx&&o.y===ny);
-    if(loot){g.objects=(g.objects||[]).filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:(p.weaponMods.reach||0)+1};else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,(p.weaponMods.weight||1)-0.15)};else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:(p.weaponMods.sharpness||1)+0.25};snd('spell');const _d=OBJ_TYPES[loot.type]?.desc||'Покращення!';setMsg(_d);speak(_d,settings?.voice!==false);if(isHost){lastSync.current=0;syncState();}}
+    if(loot){g.objects=(g.objects||[]).filter(o=>o.id!==loot.id);const upg=OBJ_TYPES[loot.type]?.upg;if(upg==='hp'){p.hp=Math.min(p.maxHp+20,p.hp+20);p.maxHp+=20;}else if(upg==='reach')p.weaponMods={...p.weaponMods,reach:Math.min(8,(p.weaponMods.reach||0)+1)};else if(upg==='weight')p.weaponMods={...p.weaponMods,weight:Math.max(0.3,(p.weaponMods.weight||1)-0.15)};else if(upg==='sharpness')p.weaponMods={...p.weaponMods,sharpness:(p.weaponMods.sharpness||1)+0.25};
+      else if(upg==='spell'){
+        // Unlock a random locked spell (lowest tier first)
+        const locked=SPELLS.filter(s=>!(p.unlocked||[]).includes(s.code)).sort((a,b)=>a.tier-b.tier);
+        if(locked.length){const ns=locked[0];p.unlocked=[...(p.unlocked||[]),ns.code];snd('spell');setMsg(`📜 Відкрито: ${ns.name} (${ns.code})`);speak(`Відкрито ${ns.name}`,settings?.voice!==false);}
+        else setMsg('📜 Усі заклинання вже відкриті!');
+      }
+      if(upg!=='spell'){snd('spell');const _d=OBJ_TYPES[loot.type]?.desc||'Покращення!';setMsg(_d);speak(_d,settings?.voice!==false);}
+      if(isHost){lastSync.current=0;syncState();}}
     fr();
   },[myId,isHost]);
 // ── TOUCH (separate effect, re-binds with handlers — like single-player) ──
@@ -1362,7 +1472,8 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
   const SPELL_CD=4000; // 4s cooldown
   const castSpell=useCallback((spell)=>{
     const p=myP.current,g=rs.current;if(!p)return;const fn=spell.fn,now=Date.now();
-    if(now<spellCdRef.current){const left=Math.ceil((spellCdRef.current-now)/1000);setMsg(`⏳ Заклинання перезаряджається (${left}с)`);return;}
+    if(!(p.unlocked||[]).includes(spell.code)){setMsg(`🔒 "${spell.name}" ще не відкрито — знайди 📜`);return;}
+    if(now<spellCdRef.current){const left=Math.ceil((spellCdRef.current-now)/1000);setMsg(`⏳ Перезарядка (${left}с)`);return;}
     spellCdRef.current=now+SPELL_CD;
     if(fn==='stamina')p.stamina=Math.min(100,p.stamina+40);
     else if(fn==='heal')p.hp=Math.min(p.maxHp,p.hp+40);
@@ -1379,6 +1490,33 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       if(isHost){lastSync.current=0;syncState();}}
     }
     else if(fn==='teleport'){const[dx,dy]=DIR[p.yawIdx||0];p.x=clamp(p.x+dx*3,0,G-1);p.y=clamp(p.y+dy*3,0,G-1);}
+    // ── Складні заклинання ──
+    else if(fn==='berserk')p.spell={fn:'berserk',until:now+6000}; // surge×3 applied in attack
+    else if(fn==='invuln')p.spell={fn:'invuln',until:now+2000};
+    else if(fn==='immortal')p.spell={fn:'invuln',until:now+6000};
+    else if(fn==='reflect')p.spell={fn:'reflect',until:now+4000};
+    else if(fn==='fullheal')p.hp=p.maxHp;
+    else if(fn==='bolt'){
+      // Beam along facing direction, hits all in line
+      if(g){const[dx,dy]=DIR[p.yawIdx||0];const hitCells=[];for(let r=1;r<G;r++){const bx=p.x+dx*r,by=p.y+dy*r;if(bx<0||bx>=G||by<0||by>=G)break;hitCells.push({x:bx,y:by});}
+      const bDmg=Math.round(40*(p.weaponMods?.sharpness||1));
+      g.enemies=(g.enemies||[]).map(e=>{if(e.type==='boss')return e;if(hitCells.find(c=>c.x===e.x&&c.y===e.y)){const nhp=e.hp-bDmg;if(nhp<=0){g.score=(g.score||0)+10;return null;}return{...e,hp:nhp};}return e;}).filter(Boolean);
+      g.flash=hitCells.map(c=>({x:c.x,y:c.y,col:'#22d3ee'}));g.flashUntil=now+250;if(isHost){lastSync.current=0;syncState();}}
+    }
+    else if(fn==='meteor'){
+      // 5×5 area around player
+      if(g){const cells=[];for(let ddx=-2;ddx<=2;ddx++)for(let ddy=-2;ddy<=2;ddy++){const mx=p.x+ddx,my=p.y+ddy;if(mx>=0&&mx<G&&my>=0&&my<G)cells.push({x:mx,y:my});}
+      const mDmg=Math.round(50*(p.weaponMods?.sharpness||1));
+      g.enemies=(g.enemies||[]).map(e=>{if(e.type==='boss'){const bc=calcBossCells(e.x,e.y,e.size||1);if(bc.some(b=>cells.find(c=>c.x===b.x&&c.y===b.y))){const nhp=e.hp-mDmg;if(nhp<=0)return null;return{...e,hp:nhp};}return e;}if(cells.find(c=>c.x===e.x&&c.y===e.y)){const nhp=e.hp-mDmg;if(nhp<=0){g.score=(g.score||0)+10;return null;}return{...e,hp:nhp};}return e;}).filter(Boolean);
+      g.flash=cells.map(c=>({x:c.x,y:c.y,col:'#f97316'}));g.flashUntil=now+300;if(isHost){lastSync.current=0;syncState();}}
+    }
+    else if(fn==='timestop'){if(g){g.enemies=(g.enemies||[]).map(e=>({...e,frozen:now+5000}));if(isHost){lastSync.current=0;syncState();}}}
+    else if(fn==='apocalypse'){if(g){const killed=(g.enemies||[]).filter(e=>e.type!=='boss').length;g.score=(g.score||0)+killed*10;g.enemies=(g.enemies||[]).filter(e=>e.type==='boss');if(isHost){lastSync.current=0;syncState();}}}
+    else if(fn==='resurrect'){
+      // Revive nearest dead ally
+      const dead=Object.values(allP.current).filter(q=>!q.alive&&!q.isSpectator&&q.id!==myId);
+      if(dead.length){const ally=dead[0];hitPlayer(ally.id,-ally.maxHp);if(isHost){fbSet(`mp/${roomId}/players/${ally.id}/alive`,true);fbSet(`mp/${roomId}/players/${ally.id}/hp`,Math.round(ally.maxHp*0.7));}}
+    }
     snd('spell');setMsg(`✨ ${spell.name}!`);speak(spell.name,settings?.voice!==false);fr();
   },[isHost,settings]);
   // Touch refs
@@ -1480,7 +1618,7 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
       {spellCdRef.current>Date.now()&&<div style={{width:'100%',maxWidth:'480px',padding:'1px 8px',flexShrink:0}}>
         <div style={{height:'3px',background:'#020c1a',borderRadius:'2px',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.max(0,100-((spellCdRef.current-Date.now())/SPELL_CD)*100)}%`,background:'#a78bfa',transition:'width .1s'}}/></div>
       </div>}
-      <MorseBar currentSeq={p.morseSeq||''} unlocked={null}/>
+      <MorseBar currentSeq={p.morseSeq||''} unlocked={p.unlocked||[]}/>
     </>}
     {/* Dead overlay */}
     {!spectator&&!p.alive&&!allDead&&!g.gameOver&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.82)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:30,fontFamily:"'Courier New',monospace"}}>
