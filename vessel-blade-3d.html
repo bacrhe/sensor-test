@@ -35,6 +35,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 #hud .grow{flex:1}
 #dbg{position:fixed;top:6px;left:8px;z-index:10;font-size:8px;color:#1e3a5f;
   line-height:1.5;pointer-events:none;white-space:pre}
+#haptic{position:fixed;top:8px;right:10px;z-index:12;width:12px;height:12px;border-radius:50%;
+  background:#a78bfa;opacity:0;transition:opacity .04s;pointer-events:none;box-shadow:0 0 10px #a78bfa}
 /* ── BANNER (события: клинч / разоружение / парирование) ── */
 #banner{position:fixed;top:0;left:0;right:0;z-index:20;text-align:center;
   padding:10px;font-size:13px;font-weight:bold;letter-spacing:.18em;
@@ -74,6 +76,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 </div>
 
 <div id="dbg"></div>
+<div id="haptic"></div>
 <div id="banner"></div>
 <div id="flash"></div>
 <div id="intro">
@@ -162,6 +165,8 @@ function onOrient(e){
   // iOS компас
   if(e.webkitCompassHeading!=null && !isNaN(e.webkitCompassHeading)){
     sensor.compass = e.webkitCompassHeading; sensor.haveCompass = true;
+  }else if(e.alpha!=null && !isNaN(e.alpha) && e.absolute){
+    sensor.compass = wrap360(360 - e.alpha); sensor.haveCompass = true;
   }
 }
 function onOrientAbs(e){
@@ -175,12 +180,13 @@ function onMotion(e){
   lastMotT = now;
   const r = e.rotationRate || {};
   sensor.rRateA = r.alpha || 0;
-  // интеграция гироскопа (плавность) + коррекция дрейфа компасом (абсолют)
-  let y = sensor.yawFused + (r.alpha||0) * dt;       // гиро интегрируем
+  // ЯЗ ведём по абсолютному компасу (никогда не инвертирован), сглаживая.
+  // Если компаса нет — мягко доинтегрируем гироскопом как запас.
   if(sensor.compass!=null){
-    y = y + 0.05 * angDiff(sensor.compass, y);        // мягко тянем к компасу (5%)
+    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.25);
+  }else{
+    sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
   }
-  sensor.yawFused = wrap360(y);
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
   sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
@@ -195,6 +201,9 @@ function bindSensors(){
 
 /* ── азимут → индекс из 8 направлений на сетке ──────────────── */
 function yawToDirIdx(yaw){ return Math.round(wrap360(yaw)/45) % 8; }
+// непрерывное направление в МИРЕ из угла. Согласовано с DIRV:
+//   yaw 0° → (0,-1) «север» = −Z ;  yaw 90° → (1,0) = +X
+function dirXZ(yaw){ const a=yaw*Math.PI/180; return [Math.sin(a), -Math.cos(a)]; }
 
 /* ════════════════════════ WEB AUDIO ══════════════════════════ */
 let AC=null, master=null, worldFilter=null, ambGain=null;
@@ -316,7 +325,7 @@ function makeAvatar(baseHue){
   mesh.frustumCulled = false;          // воксели смещены в instanceMatrix — иначе тело пропадает под углом
   scene.add(mesh);
   // клинок: до 6 сегментов-вокселей вдоль направления
-  const bladeGeo = new THREE.BoxGeometry(0.14,0.14,CELL*0.9);
+  const bladeGeo = new THREE.BoxGeometry(0.22,0.22,CELL*0.95);
   const bladeMat = new THREE.MeshBasicMaterial({transparent:true});
   const blade = new THREE.InstancedMesh(bladeGeo, bladeMat, 6);
   blade.frustumCulled = false;
@@ -375,30 +384,31 @@ function updateAvatarMesh(av, t){
 /* ── обновление клинка (сегменты, длина, ярус, цвет) ─────────── */
 function updateBlade(av){
   if(av.disarmed || av.dead){ av.blade.count=0; return; }
-  // плавное непрерывное направление (визуал), коллизии остаются по 8 секторам
-  const a = av.visYaw*Math.PI/180;
-  const dx = Math.sin(a), dy = Math.cos(a);   // 0°→ +Z(юг), 90°→ +X(восток)
+  const [dx,dz] = dirXZ(av.visYaw);            // согласовано с коллизиями (DIRV)
   const px=worldX(av.gx), pz=worldZ(av.gy);
   const tierY = 0.2 + av.tier*TIER_H;            // высота луча по ярусу
   const len = clamp(Math.round(av.swordLen),1,6);
   av.blade.count = len;
   const hot = av.hitActive;                      // активный выброс — раскалён
   const baseHandY = TIER_H*0.9;                  // «рука» на уровне торса
-  const yaw = Math.atan2(dx, dy);
+  const yaw = Math.atan2(dx, dz);
   for(let i=0;i<len;i++){
     const cx = px + dx*CELL*(i+0.7);
-    const cz = pz + dy*CELL*(i+0.7);
+    const cz = pz + dz*CELL*(i+0.7);
     const yy = lerp(baseHandY, tierY, (i+1)/len); // от руки к целевому ярусу
     _d.position.set(cx, yy, cz);
     _d.rotation.set(0, yaw, 0);
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
-    const lum = hot ? 0.78 : 0.42;
-    _c.setHSL(av===player?0.5:0.95, 0.9, lum);
+    // ярко: кончик горячее основания, активный выброс — белёсо-раскалённый
+    const tip=(i+1)/len;
+    const lum = hot ? lerp(0.75,1.0,tip) : lerp(0.55,0.8,tip);
+    const sat = hot ? 0.55 : 0.9;
+    _c.setHSL(av===player?0.5:0.95, sat, lum);
     av.blade.setColorAt(i,_c);
   }
   av.blade.instanceMatrix.needsUpdate=true;
   av.blade.instanceColor.needsUpdate=true;
-  av.blade.material.opacity = hot?1.0:0.65;
+  av.blade.material.opacity = hot?1.0:0.92;
 }
 
 /* ════════════════════ СТОЙКИ И КАМЕРА ════════════════════════ */
@@ -409,8 +419,8 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
-  // непрерывное сглаженное направление взгляда (для камеры) — без рывков по 8 секторам
-  const a = player.visYaw*Math.PI/180, dx = Math.sin(a), dy = Math.cos(a);
+  // непрерывное сглаженное направление взгляда, согласованное с коллизиями
+  const [dx,dz] = dirXZ(player.visYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // стойка по углу γ (roll)
   const beacon = Math.abs(sensor.roll) > 45;
@@ -421,10 +431,12 @@ function updateStanceAndCamera(dt){
     player.charging = true; player.hitActive=false;
     player.charge = clamp(player.charge + dt, 1, 3);
     player.swordLen = lerp(player.swordLen, 1, dt*4); // в маяке клинок втянут
-    // камера: от 1-го лица, чуть назад от головы (бинокулярный визор)
-    camTarget.set(px+dx*4, TIER_H*2, pz+dy*4);
-    camPos.set(px-dx*0.25, TIER_H*2+0.15, pz-dy*0.25);
+    player.mesh.visible = false;        // от 1-го лица своё тело не загораживает обзор
+    // камера в голове, смотрит ВПЕРЁД по сетке (панорамный визор)
+    camTarget.set(px+dx*6, TIER_H*1.7, pz+dz*6);
+    camPos.set(px+dx*0.1, TIER_H*1.95, pz+dz*0.1);
   }else{
+    player.mesh.visible = true;
     // Атака/Молния: при ПЕРЕХОДЕ из маяка — выброс на накопленную длину
     if(player.charging){
       player.charging=false;
@@ -437,9 +449,9 @@ function updateStanceAndCamera(dt){
     if(player.strikeT>0){ player.strikeT-=dt; }
     else player.hitActive=false;
     player.swordLen = lerp(player.swordLen, 1, dt*1.6);
-    // камера: от 3-го лица, строго за затылком
-    camTarget.set(px+dx*2.5, TIER_H*1.4, pz+dy*2.5);
-    camPos.set(px-dx*3.2, TIER_H*2.6, pz-dy*3.2);
+    // камера: от 3-го лица, выше и за затылком, чуть наклон вниз
+    camTarget.set(px+dx*3.0, TIER_H*1.1, pz+dz*3.0);
+    camPos.set(px-dx*3.4, TIER_H*3.0, pz-dz*3.4);
   }
 }
 
@@ -469,7 +481,7 @@ function startClinch(){
   doFlash('#a78bfa');
   // звонкий «лязг» столкновения клинков (две ноты)
   blip(900,0.09,'square',0.22); blip(70,0.45,'sawtooth',0.2);
-  if(navigator.vibrate) navigator.vibrate([0,90]);   // чёткий старт-импульс
+  buzz([0,90]);   // чёткий старт-импульс
 }
 function endClinch(reason){
   clinch.active=false; clinch.delta=0;
@@ -481,13 +493,13 @@ function endClinch(reason){
     // короткое окно идеальной контратаки: бонусный урон фантому
     damageTier(phantom, 1, 28);
     blip(880,0.18,'sine',0.2);
-    if(navigator.vibrate) navigator.vibrate([0,40,40,40]);
+    buzz([0,40,40,40]);
   }else if(reason==='disarm'){
     player.disarmed=true; player.stamina=0;
     dropBlade(player);
     showBanner('✖ РАЗОРУЖЕНИЕ — ШАГНИ К МЕЧУ','#ef4444');
     blip(50,0.6,'sawtooth',0.22);
-    if(navigator.vibrate) navigator.vibrate([0,200]);
+    buzz([0,200]);
   }
 }
 
@@ -502,13 +514,11 @@ function updateClinch(dt){
   setSwordSound(clinch.lockX, clinch.lockY, clinch.lockZ, 0.28, 110);
   // ВИБРАЦИЯ = насколько телефон ушёл от точки меча. Близко (Δ мал) — тихие редкие
   // импульсы; далеко (Δ велик) — частые и долгие. Это «компас рассинхрона».
-  if(navigator.vibrate){
-    clinch.vibT -= dt;
-    if(clinch.vibT<=0){
-      const n = clamp(clinch.delta/CLINCH_DELTA_CRIT, 0, 1);   // 0..1
-      clinch.vibT = lerp(0.45, 0.10, n);        // чем дальше — тем чаще
-      navigator.vibrate(Math.round(lerp(15, 90, n)));
-    }
+  clinch.vibT -= dt;
+  if(clinch.vibT<=0){
+    const n = clamp(clinch.delta/CLINCH_DELTA_CRIT, 0, 1);   // 0..1
+    clinch.vibT = lerp(0.45, 0.10, n);        // чем дальше — тем чаще
+    buzz(Math.round(lerp(20, 110, n)));
   }
   // сначала рассинхрон должен «разорваться» (телефон ушёл от точки меча),
   // и только потом возврат считается парированием — иначе мгновенный фрипарри
@@ -617,7 +627,7 @@ function handleDeath(av, dt){
     }else{
       showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
       blip(80,0.6,'sawtooth',0.25);
-      if(navigator.vibrate) navigator.vibrate([0,80,60,160]);
+      buzz([0,80,60,160]);
     }
   }
 }
@@ -675,26 +685,26 @@ function updatePhantom(dt){
   }
 }
 
-/* ════════════════════ СВАЙП = ШАГ ПО СЕТКЕ ═══════════════════ */
+/* ════════════════════ СВАЙП = ШАГ ОТНОСИТЕЛЬНО ВЗГЛЯДА ═══════
+   В виде от 3-го лица: свайп ВВЕРХ = шаг вперёд (от камеры),
+   ВНИЗ = назад, ВЛЕВО/ВПРАВО = вбок. Привязано к направлению клинка,
+   а не к абсолютной сетке — так интуитивно.                       */
+function stepRelative(dx, dy){            // dx,dy — экранный свайп
+  const f = DIRV[player.dirIdx];          // вперёд (куда смотрит игрок)
+  const r = [-f[1], f[0]];                // вправо (перпендикуляр)
+  let mx=0,my=0;
+  if(Math.abs(dx)>Math.abs(dy)){ const s=dx>0?1:-1; mx=r[0]*s; my=r[1]*s; }  // вбок
+  else { const s=dy<0?1:-1; mx=f[0]*s; my=f[1]*s; }                          // вверх=вперёд
+  player.gx=clamp(player.gx+mx,0,12); player.gy=clamp(player.gy+my,0,12);
+  tryPickupBlade(); blip(520,0.05,'sine',0.06);
+}
 let touchStart=null;
-$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY,t:performance.now()}; },{passive:true});
+$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY}; },{passive:true});
 $('cv').addEventListener('touchend',e=>{
   if(!touchStart) return;
   const t=e.changedTouches[0];
   const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
-  const adx=Math.abs(dx), ady=Math.abs(dy);
-  if(Math.max(adx,ady)<28){ touchStart=null; return; } // тап — не свайп
-  // свайп в экранных координатах → шаг по сетке (учёт направления взгляда)
-  let sgx=0,sgy=0;
-  if(adx>ady) sgx = dx>0?1:-1; else sgy = dy>0?1:-1;
-  // поворот свайпа под текущий азимут (как в mp-версии)
-  const a = sensor.yawFused*Math.PI/180;
-  const ca=Math.cos(a), sa=Math.sin(a);
-  const wx = Math.round(sgx*ca - sgy*sa);
-  const wy = Math.round(sgx*sa + sgy*ca);
-  player.gx=clamp(player.gx+wx,0,12); player.gy=clamp(player.gy+wy,0,12);
-  tryPickupBlade();
-  blip(520,0.05,'sine',0.06);
+  if(Math.max(Math.abs(dx),Math.abs(dy))>=28) stepRelative(dx,dy);
   touchStart=null;
 },{passive:true});
 // мышь — для теста на десктопе
@@ -702,17 +712,21 @@ let mDown=null;
 $('cv').addEventListener('mousedown',e=>{mDown={x:e.clientX,y:e.clientY};});
 addEventListener('mouseup',e=>{
   if(!mDown) return; const dx=e.clientX-mDown.x,dy=e.clientY-mDown.y;
-  if(Math.max(Math.abs(dx),Math.abs(dy))>28){
-    if(Math.abs(dx)>Math.abs(dy)) player.gx=clamp(player.gx+(dx>0?1:-1),0,12);
-    else player.gy=clamp(player.gy+(dy>0?1:-1),0,12);
-    tryPickupBlade();
-  }
+  if(Math.max(Math.abs(dx),Math.abs(dy))>=28) stepRelative(dx,dy);
   mDown=null;
 });
 // клавиши — отладка стойки/направления без телефона
 const keys={};
 addEventListener('keydown',e=>{keys[e.key]=true;});
 addEventListener('keyup',e=>{keys[e.key]=false;});
+
+/* ════════════════════ ВИБРАЦИЯ + ИНДИКАТОР ══════════════════ */
+const HAPTICS = ('vibrate' in navigator);
+let hapticFlash = 0;
+function buzz(pattern){
+  if(HAPTICS){ try{ navigator.vibrate(pattern); }catch(e){} }
+  hapticFlash = 0.16;   // визуальная отметка: импульс отправлен (видно даже без «железа»)
+}
 
 /* ════════════════════ БАННЕР / ВСПЫШКА ═══════════════════════ */
 let bannerT=0;
@@ -858,7 +872,7 @@ function frame(now){
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  фантом ${Math.round(phantom.hp)}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}`;
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
@@ -866,6 +880,7 @@ function frame(now){
     f.style.opacity=(flashT/0.35*0.5); f.style.background=`radial-gradient(circle,${flashCol}00,${flashCol}66)`;
     if(flashT<=0) f.style.opacity=0;
   }
+  if(hapticFlash>0){ hapticFlash-=dt; $('haptic').style.opacity = hapticFlash>0 ? 0.9 : 0; }
   if(introT>0){ introT-=dt; if(introT<=0){ $('intro').style.opacity='0'; setTimeout(()=>$('intro').style.display='none',700);} }
 
   renderer.render(scene, camera);
@@ -885,6 +900,7 @@ $('btnReq').addEventListener('click', async ()=>{
     initAudio();
     if(AC && AC.state==='suspended') await AC.resume();
     NET.start();                       // живое подключение к vessel-mir-13
+    buzz([0,120,60,120]);              // тест вибрации при входе
     $('gate').style.display='none';
     started=true; last=0;
   }catch(err){
