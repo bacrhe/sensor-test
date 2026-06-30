@@ -830,7 +830,9 @@ $('mResume').onclick=closeMenu;
 $('mCopy').onclick=()=>copyLog($('mCopy'));
 $('mNew').onclick=newGame;
 $('mMenu').onclick=()=>location.reload();
-$('roomInput').value = NET.room;   // подхватить ?room= из ссылки, если был
+// подхватить ?room= из ссылки (без обращения к NET — он объявлен ниже)
+{ const ur=(new URLSearchParams(location.search).get('room')||'').toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+  if(ur) $('roomInput').value=ur; }
 
 /* ════════════════════ ВИБРАЦИЯ + ИНДИКАТОР ══════════════════ */
 const HAPTICS = ('vibrate' in navigator);
