@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>МАТРИЦА 13×13 — Слепок Сознания (Voxel Blade)</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#01060f;color:#c5d8f0;
+  font-family:'Courier New',monospace;overscroll-behavior:none;touch-action:none;user-select:none}
+#cv{position:fixed;inset:0;display:block;z-index:0}
+/* ── GATE ─────────────────────────────────────────── */
+#gate{position:fixed;inset:0;z-index:30;background:#01060f;padding:16px;overflow:auto}
+.sub{color:#1e3a5f;font-size:9px;letter-spacing:.25em;margin-bottom:2px}
+h1{color:#3a6a9f;font-size:16px;margin-bottom:10px}
+h1 span{color:#1e3a5f;font-size:10px}
+.divider{height:1px;background:linear-gradient(90deg,#1e3a5f,transparent);margin-bottom:14px}
+.card{background:#060f1e;border:1px solid #1e3a5f;border-radius:8px;padding:14px;margin-bottom:10px}
+.card .lbl{color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:8px}
+.card p{color:#4a6a9f;font-size:11px;line-height:1.8;margin-bottom:10px}
+.card p b{color:#60a5fa}
+.diag-row{display:flex;justify-content:space-between;padding:3px 6px;background:#01101f;border-radius:3px;font-size:10px;margin-bottom:3px}
+.ok{color:#22c55e}.warn{color:#f59e0b}.err{color:#ef4444}
+.btn{width:100%;padding:13px;background:#0c2a1f;border:1px solid #16a34a;color:#22c55e;
+  border-radius:6px;font:inherit;font-size:13px;letter-spacing:.08em;cursor:pointer}
+.btn:active{background:#14532d}
+.btn:disabled{opacity:.5}
+.note{font-size:9px;color:#1e3a5f;margin-top:8px;line-height:1.7}
+#errMsg{color:#ef4444;font-size:10px;margin-bottom:8px;display:none}
+/* ── HUD (минимальный, состояние выражено цветом вокселей) ── */
+#hud{position:fixed;left:0;right:0;bottom:0;z-index:10;padding:8px 12px;
+  display:flex;gap:10px;align-items:center;font-size:9px;color:#2a4a6f;
+  pointer-events:none;letter-spacing:.06em}
+#stance{font-size:11px;font-weight:bold;letter-spacing:.12em}
+#hud .grow{flex:1}
+#dbg{position:fixed;top:6px;left:8px;z-index:10;font-size:8px;color:#1e3a5f;
+  line-height:1.5;pointer-events:none;white-space:pre}
+/* ── BANNER (события: клинч / разоружение / парирование) ── */
+#banner{position:fixed;top:0;left:0;right:0;z-index:20;text-align:center;
+  padding:10px;font-size:13px;font-weight:bold;letter-spacing:.18em;
+  opacity:0;transition:opacity .2s;pointer-events:none;text-shadow:0 0 12px currentColor}
+#flash{position:fixed;inset:0;z-index:15;pointer-events:none;opacity:0;
+  background:radial-gradient(circle,rgba(255,255,255,.0),rgba(255,40,40,.0))}
+#intro{position:fixed;inset:0;z-index:18;display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:6px;background:rgba(1,6,15,.55);pointer-events:none;
+  transition:opacity .6s;text-align:center;padding:24px}
+#intro .big{font-size:15px;color:#60a5fa;letter-spacing:.1em}
+#intro .sm{font-size:10px;color:#4a6a9f;line-height:1.9;max-width:330px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<!-- GATE -->
+<div id="gate">
+  <div class="sub">МАТРИЦА 13×13 · BLIND FIGHT</div>
+  <h1>СЛЕПОК СОЗНАНИЯ <span>VOXEL BLADE ENGINE</span></h1>
+  <div class="divider"></div>
+  <div class="card">
+    <div class="lbl">ДИАГНОСТИКА</div>
+    <div id="diag"></div>
+  </div>
+  <div class="card">
+    <p>Телефон — это <b>рукоять светового клинка</b>. Гироскоп ведёт лезвие,
+       компас держит Север, поворот корпуса (<b>γ</b>) меняет стойку.</p>
+    <p style="color:#2a4a6f">Альбомная (|γ|&gt;45°) — <b>Ножны/Маяк</b>: накопление давления, вид от 1-го лица.<br>
+       Книжная (|γ|&lt;45°) — <b>Атака/Молния</b>: выброс клинка, вид от 3-го лица.<br>
+       Свайп по экрану — шаг по сетке 13×13.</p>
+    <div id="errMsg"></div>
+    <button class="btn" id="btnReq">▷ ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ</button>
+    <div class="note">Chrome/Android — сразу после клика. iOS Safari — появится диалог разрешения.
+      Нужен HTTPS (GitHub Pages подходит) и физический телефон с гироскопом.</div>
+  </div>
+</div>
+
+<div id="dbg"></div>
+<div id="banner"></div>
+<div id="flash"></div>
+<div id="intro">
+  <div class="big">ТЫ — СОЗНАНИЕ В МАТРИЦЕ 13×13</div>
+  <div class="sm">Фантом ищет твоё тело. Держи телефон как меч.
+    Наклони вниз (книжная) и резко выброси клинок, чтобы прожечь чужие воксели.
+    Если клинки столкнутся — наступит <b style="color:#a78bfa">Рассинхрон</b>:
+    мир оглохнет, и ты на слух будешь искать оставленное тело.</div>
+  <div class="sm" style="color:#22c55e">— двигай телефон —</div>
+</div>
+
+<div id="hud">
+  <div id="stance" style="color:#60a5fa">—</div>
+  <div class="grow"></div>
+  <div id="hudInfo"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, set, onValue, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+/* ════════════════════════════════════════════════════════════════
+   МАТРИЦА 13×13 — Слепок Сознания · Voxel Blade Engine
+   Реализует ядро ТЗ (блоки 1–7) в одиночном тестовом контуре vs Фантом.
+   Стек: Three.js (InstancedMesh, emissive, без теней) + Web Audio (PannerNode,
+   BiquadFilter) + DeviceMotion/Orientation (комплементарный фильтр).
+   Сетевой слой (блок 8, Firebase) подготовлен ниже как NET-структура.
+   ════════════════════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp = (a,b,t)=>a+(b-a)*t;
+const wrap360 = a => ((a%360)+360)%360;
+// кратчайшая разница углов (−180..180)
+const angDiff = (a,b)=>{let d=wrap360(a-b);if(d>180)d-=360;return d;};
+
+const G = 13, CX = 6, CY = 6;      // глобальная сетка 13×13, центр (6,6)
+const CELL = 1.0;                  // мировой размер макро-клетки
+const TIER_H = 0.9;                // высота яруса (ноги/торс/голова)
+const DIRV = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]]; // 8 направлений
+const DSYM = ['N','NE','E','SE','S','SW','W','NW'];
+
+/* ── мир→экран координаты клетки ─────────────────────────────── */
+const worldX = gx => (gx - CX) * CELL;
+const worldZ = gy => (gy - CY) * CELL;
+
+/* ════════════ ДИАГНОСТИКА + РАЗРЕШЕНИЯ (из sensor-test) ════════ */
+const ua = navigator.userAgent;
+const isBrave = navigator.brave !== undefined;
+const hasOri = typeof DeviceOrientationEvent !== 'undefined';
+const hasMot = typeof DeviceMotionEvent !== 'undefined';
+const needsPerm = hasOri && typeof DeviceOrientationEvent.requestPermission === 'function';
+const isSecure = location.protocol==='https:'||location.hostname==='localhost'||location.protocol==='file:';
+[
+  ['Контекст', isSecure?'HTTPS ✓':'НЕ защищён ⚠', isSecure?'ok':'err'],
+  ['Гироскоп/ориентация', hasOri?'есть ✓':'нет ✗', hasOri?'ok':'err'],
+  ['Акселерометр', hasMot?'есть ✓':'нет ✗', hasMot?'ok':'err'],
+  ['Разрешение', needsPerm?'спросит (iOS)':'авто (Android)', 'ok'],
+  ['Браузер', isBrave?'Brave — блокирует ⚠':'OK ✓', isBrave?'warn':'ok'],
+].forEach(([k,v,c])=>{
+  const d=document.createElement('div');d.className='diag-row';
+  d.innerHTML=`<span style="color:#1e3a5f">${k}</span><span class="${c}">${v}</span>`;
+  $('diag').appendChild(d);
+});
+
+/* ════════════════════════ СЕНСОРНЫЙ СИНТЕЗ ════════════════════
+   Комплементарный фильтр: гироскоп даёт мгновенный отклик (95%),
+   компас непрерывно корректирует дрейф по Северу (5%).            */
+const sensor = {
+  yawFused: 0,    // итоговый азимут клинка (°)
+  pitch: 0,       // наклон вниз/вверх (нормирован −1..1) → выбор яруса
+  roll: 0,        // γ, поворот корпуса → стойка
+  compass: null,  // абсолютный компас (°)
+  rRateA: 0,      // скорость рыскания (°/с) от гироскопа
+  speed: 0,       // |a| без g — скорость руки (для яркости свечения)
+  haveCompass: false,
+};
+let lastMotT = 0;
+
+function onOrient(e){
+  if(e.beta!=null) sensor.pitch = clamp((e.beta - 45) / 45, -1, 1);  // 0°гориз .. 90°вниз
+  if(e.gamma!=null) sensor.roll = e.gamma;
+  // iOS компас
+  if(e.webkitCompassHeading!=null && !isNaN(e.webkitCompassHeading)){
+    sensor.compass = e.webkitCompassHeading; sensor.haveCompass = true;
+  }
+}
+function onOrientAbs(e){
+  if(e.alpha!=null && !isNaN(e.alpha)){
+    sensor.compass = wrap360(360 - e.alpha); sensor.haveCompass = true;
+  }
+}
+function onMotion(e){
+  const now = performance.now();
+  const dt = lastMotT ? clamp((now-lastMotT)/1000, 0, 0.1) : 0.016;
+  lastMotT = now;
+  const r = e.rotationRate || {};
+  sensor.rRateA = r.alpha || 0;
+  // интеграция гироскопа (плавность) + коррекция дрейфа компасом (абсолют)
+  let y = sensor.yawFused + (r.alpha||0) * dt;       // гиро интегрируем
+  if(sensor.compass!=null){
+    y = y + 0.05 * angDiff(sensor.compass, y);        // мягко тянем к компасу (5%)
+  }
+  sensor.yawFused = wrap360(y);
+  // скорость руки = чистое ускорение
+  const a = e.acceleration || {};
+  sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
+}
+
+function bindSensors(){
+  window.addEventListener('deviceorientation', onOrient, true);
+  window.addEventListener('deviceorientationabsolute', onOrientAbs, true);
+  window.addEventListener('devicemotion', onMotion);
+  // если компас не пришёл — yaw всё равно интегрируется от гиро
+}
+
+/* ── азимут → индекс из 8 направлений на сетке ──────────────── */
+function yawToDirIdx(yaw){ return Math.round(wrap360(yaw)/45) % 8; }
+
+/* ════════════════════════ WEB AUDIO ══════════════════════════ */
+let AC=null, master=null, worldFilter=null, ambGain=null;
+let swordOsc=null, swordGain=null, swordPanner=null;
+const listenerForward = new THREE.Vector3();
+const listenerUp = new THREE.Vector3();
+
+function initAudio(){
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.9; master.connect(AC.destination);
+    // worldFilter: lowpass — при рассинхроне опускаем частоту (глухота)
+    worldFilter = AC.createBiquadFilter();
+    worldFilter.type='lowpass'; worldFilter.frequency.value=18000; worldFilter.connect(master);
+    // ambient — низкий дрон мира
+    const amb = AC.createOscillator(); amb.type='sine'; amb.frequency.value=42;
+    ambGain = AC.createGain(); ambGain.gain.value=0.05;
+    amb.connect(ambGain); ambGain.connect(worldFilter); amb.start();
+    // sword hum — пространственный источник (остаётся в точке блокировки при клинче)
+    swordOsc = AC.createOscillator(); swordOsc.type='sawtooth'; swordOsc.frequency.value=120;
+    swordGain = AC.createGain(); swordGain.gain.value=0.0;
+    swordPanner = AC.createPanner();
+    swordPanner.panningModel='HRTF'; swordPanner.distanceModel='inverse';
+    swordPanner.refDistance=1; swordPanner.maxDistance=20; swordPanner.rolloffFactor=1.2;
+    swordOsc.connect(swordGain); swordGain.connect(swordPanner); swordPanner.connect(worldFilter);
+    swordOsc.start();
+  }catch(err){ console.warn('audio init failed', err); }
+}
+function setListener(camera){
+  if(!AC) return;
+  const L = AC.listener, p = camera.position;
+  camera.getWorldDirection(listenerForward);
+  listenerUp.set(0,1,0).applyQuaternion(camera.quaternion);
+  if(L.positionX){
+    L.positionX.value=p.x; L.positionY.value=p.y; L.positionZ.value=p.z;
+    L.forwardX.value=listenerForward.x; L.forwardY.value=listenerForward.y; L.forwardZ.value=listenerForward.z;
+    L.upX.value=listenerUp.x; L.upY.value=listenerUp.y; L.upZ.value=listenerUp.z;
+  }else{ // старый API
+    L.setPosition(p.x,p.y,p.z);
+    L.setOrientation(listenerForward.x,listenerForward.y,listenerForward.z, listenerUp.x,listenerUp.y,listenerUp.z);
+  }
+}
+function setSwordSound(x,y,z, level, freq){
+  if(!swordPanner) return;
+  if(swordPanner.positionX){ swordPanner.positionX.value=x; swordPanner.positionY.value=y; swordPanner.positionZ.value=z; }
+  else swordPanner.setPosition(x,y,z);
+  swordGain.gain.setTargetAtTime(level, AC.currentTime, 0.05);
+  if(freq) swordOsc.frequency.setTargetAtTime(freq, AC.currentTime, 0.05);
+}
+function setWorldMuffle(t){ // t: 0 норма .. 1 полная глухота
+  if(!worldFilter) return;
+  worldFilter.frequency.setTargetAtTime(lerp(18000, 320, t), AC.currentTime, 0.08);
+}
+function blip(freq, dur, type='square', vol=0.12){
+  if(!AC) return;
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.value=freq; o.connect(g); g.connect(worldFilter);
+  const t=AC.currentTime; g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.start(t); o.stop(t+dur);
+}
+
+/* ════════════════════════ THREE.JS СЦЕНА ═════════════════════ */
+const renderer = new THREE.WebGLRenderer({canvas:$('cv'), antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x01060f, 6, 16);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+function resize(){
+  const w=innerWidth,h=innerHeight;
+  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+/* ── пол: сетка 13×13 (слабо светящиеся тайлы) ───────────────── */
+const floorGeo = new THREE.BoxGeometry(CELL*0.92, 0.06, CELL*0.92);
+const floorMat = new THREE.MeshBasicMaterial({color:0x0a2038});
+const floor = new THREE.InstancedMesh(floorGeo, floorMat, G*G);
+{
+  const d=new THREE.Object3D(); const col=new THREE.Color();
+  let i=0;
+  for(let y=0;y<G;y++)for(let x=0;x<G;x++){
+    d.position.set(worldX(x), -0.45, worldZ(y)); d.updateMatrix();
+    floor.setMatrixAt(i, d.matrix);
+    // лёгкий градиент к краям (как в метасетке стилей)
+    const dx=(x-CX)/6, dy=(y-CY)/6, w=Math.min(1,(dx*dx+dy*dy)/2);
+    col.setHSL(0.58 - w*0.06, 0.5, 0.06 + w*0.05);
+    floor.setColorAt(i, col); i++;
+  }
+}
+floor.instanceColor.needsUpdate = true;
+scene.add(floor);
+
+/* ════════════════════ ВОКСЕЛЬНОЕ ТЕЛО (аватар) ═══════════════
+   Локальная сфера: 3 яруса (0 ноги, 1 торс, 2 голова).
+   Микро-воксели рендерим представительным набором (телефон-перф);
+   попадание считается по паре (клетка × ярус) — это макро-проекция
+   «прожигания» микро-вокселей клинка сквозь чужие микро-воксели.    */
+function buildBodyVoxels(){
+  // локальные смещения вокселей (x,y_tier,z) внутри клетки, единичн. размер 0.26
+  const s=0.26, V=[];
+  const add=(cx,ty,cz)=>V.push([cx*s, ty, cz*s, ty]); // [x, yWorld, z, tier]
+  // ноги (tier 0): две колонны
+  for(let ty=0;ty<2;ty++){ add(-0.6,0.05+ty*s,0); add(0.6,0.05+ty*s,0); }
+  // торс (tier 1): 3×2 плита
+  for(let ty=0;ty<2;ty++)for(let cx=-1;cx<=1;cx++){ add(cx,TIER_H+0.05+ty*s, 0); }
+  for(let cx=-1;cx<=1;cx++) add(cx, TIER_H+0.05+2*s, 0);
+  // голова (tier 2): куб
+  add(0, TIER_H*2+0.1, 0); add(-0.5,TIER_H*2+0.1,0); add(0.5,TIER_H*2+0.1,0);
+  return {offsets:V, size:s};
+}
+const BODY = buildBodyVoxels();
+
+function makeAvatar(baseHue){
+  const geo = new THREE.BoxGeometry(BODY.size*0.92, BODY.size*0.92, BODY.size*0.92);
+  const mat = new THREE.MeshBasicMaterial({});
+  const mesh = new THREE.InstancedMesh(geo, mat, BODY.offsets.length);
+  scene.add(mesh);
+  // клинок: до 6 сегментов-вокселей вдоль направления
+  const bladeGeo = new THREE.BoxGeometry(0.14,0.14,CELL*0.9);
+  const bladeMat = new THREE.MeshBasicMaterial({transparent:true});
+  const blade = new THREE.InstancedMesh(bladeGeo, bladeMat, 6);
+  blade.count = 0; scene.add(blade);
+  return {
+    mesh, blade, baseHue,
+    gx:CX, gy:CY,                  // позиция на сетке 13×13
+    dirIdx:0,                      // направление взгляда/клинка (0..7)
+    tier:1,                        // целевой ярус клинка
+    hp:100, stamina:100,
+    swordLen:1, charging:false, charge:1,   // длина и накопление давления
+    hitActive:false,               // активен ли хитбокс (стойка атаки, фаза выброса)
+    strikeT:0,                     // таймер угасания после выброса
+    disarmed:false,
+    painT:0, hue:baseHue,
+  };
+}
+
+const player = makeAvatar(0.33);   // зелёный спектр
+const phantom = makeAvatar(0.92);  // пурпур/красный спектр
+phantom.gx = 6; phantom.gy = 1;    // напротив, в верхней части сетки
+
+/* ── обновление вокселей аватара (позиция, цвет=состояние) ───── */
+const _d = new THREE.Object3D(), _c = new THREE.Color();
+function aggressionHue(a){ // a:0 (норма) колодный синий → 1 (низкий HP) раскалённый
+  // 0.55 (cyan) → 0.0 (red)
+  return lerp(0.55, 0.0, a);
+}
+function updateAvatarMesh(av, t){
+  const hpFrac = clamp(av.hp/100, 0, 1);
+  const aggr = 1 - hpFrac;                       // градиент агрессии
+  const hue = aggressionHue(aggr);
+  const baseI = 0.32 + aggr*0.5;                 // emissiveIntensity растёт с уроном
+  // импульс яркости от скорости руки (только игрок)
+  const speedPulse = av===player ? clamp(sensor.speed/16,0,0.4) : 0;
+  const erosion = hpFrac < 0.15 ? (Math.sin(t*0.04)*0.5+0.5)*0.18 : 0; // предсмертная рябь
+  const px = worldX(av.gx), pz = worldZ(av.gy);
+  for(let i=0;i<BODY.offsets.length;i++){
+    const o = BODY.offsets[i];
+    let ex=0,ez=0;
+    if(erosion){ ex=(Math.sin((i*1.7)+t*0.05))*erosion; ez=(Math.cos((i*2.3)+t*0.045))*erosion; }
+    _d.position.set(px+o[0]+ex, o[1], pz+o[2]+ez);
+    _d.updateMatrix(); av.mesh.setMatrixAt(i,_d.matrix);
+    // боль: хаотичный строб по повреждённым ярусам
+    let L = baseI + speedPulse;
+    if(av.painT>0){ L *= (Math.random()<0.5 ? 0.3 : 1.4); }
+    _c.setHSL(hue, 0.85, clamp(0.18 + L*0.4, 0.08, 0.85));
+    av.mesh.setColorAt(i,_c);
+  }
+  av.mesh.instanceMatrix.needsUpdate=true;
+  av.mesh.instanceColor.needsUpdate=true;
+}
+
+/* ── обновление клинка (сегменты, длина, ярус, цвет) ─────────── */
+function updateBlade(av){
+  if(av.disarmed){ av.blade.count=0; return; }
+  const [dx,dy]=DIRV[av.dirIdx];
+  const px=worldX(av.gx), pz=worldZ(av.gy);
+  const tierY = 0.2 + av.tier*TIER_H;            // высота луча по ярусу
+  const len = clamp(Math.round(av.swordLen),1,6);
+  av.blade.count = len;
+  const hot = av.hitActive;                      // активный выброс — раскалён
+  const baseHandY = TIER_H*0.9;                  // «рука» на уровне торса
+  for(let i=0;i<len;i++){
+    const cx = px + dx*CELL*(i+0.7);
+    const cz = pz + dy*CELL*(i+0.7);
+    const yy = lerp(baseHandY, tierY, (i+1)/len); // от руки к целевому ярусу
+    _d.position.set(cx, yy, cz);
+    _d.lookAt(cx+dx, yy, cz+dy);
+    _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
+    const lum = hot ? 0.75 : 0.42;
+    _c.setHSL(av===player?0.5:0.95, 0.9, lum);
+    av.blade.setColorAt(i,_c);
+  }
+  av.blade.instanceMatrix.needsUpdate=true;
+  av.blade.instanceColor.needsUpdate=true;
+  av.blade.material.opacity = hot?1.0:0.7;
+}
+
+/* ════════════════════ СТОЙКИ И КАМЕРА ════════════════════════ */
+const STANCE = {BEACON:'beacon', STRIKE:'strike'};
+let stance = STANCE.STRIKE;
+const camTarget = new THREE.Vector3();
+const camPos = new THREE.Vector3();
+
+function updateStanceAndCamera(dt){
+  const [dx,dy]=DIRV[player.dirIdx];
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  // стойка по углу γ (roll)
+  const beacon = Math.abs(sensor.roll) > 45;
+  stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
+
+  if(beacon){
+    // Ножны/Маяк: хитбокс off, копим давление (1→3 за ~2с), вид от 1-го лица
+    player.charging = true; player.hitActive=false;
+    player.charge = clamp(player.charge + dt, 1, 3);
+    player.swordLen = lerp(player.swordLen, 1, dt*4); // в маяке клинок втянут
+    // камера: от 1-го лица, чуть назад от головы (бинокулярный визор)
+    camTarget.set(px+dx*4, TIER_H*2, pz+dy*4);
+    camPos.set(px-dx*0.25, TIER_H*2+0.15, pz-dy*0.25);
+  }else{
+    // Атака/Молния: при ПЕРЕХОДЕ из маяка — выброс на накопленную длину
+    if(player.charging){
+      player.charging=false;
+      player.swordLen = player.charge;            // мгновенный выброс
+      player.charge = 1;
+      player.hitActive=true; player.strikeT=0.45; // окно прожигания
+      blip(180,0.12,'sawtooth',0.18);
+    }
+    // линейное угасание длины до базовой (1)
+    if(player.strikeT>0){ player.strikeT-=dt; }
+    else player.hitActive=false;
+    player.swordLen = lerp(player.swordLen, 1, dt*1.6);
+    // камера: от 3-го лица, строго за затылком
+    camTarget.set(px+dx*2.5, TIER_H*1.4, pz+dy*2.5);
+    camPos.set(px-dx*3.2, TIER_H*2.6, pz-dy*3.2);
+  }
+}
+
+/* ════════════════════ КЛИНЧ / РАССИНХРОН ═════════════════════ */
+const clinch = {
+  active:false, lockYaw:0, lockX:0, lockY:0, lockZ:0,
+  delta:0, t:0, parryWindow:0,
+};
+const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
+const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
+
+function bladeContestCell(av){   // клетка-кончик клинка
+  const [dx,dy]=DIRV[av.dirIdx];
+  const len=clamp(Math.round(av.swordLen),1,6);
+  return {x: av.gx+dx*len, y: av.gy+dy*len};
+}
+
+function startClinch(){
+  if(clinch.active) return;
+  clinch.active=true; clinch.t=0; clinch.parryWindow=0;
+  clinch.lockYaw = sensor.yawFused;
+  const tip = bladeContestCell(player);
+  clinch.lockX = worldX(clamp(tip.x,0,12));
+  clinch.lockY = TIER_H*1.2;
+  clinch.lockZ = worldZ(clamp(tip.y,0,12));
+  showBanner('⚡ КЛИНЧ — НАЙДИ ТЕЛО НА СЛУХ','#a78bfa');
+  blip(70,0.5,'square',0.2);
+}
+function endClinch(reason){
+  clinch.active=false; clinch.delta=0;
+  setWorldMuffle(0);
+  if(navigator.vibrate) navigator.vibrate(0);
+  if(reason==='parry'){
+    showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
+    doFlash('#22d3ee');
+    // короткое окно идеальной контратаки: бонусный урон фантому
+    damageTier(phantom, 1, 28);
+    blip(880,0.18,'sine',0.2);
+  }else if(reason==='disarm'){
+    player.disarmed=true; player.stamina=0;
+    dropBlade(player);
+    showBanner('✖ РАЗОРУЖЕНИЕ — ШАГНИ К МЕЧУ','#ef4444');
+    blip(50,0.6,'sawtooth',0.22);
+  }
+}
+
+function updateClinch(dt){
+  if(!clinch.active) return;
+  clinch.t += dt;
+  // Δ — между заблокированным азимутом и текущим положением гироскопа
+  clinch.delta = Math.abs(angDiff(sensor.yawFused, clinch.lockYaw));
+  // звук собственного меча остаётся в точке блокировки; мир глохнет
+  const muffle = clamp(clinch.delta/CLINCH_DELTA_CRIT + clinch.t/CLINCH_TIME_CRIT*0.4, 0, 1);
+  setWorldMuffle(muffle);
+  setSwordSound(clinch.lockX, clinch.lockY, clinch.lockZ, 0.22, 110);
+  // нарастающая вибрация + сгорание выносливости
+  if(navigator.vibrate){
+    const v = clamp(Math.round(clinch.delta), 0, 60);
+    if(v>4 && Math.random()<0.3) navigator.vibrate(v);
+  }
+  player.stamina = clamp(player.stamina - dt*18, 0, 100);
+  // парирование: вернул телефон в точку блокировки (Δ≈0)
+  if(clinch.delta < 8){
+    clinch.parryWindow += dt;
+    if(clinch.parryWindow > 0.18){ endClinch('parry'); return; }
+  }else clinch.parryWindow = 0;
+  // разоружение: превышение дельты/времени или ноль выносливости
+  if(clinch.delta > CLINCH_DELTA_CRIT || clinch.t > CLINCH_TIME_CRIT || player.stamina<=0){
+    endClinch('disarm');
+  }
+}
+
+/* ── разоружение: меч падает на пол отдельным вокселем ────────── */
+let droppedBlade=null;
+const dropGeo=new THREE.BoxGeometry(0.5,0.16,0.16);
+const dropMat=new THREE.MeshBasicMaterial({color:0x60a5fa});
+function dropBlade(av){
+  if(droppedBlade) scene.remove(droppedBlade);
+  droppedBlade=new THREE.Mesh(dropGeo,dropMat);
+  const tip=bladeContestCell(av);
+  droppedBlade.userData={gx:clamp(tip.x,0,12), gy:clamp(tip.y,0,12)};
+  droppedBlade.position.set(worldX(droppedBlade.userData.gx), -0.3, worldZ(droppedBlade.userData.gy));
+  scene.add(droppedBlade);
+}
+function tryPickupBlade(){
+  if(!droppedBlade || !player.disarmed) return;
+  if(player.gx===droppedBlade.userData.gx && player.gy===droppedBlade.userData.gy){
+    player.disarmed=false; player.stamina=40; player.swordLen=1;
+    scene.remove(droppedBlade); droppedBlade=null;
+    showBanner('↺ КЛИНОК ВОЗВРАЩЁН','#22c55e'); blip(660,0.15,'sine',0.18);
+  }
+}
+
+/* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
+function damageTier(av, tier, amount){
+  if(tier===0){
+    // ноги → теряется мобильность (Ритм/Выносливость)
+    av.stamina = clamp(av.stamina - amount, 0, 100);
+  }else{
+    // торс/голова → HP (Душа)
+    av.hp = clamp(av.hp - amount, 0, 100);
+  }
+  av.painT = 0.25;
+  if(av===phantom) blip(300,0.08,'square',0.1);
+  if(av===player && navigator.vibrate) navigator.vibrate(30);
+}
+
+/* ── проверка прожигания: клинок игрока ∩ воксели фантома ─────── */
+function resolveBurn(){
+  if(!player.hitActive || player.disarmed) return;
+  const tip = bladeContestCell(player);
+  // клинок проходит по линии — проверяем все клетки луча
+  const [dx,dy]=DIRV[player.dirIdx];
+  const len=clamp(Math.round(player.swordLen),1,6);
+  for(let i=1;i<=len;i++){
+    const cx=player.gx+dx*i, cy=player.gy+dy*i;
+    if(cx===phantom.gx && cy===phantom.gy && !phantom.disarmed){
+      // ярус определяется наклоном телефона (pitch): вниз→ноги, прямо→торс/голова
+      const tier = sensor.pitch>0.4 ? 0 : (sensor.pitch<-0.2 ? 2 : 1);
+      damageTier(phantom, tier, 14);
+      player.hitActive=false; // один выброс — один прожиг
+      doFlash(player.hue<0.2?'#ef4444':'#22c55e');
+      return;
+    }
+  }
+}
+
+/* ── проверка столкновения клинков → клинч ───────────────────── */
+function resolveClinch(){
+  if(clinch.active || player.disarmed || phantom.disarmed) return;
+  const pTip=bladeContestCell(player);
+  const eTip=bladeContestCell(phantom);
+  // клинки тянутся в одну клетку И хотя бы один в активной фазе замаха → клинч
+  const tipsMeet = (pTip.x===eTip.x && pTip.y===eTip.y);
+  if(tipsMeet && (player.hitActive || phantom.hitActive)) startClinch();
+}
+
+/* ════════════════════ ФАНТОМ (ИИ) ════════════════════════════ */
+const phantomAI = { moveT:0, swingT:0 };
+function updatePhantom(dt){
+  if(phantom.disarmed){ phantom.hp = clamp(phantom.hp,0,100); return; }
+  phantomAI.moveT -= dt; phantomAI.swingT -= dt;
+  // направление на игрока
+  const ddx = Math.sign(player.gx - phantom.gx);
+  const ddy = Math.sign(player.gy - phantom.gy);
+  const dist = Math.abs(player.gx-phantom.gx)+Math.abs(player.gy-phantom.gy);
+  // повернуть клинок к игроку
+  let bestIdx=phantom.dirIdx, bestDot=-9;
+  for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
+  phantom.dirIdx=bestIdx;
+  phantom.tier = 1;
+  // шаг к игроку
+  if(phantomAI.moveT<=0 && dist>1 && !clinch.active){
+    phantomAI.moveT = 0.55;
+    if(Math.abs(player.gx-phantom.gx) >= Math.abs(player.gy-phantom.gy)) phantom.gx=clamp(phantom.gx+ddx,0,12);
+    else phantom.gy=clamp(phantom.gy+ddy,0,12);
+  }
+  // замах при сближении (форсирует клинч / атакует)
+  if(phantomAI.swingT<=0 && dist<=2 && !clinch.active){
+    phantomAI.swingT = 1.4 + Math.random()*0.8;
+    phantom.swordLen = 2; phantom.hitActive=true; phantom.strikeT=0.5;
+    blip(140,0.1,'sawtooth',0.1);
+  }
+  if(phantom.strikeT>0){ phantom.strikeT-=dt; } else phantom.hitActive=false;
+  phantom.swordLen = lerp(phantom.swordLen,1,dt*1.5);
+  // урон игроку, если клинок фантома достаёт (и нет клинча/парирования)
+  if(phantom.hitActive && !clinch.active){
+    const t=bladeContestCell(phantom);
+    if(t.x===player.gx && t.y===player.gy && !player.disarmed){
+      // если игрок в стойке атаки и тоже бьёт — это клинч, не урон
+      if(player.hitActive) startClinch();
+      else { damageTier(player, 1, 9); phantom.hitActive=false; doFlash('#ef4444'); }
+    }
+  }
+}
+
+/* ════════════════════ СВАЙП = ШАГ ПО СЕТКЕ ═══════════════════ */
+let touchStart=null;
+$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY,t:performance.now()}; },{passive:true});
+$('cv').addEventListener('touchend',e=>{
+  if(!touchStart) return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  const adx=Math.abs(dx), ady=Math.abs(dy);
+  if(Math.max(adx,ady)<28){ touchStart=null; return; } // тап — не свайп
+  // свайп в экранных координатах → шаг по сетке (учёт направления взгляда)
+  let sgx=0,sgy=0;
+  if(adx>ady) sgx = dx>0?1:-1; else sgy = dy>0?1:-1;
+  // поворот свайпа под текущий азимут (как в mp-версии)
+  const a = sensor.yawFused*Math.PI/180;
+  const ca=Math.cos(a), sa=Math.sin(a);
+  const wx = Math.round(sgx*ca - sgy*sa);
+  const wy = Math.round(sgx*sa + sgy*ca);
+  player.gx=clamp(player.gx+wx,0,12); player.gy=clamp(player.gy+wy,0,12);
+  tryPickupBlade();
+  blip(520,0.05,'sine',0.06);
+  touchStart=null;
+},{passive:true});
+// мышь — для теста на десктопе
+let mDown=null;
+$('cv').addEventListener('mousedown',e=>{mDown={x:e.clientX,y:e.clientY};});
+addEventListener('mouseup',e=>{
+  if(!mDown) return; const dx=e.clientX-mDown.x,dy=e.clientY-mDown.y;
+  if(Math.max(Math.abs(dx),Math.abs(dy))>28){
+    if(Math.abs(dx)>Math.abs(dy)) player.gx=clamp(player.gx+(dx>0?1:-1),0,12);
+    else player.gy=clamp(player.gy+(dy>0?1:-1),0,12);
+    tryPickupBlade();
+  }
+  mDown=null;
+});
+// клавиши — отладка стойки/направления без телефона
+const keys={};
+addEventListener('keydown',e=>{keys[e.key]=true;});
+addEventListener('keyup',e=>{keys[e.key]=false;});
+
+/* ════════════════════ БАННЕР / ВСПЫШКА ═══════════════════════ */
+let bannerT=0;
+function showBanner(text,color){ const b=$('banner'); b.textContent=text; b.style.color=color; b.style.opacity='1'; bannerT=1.6; }
+let flashT=0, flashCol='#fff';
+function doFlash(col){ flashCol=col; flashT=0.35; }
+
+/* ════════════════════ СЕТЕВОЙ СЛОЙ (Firebase, блок 8) ════════
+   Живое подключение к проекту vessel-mir-13 (Realtime Database).
+   ВАЖНО: пишем в собственную ветку  blade/{room}/players/{id}, чтобы
+   НЕ пересекаться с настольной игрой (rooms/) и 2D-версией (mp/),
+   которые живут в том же проекте. Комната — из URL  ?room=КОД  (иначе HALL).
+   Чужие рисуются как 3-ярусные воксельные столбы (цвет=агрессия, луч=атака). */
+const NET = {
+  cfg:{ apiKey:"AIzaSyBFTDfxlGYuMup3bvXpu7FSb1X1ZoaW9kc",
+        authDomain:"vessel-mir-13.firebaseapp.com",
+        databaseURL:"https://vessel-mir-13-default-rtdb.firebaseio.com",
+        projectId:"vessel-mir-13",
+        messagingSenderId:"867742512524",
+        appId:"1:867742512524:web:0e50ec79111eae793492a9" },
+  room:(new URLSearchParams(location.search).get('room')||'HALL').toUpperCase(),
+  myId:'p'+Math.random().toString(36).slice(2,8),
+  db:null, online:false, sendT:0, remotes:{},
+  packet(av){ return { x:av.gx, y:av.gy, yaw:Math.round(sensor.yawFused), pitch:+sensor.pitch.toFixed(2),
+    roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
+    isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), t:Date.now() }; },
+  async start(){
+    try{
+      const app=initializeApp(this.cfg,'vessel-blade');
+      this.db=getDatabase(app);
+      const meRef=ref(this.db,`blade/${this.room}/players/${this.myId}`);
+      onDisconnect(meRef).remove();                       // убрать себя при выходе
+      onValue(ref(this.db,`blade/${this.room}/players`), snap=>{
+        const all=snap.val()||{};
+        for(const id in this.remotes){ if(!all[id]) removeRemote(id); }
+        for(const id in all){ if(id!==this.myId) upsertRemote(id, all[id]); }
+      });
+      this.online=true;
+    }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  tick(dt){
+    if(!this.online||!this.db) return;
+    this.sendT-=dt;
+    if(this.sendT<=0){ this.sendT=0.08;                   // ~12 Гц
+      set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    }
+  },
+};
+
+/* ── рендер чужого игрока: 3-ярусный воксельный столб + луч ───── */
+const remoteTierGeo = new THREE.BoxGeometry(0.55, TIER_H*0.85, 0.55);
+const remoteBeamGeo = new THREE.BoxGeometry(0.12, 0.12, CELL*0.95);
+function upsertRemote(id, p){
+  let r = NET.remotes[id];
+  if(!r){
+    const g=new THREE.Group(); const tiers=[];
+    for(let t=0;t<3;t++){
+      const m=new THREE.Mesh(remoteTierGeo, new THREE.MeshBasicMaterial({color:0x60a5fa}));
+      m.position.y = 0.25 + t*TIER_H; g.add(m); tiers.push(m);
+    }
+    const beam=new THREE.Mesh(remoteBeamGeo, new THREE.MeshBasicMaterial({color:0xa5f3fc, transparent:true, opacity:0.85}));
+    beam.visible=false; g.add(beam);
+    scene.add(g);
+    r = NET.remotes[id] = {group:g, tiers, beam};
+  }
+  const gx=clamp(p.x|0,0,12), gy=clamp(p.y|0,0,12);
+  r.group.position.set(worldX(gx), 0, worldZ(gy));
+  const aggr = 1 - clamp((p.hp??100)/100, 0, 1);
+  const col = new THREE.Color().setHSL(lerp(0.55,0.0,aggr), 0.85, 0.32 + aggr*0.25);
+  r.tiers.forEach(m=>m.material.color.copy(col));
+  // луч виден, когда столб бьёт (не копит давление и клинок выброшен)
+  const striking = !p.isCharging && (p.swordLength??1) > 1.2;
+  r.beam.visible = striking;
+  if(striking){
+    const idx = Math.round(wrap360(p.yaw||0)/45)%8, d=DIRV[idx];
+    r.beam.position.set(d[0]*CELL*1.2, TIER_H*1.1, d[1]*CELL*1.2);
+    r.beam.rotation.y = Math.atan2(d[0], d[1]);
+  }
+}
+function removeRemote(id){ const r=NET.remotes[id]; if(r){ scene.remove(r.group); delete NET.remotes[id]; } }
+
+/* ════════════════════ ГЛАВНЫЙ ЦИКЛ ═══════════════════════════ */
+let started=false, last=0, introT=4;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!started) return;
+  const dt = last ? clamp((now-last)/1000,0,0.05) : 0.016;
+  last=now;
+
+  // клавиатурная отладка (если нет сенсоров под рукой)
+  if(keys['ArrowLeft']) sensor.yawFused=wrap360(sensor.yawFused-120*dt);
+  if(keys['ArrowRight']) sensor.yawFused=wrap360(sensor.yawFused+120*dt);
+  if(keys['ArrowUp']) sensor.pitch=clamp(sensor.pitch-dt,-1,1);
+  if(keys['ArrowDown']) sensor.pitch=clamp(sensor.pitch+dt,-1,1);
+  if(keys[' ']) sensor.roll = (sensor.roll>45?0:60); // пробел — переключить стойку
+
+  // направление и ярус клинка из сенсоров
+  player.dirIdx = yawToDirIdx(sensor.yawFused);
+  player.tier = sensor.pitch>0.4 ? 0 : (sensor.pitch<-0.2 ? 2 : 1);
+
+  updateStanceAndCamera(dt);
+  updatePhantom(dt);
+  if(!clinch.active){ resolveBurn(); resolveClinch(); }
+  updateClinch(dt);
+  NET.tick(dt);                        // отправка пакета в Firebase (~12 Гц)
+
+  // регенерация выносливости вне клинча
+  if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
+  if(player.painT>0) player.painT-=dt;
+  if(phantom.painT>0) phantom.painT-=dt;
+
+  // звук клинка вне клинча — у кончика, громкость от скорости руки
+  if(!clinch.active){
+    const tip=bladeContestCell(player);
+    const lvl = player.hitActive?0.18: clamp(sensor.speed/40,0,0.08);
+    setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl,
+      120 + sensor.speed*6);
+  }
+
+  // рендер вокселей
+  updateAvatarMesh(player, now);
+  updateAvatarMesh(phantom, now);
+  updateBlade(player);
+  updateBlade(phantom);
+
+  // камера (плавно)
+  camera.position.lerp(camPos, clamp(dt*8,0,1));
+  camera.lookAt(camTarget);
+  setListener(camera);
+
+  // победа/поражение
+  if(phantom.hp<=0 && phantom.painT<=0 && !phantom.dead){ phantom.dead=true; showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН','#22c55e'); }
+  if(player.hp<=0 && !player.dead){ player.dead=true; showBanner('▼ СОЗНАНИЕ УГАСЛО — F5','#ef4444'); }
+
+  // HUD (минимальный — основное состояние видно по цвету тел)
+  const st = stance===STANCE.BEACON?'МАЯК ▲ заряд '+player.charge.toFixed(1):'МОЛНИЯ ⚡';
+  $('stance').textContent = st;
+  $('stance').style.color = stance===STANCE.BEACON?'#fbbf24':'#60a5fa';
+  $('hudInfo').textContent = `dir ${DSYM[player.dirIdx]} · ярус ${player.tier} · vit ${Math.round(player.stamina)}`;
+  $('dbg').textContent =
+    `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
+    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  speed ${sensor.speed.toFixed(1)}\n`+
+    `HP ${Math.round(player.hp)}  фантом ${Math.round(phantom.hp)}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}`;
+
+  // баннер/вспышка таймеры
+  if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
+  if(flashT>0){ flashT-=dt; const f=$('flash');
+    f.style.opacity=(flashT/0.35*0.5); f.style.background=`radial-gradient(circle,${flashCol}00,${flashCol}66)`;
+    if(flashT<=0) f.style.opacity=0;
+  }
+  if(introT>0){ introT-=dt; if(introT<=0){ $('intro').style.opacity='0'; setTimeout(()=>$('intro').style.display='none',700);} }
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+/* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
+$('btnReq').addEventListener('click', async ()=>{
+  $('btnReq').textContent='⏳ запрос...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
+  try{
+    if(needsPerm){
+      if(await DeviceOrientationEvent.requestPermission()!=='granted') throw new Error('Ориентация: отказано');
+      if(typeof DeviceMotionEvent.requestPermission==='function')
+        if(await DeviceMotionEvent.requestPermission()!=='granted') throw new Error('Движение: отказано');
+    }
+    bindSensors();
+    initAudio();
+    if(AC && AC.state==='suspended') await AC.resume();
+    NET.start();                       // живое подключение к vessel-mir-13
+    $('gate').style.display='none';
+    started=true; last=0;
+  }catch(err){
+    $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
+    $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
+  }
+});
+</script>
+</body>
+</html>
