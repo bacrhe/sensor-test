@@ -859,11 +859,13 @@ function botThink(bot,rs,allP,roomId){
         }
         // Cells occupied by OTHER alive entities
         const occupied=(x,y)=>all.some(p=>p.id!==bot.id&&(p.x||0)===x&&(p.y||0)===y);
-        // If bot is already standing on the target edge in a free spot — done
-        const botOnEdge=(teamEdge==='W'&&bot.x===0)||(teamEdge==='E'&&bot.x===G-1)||(teamEdge==='N'&&bot.y===0)||(teamEdge==='S'&&bot.y===G-1);
+        // Is the bot in a corner? Corners are ambiguous — bot must move to a proper (non-corner) edge cell
+        const atCorner=(bot.x===0||bot.x===G-1)&&(bot.y===0||bot.y===G-1);
+        // Bot is "settled" only if on target edge AND not in a corner
+        const botOnEdge=!atCorner&&((teamEdge==='W'&&bot.x===0)||(teamEdge==='E'&&bot.x===G-1)||(teamEdge==='N'&&bot.y===0)||(teamEdge==='S'&&bot.y===G-1));
         if(botOnEdge){targets=[{x:bot.x,y:bot.y,isEdge:true}];}
         else{
-          // Pick nearest FREE edge cell to this bot
+          // Pick nearest FREE edge cell to this bot (always a non-corner cell)
           const freeCells=edgeCells.filter(ec=>!occupied(ec.x,ec.y));
           const pool=freeCells.length?freeCells:edgeCells;
           let best=pool[0],bd=999;
@@ -902,9 +904,11 @@ function botThink(bot,rs,allP,roomId){
   const curD=Math.abs(tdx)+Math.abs(tdy);
   // ── STOP CONDITION: if at edge target, HOLD POSITION (don't jitter) ──
   if(tgt.isEdge){
+    const atCorner=(bot.x===0||bot.x===G-1)&&(bot.y===0||bot.y===G-1);
     const onTargetEdge=(bot.x===0&&tgt.x===0)||(bot.x===G-1&&tgt.x===G-1)||(bot.y===0&&tgt.y===0)||(bot.y===G-1&&tgt.y===G-1);
-    if(onTargetEdge){bot._stuck=0;return;}
-    if(curD===0){bot._stuck=0;return;}
+    // On the correct edge AND not stuck in a corner → HOLD. Corner → keep moving to a proper cell.
+    if(onTargetEdge&&!atCorner){bot._stuck=0;return;}
+    if(curD===0&&!atCorner){bot._stuck=0;return;}
   }
   if(tgt.isFollow&&curD<=1){bot._stuck=0;return;}
   if(curD===0){bot._stuck=0;return;}
@@ -1269,16 +1273,22 @@ function MPGame({roomId,myId,isHost,roomInfo,settings,onExit,spectator=false,rec
         }).filter(Boolean);
         if(mpMode==='coop_adventure'&&!g.enemies.length){
           if(g._roomCleared!==g.roomNumber){g._roomCleared=g.roomNumber;g.msg=g.isHub?'🏠 ДІМ — оберіть напрямок (зберіть усіх на краю)':'✓ Очищено! Зберіть усіх на одному краю';changed=true;}
-          // Determine each player's current edge
-          const edgeOf=p=>{const px=p.x||0,py=p.y||0;if(py===0)return'N';if(py===G-1)return'S';if(px===0)return'W';if(px===G-1)return'E';return null;};
-          // Which edge is everyone on? All active players must be on the SAME edge
-          const edges=pList.map(edgeOf);
-          const allOnEdge=edges.every(e=>e!==null);
-          const sameEdge=allOnEdge&&edges.every(e=>e===edges[0]);
-          // Show hint if ANY player is on an edge (preview adjacent room)
-          let anyEdge=null;for(const p of pList){const e=edgeOf(p);if(e){anyEdge=e;break;}}
+          // Determine which edge(s) each player touches. Corners belong to TWO edges.
+          const edgesOf=p=>{const px=p.x||0,py=p.y||0;const s=[];if(py===0)s.push('N');if(py===G-1)s.push('S');if(px===0)s.push('W');if(px===G-1)s.push('E');return s;};
+          const playerEdgeSets=pList.map(edgesOf);
+          const allOnEdge=playerEdgeSets.every(s=>s.length>0);
+          // Find an edge that ALL players share (corner players can satisfy either of their 2 edges)
+          let commonEdge=null;
+          if(allOnEdge){
+            for(const e of['N','S','E','W']){
+              if(playerEdgeSets.every(s=>s.includes(e))){commonEdge=e;break;}
+            }
+          }
+          const sameEdge=commonEdge!==null;
+          // Hint: first edge anyone is on
+          let anyEdge=null;for(const p of pList){const es=edgesOf(p);if(es.length){anyEdge=es[0];break;}}
           if(sameEdge){
-            const dir=edges[0];
+            const dir=commonEdge;
             g.transitionDir=dir;
             g.transitionTimer=(g.transitionTimer||0)+1;changed=true;
             const HALF=25,FULL=50;
