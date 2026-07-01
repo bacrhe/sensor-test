@@ -746,7 +746,7 @@ function damageTier(av, tier, amount){
    Срабатывает непрерывно (не только на перекате стойки). Кулдаун,
    чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
 function applyIncomingHit(h){
-  if(!friendlyFire) return;                      // приём урона от игроков выключен
+  if(h.src!=='phantom' && !friendlyFire) return;   // урон от игроков — по настройке; от фантомов — всегда
   const tier = clamp((h.tier|0),0,2);
   damageTier(player, tier, h.dmg||14);
   player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
@@ -789,6 +789,13 @@ function resolveBurn(dt){
       damageTier(ph, tier, 16); burnCd = 0.3; ph.hitGlow = 0.3;
       doFlash('#22c55e'); buzz(40);
       logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(ph.hp)}`);
+      return;
+    }
+    const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
+    if(rp){
+      if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
+        NET.sendPhantomHit(owner, +pi, pitchTier(sensor.pitch), 16); burnCd=0.3;
+        doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       return;
     }
   }
@@ -857,21 +864,30 @@ function respawn(av){
 
 /* ════════════════════ ФАНТОМЫ (ИИ) ══════════════════════════ */
 function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead && p.gx===gx && p.gy===gy); }
+function nearestTarget(ph){
+  let best=null, bd=1e9;
+  if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0) continue;
+    const d=Math.abs(ph.gx-r.gx)+Math.abs(ph.gy-r.gy); if(d<bd){ bd=d; best={gx:r.gx,gy:r.gy,local:false,id}; } }
+  return best;
+}
 function updatePhantoms(dt){
   for(const ph of phantoms){
     if(ph.dead || ph.disarmed){ continue; }
     const ai=ph.ai;
     ai.moveT -= dt; ai.swingT -= dt;
-    const ddx = Math.sign(player.gx - ph.gx);
-    const ddy = Math.sign(player.gy - ph.gy);
-    const dist = Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy);
+    const tgt = nearestTarget(ph);
+    if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
+    const ddx = Math.sign(tgt.gx - ph.gx);
+    const ddy = Math.sign(tgt.gy - ph.gy);
+    const dist = Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
     let bestIdx=ph.dirIdx, bestDot=-9;
     for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
     ph.dirIdx=bestIdx; ph.tier=1; ph.pitch=0; ph.roll=0;
-    if(ai.moveT<=0 && dist>1 && !clinch.active && ai.windT<=0 && !player.dead){
+    if(ai.moveT<=0 && dist>1 && !clinch.active && ai.windT<=0){
       ai.moveT = 0.95;
       let nx=ph.gx, ny=ph.gy;
-      if(Math.abs(player.gx-ph.gx) >= Math.abs(player.gy-ph.gy)) nx=clamp(ph.gx+ddx,0,12);
+      if(Math.abs(tgt.gx-ph.gx) >= Math.abs(tgt.gy-ph.gy)) nx=clamp(ph.gx+ddx,0,12);
       else ny=clamp(ph.gy+ddy,0,12);
       if(!obstacleAt(nx,ny) && !phantomBlocks(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
     }
@@ -879,18 +895,23 @@ function updatePhantoms(dt){
       ai.windT -= dt;
       ph.swordLen = lerp(ph.swordLen, 2.2, dt*4);
       if(ai.windT<=0){ ph.hitActive=true; ph.strikeT=0.5; blip(150,0.12,'sawtooth',0.12); }
-    } else if(ai.swingT<=0 && dist<=2 && !clinch.active && !player.dead){
+    } else if(ai.swingT<=0 && dist<=2 && !clinch.active){
       ai.swingT = 2.4 + Math.random()*1.4;
       ai.windT = 0.5;
       blip(90,0.2,'sine',0.08);
     }
     if(ph.strikeT>0){ ph.strikeT-=dt; } else if(ai.windT<=0) ph.hitActive=false;
     if(ai.windT<=0) ph.swordLen = lerp(ph.swordLen,1,dt*1.5);
-    if(ph.hitActive && !clinch.active && !player.dead){
+    // урон цели, если клинок фантома достаёт (и нет клинча)
+    if(ph.hitActive && !clinch.active){
       const t=bladeContestCell(ph);
-      if(t.x===player.gx && t.y===player.gy && !player.disarmed){
-        if(bladeCovers(player, ph.gx, ph.gy)) startClinch(ph);
-        else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60); logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
+      if(t.x===tgt.gx && t.y===tgt.gy){
+        if(tgt.local && !player.disarmed && !player.dead){
+          if(bladeCovers(player, ph.gx, ph.gy)) startClinch(ph);
+          else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60); logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
+        }else if(!tgt.local){
+          NET.sendHit(tgt.id, 1, 9, 'phantom'); ph.hitActive=false;   // урон сетевому игроку
+        }
       }
     }
   }
@@ -974,8 +995,8 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 function applyMode(){
   const fighter = mode==='fighter';
   player.mesh.visible=fighter; player.blade.visible=fighter;
-  phantoms.forEach(ph=>{ ph.mesh.visible=fighter; ph.blade.visible=fighter; });
-  obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=fighter; });
+  phantoms.forEach(ph=>{ ph.mesh.visible=true; ph.blade.visible=true; });  // общий мир — видны всегда
+  obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
   if(droppedBlade) droppedBlade.visible=fighter;
   camera.up.set(0,1,0);
   logE('режим: '+mode);
@@ -1028,7 +1049,7 @@ const NET = {
         appId:"1:867742512524:web:0e50ec79111eae793492a9" },
   room:(new URLSearchParams(location.search).get('room')||'HALL').toUpperCase(),
   myId:'p'+Math.random().toString(36).slice(2,8),
-  db:null, online:false, sendT:0, remotes:{},
+  db:null, online:false, sendT:0, remotes:{}, rphantoms:{},
   packet(av){
     if(mode==='spectator'){                      // наблюдатель: столб-палка у задней кромки
       const sx = (this.myId.charCodeAt(1)||6) % 13;
@@ -1048,7 +1069,7 @@ const NET = {
         for(const id in this.remotes){ if(!all[id]) removeRemote(id); }
         for(const id in all){ if(id!==this.myId) upsertRemote(id, all[id]); }
       });
-      // входящие удары от соперников → применяем к себе и удаляем
+      // входящие удары → применяем к себе и удаляем
       const hitsRef=ref(this.db,`blade/${this.room}/hits/${this.myId}`);
       onDisconnect(hitsRef).remove();
       onValue(hitsRef, snap=>{
@@ -1058,19 +1079,54 @@ const NET = {
           remove(ref(this.db,`blade/${this.room}/hits/${this.myId}/${key}`)).catch(()=>{});
         }
       });
+      // ОБЩИЕ ФАНТОМЫ: читаем всех, рисуем чужих (свои — локально-авторитетно)
+      onValue(ref(this.db,`blade/${this.room}/phantoms`), snap=>{
+        const all=snap.val()||{};
+        const live=new Set();
+        for(const owner in all){
+          if(owner===this.myId) continue;               // свои рисуем из локального массива
+          const list=all[owner]||{};
+          for(const i in list){ const key=owner+'_'+i; live.add(key); upsertRemotePhantom(key, list[i]); }
+        }
+        for(const key in this.rphantoms){ if(!live.has(key)) removeRemotePhantom(key); }
+      });
+      // удары по МОИМ фантомам от других игроков
+      const phHitRef=ref(this.db,`blade/${this.room}/phantomHits/${this.myId}`);
+      onDisconnect(phHitRef).remove();
+      onValue(phHitRef, snap=>{
+        const hits=snap.val()||{};
+        for(const key in hits){
+          const h=hits[key];
+          if(h && phantoms[h.i] && !phantoms[h.i].dead){ damageTier(phantoms[h.i], h.tier|0, h.dmg||16); phantoms[h.i].hitGlow=0.3; }
+          remove(ref(this.db,`blade/${this.room}/phantomHits/${this.myId}/${key}`)).catch(()=>{});
+        }
+      });
+      onDisconnect(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`)).remove();
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
   },
-  sendHit(targetId, tier, dmg){
+  sendHit(targetId, tier, dmg, src){
     if(!this.online||!this.db) return;
-    push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, t:Date.now()}).catch(()=>{});
+    push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, src:src||'player', t:Date.now()}).catch(()=>{});
+  },
+  sendPhantomHit(owner, i, tier, dmg){
+    if(!this.online||!this.db) return;
+    push(ref(this.db,`blade/${this.room}/phantomHits/${owner}`), {from:this.myId, i, tier, dmg, t:Date.now()}).catch(()=>{});
   },
   tick(dt){
     if(!this.online||!this.db) return;
-    if(mode==='map') return;                              // карта — тихий наблюдатель
     this.sendT-=dt;
-    if(this.sendT<=0){ this.sendT=0.08;                   // ~12 Гц
-      set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    if(this.sendT>0) return;
+    this.sendT=0.08;                                     // ~12 Гц
+    if(mode!=='map') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
+    if(phantoms.length){
+      const obj={};
+      phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,dead:ph.dead?1:0}; });
+      set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
+    }else{
+      set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
     }
   },
 };
@@ -1134,6 +1190,30 @@ function removeRemote(id){
   }
 }
 
+/* ── ОБЩИЕ ФАНТОМЫ чужих владельцев: рисуем как красные аватары ── */
+function upsertRemotePhantom(key, s){
+  let r = NET.rphantoms[key];
+  if(!r){ const av=makeAvatar(0.02); av.bladeHue=0.02; r=NET.rphantoms[key]={av, latest:s}; }
+  r.latest=s;
+}
+function renderRemotePhantoms(now, dt){
+  for(const key in NET.rphantoms){
+    const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
+    av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
+    av.visYaw=smoothAngle(av.visYaw, s.yaw||0, clamp(dt*8,0,1));
+    av.dirIdx=yawToDirIdx(s.yaw||0);
+    av.pitch=0; av.roll=0; av.crouch=0;
+    av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
+    updateAvatarMesh(av,now); updateBlade(av);
+  }
+}
+function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ scene.remove(r.av.mesh); scene.remove(r.av.blade); delete NET.rphantoms[key]; } }
+function remotePhantomAt(cx,cy){
+  for(const key in NET.rphantoms){ const r=NET.rphantoms[key]; const s=r.latest||{};
+    if(!s.dead && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
+  return null;
+}
+
 /* ════════════════════ ГЛАВНЫЙ ЦИКЛ ═══════════════════════════ */
 let started=false, last=0, introT=4, sampleT=2, resyncT=3;
 function frame(now){
@@ -1167,10 +1247,8 @@ function frame(now){
     player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
 
     updateStanceAndCamera(dt);
-    updatePhantoms(dt);
     if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
     updateClinch(dt);
-    for(const ph of phantoms) handleDeath(ph, dt);
     handleDeath(player, dt);
 
     if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
@@ -1182,12 +1260,6 @@ function frame(now){
     }
     updateAvatarMesh(player, now);
     updateBlade(player);
-    for(const ph of phantoms){
-      if(ph.painT>0) ph.painT-=dt;
-      ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
-      updateAvatarMesh(ph, now);
-      updateBlade(ph);
-    }
   }else if(mode==='spectator'){
     // облёт сверху: высота ~9, вращение вокруг центра по компасу
     const ang = sensor.yawFused*Math.PI/180;
@@ -1199,8 +1271,18 @@ function frame(now){
     camPos.set(0, 17, 0.001);
     camTarget.set(0, 0, 0);
   }
-  renderRemotes(now, dt);              // чужие тела — каждый кадр (во всех режимах)
-  NET.tick(dt);                        // отправка пакета в Firebase (~12 Гц)
+  // ── ОБЩИЙ МИР (во всех режимах): свои фантомы + чужие тела/фантомы ──
+  updatePhantoms(dt);
+  for(const ph of phantoms){
+    handleDeath(ph, dt);
+    if(ph.painT>0) ph.painT-=dt;
+    ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
+    updateAvatarMesh(ph, now);
+    updateBlade(ph);
+  }
+  renderRemotes(now, dt);              // чужие игроки
+  renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
+  NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
 
   // периодическая выборка состояния в лог
   sampleT -= dt;
@@ -1227,7 +1309,7 @@ function frame(now){
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
+    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
