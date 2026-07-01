@@ -70,6 +70,12 @@ h1 span{color:#1e3a5f;font-size:10px}
 #intro .big{font-size:15px;color:#60a5fa;letter-spacing:.1em}
 #intro .sm{font-size:10px;color:#4a6a9f;line-height:1.9;max-width:330px}
 </style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
 </head>
 <body>
 <canvas id="cv"></canvas>
@@ -150,7 +156,11 @@ h1 span{color:#1e3a5f;font-size:10px}
 </div>
 
 <script type="module">
-import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getDatabase, ref, set, onValue, onDisconnect, push, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
@@ -359,14 +369,30 @@ function blip(freq, dur, type='square', vol=0.12){
 }
 
 /* ════════════════════════ THREE.JS СЦЕНА ═════════════════════ */
-const renderer = new THREE.WebGLRenderer({canvas:$('cv'), antialias:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const renderer = new THREE.WebGLRenderer({canvas:$('cv'), antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));   // запас под bloom на телефоне
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // OutputPass применит её в конце цепочки
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x01060f, 6, 16);
-const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+scene.background = new THREE.Color(0x02040c);
+scene.fog = new THREE.Fog(0x03060f, 8, 22);           // мягче и дальше — мир не «схлопнут»
+const camera = new THREE.PerspectiveCamera(68, 1, 0.05, 200);
+
+/* ── ПОСТ-ОБРАБОТКА: bloom делает воксели/клинки светящимися (Tron) ── */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),
+  0.6,    // strength — умеренный ореол (не выжигает кадр)
+  0.4,    // radius   — компактнее
+  0.78);  // threshold — светятся только самые яркие места (клинок, искры), а не всё тело
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
 function resize(){
   const w=innerWidth,h=innerHeight;
-  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h); composer.setSize(w,h); bloomPass.setSize(w,h);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
 
@@ -390,55 +416,143 @@ floor.instanceColor.needsUpdate = true;
 floor.frustumCulled = false;
 scene.add(floor);
 
+/* ── бесконечная тёмная площадка под сеткой (убирает «пустоту» по краям) ── */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80,80),
+  new THREE.MeshBasicMaterial({color:0x020610}));
+ground.rotation.x = -Math.PI/2; ground.position.y = -0.52; ground.frustumCulled=false;
+scene.add(ground);
+
+/* ── неоновая решётка 13×13: светящиеся линии по границам клеток (bloom) ── */
+{
+  const pts=[]; const half=G*CELL/2; const y=-0.40;
+  for(let i=0;i<=G;i++){
+    const p=(i-G/2)*CELL;
+    pts.push(-half,y,p,  half,y,p);   // линии вдоль X
+    pts.push(p,y,-half,  p,y,half);   // линии вдоль Z
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+  const grid=new THREE.LineSegments(g,new THREE.LineBasicMaterial({
+    color:0x2f6bd6, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false}));
+  grid.frustumCulled=false; scene.add(grid);
+  // яркая рамка арены
+  const bh=half;
+  const bg=new THREE.BufferGeometry();
+  bg.setAttribute('position',new THREE.Float32BufferAttribute(
+    [-bh,y,-bh, bh,y,-bh,  bh,y,-bh, bh,y,bh,  bh,y,bh, -bh,y,bh,  -bh,y,bh, -bh,y,-bh],3));
+  const border=new THREE.LineSegments(bg,new THREE.LineBasicMaterial({
+    color:0x49b6ff, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false}));
+  border.frustumCulled=false; scene.add(border);
+}
+
+/* ── звёздное поле-фон: наполняет «слепок сознания» глубиной ── */
+{
+  const N=650, pos=new Float32Array(N*3), col=new Float32Array(N*3), c=new THREE.Color();
+  for(let i=0;i<N;i++){
+    const r=26+Math.random()*70, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+    pos[i*3]=r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1]=Math.abs(r*Math.cos(ph))*0.6+2;   // держим звёзды выше горизонта
+    pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+    c.setHSL(0.55+Math.random()*0.12, 0.6, 0.35+Math.random()*0.4);
+    col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
+  }
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  sg.setAttribute('color',new THREE.BufferAttribute(col,3));
+  const stars=new THREE.Points(sg,new THREE.PointsMaterial({
+    size:0.34, vertexColors:true, transparent:true, opacity:0.85,
+    blending:THREE.AdditiveBlending, depthWrite:false, fog:false, sizeAttenuation:true}));
+  stars.frustumCulled=false; scene.add(stars);
+}
+
+/* ── ИСКРЫ: пул частиц для попаданий/клинча (juice, дёшево на GPU) ── */
+const SPARK_MAX=140;
+const _sPos=new Float32Array(SPARK_MAX*3), _sCol=new Float32Array(SPARK_MAX*3);
+const _sVel=new Float32Array(SPARK_MAX*3), _sLife=new Float32Array(SPARK_MAX), _sMax=new Float32Array(SPARK_MAX);
+const _sBaseCol=new Float32Array(SPARK_MAX*3);
+let _sHead=0;
+const _sGeo=new THREE.BufferGeometry();
+_sGeo.setAttribute('position',new THREE.BufferAttribute(_sPos,3));
+_sGeo.setAttribute('color',new THREE.BufferAttribute(_sCol,3));
+const _sPts=new THREE.Points(_sGeo,new THREE.PointsMaterial({
+  size:0.2, vertexColors:true, transparent:true, blending:THREE.AdditiveBlending,
+  depthWrite:false, fog:false}));
+_sPts.frustumCulled=false; scene.add(_sPts);
+const _sc=new THREE.Color();
+function emitSparks(x,y,z,hex,n=12,spd=3.2){
+  _sc.set(hex);
+  for(let k=0;k<n;k++){
+    const i=_sHead=(_sHead+1)%SPARK_MAX, j=i*3;
+    _sPos[j]=x; _sPos[j+1]=y; _sPos[j+2]=z;
+    const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1), v=spd*(0.4+Math.random());
+    _sVel[j]=Math.sin(ph)*Math.cos(th)*v;
+    _sVel[j+1]=Math.abs(Math.cos(ph))*v*0.9+1;
+    _sVel[j+2]=Math.sin(ph)*Math.sin(th)*v;
+    _sBaseCol[j]=_sc.r; _sBaseCol[j+1]=_sc.g; _sBaseCol[j+2]=_sc.b;
+    _sCol[j]=_sc.r; _sCol[j+1]=_sc.g; _sCol[j+2]=_sc.b;
+    _sLife[i]=_sMax[i]=0.5+Math.random()*0.35;
+  }
+  _sGeo.attributes.position.needsUpdate=true;
+  _sGeo.attributes.color.needsUpdate=true;
+}
+function updateSparks(dt){
+  let live=false;
+  for(let i=0;i<SPARK_MAX;i++){
+    if(_sLife[i]<=0) continue;
+    live=true;
+    _sLife[i]-=dt; const j=i*3;
+    _sVel[j+1]-=9*dt;                       // гравитация
+    _sPos[j]+=_sVel[j]*dt; _sPos[j+1]+=_sVel[j+1]*dt; _sPos[j+2]+=_sVel[j+2]*dt;
+    if(_sPos[j+1]<-0.45){ _sPos[j+1]=-0.45; _sVel[j+1]*=-0.35; _sVel[j]*=0.6; _sVel[j+2]*=0.6; }
+    const f=clamp(_sLife[i]/_sMax[i],0,1);   // гаснут в чёрный → на аддитиве исчезают
+    _sCol[j]=_sBaseCol[j]*f; _sCol[j+1]=_sBaseCol[j+1]*f; _sCol[j+2]=_sBaseCol[j+2]*f;
+  }
+  if(live){ _sGeo.attributes.position.needsUpdate=true; _sGeo.attributes.color.needsUpdate=true; }
+}
+
 /* ════════════════════ ВОКСЕЛЬНОЕ ТЕЛО (аватар) ═══════════════
    Локальная сфера: 3 яруса (0 ноги, 1 торс, 2 голова).
    Микро-воксели рендерим представительным набором (телефон-перф);
    попадание считается по паре (клетка × ярус) — это макро-проекция
    «прожигания» микро-вокселей клинка сквозь чужие микро-воксели.    */
-function buildBodyVoxels(){
-  // локальные смещения вокселей (x,y_tier,z) внутри клетки, единичн. размер 0.26
-  const s=0.26, V=[];
-  const add=(cx,ty,cz)=>V.push([cx*s, ty, cz*s, ty]); // [x, yWorld, z, tier]
-  // ноги (tier 0): две колонны
-  for(let ty=0;ty<2;ty++){ add(-0.6,0.05+ty*s,0); add(0.6,0.05+ty*s,0); }
-  // торс (tier 1): 3×2 плита
-  for(let ty=0;ty<2;ty++)for(let cx=-1;cx<=1;cx++){ add(cx,TIER_H+0.05+ty*s, 0); }
-  for(let cx=-1;cx<=1;cx++) add(cx, TIER_H+0.05+2*s, 0);
-  // голова (tier 2): куб
-  add(0, TIER_H*2+0.1, 0); add(-0.5,TIER_H*2+0.1,0); add(0.5,TIER_H*2+0.1,0);
-  return {offsets:V, size:s};
+/* Ориентируем сегмент-конечность (руку) от точки A к точке B в ЛОКАЛЬНЫХ
+   координатах группы аватара. Базовая геометрия — длиной 1 вдоль +Z. */
+const _zAxis=new THREE.Vector3(0,0,1), _limbV=new THREE.Vector3(), _limbQ=new THREE.Quaternion();
+function setLimb(m, ax,ay,az, bx,by,bz){
+  const dx=bx-ax, dy=by-ay, dz=bz-az, len=Math.hypot(dx,dy,dz)||0.001;
+  m.position.set((ax+bx)*0.5,(ay+by)*0.5,(az+bz)*0.5);
+  _limbV.set(dx/len,dy/len,dz/len);
+  m.quaternion.setFromUnitVectors(_zAxis,_limbV);
+  m.scale.set(1,1,len);
 }
-const BODY = buildBodyVoxels();
-const ARM_COUNT = 6;                 // 2 руки × (плечо-локоть-предплечье)
-const AV_COUNT = BODY.offsets.length + ARM_COUNT;
-
 function makeAvatar(baseHue){
-  const geo = new THREE.BoxGeometry(BODY.size*0.74, BODY.size*0.74, BODY.size*0.74); // зазоры → «точки света»
-  const mat = new THREE.MeshBasicMaterial({transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false});
-  const mesh = new THREE.InstancedMesh(geo, mat, AV_COUNT);
-  mesh.frustumCulled = false;          // воксели смещены в instanceMatrix — иначе тело пропадает под углом
-  scene.add(mesh);
-  // клинок: до 6 сегментов-вокселей вдоль направления
-  const bladeGeo = new THREE.BoxGeometry(0.22,0.22,CELL*0.95);
-  const bladeMat = new THREE.MeshBasicMaterial({transparent:true, blending:THREE.AdditiveBlending, depthWrite:false});
-  const blade = new THREE.InstancedMesh(bladeGeo, bladeMat, 6);
-  blade.frustumCulled = false;
-  blade.count = 0; scene.add(blade);
+  const g=new THREE.Group(); g.frustumCulled=false; scene.add(g);
+  const box=(w,h,d)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial());
+    m.frustumCulled=false; g.add(m); return m; };
+  const limb=()=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(0.19,0.19,1), new THREE.MeshBasicMaterial());
+    m.frustumCulled=false; g.add(m); return m; };
+  // цельная блочная фигура (локальные координаты: +Y вверх, +Z «вперёд/лицо»)
+  const parts={
+    legL:box(0.26,0.66,0.32), legR:box(0.26,0.66,0.32),
+    footL:box(0.3,0.16,0.42), footR:box(0.3,0.16,0.42),
+    pelvis:box(0.6,0.32,0.44), torso:box(0.66,0.74,0.44),
+    head:box(0.5,0.48,0.5),   visor:box(0.52,0.12,0.06),   // визор = команда + куда смотрит
+    armLU:limb(), armLF:limb(), armRU:limb(), armRF:limb(),// плечо/предплечье ×2
+    grip:box(0.24,0.24,0.26),                              // кисти на рукояти
+  };
+  // клинок: тонкий световой луч (сегменты) в МИРОВОМ пространстве
+  const bladeGeo=new THREE.BoxGeometry(0.17,0.17,CELL*0.95);
+  const bladeMat=new THREE.MeshBasicMaterial({transparent:true, blending:THREE.AdditiveBlending, depthWrite:false});
+  const blade=new THREE.InstancedMesh(bladeGeo,bladeMat,6);
+  blade.frustumCulled=false; blade.count=0; scene.add(blade);
   return {
-    mesh, blade, baseHue,
-    gx:CX, gy:CY,                  // позиция на сетке 13×13
-    dirIdx:0,                      // направление взгляда/клинка (0..7)
-    visYaw:0,                      // сглаженный угол клинка для рендера (плавность)
-    tier:1,                        // целевой ярус клинка
-    crouch:0,                      // присед 0..1 (при прицеле вниз)
-    pitch:0, roll:0, speedPulse:0, bladeHue:0.95,   // для рендера (и сети)
-    hp:100, stamina:100,
-    swordLen:1, charging:false, charge:1,   // длина и накопление давления
-    hitActive:false,               // активен ли хитбокс (стойка атаки, фаза выброса)
-    strikeT:0,                     // таймер угасания после выброса
-    disarmed:false,
-    dead:false, respawnT:0, score:0,
-    painT:0, hitGlow:0, hue:baseHue,
+    mesh:g, parts, blade, baseHue,
+    gx:CX, gy:CY, dirIdx:0, visYaw:0, tier:1, crouch:0,
+    pitch:0, roll:0, speedPulse:0, bladeHue:0.95,
+    hp:100, stamina:100, swordLen:1, charging:false, charge:1,
+    hitActive:false, strikeT:0, disarmed:false,
+    dead:false, respawnT:0, score:0, painT:0, hitGlow:0, hue:baseHue,
   };
 }
 
@@ -467,27 +581,36 @@ spawnPhantoms(phantomCount);
    4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
    и клинок, и движение) + 2 разрушаемых (можно прожечь).          */
 const obstacles = [];
-const obsGeo = new THREE.BoxGeometry(0.62, TIER_H*2.6, 0.62);
 function spawnObstacles(){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
-  const taken=new Set(['6,6','6,1']);
+  // не ставим препятствия на центр игрока и на стартовые клетки фантомов
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
   for(const solid of [true,true,false,false]){
     let gx,gy,key,tries=0;
     do{ gx=1+Math.floor(Math.random()*11); gy=1+Math.floor(Math.random()*11); key=gx+','+gy; tries++; }
     while(taken.has(key) && tries<50);
     taken.add(key);
-    const mat=new THREE.MeshBasicMaterial({color:solid?0x6b7d94:0xd99a3a, transparent:true,
-      opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false});
-    const m=new THREE.Mesh(obsGeo,mat); m.frustumCulled=false;
-    m.position.set(worldX(gx), TIER_H*1.1, worldZ(gy)); scene.add(m);
-    obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:m});
+    // прочное — тёмный стальной блок; разрушаемое — светящийся янтарный кристалл
+    const h = solid?TIER_H*2.1:TIER_H*1.8;
+    const geo = new THREE.BoxGeometry(0.74,h,0.74);
+    const mat = solid
+      ? new THREE.MeshBasicMaterial({color:0x28374f})
+      : new THREE.MeshBasicMaterial({color:0xc9a03a, transparent:true, opacity:0.9});
+    const grp=new THREE.Group(); grp.frustumCulled=false;
+    const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
+    const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({color: solid?0x5f86c0:0xffd47a, transparent:true,
+        opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
+    edges.frustumCulled=false; grp.add(edges);
+    grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
+    obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:grp,mat});
   }
   logE('препятствия: 2 прочных + 2 разрушаемых');
 }
 function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.gy===gy); }
 function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
-  o.hp-=amount; o.mesh.material.color.offsetHSL(0,0,0.05);
+  o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
   if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); }
 }
 spawnObstacles();
@@ -498,89 +621,110 @@ function aggressionHue(a){ // a:0 (норма) колодный синий → 1
   // 0.55 (cyan) → 0.0 (red)
   return lerp(0.55, 0.0, a);
 }
-/* ── геометрия «рука+клинок»: рукоять, кончик, боковой замах, присед ──
-   side инвертирован (по просьбе); crouch опускает рукоять и кончик.       */
+/* ── геометрия «рука+клинок» ──────────────────────────────────────
+   Клинок держится ПРЯМО перед грудью и уходит прямым лучом вперёд по
+   направлению взгляда; наклон (pitch) задаёт возвышение, стойка (roll)
+   лишь слегка наклоняет гарду. Во время удара — снап-выпад вперёд +
+   рубящая дуга вниз (atk 1→0), возврат в стойку. Всё это чисто визуально;
+   хитбокс считается по клеткам (bladeContestCell) и не зависит от анимации. */
+const STRIKE_DUR = 0.32;               // длительность видимого взмаха
 function handInfo(av){
   const [dx,dz] = dirXZ(av.visYaw);
-  const rx = -dz, rz = dx;
+  const rx = -dz, rz = dx;                        // «вправо» от направления
   const px=worldX(av.gx), pz=worldZ(av.gy);
   const cr = av.crouch||0;
-  const side = -clamp((av.roll||0)/55, -1.3, 1.3);   // ← инверсия; из av (и для сети)
-  const hx = px + rx*side*0.55;
-  const hz = pz + rz*side*0.55;
-  const hy = TIER_H*(0.9 - cr*0.35) + Math.abs(side)*TIER_H*0.5;
+  const pitch = av.pitch||0;
+  const guard = clamp((av.roll||0)/70, -1, 1);    // стойка: лёгкий наклон гарды вбок
+
+  // фаза удара 0..1: снап в начале, плавный возврат к 0 (в покое анимации нет)
+  const atk = clamp((av.strikeT||0)/STRIKE_DUR, 0, 1);
+  const lunge   = atk*0.7;                         // рывок кисти вперёд
+  const dipAtk  = atk*0.85;                        // клинок рубит вниз и возвращается
+  const lenBoost= atk*0.7;                         // на выпаде луч чуть длиннее
+
+  // якорь кисти: перед грудью (двуручный хват), небольшой сдвиг по стойке
+  const hx = px + dx*(0.26+lunge) + rx*guard*0.16;
+  const hz = pz + dz*(0.26+lunge) + rz*guard*0.16;
+  const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
+
   const len = clamp(Math.round(av.swordLen),1,6);
-  const tipY = clamp(TIER_H*(1.1 - cr*0.5) + (av.pitch||0)*TIER_H*1.5, -0.08, TIER_H*2.3);
-  const tipX = px + dx*CELL*len, tipZ = pz + dz*CELL*len;
-  return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr};
+  // угол возвышения луча: прицел наклоном + рубящая дуга атаки
+  const elev = clamp(pitch*0.9 - dipAtk, -1.15, 1.15);
+  const ce=Math.cos(elev), se=Math.sin(elev);
+  const reach = CELL*(len+lenBoost);
+  const tipX = hx + dx*ce*reach;
+  const tipY = clamp(hy + se*reach, -0.06, TIER_H*2.4);
+  const tipZ = hz + dz*ce*reach;
+  return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr,atk,guard};
 }
 
 function updateAvatarMesh(av, t){
-  const hpFrac = clamp(av.hp/100, 0, 1);
-  const aggr = 1 - hpFrac;
-  const hue = aggressionHue(aggr);
-  const baseI = 0.32 + aggr*0.5;
-  const speedPulse = av.speedPulse||0;
-  const erosion = hpFrac < 0.15 ? (Math.sin(t*0.04)*0.5+0.5)*0.16 : 0;
-  if(av.hitGlow>0) av.hitGlow -= 0.016;
-  const glow = clamp(av.hitGlow,0,0.3);
-  const pain = av.painT>0 ? (Math.sin(t*0.05)*0.5+0.5)*0.5 : 0;
-  const px = worldX(av.gx), pz = worldZ(av.gy);
-  const cr = av.crouch||0;
-  const L0 = baseI + speedPulse + pain + glow*3;
-  const setC = (idx,bright)=>{ _c.setHSL(hue,0.8,clamp(0.16+bright*0.4,0.06,0.9)); av.mesh.setColorAt(idx,_c); };
-  // ── тело: присед сжимает по высоте, ноги чуть расходятся (стойка/колени) ──
-  const nBody = BODY.offsets.length;
-  for(let i=0;i<nBody;i++){
-    const o = BODY.offsets[i];
-    const isLeg = o[3]===0;
-    const yc = o[1]*(1 - cr*0.34);                 // присед: ниже
-    const xc = o[0]*(isLeg ? (1 + cr*0.5) : 1);     // колени врозь при приседе
-    let ex=0,ez=0;
-    if(erosion){ ex=Math.sin(i*1.7+t*0.05)*erosion; ez=Math.cos(i*2.3+t*0.045)*erosion; }
-    _d.position.set(px+xc+ex, yc, pz+o[2]+ez);
-    _d.updateMatrix(); av.mesh.setMatrixAt(i,_d.matrix);
-    setC(i, L0);
-  }
-  // ── руки: две руки с локтями, сходятся на рукояти (двуручный хват) ──
-  const H = handInfo(av);
-  const rxv=-H.dz, rzv=H.dx;                       // «вправо» относительно взгляда
-  const sy = TIER_H*(1.55 - cr*0.5);               // высота плеч (сжимается с приседом)
-  let ai = nBody;
-  for(const sign of [-1,1]){                        // левая и правая рука
-    const Sx=px+rxv*0.5*sign, Sy=sy, Sz=pz+rzv*0.5*sign;   // плечо
-    const Ex=lerp(Sx,H.hx,0.5)+rxv*0.28*sign, Ey=lerp(Sy,H.hy,0.5)-0.2, Ez=lerp(Sz,H.hz,0.5)+rzv*0.28*sign; // локоть (наружу+вниз)
-    const pts=[ [lerp(Sx,Ex,0.5),lerp(Sy,Ey,0.5),lerp(Sz,Ez,0.5)],   // плечо-локоть
-                [Ex,Ey,Ez],                                            // локоть
-                [lerp(Ex,H.hx,0.5),lerp(Ey,H.hy,0.5),lerp(Ez,H.hz,0.5)] ]; // предплечье
-    for(const p of pts){ _d.position.set(p[0],p[1],p[2]); _d.updateMatrix(); av.mesh.setMatrixAt(ai,_d.matrix); setC(ai, L0*0.9); ai++; }
-  }
-  av.mesh.instanceMatrix.needsUpdate=true;
-  av.mesh.instanceColor.needsUpdate=true;
+  const P=av.parts, g=av.mesh; if(!P) return;
+  const hpFrac=clamp(av.hp/100,0,1), aggr=1-hpFrac, hue=aggressionHue(aggr);
+  if(av.hitGlow>0) av.hitGlow-=0.016;
+  const glow=clamp(av.hitGlow,0,0.3);
+  const pain=av.painT>0?(Math.sin(t*0.05)*0.5+0.5)*0.4:0;
+  const base=0.32 + aggr*0.24 + (av.speedPulse||0)*0.35 + pain + glow*1.1;
+  const cr=av.crouch||0, sq=1-cr*0.26;
+  const col=(m,l,s)=>m.material.color.setHSL(hue, s??0.75, clamp(l,0.06,0.6));
+  // ── позиция + поворот всей фигуры по направлению взгляда ──
+  g.position.set(worldX(av.gx),0,worldZ(av.gy));
+  g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
+  // ── ноги/стопы: присед опускает и разводит колени ──
+  const spread=0.17+cr*0.13;
+  P.legL.position.set(-spread,0.33*sq,0); P.legL.scale.y=sq;
+  P.legR.position.set( spread,0.33*sq,0); P.legR.scale.y=sq;
+  P.footL.position.set(-spread,0.09,0.08); P.footR.position.set(spread,0.09,0.08);
+  P.pelvis.position.set(0,0.78*sq,0);
+  P.torso.position.set(0,1.26*sq,0);  P.torso.scale.y=sq;
+  P.head.position.set(0,1.86*sq,0.02);
+  P.visor.position.set(0,1.9*sq,0.27);
+  col(P.legL,base*0.78); col(P.legR,base*0.78);
+  col(P.footL,base*0.55); col(P.footR,base*0.55);
+  col(P.pelvis,base*0.9); col(P.torso,base,0.8); col(P.head,base*1.08,0.7);
+  P.visor.material.color.setHSL(av.bladeHue??0.95, 0.9, clamp(0.5+glow,0.2,0.95));
+  // ── руки к рукояти (двуручный хват), локоть наружу-вниз; выпад тянет руки вперёд ──
+  const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1), lunge=atk*0.7;
+  const guard=clamp((av.roll||0)/70,-1,1);
+  const hlx=-guard*0.16, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo)
+  const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
+  const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
+  const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
+  setLimb(P.armLU, Slx,sy,sz, Elx,Ely,Elz); setLimb(P.armLF, Elx,Ely,Elz, hlx,hly,hlz);
+  setLimb(P.armRU, Srx,sy,sz, Erx,Ely,Elz); setLimb(P.armRF, Erx,Ely,Elz, hlx,hly,hlz);
+  P.grip.position.set(hlx,hly,hlz);
+  col(P.armLU,base*0.85); col(P.armLF,base*0.85); col(P.armRU,base*0.85); col(P.armRF,base*0.85);
+  col(P.grip,base*0.5,0.3);
 }
 
-/* ── обновление клинка (сегменты вдоль руки→кончика) ─────────── */
+/* ── обновление клинка: ровный луч-сегменты от кисти к кончику ── */
+const _bladeDir = new THREE.Vector3();
 function updateBlade(av){
   if(av.disarmed || av.dead){ av.blade.count=0; return; }
   const H = handInfo(av);
-  av.blade.count = H.len;
+  const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;   // вектор клинка
+  const blen = Math.hypot(bx,by,bz)||1;
+  const segs = clamp(Math.round(blen/(CELL*0.9)), 1, 6);  // плотное заполнение без разрывов
+  av.blade.count = segs;
   const hot = av.strikeT>0;
-  for(let i=0;i<H.len;i++){
-    const f=(i+0.7)/H.len;
-    const cx = lerp(H.hx, H.tipX, f);
-    const cy = lerp(H.hy, H.tipY, f);
-    const cz = lerp(H.hz, H.tipZ, f);
-    _d.position.set(cx, cy, cz);
-    _d.lookAt(cx+(H.tipX-H.hx), cy+(H.tipY-H.hy), cz+(H.tipZ-H.hz));
+  const segLen = blen/segs;
+  const hue = av.bladeHue??0.95;
+  for(let i=0;i<segs;i++){
+    const f=(i+0.5)/segs;
+    _d.position.set(lerp(H.hx,H.tipX,f), lerp(H.hy,H.tipY,f), lerp(H.hz,H.tipZ,f));
+    _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);   // +Z вдоль клинка
+    _d.scale.set(1, 1, segLen/(CELL*0.95));                            // подгон длины сегмента
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
-    const lum = hot ? lerp(0.8,1.0,f) : lerp(0.55,0.85,f);
-    const sat = hot ? 0.5 : 0.9;
-    _c.setHSL(av.bladeHue??0.95, sat, lum);
+    // яркое ядро у рукояти + разгорается к кончику; во время удара — вспышка и белее
+    const lum = clamp((hot?0.72:0.55) + f*0.22 + (hot?H.atk*0.15:0), 0, 0.97);
+    const sat = hot ? lerp(0.85,0.5,H.atk) : 0.95;
+    _c.setHSL(hue, sat, lum);
     av.blade.setColorAt(i,_c);
   }
+  _d.scale.set(1,1,1);                                     // сброс общего масштаба
   av.blade.instanceMatrix.needsUpdate=true;
   av.blade.instanceColor.needsUpdate=true;
-  av.blade.material.opacity = hot?1.0:0.95;
+  av.blade.material.opacity = hot?1.0:0.92;
 }
 
 /* ════════════════════ СТОЙКИ И КАМЕРА ════════════════════════ */
@@ -646,6 +790,7 @@ function startClinch(foe){
   showBanner('⚡ КЛИНЧ — ВЕРНИ ТЕЛЕФОН В ТОЧКУ МЕЧА','#a78bfa');
   logE('КЛИНЧ старт, lockYaw='+Math.round(clinch.lockYaw));
   doFlash('#a78bfa');
+  emitSparks(clinch.lockX, clinch.lockY, clinch.lockZ, '#c4a8ff', 22, 4.2);
   // звонкий «лязг» столкновения клинков (две ноты)
   blip(900,0.09,'square',0.22); blip(70,0.45,'sawtooth',0.2);
   buzz([0,90]);   // чёткий старт-импульс
@@ -760,6 +905,7 @@ function applyIncomingHit(h){
   const tier = clamp((h.tier|0),0,2);
   damageTier(player, tier, h.dmg||14);
   player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
+  emitSparks(worldX(player.gx), TIER_H*(0.6+tier*0.7), worldZ(player.gy), '#ff5a5a', 18, 3.4);
   logE(`ПОПАДАНИЕ соперника, ярус ${tier} → HP ${Math.round(player.hp)}`);
 }
 function remoteFighterAt(cx,cy){
@@ -780,6 +926,7 @@ function resolveBurn(dt){
         if(burnCd<=0){ blip(200,0.06,'square',0.12); doFlash('#6b7d94'); burnCd=0.2; }
       }else if(burnCd<=0){                      // разрушаемое — прожигаем
         damageObstacle(o,16); burnCd=0.3; buzz(35);
+        emitSparks(worldX(cx), TIER_H, worldZ(cy), '#ffb454', 14, 3.2);
         logE(`ПРОЖИГ препятствия+${i}, hp→${Math.max(0,o.hp)}`);
       }
       return;                                   // за препятствием луч не идёт
@@ -797,7 +944,9 @@ function resolveBurn(dt){
       if(burnCd>0) return;
       const tier = pitchTier(sensor.pitch);
       damageTier(ph, tier, 16); burnCd = 0.3; ph.hitGlow = 0.3;
+      player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
       doFlash('#22c55e'); buzz(40);
+      emitSparks(worldX(cx), TIER_H*(0.5+tier), worldZ(cy), '#63ffa0', 16, 3.6);
       logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(ph.hp)}`);
       return;
     }
@@ -918,7 +1067,9 @@ function updatePhantoms(dt){
       if(t.x===tgt.gx && t.y===tgt.gy){
         if(tgt.local && !player.disarmed && !player.dead){
           if(bladeCovers(player, ph.gx, ph.gy)) startClinch(ph);
-          else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60); logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
+          else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60);
+            emitSparks(worldX(player.gx), TIER_H*1.2, worldZ(player.gy), '#ff5a5a', 16, 3.4);
+            logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
         }else if(!tgt.local){
           NET.sendHit(tgt.id, 1, 9, 'phantom'); ph.hitActive=false;   // урон сетевому игроку
         }
@@ -1243,7 +1394,7 @@ let started=false, last=0, introT=4, sampleT=2, resyncT=3;
 function frame(now){
   requestAnimationFrame(frame);
   if(!started) return;
-  if(paused){ renderer.render(scene, camera); last=0; return; }   // пауза: только рендер
+  if(paused){ composer.render(); last=0; return; }   // пауза: только рендер
   const dt = last ? clamp((now-last)/1000,0,0.05) : 0.016;
   last=now;
 
@@ -1267,6 +1418,12 @@ function frame(now){
     player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
     player.pitch = sensor.pitch; player.roll = sensor.roll;
     player.speedPulse = clamp(sensor.speed/16,0,0.4);
+    // ЖЕСТ ВЗМАХА: резкое движение руки → видимый удар клинком (снап-выпад)
+    player.swingCd = (player.swingCd||0) - dt;
+    if(sensor.speed > 11 && player.swingCd<=0 && !clinch.active && !player.disarmed && !player.dead){
+      player.strikeT = STRIKE_DUR; player.swingCd = 0.4;
+      blip(300+sensor.speed*4, 0.07, 'sawtooth', 0.06);   // «вжух»
+    }
     // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
     player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
 
@@ -1357,7 +1514,8 @@ function frame(now){
   if(hapticFlash>0){ hapticFlash-=dt; $('haptic').style.opacity = hapticFlash>0 ? 0.9 : 0; }
   if(introT>0){ introT-=dt; if(introT<=0){ $('intro').style.opacity='0'; setTimeout(()=>$('intro').style.display='none',700);} }
 
-  renderer.render(scene, camera);
+  updateSparks(dt);
+  composer.render();
 }
 requestAnimationFrame(frame);
 
