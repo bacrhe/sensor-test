@@ -220,6 +220,8 @@ const sensor = {
   haveCompass: false,
   pitchRaw: 0,    // сырой наклон (−1..1)
   haveGrav: false,
+  gz: 9.4,        // проекция g на ось «перпендикуляр экрану» → «ровно ли держим»
+  level: 1,       // 1=ровно (компасу доверяем), 0=вертикально (сингулярность компаса)
 };
 let invertPitch = false;   // перемикач у меню (страховка)
 let mode = 'fighter';      // 'fighter' | 'spectator' | 'map'
@@ -247,15 +249,23 @@ function onMotion(e){
   lastMotT = now;
   const r = e.rotationRate || {};
   sensor.rRateA = r.alpha || 0;
-  if(sensor.compass!=null){
-    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.5);  // сильнее держимся компаса
-  }else{
-    sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
-  }
-  // НАКЛОН по гравитации: проекция g на ось «верх телефона» (Y). Это НЕ зависит
-  // от поворота корпуса (roll вращает вокруг Y) → знак стабилен. Верх вверх → +.
+  // НАКЛОН + «ровно ли держим» по гравитации
   const gg = e.accelerationIncludingGravity;
-  if(gg && gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(gg.y/9.4, -1, 1); }
+  if(gg){
+    if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(gg.y/9.4, -1, 1); }
+    if(gg.z!=null) sensor.gz = gg.z;
+  }
+  // level: 1 когда экран смотрит вверх/вниз (|gz| велик, компас надёжен),
+  // →0 когда телефон почти вертикально (экран «на себя», компас у сингулярности и прыгает).
+  sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
+  // ЯЗ: гироскоп ведёт всегда; компас корректирует ТЕМ сильнее, чем ровнее держим.
+  // У вертикали (level→0) компас не слушаем — поэтому нет переворота на 180°.
+  sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
+  if(sensor.compass!=null && sensor.level>0.03){
+    const d = angDiff(sensor.compass, sensor.yawFused);
+    if(Math.abs(d) < 100)                                   // отсекаем скачки-перевороты
+      sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.5*sensor.level);
+  }
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
   sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
@@ -1145,7 +1155,9 @@ function frame(now){
     player.dirIdx = yawToDirIdx(sensor.yawFused);
     // периодическая жёсткая сверка с компасом (борьба с дрейфом → синхрон между устройствами)
     resyncT -= dt;
-    if(resyncT<=0 && sensor.compass!=null){ resyncT=3.0; sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.9); }
+    if(resyncT<=0 && sensor.compass!=null && sensor.level>0.5 && Math.abs(angDiff(sensor.compass, sensor.yawFused))<60){
+      resyncT=3.0; sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.9);
+    }
     sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
     player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
     player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
@@ -1214,7 +1226,7 @@ function frame(now){
   $('hudInfo').textContent = `dir ${DSYM[player.dirIdx]} · ярус ${player.tier} · vit ${Math.round(player.stamina)}`;
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
-    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  speed ${sensor.speed.toFixed(1)}\n`+
+    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
