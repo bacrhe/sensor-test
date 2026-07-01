@@ -104,6 +104,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="mt">ПАУЗА</div>
   <div class="msub" id="mInfo">—</div>
   <button id="mResume">▶ ПРОДОЛЖИТЬ</button>
+  <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
@@ -206,11 +207,15 @@ const sensor = {
   rRateA: 0,      // скорость рыскания (°/с) от гироскопа
   speed: 0,       // |a| без g — скорость руки (для яркости свечения)
   haveCompass: false,
+  pitchRaw: 0,    // сырой наклон (−1..1)
+  haveGrav: false,
 };
+let invertPitch = false;   // перемикач у меню (страховка)
 let lastMotT = 0;
 
 function onOrient(e){
-  if(e.beta!=null) sensor.pitch = clamp((45 - e.beta) / 45, -1, 1);  // вверх→+ (в голову), вниз→− (в ноги)
+  // beta — запасной наклон (используется, только если нет гравитации)
+  if(e.beta!=null && !sensor.haveGrav) sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
   if(e.gamma!=null) sensor.roll = e.gamma;
   // iOS компас
   if(e.webkitCompassHeading!=null && !isNaN(e.webkitCompassHeading)){
@@ -230,13 +235,15 @@ function onMotion(e){
   lastMotT = now;
   const r = e.rotationRate || {};
   sensor.rRateA = r.alpha || 0;
-  // ЯЗ ведём по абсолютному компасу (никогда не инвертирован), сглаживая.
-  // Если компаса нет — мягко доинтегрируем гироскопом как запас.
   if(sensor.compass!=null){
     sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.25);
   }else{
     sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
   }
+  // НАКЛОН по гравитации: проекция g на ось «верх телефона» (Y). Это НЕ зависит
+  // от поворота корпуса (roll вращает вокруг Y) → знак стабилен. Верх вверх → +.
+  const gg = e.accelerationIncludingGravity;
+  if(gg && gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(gg.y/9.4, -1, 1); }
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
   sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
@@ -403,6 +410,35 @@ const player = makeAvatar(0.33);   // зелёный спектр
 const phantom = makeAvatar(0.92);  // пурпур/красный спектр
 phantom.gx = 6; phantom.gy = 1;    // напротив, в верхней части сетки
 
+/* ════════════════════ ПРЕПЯТСТВИЯ ════════════════════════════
+   4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
+   и клинок, и движение) + 2 разрушаемых (можно прожечь).          */
+const obstacles = [];
+const obsGeo = new THREE.BoxGeometry(0.62, TIER_H*2.6, 0.62);
+function spawnObstacles(){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set(['6,6','6,1']);
+  for(const solid of [true,true,false,false]){
+    let gx,gy,key,tries=0;
+    do{ gx=1+Math.floor(Math.random()*11); gy=1+Math.floor(Math.random()*11); key=gx+','+gy; tries++; }
+    while(taken.has(key) && tries<50);
+    taken.add(key);
+    const mat=new THREE.MeshBasicMaterial({color:solid?0x6b7d94:0xd99a3a, transparent:true,
+      opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false});
+    const m=new THREE.Mesh(obsGeo,mat); m.frustumCulled=false;
+    m.position.set(worldX(gx), TIER_H*1.1, worldZ(gy)); scene.add(m);
+    obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:m});
+  }
+  logE('препятствия: 2 прочных + 2 разрушаемых');
+}
+function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.gy===gy); }
+function damageObstacle(o,amount){
+  if(o.solid || !o.alive) return;
+  o.hp-=amount; o.mesh.material.color.offsetHSL(0,0,0.05);
+  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); }
+}
+spawnObstacles();
+
 /* ── обновление вокселей аватара (позиция, цвет=состояние) ───── */
 const _d = new THREE.Object3D(), _c = new THREE.Color();
 function aggressionHue(a){ // a:0 (норма) колодный синий → 1 (низкий HP) раскалённый
@@ -445,7 +481,7 @@ function updateBlade(av){
   av.blade.count = len;
   const hot = av.strikeT>0;
   const tipY = av===player
-    ? clamp(TIER_H*1.1 + sensor.pitch*TIER_H*1.4, 0.1, TIER_H*2.3)
+    ? clamp(TIER_H*1.1 + sensor.pitch*TIER_H*1.5, -0.08, TIER_H*2.3)   // может цеплять пол
     : 0.2 + av.tier*TIER_H;
   // BOKOVOY ZAMAH: roll uvodit rukoyat vbok i vverh (zanos dvuruchnogo mecha)
   const side = av===player ? clamp(sensor.roll/55, -1.3, 1.3) : 0;
@@ -641,21 +677,30 @@ function damageTier(av, tier, amount){
 let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
-  if(!player.hitActive || player.disarmed || player.dead || phantom.dead) return;
+  if(!player.hitActive || player.disarmed || player.dead) return;
   const [dx,dy]=DIRV[player.dirIdx];
   const len=clamp(Math.round(player.swordLen),1,6);
-  let hitCell=-1;
   for(let i=1;i<=len;i++){
-    if(player.gx+dx*i===phantom.gx && player.gy+dy*i===phantom.gy){ hitCell=i; break; }
+    const cx=player.gx+dx*i, cy=player.gy+dy*i;
+    const o=obstacleAt(cx,cy);
+    if(o){                                     // клинок упёрся в препятствие
+      if(o.solid){                             // прочное — луч заблокирован (лязг)
+        if(burnCd<=0){ blip(200,0.06,'square',0.12); doFlash('#6b7d94'); burnCd=0.2; }
+      }else if(burnCd<=0){                      // разрушаемое — прожигаем
+        damageObstacle(o,16); burnCd=0.3; buzz(35);
+        logE(`ПРОЖИГ препятствия+${i}, hp→${Math.max(0,o.hp)}`);
+      }
+      return;                                   // за препятствием луч не идёт
+    }
+    if(!phantom.dead && cx===phantom.gx && cy===phantom.gy){
+      if(burnCd>0) return;
+      const tier = pitchTier(sensor.pitch);
+      damageTier(phantom, tier, 16); burnCd = 0.3; phantom.hitGlow = 0.3;
+      doFlash('#22c55e'); buzz(40);
+      logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(phantom.hp)}`);
+      return;
+    }
   }
-  if(hitCell<0) return;                       // клинок не накрывает клетку фантома
-  if(burnCd>0) return;                        // клетка верная, но ещё кулдаун
-  const tier = pitchTier(sensor.pitch);
-  damageTier(phantom, tier, 16);
-  burnCd = 0.3;
-  phantom.hitGlow = 0.3;                      // подсветка места касания
-  doFlash('#22c55e'); buzz(40);
-  logE(`ПРОЖИГ: клетка+${hitCell} ярус ${tier} → HP ${Math.round(phantom.hp)}`);
 }
 
 /* ── все клетки, которые накрывает клинок (для клинча) ────────── */
@@ -734,8 +779,10 @@ function updatePhantom(dt){
   // шаг к игроку — медленнее, и только когда не в заводе/клинче
   if(phantomAI.moveT<=0 && dist>1 && !clinch.active && phantomAI.windT<=0 && !player.dead){
     phantomAI.moveT = 0.95;            // было 0.55 — заметно спокойнее
-    if(Math.abs(player.gx-phantom.gx) >= Math.abs(player.gy-phantom.gy)) phantom.gx=clamp(phantom.gx+ddx,0,12);
-    else phantom.gy=clamp(phantom.gy+ddy,0,12);
+    let nx=phantom.gx, ny=phantom.gy;
+    if(Math.abs(player.gx-phantom.gx) >= Math.abs(player.gy-phantom.gy)) nx=clamp(phantom.gx+ddx,0,12);
+    else ny=clamp(phantom.gy+ddy,0,12);
+    if(!obstacleAt(nx,ny)){ phantom.gx=nx; phantom.gy=ny; }   // обходит препятствия
   }
   // ТЕЛЕГРАФ: перед ударом клинок медленно поднимается (видно, что сейчас будет замах)
   if(phantomAI.windT>0){
@@ -769,7 +816,9 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
   let mx=0,my=0;
   if(Math.abs(dx)>Math.abs(dy)){ const s=dx>0?1:-1; mx=r[0]*s; my=r[1]*s; }  // вбок
   else { const s=dy<0?1:-1; mx=f[0]*s; my=f[1]*s; }                          // вверх=вперёд
-  player.gx=clamp(player.gx+mx,0,12); player.gy=clamp(player.gy+my,0,12);
+  const nx=clamp(player.gx+mx,0,12), ny=clamp(player.gy+my,0,12);
+  if(obstacleAt(nx,ny)){ blip(120,0.07,'square',0.1); logE('стена: ('+nx+','+ny+')'); return; }
+  player.gx=nx; player.gy=ny;
   tryPickupBlade(); blip(520,0.05,'sine',0.06);
 }
 let touchStart=null;
@@ -823,10 +872,13 @@ function newGame(){
   player.score=0; player.gx=CX; player.gy=CY;
   phantom.hp=100; phantom.stamina=100; phantom.dead=false; phantom.disarmed=false; phantom.gx=6; phantom.gy=1;
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  spawnObstacles();
   clearClinch(); logE('=== НОВАЯ ИГРА ==='); closeMenu();
 }
 $('pauseBtn').onclick=openMenu;
 $('mResume').onclick=closeMenu;
+$('mInvert').onclick=()=>{ invertPitch=!invertPitch;
+  $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
 $('mNew').onclick=newGame;
 $('mMenu').onclick=()=>location.reload();
@@ -940,7 +992,8 @@ function frame(now){
 
   // направление и ярус клинка из сенсоров
   player.dirIdx = yawToDirIdx(sensor.yawFused);
-  player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова (исправлено)
+  sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
+  player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
   // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
   player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
   phantom.visYaw = smoothAngle(phantom.visYaw, phantom.dirIdx*45, dt*7);
