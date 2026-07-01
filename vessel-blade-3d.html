@@ -46,6 +46,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 #logbody{flex:1;margin:0;padding:8px;overflow:auto;font-size:9px;line-height:1.5;color:#8ab0d8;white-space:pre-wrap}
 #pauseBtn{position:fixed;top:6px;right:30px;z-index:16;font:inherit;font-size:14px;
   background:#0a1a2e;color:#60a5fa;border:1px solid #1e3a5f;border-radius:6px;padding:4px 10px;display:none}
+#followBtn{position:fixed;top:44px;right:30px;z-index:16;font:inherit;font-size:12px;
+  background:#0a1a2e;color:#a5f3fc;border:1px solid #1e3a5f;border-radius:6px;padding:5px 10px;display:none}
 #menu{position:fixed;inset:0;z-index:28;display:none;flex-direction:column;align-items:center;justify-content:center;
   gap:12px;background:rgba(1,6,15,.92);padding:24px}
 #menu .mt{color:#3a6a9f;font-size:14px;letter-spacing:.2em;margin-bottom:6px}
@@ -89,9 +91,10 @@ h1 span{color:#1e3a5f;font-size:10px}
        Свайп по экрану — шаг по сетке 13×13.</p>
     <div id="errMsg"></div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">РЕЖИМ</label>
-    <div id="modeSel" style="display:flex;gap:6px;margin-bottom:10px">
+    <div id="modeSel" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="mbtn on" data-mode="fighter">⚔ БОЕЦ</button>
-      <button class="mbtn" data-mode="spectator">👁 НАБЛЮД.</button>
+      <button class="mbtn" data-mode="spectator">👁 СВЕРХУ</button>
+      <button class="mbtn" data-mode="follow">🎥 СЛЕЖКА</button>
       <button class="mbtn" data-mode="map">🗺 КАРТА</button>
     </div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КОМНАТА (общий бой у кого одинаковая)</label>
@@ -108,6 +111,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 <div id="haptic"></div>
 <button id="logBtn">LOG</button>
 <button id="pauseBtn">⏸</button>
+<button id="followBtn">◎ ИГРОК ▷</button>
 <div id="menu">
   <div class="mt">ПАУЗА</div>
   <div class="msub" id="mInfo">—</div>
@@ -224,7 +228,13 @@ const sensor = {
   level: 1,       // 1=ровно (компасу доверяем), 0=вертикально (сингулярность компаса)
 };
 let invertPitch = false;   // перемикач у меню (страховка)
-let mode = 'fighter';      // 'fighter' | 'spectator' | 'map'
+let mode = 'fighter';      // 'fighter' | 'spectator' | 'follow' | 'map'
+// iOS отдаёт accelerationIncludingGravity с ПРОТИВОПОЛОЖНЫМ знаком → наклон инвертирован.
+// Определяем платформу и правим знак автоматически (без ручного тумблера).
+const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent)
+  || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1)
+  || (typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function');
+const GRAV_SIGN = IS_IOS ? -1 : 1;
 let lastMotT = 0;
 
 function onOrient(e){
@@ -252,7 +262,7 @@ function onMotion(e){
   // НАКЛОН + «ровно ли держим» по гравитации
   const gg = e.accelerationIncludingGravity;
   if(gg){
-    if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(gg.y/9.4, -1, 1); }
+    if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
     if(gg.z!=null) sensor.gz = gg.z;
   }
   // level: 1 когда экран смотрит вверх/вниз (|gz| велик, компас надёжен),
@@ -999,14 +1009,28 @@ function applyMode(){
   obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
   if(droppedBlade) droppedBlade.visible=fighter;
   camera.up.set(0,1,0);
+  $('followBtn').style.display = (mode==='follow')?'block':'none';
   logE('режим: '+mode);
 }
+const MODE_ORDER=['fighter','spectator','follow','map'];
+const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',map:'КАРТА'};
 function cycleMode(){
-  mode = mode==='fighter'?'spectator':mode==='spectator'?'map':'fighter';
-  $('mMode').textContent='◎ РЕЖИМ: '+(mode==='fighter'?'БОЕЦ':mode==='spectator'?'НАБЛЮД.':'КАРТА');
+  mode = MODE_ORDER[(MODE_ORDER.indexOf(mode)+1)%MODE_ORDER.length];
+  $('mMode').textContent='◎ РЕЖИМ: '+MODE_LABEL[mode];
   applyMode();
 }
 $('mMode').onclick=cycleMode;
+// стежка від третьої особи: перемикання між гравцями
+let followTarget=null;
+function fighterIds(){ return Object.keys(NET.remotes).filter(id=>!NET.remotes[id].spec); }
+function cycleFollow(){
+  const ids=fighterIds();
+  if(!ids.length){ followTarget=null; showBanner('нет игроков для слежки','#3a6a9f'); return; }
+  const i=ids.indexOf(followTarget);
+  followTarget = ids[(i+1)%ids.length];
+  showBanner('◎ слежу за '+followTarget.slice(0,4),'#a5f3fc');
+}
+$('followBtn').onclick=cycleFollow;
 $('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
   $('mPhan').textContent='☠ ФАНТОМОВ: '+phantomCount; };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
@@ -1118,7 +1142,7 @@ const NET = {
     this.sendT-=dt;
     if(this.sendT>0) return;
     this.sendT=0.08;                                     // ~12 Гц
-    if(mode!=='map') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    if(mode!=='map' && mode!=='follow') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
       const obj={};
@@ -1266,6 +1290,18 @@ function frame(now){
     camera.up.set(0,1,0);
     camPos.set(Math.sin(ang)*8, 9, Math.cos(ang)*8);
     camTarget.set(0, TIER_H, 0);
+  }else if(mode==='follow'){
+    // третье лицо ЗА выбранным игроком: камера смотрит туда же, куда он
+    camera.up.set(0,1,0);
+    const ids=fighterIds();
+    if(!ids.includes(followTarget)) followTarget = ids[0]||null;
+    const r = followTarget && NET.remotes[followTarget];
+    if(r){
+      const p=r.latest||{}; const [dx,dz]=dirXZ(p.yaw||0);
+      const px=worldX(r.gx), pz=worldZ(r.gy);
+      camPos.set(px-dx*3.6, TIER_H*3.1, pz-dz*3.6);
+      camTarget.set(px+dx*2.5, TIER_H*1.1, pz+dz*2.5);
+    }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
   }else{ // map — строго сверху, фиксировано
     camera.up.set(0,0,-1);   // север (−Z) вверх экрана
     camPos.set(0, 17, 0.001);
