@@ -124,6 +124,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mResume">▶ ПРОДОЛЖИТЬ</button>
   <button id="mMode">◎ РЕЖИМ: БОЕЦ</button>
   <button id="mPhan">☠ ФАНТОМОВ: 1</button>
+  <button id="mDiff">🎯 СЛОЖНОСТЬ: НОРМА</button>
   <button id="mFF">⚔ УРОН ИГРОКАМ: ВКЛ</button>
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
@@ -247,20 +248,35 @@ const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent)
 const GRAV_SIGN = IS_IOS ? -1 : 1;
 let lastMotT = 0;
 
+// ── РОЛЛ-НЕЗАВИСИМЫЙ АЗИМУТ из полной ориентации устройства ──
+// Берём направление «из спинки телефона» (−Z экрана) в мире и проецируем на
+// горизонталь. Не зависит от наклона/поворота корпуса → в альбомной ориентации
+// (1-е лицо) поворот предсказуемый, без переворотов и «реверса».
+const _oEuler=new THREE.Euler(), _oQuat=new THREE.Quaternion();
+const _q0h=new THREE.Quaternion(), _q1h=new THREE.Quaternion(-Math.SQRT1_2,0,0,Math.SQRT1_2);
+const _upZh=new THREE.Vector3(0,0,1), _lookh=new THREE.Vector3();
+function orientationHeading(alpha,beta,gamma){
+  const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
+  _oEuler.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,-(gamma||0)*Math.PI/180,'YXZ');
+  _oQuat.setFromEuler(_oEuler);
+  _oQuat.multiply(_q1h);
+  _oQuat.multiply(_q0h.setFromAxisAngle(_upZh,-o));
+  _lookh.set(0,0,-1).applyQuaternion(_oQuat);
+  return wrap360(Math.atan2(_lookh.x,-_lookh.z)*180/Math.PI);
+}
+
 function onOrient(e){
   // beta — запасной наклон (используется, только если нет гравитации)
   if(e.beta!=null && !sensor.haveGrav) sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
   if(e.gamma!=null) sensor.roll = e.gamma;
-  // iOS компас
-  if(e.webkitCompassHeading!=null && !isNaN(e.webkitCompassHeading)){
-    sensor.compass = e.webkitCompassHeading; sensor.haveCompass = true;
-  }else if(e.alpha!=null && !isNaN(e.alpha) && e.absolute){
-    sensor.compass = wrap360(360 - e.alpha); sensor.haveCompass = true;
+  // РОЛЛ-НЕЗАВИСИМЫЙ азимут из ориентации (стабилен в альбомной/1-м лице)
+  if(e.alpha!=null && !isNaN(e.alpha)){
+    sensor.compass = orientationHeading(e.alpha, e.beta, e.gamma); sensor.haveCompass = true;
   }
 }
 function onOrientAbs(e){
   if(e.alpha!=null && !isNaN(e.alpha)){
-    sensor.compass = wrap360(360 - e.alpha); sensor.haveCompass = true;
+    sensor.compass = orientationHeading(e.alpha, e.beta, e.gamma); sensor.haveCompass = true;
   }
 }
 function onMotion(e){
@@ -275,16 +291,14 @@ function onMotion(e){
     if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
     if(gg.z!=null) sensor.gz = gg.z;
   }
-  // level: 1 когда экран смотрит вверх/вниз (|gz| велик, компас надёжен),
-  // →0 когда телефон почти вертикально (экран «на себя», компас у сингулярности и прыгает).
+  // level (для отладки/HUD): 1 ровно, 0 вертикально
   sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
-  // ЯЗ: гироскоп ведёт всегда; компас корректирует ТЕМ сильнее, чем ровнее держим.
-  // У вертикали (level→0) компас не слушаем — поэтому нет переворота на 180°.
-  sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
-  if(sensor.compass!=null && sensor.level>0.03){
-    const d = angDiff(sensor.compass, sensor.yawFused);
-    if(Math.abs(d) < 100)                                   // отсекаем скачки-перевороты
-      sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.5*sensor.level);
+  // ЯЗ: следуем за ролл-независимым азимутом в ЛЮБОЙ ориентации.
+  // Это убирает «реверс» в 1-м лице — поворот всегда предсказуемый.
+  if(sensor.compass!=null){
+    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.35);
+  }else{
+    sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);   // запас, если ориентации нет
   }
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
@@ -770,6 +784,8 @@ const clinch = {
   delta:0, t:0, parryWindow:0, vibT:0,
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
+let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
+const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СЛОЖНО'}];
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
 
@@ -804,7 +820,10 @@ function endClinch(reason){
     showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
     doFlash('#22d3ee');
     // короткое окно идеальной контратаки: бонусный урон соупернику в клинче
-    if(clinch.foe && !clinch.foe.dead) damageTier(clinch.foe, 1, 28);
+    if(clinch.foe){
+      if(clinch.foe.remote){ if(friendlyFire) NET.sendHit(clinch.foe.id, 1, 28, 'player'); }
+      else if(!clinch.foe.dead) damageTier(clinch.foe, 1, 28);
+    }
     blip(880,0.18,'sine',0.2);
     buzz([0,40,40,40]);
   }else if(reason==='disarm'){
@@ -971,13 +990,27 @@ function bladeCovers(av,gx,gy){
   for(let i=1;i<=len;i++) if(av.gx+dx*i===gx && av.gy+dy*i===gy) return true;
   return false;
 }
-/* ── КЛИНЧ: фантом наносит удар, а твой клинок на его пути (блок) ── */
+function remoteBladeCells(r){
+  const p=r.latest||{}; const idx=yawToDirIdx(p.yaw||0); const [dx,dy]=DIRV[idx];
+  const len=clamp(Math.round(p.swordLength||1),1,6); const out=[];
+  for(let i=1;i<=len;i++) out.push((r.gx+dx*i)+','+(r.gy+dy*i));
+  return out;
+}
+/* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
 function resolveClinch(){
   if(clinch.active || player.disarmed || player.dead) return;
+  const pc=bladeCells(player);
+  // с фантомами
   for(const ph of phantoms){
     if(ph.disarmed || ph.dead || !ph.hitActive) continue;
-    const pc=bladeCells(player), ec=new Set(bladeCells(ph));
+    const ec=new Set(bladeCells(ph));
     if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки сошлись'); return; }
+  }
+  // с реальными игроками (PvP-фехтование)
+  if(friendlyFire) for(const id in NET.remotes){
+    const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0) continue;
+    const ec=new Set(remoteBladeCells(r));
+    if(pc.some(c=>ec.has(c))){ startClinch({remote:true, id}); logE('ФЕХТ с игроком '+id.slice(0,4)); return; }
   }
 }
 
@@ -1035,6 +1068,7 @@ function updatePhantoms(dt){
     if(ph.dead || ph.disarmed){ continue; }
     const ai=ph.ai;
     ai.moveT -= dt; ai.swingT -= dt;
+    ai.burnCd = Math.max(0, (ai.burnCd||0)-dt);
     const tgt = nearestTarget(ph);
     if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
     const ddx = Math.sign(tgt.gx - ph.gx);
@@ -1042,37 +1076,37 @@ function updatePhantoms(dt){
     const dist = Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
     let bestIdx=ph.dirIdx, bestDot=-9;
     for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
-    ph.dirIdx=bestIdx; ph.tier=1; ph.pitch=0; ph.roll=0;
-    if(ai.moveT<=0 && dist>1 && !clinch.active && ai.windT<=0){
-      ai.moveT = 0.95;
+    ph.dirIdx=bestIdx;
+    // ПРИЦЕЛ ПО ЯРУСУ как игрок: целится в тело цели (для локальной — в её ярус)
+    ph.tier = tgt.local ? player.tier : 1;
+    ph.pitch = (ph.tier-1)*0.7; ph.roll=0;
+    ph.hitActive = true;                              // клинок ЖИВ всегда (как у игрока)
+    // движение к цели
+    if(ai.moveT<=0 && dist>1 && !clinch.active){
+      ai.moveT = 0.9;
       let nx=ph.gx, ny=ph.gy;
       if(Math.abs(tgt.gx-ph.gx) >= Math.abs(tgt.gy-ph.gy)) nx=clamp(ph.gx+ddx,0,12);
       else ny=clamp(ph.gy+ddy,0,12);
       if(!obstacleAt(nx,ny) && !phantomBlocks(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
     }
+    // периодический ВИЗУАЛЬНЫЙ выпад (удлиняет луч на миг), урон при этом непрерывный
     if(ai.windT>0){
-      ai.windT -= dt;
-      ph.swordLen = lerp(ph.swordLen, 2.2, dt*4);
-      if(ai.windT<=0){ ph.hitActive=true; ph.strikeT=0.5; blip(150,0.12,'sawtooth',0.12); }
-    } else if(ai.swingT<=0 && dist<=2 && !clinch.active){
-      ai.swingT = 2.4 + Math.random()*1.4;
-      ai.windT = 0.5;
-      blip(90,0.2,'sine',0.08);
+      ai.windT -= dt; ph.swordLen = lerp(ph.swordLen, 2.0, dt*5);
+      ph.strikeT = Math.max(ph.strikeT, STRIKE_DUR);
+    }else{
+      ph.swordLen = lerp(ph.swordLen, 1.2, dt*2.5);
+      if(ai.swingT<=0 && dist<=3 && !clinch.active){ ai.swingT=1.6+Math.random()*1.4; ai.windT=0.32; }
     }
-    if(ph.strikeT>0){ ph.strikeT-=dt; } else if(ai.windT<=0) ph.hitActive=false;
-    if(ai.windT<=0) ph.swordLen = lerp(ph.swordLen,1,dt*1.5);
-    // урон цели, если клинок фантома достаёт (и нет клинча)
-    if(ph.hitActive && !clinch.active){
-      const t=bladeContestCell(ph);
-      if(t.x===tgt.gx && t.y===tgt.gy){
-        if(tgt.local && !player.disarmed && !player.dead){
-          if(bladeCovers(player, ph.gx, ph.gy)) startClinch(ph);
-          else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60);
-            emitSparks(worldX(player.gx), TIER_H*1.2, worldZ(player.gy), '#ff5a5a', 16, 3.4);
-            logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
-        }else if(!tgt.local){
-          NET.sendHit(tgt.id, 1, 9, 'phantom'); ph.hitActive=false;   // урон сетевому игроку
-        }
+    if(ph.strikeT>0) ph.strikeT-=dt;
+    // НЕПРЕРЫВНЫЙ урон при накрытии цели клинком (как burn у игрока), с кулдауном
+    if(!clinch.active && ai.burnCd<=0 && bladeCovers(ph, tgt.gx, tgt.gy)){
+      const D=DIFF[botDiff];
+      if(tgt.local && !player.disarmed && !player.dead){
+        damageTier(player, ph.tier, D.dmg); ai.burnCd=D.cd; doFlash('#ef4444'); buzz(50);
+        emitSparks(worldX(player.gx), TIER_H*(0.6+ph.tier*0.7), worldZ(player.gy), '#ff5a5a', 14, 3.2);
+        logE('фантом режет игрока ярус '+ph.tier+' → HP '+Math.round(player.hp));
+      }else if(!tgt.local){
+        NET.sendHit(tgt.id, ph.tier, D.dmg, 'phantom'); ai.burnCd=D.cd;
       }
     }
   }
@@ -1184,6 +1218,8 @@ function cycleFollow(){
 $('followBtn').onclick=cycleFollow;
 $('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
   $('mPhan').textContent='☠ ФАНТОМОВ: '+phantomCount; };
+$('mDiff').onclick=()=>{ botDiff=(botDiff+1)%3;
+  $('mDiff').textContent='🎯 СЛОЖНОСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
   $('mFF').textContent='⚔ УРОН ИГРОКАМ: '+(friendlyFire?'ВКЛ':'ВЫКЛ'); logE('friendlyFire='+friendlyFire); };
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
