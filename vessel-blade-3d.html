@@ -377,11 +377,13 @@ function buildBodyVoxels(){
   return {offsets:V, size:s};
 }
 const BODY = buildBodyVoxels();
+const ARM_COUNT = 5;                 // воксели рук, тянущиеся к рукояти меча
+const AV_COUNT = BODY.offsets.length + ARM_COUNT;
 
 function makeAvatar(baseHue){
   const geo = new THREE.BoxGeometry(BODY.size*0.74, BODY.size*0.74, BODY.size*0.74); // зазоры → «точки света»
   const mat = new THREE.MeshBasicMaterial({transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false});
-  const mesh = new THREE.InstancedMesh(geo, mat, BODY.offsets.length);
+  const mesh = new THREE.InstancedMesh(geo, mat, AV_COUNT);
   mesh.frustumCulled = false;          // воксели смещены в instanceMatrix — иначе тело пропадает под углом
   scene.add(mesh);
   // клинок: до 6 сегментов-вокселей вдоль направления
@@ -396,6 +398,7 @@ function makeAvatar(baseHue){
     dirIdx:0,                      // направление взгляда/клинка (0..7)
     visYaw:0,                      // сглаженный угол клинка для рендера (плавность)
     tier:1,                        // целевой ярус клинка
+    crouch:0,                      // присед 0..1 (при прицеле вниз)
     hp:100, stamina:100,
     swordLen:1, charging:false, charge:1,   // длина и накопление давления
     hitActive:false,               // активен ли хитбокс (стойка атаки, фаза выброса)
@@ -445,58 +448,79 @@ function aggressionHue(a){ // a:0 (норма) колодный синий → 1
   // 0.55 (cyan) → 0.0 (red)
   return lerp(0.55, 0.0, a);
 }
+/* ── геометрия «рука+клинок»: рукоять, кончик, боковой замах, присед ──
+   side инвертирован (по просьбе); crouch опускает рукоять и кончик.       */
+function handInfo(av){
+  const [dx,dz] = dirXZ(av.visYaw);
+  const rx = -dz, rz = dx;
+  const px=worldX(av.gx), pz=worldZ(av.gy);
+  const cr = av.crouch||0;
+  const side = av===player ? -clamp(sensor.roll/55, -1.3, 1.3) : 0;   // ← инверсия
+  const hx = px + rx*side*0.55;
+  const hz = pz + rz*side*0.55;
+  const hy = TIER_H*(0.9 - cr*0.35) + Math.abs(side)*TIER_H*0.5;
+  const len = clamp(Math.round(av.swordLen),1,6);
+  const tipY = av===player
+    ? clamp(TIER_H*(1.1 - cr*0.5) + sensor.pitch*TIER_H*1.5, -0.08, TIER_H*2.3)
+    : 0.2 + av.tier*TIER_H;
+  const tipX = px + dx*CELL*len, tipZ = pz + dz*CELL*len;
+  return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr};
+}
+
 function updateAvatarMesh(av, t){
   const hpFrac = clamp(av.hp/100, 0, 1);
-  const aggr = 1 - hpFrac;                       // градиент агрессии
+  const aggr = 1 - hpFrac;
   const hue = aggressionHue(aggr);
-  const baseI = 0.32 + aggr*0.5;                 // «emissiveIntensity» растёт с уроном
+  const baseI = 0.32 + aggr*0.5;
   const speedPulse = av===player ? clamp(sensor.speed/16,0,0.4) : 0;
-  const erosion = hpFrac < 0.15 ? (Math.sin(t*0.04)*0.5+0.5)*0.16 : 0; // предсмертная рябь
+  const erosion = hpFrac < 0.15 ? (Math.sin(t*0.04)*0.5+0.5)*0.16 : 0;
   if(av.hitGlow>0) av.hitGlow -= 0.016;
-  const glow = clamp(av.hitGlow,0,0.3);          // вспышка места касания
-  // плавная (не хаотичная) пульсация боли — голограмма, а не мигающие кубы
+  const glow = clamp(av.hitGlow,0,0.3);
   const pain = av.painT>0 ? (Math.sin(t*0.05)*0.5+0.5)*0.5 : 0;
   const px = worldX(av.gx), pz = worldZ(av.gy);
-  for(let i=0;i<BODY.offsets.length;i++){
+  const cr = av.crouch||0;
+  const L0 = baseI + speedPulse + pain + glow*3;
+  const setC = (idx,bright)=>{ _c.setHSL(hue,0.8,clamp(0.16+bright*0.4,0.06,0.9)); av.mesh.setColorAt(idx,_c); };
+  // ── тело: присед сжимает по высоте, ноги чуть расходятся (стойка/колени) ──
+  const nBody = BODY.offsets.length;
+  for(let i=0;i<nBody;i++){
     const o = BODY.offsets[i];
+    const isLeg = o[3]===0;
+    const yc = o[1]*(1 - cr*0.34);                 // присед: ниже
+    const xc = o[0]*(isLeg ? (1 + cr*0.5) : 1);     // колени врозь при приседе
     let ex=0,ez=0;
-    if(erosion){ ex=(Math.sin((i*1.7)+t*0.05))*erosion; ez=(Math.cos((i*2.3)+t*0.045))*erosion; }
-    _d.position.set(px+o[0]+ex, o[1], pz+o[2]+ez);
+    if(erosion){ ex=Math.sin(i*1.7+t*0.05)*erosion; ez=Math.cos(i*2.3+t*0.045)*erosion; }
+    _d.position.set(px+xc+ex, yc, pz+o[2]+ez);
     _d.updateMatrix(); av.mesh.setMatrixAt(i,_d.matrix);
-    const L = baseI + speedPulse + pain + glow*3;
-    _c.setHSL(hue, 0.8, clamp(0.16 + L*0.4, 0.06, 0.9));
-    av.mesh.setColorAt(i,_c);
+    setC(i, L0);
+  }
+  // ── руки: линия вокселей от плеча к рукояти меча (руки держат клинок) ──
+  const H = handInfo(av);
+  const sy = TIER_H*(1.5 - cr*0.5);                 // плечо (сжимается с приседом)
+  const sx = px, sz = pz;
+  for(let a=0;a<ARM_COUNT;a++){
+    const f=(a+1)/ARM_COUNT;
+    _d.position.set(lerp(sx,H.hx,f), lerp(sy,H.hy,f), lerp(sz,H.hz,f));
+    _d.updateMatrix(); av.mesh.setMatrixAt(nBody+a,_d.matrix);
+    setC(nBody+a, L0*0.9);
   }
   av.mesh.instanceMatrix.needsUpdate=true;
   av.mesh.instanceColor.needsUpdate=true;
 }
 
-/* ── обновление клинка (сегменты, длина, ярус, цвет) ─────────── */
+/* ── обновление клинка (сегменты вдоль руки→кончика) ─────────── */
 function updateBlade(av){
   if(av.disarmed || av.dead){ av.blade.count=0; return; }
-  const [dx,dz] = dirXZ(av.visYaw);            // forward (DIRV-consistent)
-  const rx = -dz, rz = dx;                      // right (perpendicular)
-  const px=worldX(av.gx), pz=worldZ(av.gy);
-  const len = clamp(Math.round(av.swordLen),1,6);
-  av.blade.count = len;
+  const H = handInfo(av);
+  av.blade.count = H.len;
   const hot = av.strikeT>0;
-  const tipY = av===player
-    ? clamp(TIER_H*1.1 + sensor.pitch*TIER_H*1.5, -0.08, TIER_H*2.3)   // может цеплять пол
-    : 0.2 + av.tier*TIER_H;
-  // BOKOVOY ZAMAH: roll uvodit rukoyat vbok i vverh (zanos dvuruchnogo mecha)
-  const side = av===player ? clamp(sensor.roll/55, -1.3, 1.3) : 0;
-  const handX = px + rx*side*0.55;
-  const handZ = pz + rz*side*0.55;
-  const handY = TIER_H*0.9 + Math.abs(side)*TIER_H*0.6;
-  const tipX = px + dx*CELL*len;
-  const tipZ = pz + dz*CELL*len;
-  for(let i=0;i<len;i++){
-    const f=(i+0.7)/len;
-    const cx = lerp(handX, tipX, f);
-    const cy = lerp(handY, tipY, f);
-    const cz = lerp(handZ, tipZ, f);
+  for(let i=0;i<H.len;i++){
+    const f=(i+0.7)/H.len;
+    const cx = lerp(H.hx, H.tipX, f);
+    const cy = lerp(H.hy, H.tipY, f);
+    const cz = lerp(H.hz, H.tipZ, f);
     _d.position.set(cx, cy, cz);
-    _d.lookAt(cx+(tipX-handX), cy+(tipY-handY), cz+(tipZ-handZ));
+    _d.lookAt(cx+(H.tipX-H.hx), cy+(H.tipY-H.hy), cz+(H.tipZ-H.hz));
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
     const lum = hot ? lerp(0.8,1.0,f) : lerp(0.55,0.85,f);
     const sat = hot ? 0.5 : 0.9;
@@ -516,41 +540,33 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
-  // КАМЕРА реагирует мгновенно (сырой компасный угол), КЛИНОК отстаёт (visYaw).
-  const [dx,dz] = dirXZ(sensor.yawFused);
+  const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
-  // стойка по углу γ (roll). Порог выше — умеренный наклон = боковой замах,
-  // а не сразу вид от 1-го лица.
-  const beacon = Math.abs(sensor.roll) > 55;
+  // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1). Без резкого щелчка.
+  const fp = clamp((Math.abs(sensor.roll)-40)/30, 0, 1);
+  const beacon = fp>0.5;
   const prevStance = stance;
   stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
   if(prevStance!==stance) logE('СТОЙКА → '+(beacon?'МАЯК (1-е лицо)':'МОЛНИЯ'));
-  // КЛИНОК ЖИВ ВСЕГДА: прожигает при касании и служит щитом (фехтование).
-  player.hitActive = !player.disarmed && !player.dead;
+  player.hitActive = !player.disarmed && !player.dead;   // клинок жив всегда
 
-  if(beacon){
-    // Маяк: копим давление (реза́ч всё равно активен), вид от 1-го лица
-    player.charging = true;
-    player.charge = clamp(player.charge + dt, 1, 3);
-    player.swordLen = lerp(player.swordLen, 1.4, dt*4);  // в маяке клинок чуть выдвинут
-    player.mesh.visible = false;        // от 1-го лица своё тело не загораживает обзор
-    camTarget.set(px+dx*6, TIER_H*1.7, pz+dz*6);
-    camPos.set(px+dx*0.1, TIER_H*1.95, pz+dz*0.1);
-  }else{
-    player.mesh.visible = true;
-    // переход из маяка → выброс на накопленную длину (рывок-замах)
-    if(player.charging){
-      player.charging=false;
-      player.swordLen = player.charge; player.charge = 1;
-      player.strikeT = 0.4;                  // «раскалённая» фаза (визуал/буст)
-      blip(180,0.12,'sawtooth',0.18);
-      logE('ВЫБРОС клинка, длина='+player.swordLen.toFixed(1));
-    }
-    if(player.strikeT>0) player.strikeT-=dt;
-    player.swordLen = lerp(player.swordLen, 1, dt*1.6);
-    camTarget.set(px+dx*3.0, TIER_H*1.1, pz+dz*3.0);
-    camPos.set(px-dx*3.4, TIER_H*3.0, pz-dz*3.4);
+  // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах)
+  if(fp>0.6){ player.charging=true; player.charge=clamp(player.charge+dt,1,3); }
+  else if(player.charging){
+    player.charging=false; player.swordLen=player.charge; player.charge=1; player.strikeT=0.4;
+    blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.swordLen.toFixed(1));
   }
+  if(player.strikeT>0) player.strikeT-=dt;
+  player.swordLen = lerp(player.swordLen, fp>0.6?1.4:1, clamp(dt*(fp>0.6?4:1.6),0,1));
+  player.mesh.visible = fp < 0.85;          // тело исчезает только у самого 1-го лица
+
+  // камера — плавный бленд между 3-м и 1-м лицом
+  const tpx=px-dx*3.4, tpy=TIER_H*3.0, tpz=pz-dz*3.4;      // 3-е лицо
+  const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
+  camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
+  const ttx=px+dx*3.0, tty=TIER_H*1.1, ttz=pz+dz*3.0;
+  const ftx=px+dx*6,   fty=TIER_H*1.7, ftz=pz+dz*6;
+  camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
 }
 
 /* ════════════════════ КЛИНЧ / РАССИНХРОН ═════════════════════ */
@@ -639,20 +655,33 @@ function updateClinch(dt){
 let droppedBlade=null;
 const dropGeo=new THREE.BoxGeometry(0.5,0.16,0.16);
 const dropMat=new THREE.MeshBasicMaterial({color:0x60a5fa});
+function freeCellNear(gx,gy){
+  gx=clamp(gx,0,12); gy=clamp(gy,0,12);
+  if(!obstacleAt(gx,gy)) return {gx,gy};
+  for(let r=1;r<=4;r++) for(const [ox,oy] of DIRV){
+    const nx=clamp(gx+ox*r,0,12), ny=clamp(gy+oy*r,0,12);
+    if(!obstacleAt(nx,ny)) return {gx:nx,gy:ny};
+  }
+  return {gx,gy};
+}
 function dropBlade(av){
   if(droppedBlade) scene.remove(droppedBlade);
   droppedBlade=new THREE.Mesh(dropGeo,dropMat);
   const tip=bladeContestCell(av);
-  droppedBlade.userData={gx:clamp(tip.x,0,12), gy:clamp(tip.y,0,12)};
-  droppedBlade.position.set(worldX(droppedBlade.userData.gx), -0.3, worldZ(droppedBlade.userData.gy));
+  const c=freeCellNear(tip.x, tip.y);       // не на непроходимом препятствии
+  droppedBlade.userData={gx:c.gx, gy:c.gy};
+  droppedBlade.position.set(worldX(c.gx), -0.3, worldZ(c.gy));
   scene.add(droppedBlade);
+  logE('меч упал в ('+c.gx+','+c.gy+')');
 }
 function tryPickupBlade(){
   if(!droppedBlade || !player.disarmed) return;
-  if(player.gx===droppedBlade.userData.gx && player.gy===droppedBlade.userData.gy){
+  const dx=Math.abs(player.gx-droppedBlade.userData.gx);
+  const dy=Math.abs(player.gy-droppedBlade.userData.gy);
+  if(dx<=1 && dy<=1){                        // рядом (или на клетке) — поднимаем
     player.disarmed=false; player.stamina=40; player.swordLen=1;
     scene.remove(droppedBlade); droppedBlade=null;
-    showBanner('↺ КЛИНОК ВОЗВРАЩЁН','#22c55e'); blip(660,0.15,'sine',0.18);
+    showBanner('↺ КЛИНОК ВОЗВРАЩЁН','#22c55e'); blip(660,0.15,'sine',0.18); logE('меч поднят');
   }
 }
 
@@ -994,6 +1023,7 @@ function frame(now){
   player.dirIdx = yawToDirIdx(sensor.yawFused);
   sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
   player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
+  player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
   // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
   player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
   phantom.visYaw = smoothAngle(phantom.visYaw, phantom.dirIdx*45, dt*7);
