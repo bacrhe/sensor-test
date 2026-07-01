@@ -113,6 +113,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="msub" id="mInfo">—</div>
   <button id="mResume">▶ ПРОДОЛЖИТЬ</button>
   <button id="mMode">◎ РЕЖИМ: БОЕЦ</button>
+  <button id="mPhan">☠ ФАНТОМОВ: 1</button>
+  <button id="mFF">⚔ УРОН ИГРОКАМ: ВКЛ</button>
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
@@ -409,6 +411,7 @@ function makeAvatar(baseHue){
     visYaw:0,                      // сглаженный угол клинка для рендера (плавность)
     tier:1,                        // целевой ярус клинка
     crouch:0,                      // присед 0..1 (при прицеле вниз)
+    pitch:0, roll:0, speedPulse:0, bladeHue:0.95,   // для рендера (и сети)
     hp:100, stamina:100,
     swordLen:1, charging:false, charge:1,   // длина и накопление давления
     hitActive:false,               // активен ли хитбокс (стойка атаки, фаза выброса)
@@ -420,8 +423,25 @@ function makeAvatar(baseHue){
 }
 
 const player = makeAvatar(0.33);   // зелёный спектр
-const phantom = makeAvatar(0.92);  // пурпур/красный спектр
-phantom.gx = 6; phantom.gy = 1;    // напротив, в верхней части сетки
+player.bladeHue = 0.5;             // клинок игрока — голубой
+let phantomCount = 1;                 // настройка: 0..N фантомов
+let phantoms = [];
+const PH_STARTS = [[6,1],[2,2],[10,2],[6,11],[2,10],[10,10]];
+function makePhantom(i){
+  const ph = makeAvatar(0.92);        // пурпур/красный спектр
+  const s = PH_STARTS[i%PH_STARTS.length];
+  ph.gx=s[0]; ph.gy=s[1];
+  ph.ai = { moveT:Math.random()*0.6, swingT:1+Math.random()*2, windT:0 };
+  return ph;
+}
+function spawnPhantoms(n){
+  phantoms.forEach(p=>{ scene.remove(p.mesh); scene.remove(p.blade); });
+  phantoms = [];
+  for(let i=0;i<n;i++) phantoms.push(makePhantom(i));
+  logE('фантомов: '+n);
+}
+function phantomAtCell(cx,cy){ return phantoms.find(p=>!p.dead && p.gx===cx && p.gy===cy); }
+spawnPhantoms(phantomCount);
 
 /* ════════════════════ ПРЕПЯТСТВИЯ ════════════════════════════
    4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
@@ -465,14 +485,12 @@ function handInfo(av){
   const rx = -dz, rz = dx;
   const px=worldX(av.gx), pz=worldZ(av.gy);
   const cr = av.crouch||0;
-  const side = av===player ? -clamp(sensor.roll/55, -1.3, 1.3) : 0;   // ← инверсия
+  const side = -clamp((av.roll||0)/55, -1.3, 1.3);   // ← инверсия; из av (и для сети)
   const hx = px + rx*side*0.55;
   const hz = pz + rz*side*0.55;
   const hy = TIER_H*(0.9 - cr*0.35) + Math.abs(side)*TIER_H*0.5;
   const len = clamp(Math.round(av.swordLen),1,6);
-  const tipY = av===player
-    ? clamp(TIER_H*(1.1 - cr*0.5) + sensor.pitch*TIER_H*1.5, -0.08, TIER_H*2.3)
-    : 0.2 + av.tier*TIER_H;
+  const tipY = clamp(TIER_H*(1.1 - cr*0.5) + (av.pitch||0)*TIER_H*1.5, -0.08, TIER_H*2.3);
   const tipX = px + dx*CELL*len, tipZ = pz + dz*CELL*len;
   return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr};
 }
@@ -482,7 +500,7 @@ function updateAvatarMesh(av, t){
   const aggr = 1 - hpFrac;
   const hue = aggressionHue(aggr);
   const baseI = 0.32 + aggr*0.5;
-  const speedPulse = av===player ? clamp(sensor.speed/16,0,0.4) : 0;
+  const speedPulse = av.speedPulse||0;
   const erosion = hpFrac < 0.15 ? (Math.sin(t*0.04)*0.5+0.5)*0.16 : 0;
   if(av.hitGlow>0) av.hitGlow -= 0.016;
   const glow = clamp(av.hitGlow,0,0.3);
@@ -537,7 +555,7 @@ function updateBlade(av){
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
     const lum = hot ? lerp(0.8,1.0,f) : lerp(0.55,0.85,f);
     const sat = hot ? 0.5 : 0.9;
-    _c.setHSL(av===player?0.5:0.95, sat, lum);
+    _c.setHSL(av.bladeHue??0.95, sat, lum);
     av.blade.setColorAt(i,_c);
   }
   av.blade.instanceMatrix.needsUpdate=true;
@@ -584,9 +602,10 @@ function updateStanceAndCamera(dt){
 
 /* ════════════════════ КЛИНЧ / РАССИНХРОН ═════════════════════ */
 const clinch = {
-  active:false, lockYaw:0, lockX:0, lockY:0, lockZ:0,
+  active:false, foe:null, lockYaw:0, lockX:0, lockY:0, lockZ:0,
   delta:0, t:0, parryWindow:0, vibT:0,
 };
+let friendlyFire = true;        // наносить/получать урон между игроками
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
 
@@ -596,9 +615,9 @@ function bladeContestCell(av){   // клетка-кончик клинка
   return {x: av.gx+dx*len, y: av.gy+dy*len};
 }
 
-function startClinch(){
+function startClinch(foe){
   if(clinch.active) return;
-  clinch.active=true; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
+  clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
   clinch.lockYaw = sensor.yawFused;
   const tip = bladeContestCell(player);
   clinch.lockX = worldX(clamp(tip.x,0,12));
@@ -619,8 +638,8 @@ function endClinch(reason){
   if(reason==='parry'){
     showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
     doFlash('#22d3ee');
-    // короткое окно идеальной контратаки: бонусный урон фантому
-    damageTier(phantom, 1, 28);
+    // короткое окно идеальной контратаки: бонусный урон соупернику в клинче
+    if(clinch.foe && !clinch.foe.dead) damageTier(clinch.foe, 1, 28);
     blip(880,0.18,'sine',0.2);
     buzz([0,40,40,40]);
   }else if(reason==='disarm'){
@@ -710,13 +729,14 @@ function damageTier(av, tier, amount){
   }
   av.painT = 0.28;
   // звук удара (вибрацию НЕ трогаем — она зарезервирована под рассинхрон)
-  blip(av===phantom?300:220, 0.08, 'square', 0.1);
+  blip(av===player?220:300, 0.08, 'square', 0.1);
 }
 
 /* ── ПРОЖИГАНИЕ: клинок жив → касание тела фантома наносит урон ─
    Срабатывает непрерывно (не только на перекате стойки). Кулдаун,
    чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
 function applyIncomingHit(h){
+  if(!friendlyFire) return;                      // приём урона от игроков выключен
   const tier = clamp((h.tier|0),0,2);
   damageTier(player, tier, h.dmg||14);
   player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
@@ -746,17 +766,19 @@ function resolveBurn(dt){
     }
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
+      if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
       if(burnCd<=0){ NET.sendHit(rf.id, pitchTier(sensor.pitch), 14); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
     }
-    if(!phantom.dead && cx===phantom.gx && cy===phantom.gy){
+    const ph = phantomAtCell(cx,cy);
+    if(ph){
       if(burnCd>0) return;
       const tier = pitchTier(sensor.pitch);
-      damageTier(phantom, tier, 16); burnCd = 0.3; phantom.hitGlow = 0.3;
+      damageTier(ph, tier, 16); burnCd = 0.3; ph.hitGlow = 0.3;
       doFlash('#22c55e'); buzz(40);
-      logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(phantom.hp)}`);
+      logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(ph.hp)}`);
       return;
     }
   }
@@ -775,16 +797,18 @@ function bladeCovers(av,gx,gy){
 }
 /* ── КЛИНЧ: фантом наносит удар, а твой клинок на его пути (блок) ── */
 function resolveClinch(){
-  if(clinch.active || player.disarmed || phantom.disarmed || player.dead || phantom.dead) return;
-  if(!phantom.hitActive) return;                         // клинч только на ударе фантома
-  const pc=bladeCells(player), ec=new Set(bladeCells(phantom));
-  if(pc.some(c=>ec.has(c))){ startClinch(); logE('БЛОК: клинки сошлись'); }
+  if(clinch.active || player.disarmed || player.dead) return;
+  for(const ph of phantoms){
+    if(ph.disarmed || ph.dead || !ph.hitActive) continue;
+    const pc=bladeCells(player), ec=new Set(bladeCells(ph));
+    if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки сошлись'); return; }
+  }
 }
 
 /* ════════════════════ СМЕРТЬ И ВОЗРОЖДЕНИЕ ═══════════════════ */
 function clearClinch(){
   if(!clinch.active) return;
-  clinch.active=false; clinch.delta=0; setWorldMuffle(0);
+  clinch.active=false; clinch.foe=null; clinch.delta=0; setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
 }
 function handleDeath(av, dt){
@@ -796,7 +820,7 @@ function handleDeath(av, dt){
   if(av.hp<=0){
     av.dead=true; av.respawnT=2.2; av.hitActive=false; av.blade.count=0;
     clearClinch();
-    if(av===phantom){
+    if(av!==player){
       player.score=(player.score||0)+1;
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
@@ -812,8 +836,8 @@ function handleDeath(av, dt){
 function respawn(av){
   av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
   av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
-  if(av===phantom){
-    phantomAI.windT=0; phantomAI.swingT=2; phantomAI.moveT=0.5;
+  if(av!==player){
+    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5;
     av.gx = player.gx<=6?12:0; av.gy = player.gy<=6?12:0;   // подальше от игрока
   }else{
     av.gx=CX; av.gy=CY;
@@ -821,46 +845,43 @@ function respawn(av){
   }
 }
 
-/* ════════════════════ ФАНТОМ (ИИ) ════════════════════════════ */
-const phantomAI = { moveT:0, swingT:0, windT:0 };
-function updatePhantom(dt){
-  if(phantom.dead || phantom.disarmed){ return; }
-  phantomAI.moveT -= dt; phantomAI.swingT -= dt;
-  // направление на игрока
-  const ddx = Math.sign(player.gx - phantom.gx);
-  const ddy = Math.sign(player.gy - phantom.gy);
-  const dist = Math.abs(player.gx-phantom.gx)+Math.abs(player.gy-phantom.gy);
-  // повернуть клинок к игроку
-  let bestIdx=phantom.dirIdx, bestDot=-9;
-  for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
-  phantom.dirIdx=bestIdx;
-  phantom.tier = 1;
-  // шаг к игроку — медленнее, и только когда не в заводе/клинче
-  if(phantomAI.moveT<=0 && dist>1 && !clinch.active && phantomAI.windT<=0 && !player.dead){
-    phantomAI.moveT = 0.95;            // было 0.55 — заметно спокойнее
-    let nx=phantom.gx, ny=phantom.gy;
-    if(Math.abs(player.gx-phantom.gx) >= Math.abs(player.gy-phantom.gy)) nx=clamp(phantom.gx+ddx,0,12);
-    else ny=clamp(phantom.gy+ddy,0,12);
-    if(!obstacleAt(nx,ny)){ phantom.gx=nx; phantom.gy=ny; }   // обходит препятствия
-  }
-  // ТЕЛЕГРАФ: перед ударом клинок медленно поднимается (видно, что сейчас будет замах)
-  if(phantomAI.windT>0){
-    phantomAI.windT -= dt;
-    phantom.swordLen = lerp(phantom.swordLen, 2.2, dt*4);
-    if(phantomAI.windT<=0){ phantom.hitActive=true; phantom.strikeT=0.5; blip(150,0.12,'sawtooth',0.12); }
-  } else if(phantomAI.swingT<=0 && dist<=2 && !clinch.active && !player.dead){
-    phantomAI.swingT = 2.4 + Math.random()*1.4;   // реже бьёт
-    phantomAI.windT = 0.5;                          // завод-предупреждение
-    blip(90,0.2,'sine',0.08);                       // низкий «вдох» перед ударом
-  }
-  if(phantom.strikeT>0){ phantom.strikeT-=dt; } else if(phantomAI.windT<=0) phantom.hitActive=false;
-  if(phantomAI.windT<=0) phantom.swordLen = lerp(phantom.swordLen,1,dt*1.5);
-  // урон игроку, если клинок фантома достаёт (и нет клинча)
-  if(phantom.hitActive && !clinch.active && !player.dead){
-    const t=bladeContestCell(phantom);
-    if(t.x===player.gx && t.y===player.gy && !player.disarmed){
-      if(bladeCovers(player, phantom.gx, phantom.gy) && !player.disarmed) startClinch(); // твой клинок защищает
-      else { damageTier(player, 1, 9); phantom.hitActive=false; doFlash('#ef4444'); buzz(60); logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
+/* ════════════════════ ФАНТОМЫ (ИИ) ══════════════════════════ */
+function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead && p.gx===gx && p.gy===gy); }
+function updatePhantoms(dt){
+  for(const ph of phantoms){
+    if(ph.dead || ph.disarmed){ continue; }
+    const ai=ph.ai;
+    ai.moveT -= dt; ai.swingT -= dt;
+    const ddx = Math.sign(player.gx - ph.gx);
+    const ddy = Math.sign(player.gy - ph.gy);
+    const dist = Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy);
+    let bestIdx=ph.dirIdx, bestDot=-9;
+    for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
+    ph.dirIdx=bestIdx; ph.tier=1; ph.pitch=0; ph.roll=0;
+    if(ai.moveT<=0 && dist>1 && !clinch.active && ai.windT<=0 && !player.dead){
+      ai.moveT = 0.95;
+      let nx=ph.gx, ny=ph.gy;
+      if(Math.abs(player.gx-ph.gx) >= Math.abs(player.gy-ph.gy)) nx=clamp(ph.gx+ddx,0,12);
+      else ny=clamp(ph.gy+ddy,0,12);
+      if(!obstacleAt(nx,ny) && !phantomBlocks(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
+    }
+    if(ai.windT>0){
+      ai.windT -= dt;
+      ph.swordLen = lerp(ph.swordLen, 2.2, dt*4);
+      if(ai.windT<=0){ ph.hitActive=true; ph.strikeT=0.5; blip(150,0.12,'sawtooth',0.12); }
+    } else if(ai.swingT<=0 && dist<=2 && !clinch.active && !player.dead){
+      ai.swingT = 2.4 + Math.random()*1.4;
+      ai.windT = 0.5;
+      blip(90,0.2,'sine',0.08);
+    }
+    if(ph.strikeT>0){ ph.strikeT-=dt; } else if(ai.windT<=0) ph.hitActive=false;
+    if(ai.windT<=0) ph.swordLen = lerp(ph.swordLen,1,dt*1.5);
+    if(ph.hitActive && !clinch.active && !player.dead){
+      const t=bladeContestCell(ph);
+      if(t.x===player.gx && t.y===player.gy && !player.disarmed){
+        if(bladeCovers(player, ph.gx, ph.gy)) startClinch(ph);
+        else { damageTier(player, 1, 9); ph.hitActive=false; doFlash('#ef4444'); buzz(60); logE('ФАНТОМ бьёт игрока → HP '+Math.round(player.hp)); }
+      }
     }
   }
 }
@@ -929,9 +950,8 @@ function closeMenu(){ paused=false; last=0; $('menu').style.display='none'; }
 function newGame(){
   player.hp=100; player.stamina=100; player.swordLen=1; player.charge=1; player.dead=false; player.disarmed=false;
   player.score=0; player.gx=CX; player.gy=CY;
-  phantom.hp=100; phantom.stamina=100; phantom.dead=false; phantom.disarmed=false; phantom.gx=6; phantom.gy=1;
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
-  spawnObstacles();
+  spawnObstacles(); spawnPhantoms(phantomCount);
   clearClinch(); logE('=== НОВАЯ ИГРА ==='); closeMenu();
 }
 $('pauseBtn').onclick=openMenu;
@@ -944,7 +964,7 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 function applyMode(){
   const fighter = mode==='fighter';
   player.mesh.visible=fighter; player.blade.visible=fighter;
-  phantom.mesh.visible=fighter; phantom.blade.visible=fighter;
+  phantoms.forEach(ph=>{ ph.mesh.visible=fighter; ph.blade.visible=fighter; });
   obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=fighter; });
   if(droppedBlade) droppedBlade.visible=fighter;
   camera.up.set(0,1,0);
@@ -956,6 +976,10 @@ function cycleMode(){
   applyMode();
 }
 $('mMode').onclick=cycleMode;
+$('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
+  $('mPhan').textContent='☠ ФАНТОМОВ: '+phantomCount; };
+$('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
+  $('mFF').textContent='⚔ УРОН ИГРОКАМ: '+(friendlyFire?'ВКЛ':'ВЫКЛ'); logE('friendlyFire='+friendlyFire); };
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
@@ -1041,16 +1065,14 @@ const NET = {
   },
 };
 
-/* ── рендер чужого: боец → 3-ярусный столб+луч; наблюдатель → палка+голова ── */
-const remoteTierGeo = new THREE.BoxGeometry(0.55, TIER_H*0.85, 0.55);
-const remoteBeamGeo = new THREE.BoxGeometry(0.12, 0.12, CELL*0.95);
+/* ── рендер чужого: боец → полное воксельное тело (как своё); наблюдатель → палка+голова ── */
 function upsertRemote(id, p){
   const spec = !!p.spec;
   let r = NET.remotes[id];
   if(r && r.spec!==spec){ removeRemote(id); r=null; }   // тип сменился — пересоздать
   if(!r){
-    const g=new THREE.Group();
-    if(spec){                                            // тонкая высокая палка с головой
+    if(spec){
+      const g=new THREE.Group();
       const stick=new THREE.Mesh(new THREE.BoxGeometry(0.16,4.0,0.16),
         new THREE.MeshBasicMaterial({color:0x7c93b8, transparent:true, opacity:0.45, depthWrite:false}));
       stick.position.y=2.0;
@@ -1060,39 +1082,47 @@ function upsertRemote(id, p){
       g.add(stick); g.add(head); g.traverse(o=>o.frustumCulled=false); scene.add(g);
       r = NET.remotes[id] = {group:g, spec:true};
     }else{
-      const tiers=[];
-      for(let t=0;t<3;t++){
-        const m=new THREE.Mesh(remoteTierGeo, new THREE.MeshBasicMaterial({color:0x60a5fa}));
-        m.position.y = 0.25 + t*TIER_H; g.add(m); tiers.push(m);
-      }
-      const beam=new THREE.Mesh(remoteBeamGeo, new THREE.MeshBasicMaterial({color:0xa5f3fc, transparent:true, opacity:0.85}));
-      beam.visible=false; g.add(beam);
-      const nose=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.22,0.22),
-        new THREE.MeshBasicMaterial({color:0xffffff}));                 // маркер «куда смотрит»
-      g.add(nose);
-      g.traverse(o=>o.frustumCulled=false); scene.add(g);
-      r = NET.remotes[id] = {group:g, tiers, beam, nose, spec:false, gx:6, gy:6};
+      const av = makeAvatar(0.95);          // полноценный аватар соперника (пурпур)
+      av.bladeHue = 0.95;
+      const nose=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,0.2), new THREE.MeshBasicMaterial({color:0xffffff}));
+      scene.add(nose); nose.frustumCulled=false;
+      r = NET.remotes[id] = {av, nose, spec:false, gx:6, gy:6, hp:100, latest:p};
     }
   }
-  const gx=clamp(p.x|0,0,12), gy=clamp(p.y|0,0,12);
-  r.group.position.set(worldX(gx), 0, worldZ(gy));
-  if(r.spec) return;
-  r.gx=gx; r.gy=gy; r.hp=p.hp??100;
-  const aggr = 1 - clamp((p.hp??100)/100, 0, 1);
-  const col = new THREE.Color().setHSL(lerp(0.55,0.0,aggr), 0.85, 0.32 + aggr*0.25);
-  r.tiers.forEach(m=>m.material.color.copy(col));
-  // «нос» показывает направление взгляда (по компасному yaw соперника)
-  const idx = Math.round(wrap360(p.yaw||0)/45)%8, d=DIRV[idx];
-  r.nose.position.set(d[0]*0.42, TIER_H*2.2, d[1]*0.42);
-  // луч виден, когда бьёт
-  const striking = !p.isCharging && (p.swordLength??1) > 1.2;
-  r.beam.visible = striking;
-  if(striking){
-    r.beam.position.set(d[0]*CELL*1.2, TIER_H*1.1, d[1]*CELL*1.2);
-    r.beam.rotation.y = Math.atan2(d[0], d[1]);
+  if(r.spec){ r.group.position.set(worldX(clamp(p.x|0,0,12)),0,worldZ(clamp(p.y|0,0,12))); return; }
+  r.latest = p;                              // тело обновим в renderRemotes каждый кадр
+  r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
+}
+function renderRemotes(now, dt){
+  for(const id in NET.remotes){
+    const r = NET.remotes[id];
+    if(r.spec || !r.av) continue;
+    const p = r.latest || {};
+    const av = r.av;
+    av.gx = r.gx; av.gy = r.gy; av.hp = r.hp;
+    av.visYaw = smoothAngle(av.visYaw, p.yaw||0, clamp(dt*8,0,1));
+    av.dirIdx = yawToDirIdx(p.yaw||0);
+    av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
+    av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
+    av.swordLen = p.swordLength||1;
+    av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
+    av.dead = (r.hp<=0);
+    updateAvatarMesh(av, now);
+    updateBlade(av);
+    // «нос» — куда смотрит
+    const d = dirXZ(av.visYaw);
+    r.nose.position.set(worldX(r.gx)+d[0]*0.5, TIER_H*2.25, worldZ(r.gy)+d[1]*0.5);
   }
 }
-function removeRemote(id){ const r=NET.remotes[id]; if(r){ scene.remove(r.group); delete NET.remotes[id]; } }
+function removeRemote(id){
+  const r=NET.remotes[id];
+  if(r){
+    if(r.group) scene.remove(r.group);
+    if(r.av){ scene.remove(r.av.mesh); scene.remove(r.av.blade); }
+    if(r.nose) scene.remove(r.nose);
+    delete NET.remotes[id];
+  }
+}
 
 /* ════════════════════ ГЛАВНЫЙ ЦИКЛ ═══════════════════════════ */
 let started=false, last=0, introT=4, sampleT=2, resyncT=3;
@@ -1119,29 +1149,33 @@ function frame(now){
     sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
     player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
     player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
+    player.pitch = sensor.pitch; player.roll = sensor.roll;
+    player.speedPulse = clamp(sensor.speed/16,0,0.4);
     // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
     player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
-    phantom.visYaw = smoothAngle(phantom.visYaw, phantom.dirIdx*45, dt*7);
 
     updateStanceAndCamera(dt);
-    updatePhantom(dt);
+    updatePhantoms(dt);
     if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
     updateClinch(dt);
-    handleDeath(phantom, dt);
+    for(const ph of phantoms) handleDeath(ph, dt);
     handleDeath(player, dt);
 
     if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
     if(player.painT>0) player.painT-=dt;
-    if(phantom.painT>0) phantom.painT-=dt;
     if(!clinch.active){
       const tip=bladeContestCell(player);
       const lvl = player.hitActive?0.18: clamp(sensor.speed/40,0,0.08);
       setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl, 120 + sensor.speed*6);
     }
     updateAvatarMesh(player, now);
-    updateAvatarMesh(phantom, now);
     updateBlade(player);
-    updateBlade(phantom);
+    for(const ph of phantoms){
+      if(ph.painT>0) ph.painT-=dt;
+      ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
+      updateAvatarMesh(ph, now);
+      updateBlade(ph);
+    }
   }else if(mode==='spectator'){
     // облёт сверху: высота ~9, вращение вокруг центра по компасу
     const ang = sensor.yawFused*Math.PI/180;
@@ -1153,6 +1187,7 @@ function frame(now){
     camPos.set(0, 17, 0.001);
     camTarget.set(0, 0, 0);
   }
+  renderRemotes(now, dt);              // чужие тела — каждый кадр (во всех режимах)
   NET.tick(dt);                        // отправка пакета в Firebase (~12 Гц)
 
   // периодическая выборка состояния в лог
@@ -1160,8 +1195,9 @@ function frame(now){
   if(sampleT<=0){
     sampleT = 2.0;
     if(mode==='fighter'){
-      const dist=Math.abs(player.gx-phantom.gx)+Math.abs(player.gy-phantom.gy);
-      logE(`state: я(${player.gx},${player.gy}) фантом(${phantom.gx},${phantom.gy}) dist${dist} `+
+      const ph = phantoms.filter(p=>!p.dead).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
+      const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомов нет';
+      logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
            `dir${DSYM[player.dirIdx]} ярус${player.tier} стойка:${stance===STANCE.BEACON?'маяк':'молн'} pitch${sensor.pitch.toFixed(2)}`);
     }else logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
   }
@@ -1179,7 +1215,7 @@ function frame(now){
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  фантом ${Math.round(phantom.hp)}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
+    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
