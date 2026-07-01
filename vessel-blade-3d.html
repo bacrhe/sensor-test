@@ -54,6 +54,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   background:#0c2030;color:#60a5fa;border:1px solid #1e3a5f;border-radius:7px}
 #menu button:active{background:#12304a}
 #menu #mNew{color:#22c55e;border-color:#16a34a;background:#0c2a1f}
+.mbtn{flex:1;font:inherit;font-size:11px;background:#01101f;color:#3a6a9f;border:1px solid #1e3a5f;border-radius:6px;padding:9px 4px}
+.mbtn.on{background:#0c2a3f;color:#60a5fa;border-color:#3b82f6}
 /* ── BANNER (события: клинч / разоружение / парирование) ── */
 #banner{position:fixed;top:0;left:0;right:0;z-index:20;text-align:center;
   padding:10px;font-size:13px;font-weight:bold;letter-spacing:.18em;
@@ -86,6 +88,12 @@ h1 span{color:#1e3a5f;font-size:10px}
        Книжная (|γ|&lt;45°) — <b>Атака/Молния</b>: выброс клинка, вид от 3-го лица.<br>
        Свайп по экрану — шаг по сетке 13×13.</p>
     <div id="errMsg"></div>
+    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">РЕЖИМ</label>
+    <div id="modeSel" style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="mbtn on" data-mode="fighter">⚔ БОЕЦ</button>
+      <button class="mbtn" data-mode="spectator">👁 НАБЛЮД.</button>
+      <button class="mbtn" data-mode="map">🗺 КАРТА</button>
+    </div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КОМНАТА (общий бой у кого одинаковая)</label>
     <input id="roomInput" value="HALL" maxlength="12" autocomplete="off"
       style="width:100%;padding:11px;margin-bottom:10px;background:#01101f;border:1px solid #1e3a5f;
@@ -104,6 +112,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="mt">ПАУЗА</div>
   <div class="msub" id="mInfo">—</div>
   <button id="mResume">▶ ПРОДОЛЖИТЬ</button>
+  <button id="mMode">◎ РЕЖИМ: БОЕЦ</button>
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
@@ -137,7 +146,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, set, onValue, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getDatabase, ref, set, onValue, onDisconnect, push, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 /* ════════════════════════════════════════════════════════════════
    МАТРИЦА 13×13 — Слепок Сознания · Voxel Blade Engine
@@ -211,6 +220,7 @@ const sensor = {
   haveGrav: false,
 };
 let invertPitch = false;   // перемикач у меню (страховка)
+let mode = 'fighter';      // 'fighter' | 'spectator' | 'map'
 let lastMotT = 0;
 
 function onOrient(e){
@@ -236,7 +246,7 @@ function onMotion(e){
   const r = e.rotationRate || {};
   sensor.rRateA = r.alpha || 0;
   if(sensor.compass!=null){
-    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.25);
+    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.5);  // сильнее держимся компаса
   }else{
     sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);
   }
@@ -377,7 +387,7 @@ function buildBodyVoxels(){
   return {offsets:V, size:s};
 }
 const BODY = buildBodyVoxels();
-const ARM_COUNT = 5;                 // воксели рук, тянущиеся к рукояти меча
+const ARM_COUNT = 6;                 // 2 руки × (плечо-локоть-предплечье)
 const AV_COUNT = BODY.offsets.length + ARM_COUNT;
 
 function makeAvatar(baseHue){
@@ -494,15 +504,18 @@ function updateAvatarMesh(av, t){
     _d.updateMatrix(); av.mesh.setMatrixAt(i,_d.matrix);
     setC(i, L0);
   }
-  // ── руки: линия вокселей от плеча к рукояти меча (руки держат клинок) ──
+  // ── руки: две руки с локтями, сходятся на рукояти (двуручный хват) ──
   const H = handInfo(av);
-  const sy = TIER_H*(1.5 - cr*0.5);                 // плечо (сжимается с приседом)
-  const sx = px, sz = pz;
-  for(let a=0;a<ARM_COUNT;a++){
-    const f=(a+1)/ARM_COUNT;
-    _d.position.set(lerp(sx,H.hx,f), lerp(sy,H.hy,f), lerp(sz,H.hz,f));
-    _d.updateMatrix(); av.mesh.setMatrixAt(nBody+a,_d.matrix);
-    setC(nBody+a, L0*0.9);
+  const rxv=-H.dz, rzv=H.dx;                       // «вправо» относительно взгляда
+  const sy = TIER_H*(1.55 - cr*0.5);               // высота плеч (сжимается с приседом)
+  let ai = nBody;
+  for(const sign of [-1,1]){                        // левая и правая рука
+    const Sx=px+rxv*0.5*sign, Sy=sy, Sz=pz+rzv*0.5*sign;   // плечо
+    const Ex=lerp(Sx,H.hx,0.5)+rxv*0.28*sign, Ey=lerp(Sy,H.hy,0.5)-0.2, Ez=lerp(Sz,H.hz,0.5)+rzv*0.28*sign; // локоть (наружу+вниз)
+    const pts=[ [lerp(Sx,Ex,0.5),lerp(Sy,Ey,0.5),lerp(Sz,Ez,0.5)],   // плечо-локоть
+                [Ex,Ey,Ez],                                            // локоть
+                [lerp(Ex,H.hx,0.5),lerp(Ey,H.hy,0.5),lerp(Ez,H.hz,0.5)] ]; // предплечье
+    for(const p of pts){ _d.position.set(p[0],p[1],p[2]); _d.updateMatrix(); av.mesh.setMatrixAt(ai,_d.matrix); setC(ai, L0*0.9); ai++; }
   }
   av.mesh.instanceMatrix.needsUpdate=true;
   av.mesh.instanceColor.needsUpdate=true;
@@ -703,6 +716,16 @@ function damageTier(av, tier, amount){
 /* ── ПРОЖИГАНИЕ: клинок жив → касание тела фантома наносит урон ─
    Срабатывает непрерывно (не только на перекате стойки). Кулдаун,
    чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
+function applyIncomingHit(h){
+  const tier = clamp((h.tier|0),0,2);
+  damageTier(player, tier, h.dmg||14);
+  player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
+  logE(`ПОПАДАНИЕ соперника, ярус ${tier} → HP ${Math.round(player.hp)}`);
+}
+function remoteFighterAt(cx,cy){
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && r.gx===cx && r.gy===cy) return {id,r}; }
+  return null;
+}
 let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
@@ -720,6 +743,13 @@ function resolveBurn(dt){
         logE(`ПРОЖИГ препятствия+${i}, hp→${Math.max(0,o.hp)}`);
       }
       return;                                   // за препятствием луч не идёт
+    }
+    const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
+    if(rf){
+      if(burnCd<=0){ NET.sendHit(rf.id, pitchTier(sensor.pitch), 14); burnCd=0.35;
+        doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
+        logE('УДАР по сопернику '+rf.id.slice(0,4)); }
+      return;
     }
     if(!phantom.dead && cx===phantom.gx && cy===phantom.gy){
       if(burnCd>0) return;
@@ -906,6 +936,26 @@ function newGame(){
 }
 $('pauseBtn').onclick=openMenu;
 $('mResume').onclick=closeMenu;
+// выбор режима на старте
+document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.mode;
+  document.querySelectorAll('.mbtn').forEach(x=>x.classList.toggle('on', x===b));
+});
+function applyMode(){
+  const fighter = mode==='fighter';
+  player.mesh.visible=fighter; player.blade.visible=fighter;
+  phantom.mesh.visible=fighter; phantom.blade.visible=fighter;
+  obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=fighter; });
+  if(droppedBlade) droppedBlade.visible=fighter;
+  camera.up.set(0,1,0);
+  logE('режим: '+mode);
+}
+function cycleMode(){
+  mode = mode==='fighter'?'spectator':mode==='spectator'?'map':'fighter';
+  $('mMode').textContent='◎ РЕЖИМ: '+(mode==='fighter'?'БОЕЦ':mode==='spectator'?'НАБЛЮД.':'КАРТА');
+  applyMode();
+}
+$('mMode').onclick=cycleMode;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
@@ -945,9 +995,14 @@ const NET = {
   room:(new URLSearchParams(location.search).get('room')||'HALL').toUpperCase(),
   myId:'p'+Math.random().toString(36).slice(2,8),
   db:null, online:false, sendT:0, remotes:{},
-  packet(av){ return { x:av.gx, y:av.gy, yaw:Math.round(sensor.yawFused), pitch:+sensor.pitch.toFixed(2),
-    roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-    isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), t:Date.now() }; },
+  packet(av){
+    if(mode==='spectator'){                      // наблюдатель: столб-палка у задней кромки
+      const sx = (this.myId.charCodeAt(1)||6) % 13;
+      return { x:sx, y:12, spec:true, hp:100, t:Date.now() };
+    }
+    return { x:av.gx, y:av.gy, yaw:Math.round(sensor.yawFused), pitch:+sensor.pitch.toFixed(2),
+      roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), spec:false, t:Date.now() }; },
   async start(){
     try{
       const app=initializeApp(this.cfg,'vessel-blade');
@@ -959,11 +1014,26 @@ const NET = {
         for(const id in this.remotes){ if(!all[id]) removeRemote(id); }
         for(const id in all){ if(id!==this.myId) upsertRemote(id, all[id]); }
       });
+      // входящие удары от соперников → применяем к себе и удаляем
+      const hitsRef=ref(this.db,`blade/${this.room}/hits/${this.myId}`);
+      onDisconnect(hitsRef).remove();
+      onValue(hitsRef, snap=>{
+        const hits=snap.val()||{};
+        for(const key in hits){
+          if(hits[key] && !player.dead && mode==='fighter') applyIncomingHit(hits[key]);
+          remove(ref(this.db,`blade/${this.room}/hits/${this.myId}/${key}`)).catch(()=>{});
+        }
+      });
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
   },
+  sendHit(targetId, tier, dmg){
+    if(!this.online||!this.db) return;
+    push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, t:Date.now()}).catch(()=>{});
+  },
   tick(dt){
     if(!this.online||!this.db) return;
+    if(mode==='map') return;                              // карта — тихий наблюдатель
     this.sendT-=dt;
     if(this.sendT<=0){ this.sendT=0.08;                   // ~12 Гц
       set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
@@ -971,32 +1041,53 @@ const NET = {
   },
 };
 
-/* ── рендер чужого игрока: 3-ярусный воксельный столб + луч ───── */
+/* ── рендер чужого: боец → 3-ярусный столб+луч; наблюдатель → палка+голова ── */
 const remoteTierGeo = new THREE.BoxGeometry(0.55, TIER_H*0.85, 0.55);
 const remoteBeamGeo = new THREE.BoxGeometry(0.12, 0.12, CELL*0.95);
 function upsertRemote(id, p){
+  const spec = !!p.spec;
   let r = NET.remotes[id];
+  if(r && r.spec!==spec){ removeRemote(id); r=null; }   // тип сменился — пересоздать
   if(!r){
-    const g=new THREE.Group(); const tiers=[];
-    for(let t=0;t<3;t++){
-      const m=new THREE.Mesh(remoteTierGeo, new THREE.MeshBasicMaterial({color:0x60a5fa}));
-      m.position.y = 0.25 + t*TIER_H; g.add(m); tiers.push(m);
+    const g=new THREE.Group();
+    if(spec){                                            // тонкая высокая палка с головой
+      const stick=new THREE.Mesh(new THREE.BoxGeometry(0.16,4.0,0.16),
+        new THREE.MeshBasicMaterial({color:0x7c93b8, transparent:true, opacity:0.45, depthWrite:false}));
+      stick.position.y=2.0;
+      const head=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.46,0.46),
+        new THREE.MeshBasicMaterial({color:0x9fb6d8, transparent:true, opacity:0.65, depthWrite:false}));
+      head.position.y=4.15;
+      g.add(stick); g.add(head); g.traverse(o=>o.frustumCulled=false); scene.add(g);
+      r = NET.remotes[id] = {group:g, spec:true};
+    }else{
+      const tiers=[];
+      for(let t=0;t<3;t++){
+        const m=new THREE.Mesh(remoteTierGeo, new THREE.MeshBasicMaterial({color:0x60a5fa}));
+        m.position.y = 0.25 + t*TIER_H; g.add(m); tiers.push(m);
+      }
+      const beam=new THREE.Mesh(remoteBeamGeo, new THREE.MeshBasicMaterial({color:0xa5f3fc, transparent:true, opacity:0.85}));
+      beam.visible=false; g.add(beam);
+      const nose=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.22,0.22),
+        new THREE.MeshBasicMaterial({color:0xffffff}));                 // маркер «куда смотрит»
+      g.add(nose);
+      g.traverse(o=>o.frustumCulled=false); scene.add(g);
+      r = NET.remotes[id] = {group:g, tiers, beam, nose, spec:false, gx:6, gy:6};
     }
-    const beam=new THREE.Mesh(remoteBeamGeo, new THREE.MeshBasicMaterial({color:0xa5f3fc, transparent:true, opacity:0.85}));
-    beam.visible=false; g.add(beam);
-    scene.add(g);
-    r = NET.remotes[id] = {group:g, tiers, beam};
   }
   const gx=clamp(p.x|0,0,12), gy=clamp(p.y|0,0,12);
   r.group.position.set(worldX(gx), 0, worldZ(gy));
+  if(r.spec) return;
+  r.gx=gx; r.gy=gy; r.hp=p.hp??100;
   const aggr = 1 - clamp((p.hp??100)/100, 0, 1);
   const col = new THREE.Color().setHSL(lerp(0.55,0.0,aggr), 0.85, 0.32 + aggr*0.25);
   r.tiers.forEach(m=>m.material.color.copy(col));
-  // луч виден, когда столб бьёт (не копит давление и клинок выброшен)
+  // «нос» показывает направление взгляда (по компасному yaw соперника)
+  const idx = Math.round(wrap360(p.yaw||0)/45)%8, d=DIRV[idx];
+  r.nose.position.set(d[0]*0.42, TIER_H*2.2, d[1]*0.42);
+  // луч виден, когда бьёт
   const striking = !p.isCharging && (p.swordLength??1) > 1.2;
   r.beam.visible = striking;
   if(striking){
-    const idx = Math.round(wrap360(p.yaw||0)/45)%8, d=DIRV[idx];
     r.beam.position.set(d[0]*CELL*1.2, TIER_H*1.1, d[1]*CELL*1.2);
     r.beam.rotation.y = Math.atan2(d[0], d[1]);
   }
@@ -1004,7 +1095,7 @@ function upsertRemote(id, p){
 function removeRemote(id){ const r=NET.remotes[id]; if(r){ scene.remove(r.group); delete NET.remotes[id]; } }
 
 /* ════════════════════ ГЛАВНЫЙ ЦИКЛ ═══════════════════════════ */
-let started=false, last=0, introT=4, sampleT=2;
+let started=false, last=0, introT=4, sampleT=2, resyncT=3;
 function frame(now){
   requestAnimationFrame(frame);
   if(!started) return;
@@ -1019,57 +1110,65 @@ function frame(now){
   if(keys['ArrowDown']) sensor.pitch=clamp(sensor.pitch+dt,-1,1);
   if(keys[' ']) sensor.roll = (sensor.roll>45?0:60); // пробел — переключить стойку
 
-  // направление и ярус клинка из сенсоров
-  player.dirIdx = yawToDirIdx(sensor.yawFused);
-  sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
-  player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
-  player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
-  // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
-  player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
-  phantom.visYaw = smoothAngle(phantom.visYaw, phantom.dirIdx*45, dt*7);
+  if(mode==='fighter'){
+    // направление и ярус клинка из сенсоров
+    player.dirIdx = yawToDirIdx(sensor.yawFused);
+    // периодическая жёсткая сверка с компасом (борьба с дрейфом → синхрон между устройствами)
+    resyncT -= dt;
+    if(resyncT<=0 && sensor.compass!=null){ resyncT=3.0; sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.9); }
+    sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
+    player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
+    player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
+    // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
+    player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
+    phantom.visYaw = smoothAngle(phantom.visYaw, phantom.dirIdx*45, dt*7);
 
-  updateStanceAndCamera(dt);
-  updatePhantom(dt);
-  // сначала клинч (если оба бьют по одной клетке), иначе прожигание
-  if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
-  updateClinch(dt);
-  handleDeath(phantom, dt);            // смерть/возрождение
-  handleDeath(player, dt);
+    updateStanceAndCamera(dt);
+    updatePhantom(dt);
+    if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
+    updateClinch(dt);
+    handleDeath(phantom, dt);
+    handleDeath(player, dt);
+
+    if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
+    if(player.painT>0) player.painT-=dt;
+    if(phantom.painT>0) phantom.painT-=dt;
+    if(!clinch.active){
+      const tip=bladeContestCell(player);
+      const lvl = player.hitActive?0.18: clamp(sensor.speed/40,0,0.08);
+      setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl, 120 + sensor.speed*6);
+    }
+    updateAvatarMesh(player, now);
+    updateAvatarMesh(phantom, now);
+    updateBlade(player);
+    updateBlade(phantom);
+  }else if(mode==='spectator'){
+    // облёт сверху: высота ~9, вращение вокруг центра по компасу
+    const ang = sensor.yawFused*Math.PI/180;
+    camera.up.set(0,1,0);
+    camPos.set(Math.sin(ang)*8, 9, Math.cos(ang)*8);
+    camTarget.set(0, TIER_H, 0);
+  }else{ // map — строго сверху, фиксировано
+    camera.up.set(0,0,-1);   // север (−Z) вверх экрана
+    camPos.set(0, 17, 0.001);
+    camTarget.set(0, 0, 0);
+  }
   NET.tick(dt);                        // отправка пакета в Firebase (~12 Гц)
 
-  // периодическая выборка состояния в лог (контекст для отладки промахов)
+  // периодическая выборка состояния в лог
   sampleT -= dt;
   if(sampleT<=0){
     sampleT = 2.0;
-    const dist=Math.abs(player.gx-phantom.gx)+Math.abs(player.gy-phantom.gy);
-    logE(`state: я(${player.gx},${player.gy}) фантом(${phantom.gx},${phantom.gy}) dist${dist} `+
-         `dir${DSYM[player.dirIdx]} ярус${player.tier} len${player.swordLen.toFixed(1)} `+
-         `стойка:${stance===STANCE.BEACON?'маяк':'молн'} pitch${sensor.pitch.toFixed(2)}`);
+    if(mode==='fighter'){
+      const dist=Math.abs(player.gx-phantom.gx)+Math.abs(player.gy-phantom.gy);
+      logE(`state: я(${player.gx},${player.gy}) фантом(${phantom.gx},${phantom.gy}) dist${dist} `+
+           `dir${DSYM[player.dirIdx]} ярус${player.tier} стойка:${stance===STANCE.BEACON?'маяк':'молн'} pitch${sensor.pitch.toFixed(2)}`);
+    }else logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
   }
 
-  // регенерация выносливости вне клинча
-  if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
-  if(player.painT>0) player.painT-=dt;
-  if(phantom.painT>0) phantom.painT-=dt;
-
-  // звук клинка вне клинча — у кончика, громкость от скорости руки
-  if(!clinch.active){
-    const tip=bladeContestCell(player);
-    const lvl = player.hitActive?0.18: clamp(sensor.speed/40,0,0.08);
-    setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl,
-      120 + sensor.speed*6);
-  }
-
-  // рендер вокселей
-  updateAvatarMesh(player, now);
-  updateAvatarMesh(phantom, now);
-  updateBlade(player);
-  updateBlade(phantom);
-
-  // камера (плавнее: и позиция, и точка взгляда интерполируются)
-  camera.position.lerp(camPos, clamp(dt*4.5,0,1));
-  camLook.lerp(camTarget, clamp(dt*5,0,1));
-  camera.lookAt(camLook);
+  // камера: карта — жёстко, остальное — плавно
+  if(mode==='map'){ camera.position.copy(camPos); camLook.copy(camTarget); camera.lookAt(camLook); }
+  else { camera.position.lerp(camPos, clamp(dt*4.5,0,1)); camLook.lerp(camTarget, clamp(dt*5,0,1)); camera.lookAt(camLook); }
   setListener(camera);
 
   // HUD (минимальный — основное состояние видно по цвету тел)
@@ -1116,6 +1215,7 @@ $('btnReq').addEventListener('click', async ()=>{
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
     started=true; last=0;
+    applyMode();
   }catch(err){
     $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
     $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
