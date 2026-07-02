@@ -129,6 +129,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mFF">⚔ УРОН ИГРОКАМ: ВКЛ</button>
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
+  <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -687,8 +688,8 @@ function handInfo(av){
   const lenBoost= atk*0.7;                         // на выпаде луч чуть длиннее
 
   // якорь кисти: перед грудью (двуручный хват), небольшой сдвиг по стойке
-  const hx = px + dx*(0.26+lunge) + rx*guard*0.16;
-  const hz = pz + dz*(0.26+lunge) + rz*guard*0.16;
+  const hx = px + dx*(0.26+lunge) + rx*guard*0.5;
+  const hz = pz + dz*(0.26+lunge) + rz*guard*0.5;
   const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
 
   const len = clamp(Math.round(av.swordLen),1,6);
@@ -730,7 +731,7 @@ function updateAvatarMesh(av, t){
   // ── руки к рукояти (двуручный хват), локоть наружу-вниз; выпад тянет руки вперёд ──
   const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1), lunge=atk*0.7;
   const guard=clamp((av.roll||0)/70,-1,1);
-  const hlx=-guard*0.16, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo)
+  const hlx=-guard*0.5, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo): руки на сторону по наклону
   const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
   const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
   const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
@@ -779,7 +780,7 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
-  if(clinch.active){ setClinchCamera(); return; }   // в клинче — плавный вид от 1-го лица
+  if(clinch.active){ player.parts.head.visible=false; player.parts.visor.visible=false; setClinchCamera(); return; }  // клинч — 1-е лицо, голову прячем
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
@@ -787,6 +788,10 @@ function updateStanceAndCamera(dt){
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
   const fp = player.fpSmooth;
   const beacon = fp>0.5;
+  // ГОЛОВУ/визор прячем ЛОКАЛЬНО как только уходим в 1-е лицо — иначе они закрывают обзор.
+  // Другие клиенты рендерят свою копию этого игрока → у них голова на месте.
+  const hideHead = fp>0.5;
+  player.parts.head.visible = !hideHead; player.parts.visor.visible = !hideHead;
   const prevStance = stance;
   stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
   if(prevStance!==stance) logE('СТОЙКА → '+(beacon?'МАЯК (1-е лицо)':'МОЛНИЯ'));
@@ -1217,7 +1222,9 @@ function updatePhantoms(dt){
     ph.dirIdx=bestIdx;
     // ПРИЦЕЛ ПО ЯРУСУ как игрок: целится в тело цели (для локальной — в её ярус)
     ph.tier = tgt.local ? player.tier : 1;
-    ph.pitch = (ph.tier-1)*0.7; ph.roll=0;
+    ph.pitch = (ph.tier-1)*0.7;
+    if(ai.side===undefined) ai.side = Math.random()<0.5?1:-1;
+    ph.roll = ai.side*55;   // «рукость» бота: клинок/руки на сторону (как игрок в альбомной ориентации)
     ph.hitActive = true;                              // клинок ЖИВ всегда (как у игрока)
     // ── ДВИЖЕНИЕ: сближение с обходом препятствий + фланг/отход (живее прямого наскока) ──
     if(ai.moveT<=0 && !clinch.active){
@@ -1246,7 +1253,7 @@ function updatePhantoms(dt){
       ph.strikeT = Math.max(ph.strikeT, STRIKE_DUR);
     }else{
       ph.swordLen = lerp(ph.swordLen, 1.2, dt*2.5);
-      if(ai.swingT<=0 && dist<=3 && !clinch.active){ ai.swingT=1.6+Math.random()*1.4; ai.windT=0.32; }
+      if(ai.swingT<=0 && dist<=3 && !clinch.active){ ai.swingT=1.6+Math.random()*1.4; ai.windT=0.32; ai.side=-(ai.side||1); }
     }
     if(ph.strikeT>0) ph.strikeT-=dt;
     // НЕПРЕРЫВНЫЙ урон при накрытии цели клинком (как burn у игрока), с кулдауном
@@ -1377,6 +1384,16 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
+const BUILD_TAG='2026-07-02 · clinch-FP · sides · cache-btn';
+$('mCache').onclick=async()=>{
+  showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
+  try{
+    if('caches' in window){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); }
+    if('serviceWorker' in navigator){ const rs=await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r=>r.unregister())); }
+  }catch(e){}
+  const u=new URL(location.href); u.searchParams.set('v', Date.now());   // свежий параметр → мимо HTTP-кэша
+  setTimeout(()=>location.replace(u.toString()), 350);
+};
 $('mNew').onclick=newGame;
 $('mMenu').onclick=()=>location.reload();
 // подхватить ?room= из ссылки (без обращения к NET — он объявлен ниже)
@@ -1755,6 +1772,7 @@ $('btnReq').addEventListener('click', async ()=>{
     NET.start();                       // живое подключение к vessel-mir-13
     buzz([0,120,60,120]);              // тест вибрации при входе
     logE('СТАРТ. HAPTICS='+HAPTICS+' compass='+sensor.haveCompass+' room='+NET.room);
+    logE('BUILD '+BUILD_TAG);
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
     started=true; last=0;
