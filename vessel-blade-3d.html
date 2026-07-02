@@ -688,8 +688,8 @@ function handInfo(av){
   const lenBoost= atk*0.7;                         // на выпаде луч чуть длиннее
 
   // якорь кисти: перед грудью (двуручный хват), небольшой сдвиг по стойке
-  const hx = px + dx*(0.26+lunge) + rx*guard*0.5;
-  const hz = pz + dz*(0.26+lunge) + rz*guard*0.5;
+  const hx = px + dx*(0.26+lunge) - rx*guard*0.5;
+  const hz = pz + dz*(0.26+lunge) - rz*guard*0.5;
   const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
 
   const len = clamp(Math.round(av.swordLen),1,6);
@@ -731,7 +731,7 @@ function updateAvatarMesh(av, t){
   // ── руки к рукояти (двуручный хват), локоть наружу-вниз; выпад тянет руки вперёд ──
   const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1), lunge=atk*0.7;
   const guard=clamp((av.roll||0)/70,-1,1);
-  const hlx=-guard*0.5, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo): руки на сторону по наклону
+  const hlx=guard*0.5, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo): руки на сторону по наклону
   const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
   const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
   const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
@@ -780,7 +780,7 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
-  if(clinch.active){ player.parts.head.visible=false; player.parts.visor.visible=false; setClinchCamera(); return; }  // клинч — 1-е лицо, голову прячем
+  if(clinch.active){ player.mesh.visible=false; setClinchCamera(); return; }  // клинч — 1-е лицо, тело полностью скрыто
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
@@ -855,11 +855,7 @@ function startClinch(foe){
   clinch.lockLen   = clamp(Math.round(player.swordLen),1,6);
   clinch.broke     = false;
   player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
-  player.strikeT = 0; player.mesh.visible = true;   // из 1-го лица возвращаем тело в кадр
-  setAvatarAlpha(player, 0.4);                       // полупрозрачно — видно оба клинка
-  // ЛОКАЛЬНО прячем свою голову/визор — в 1-м лице они закрывают обзор. Другие клиенты
-  // рендерят СВОЮ копию этого игрока, поэтому у них голова остаётся на месте.
-  player.parts.head.visible=false; player.parts.visor.visible=false;
+  player.strikeT = 0; player.mesh.visible = false;   // тело игрока скрыто (1-е лицо): видны только клинок-ориентир и астрал
 }
 function endClinch(reason){
   logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', t'+clinch.t.toFixed(1)+')');
@@ -867,7 +863,7 @@ function endClinch(reason){
   setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
   setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
-  player.parts.head.visible=true; player.parts.visor.visible=true;   // вернуть свою голову в кадр
+  player.mesh.visible=true;   // вернуть тело игрока в кадр после клинча
   if(reason==='parry'){
     showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
     doFlash('#22d3ee');
@@ -995,10 +991,10 @@ function setAvatarAlpha(av, a){
 function setClinchCamera(){
   const [dx,dz]=dirXZ(clinch.lockYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
-  // ВИД ОТ 1-ГО ЛИЦА: камера в голове, смотрит вперёд прямо на точку скрещения клинков.
-  // К этим целям камера подъезжает плавно (lerp в кадре) → мягкое переключение в клинч.
-  camPos.set(px - dx*0.18, TIER_H*1.92, pz - dz*0.18);
-  camTarget.set(clinch.lockX, clinch.lockY + TIER_H*0.15, clinch.lockZ);
+  // ВИД ОТ 1-ГО ЛИЦА: камера на уровне глаз, смотрит почти горизонтально на скрещение клинков.
+  // Тело игрока в клинче полностью скрыто (см. updateStanceAndCamera) → голова не мешает.
+  camPos.set(px - dx*0.3, TIER_H*1.55, pz - dz*0.3);
+  camTarget.set(clinch.lockX, clinch.lockY + TIER_H*0.35, clinch.lockZ);
   camera.up.set(0,1,0);
 }
 // астральный риг (создаётся один раз, невидим вне клинча)
@@ -1384,7 +1380,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-02 · clinch-FP · sides · cache-btn';
+const BUILD_TAG='2026-07-02b · clinch-body-hide · side-swap · bot-roll';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1507,7 +1503,7 @@ const NET = {
     if(phantoms.length){
       const obj={};
       phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
-        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,dead:ph.dead?1:0}; });
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0}; });
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
     }else{
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
@@ -1586,7 +1582,7 @@ function renderRemotePhantoms(now, dt){
     av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
     av.visYaw=smoothAngle(av.visYaw, s.yaw||0, clamp(dt*8,0,1));
     av.dirIdx=yawToDirIdx(s.yaw||0);
-    av.pitch=0; av.roll=0; av.crouch=0;
+    av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
     av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
     updateAvatarMesh(av,now); updateBlade(av);
   }
