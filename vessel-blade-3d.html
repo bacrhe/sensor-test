@@ -101,6 +101,7 @@ h1 span{color:#1e3a5f;font-size:10px}
       <button class="mbtn on" data-mode="fighter">⚔ БОЕЦ</button>
       <button class="mbtn" data-mode="spectator">👁 СВЕРХУ</button>
       <button class="mbtn" data-mode="follow">🎥 СЛЕЖКА</button>
+      <button class="mbtn" data-mode="action">🎬 ЭКШН</button>
       <button class="mbtn" data-mode="map">🗺 КАРТА</button>
     </div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КОМНАТА (общий бой у кого одинаковая)</label>
@@ -851,6 +852,9 @@ function startClinch(foe){
   player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
   player.strikeT = 0; player.mesh.visible = true;   // из 1-го лица возвращаем тело в кадр
   setAvatarAlpha(player, 0.4);                       // полупрозрачно — видно оба клинка
+  // ЛОКАЛЬНО прячем свою голову/визор — в 1-м лице они закрывают обзор. Другие клиенты
+  // рендерят СВОЮ копию этого игрока, поэтому у них голова остаётся на месте.
+  player.parts.head.visible=false; player.parts.visor.visible=false;
 }
 function endClinch(reason){
   logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', t'+clinch.t.toFixed(1)+')');
@@ -858,6 +862,7 @@ function endClinch(reason){
   setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
   setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
+  player.parts.head.visible=true; player.parts.visor.visible=true;   // вернуть свою голову в кадр
   if(reason==='parry'){
     showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
     doFlash('#22d3ee');
@@ -1341,11 +1346,11 @@ function applyMode(){
   obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
   if(droppedBlade) droppedBlade.visible=fighter;
   camera.up.set(0,1,0);
-  $('followBtn').style.display = (mode==='follow')?'block':'none';
+  $('followBtn').style.display = (mode==='follow'||mode==='action')?'block':'none';
   logE('режим: '+mode);
 }
-const MODE_ORDER=['fighter','spectator','follow','map'];
-const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',map:'КАРТА'};
+const MODE_ORDER=['fighter','spectator','follow','action','map'];
+const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',action:'ЭКШН',map:'КАРТА'};
 function cycleMode(){
   mode = MODE_ORDER[(MODE_ORDER.indexOf(mode)+1)%MODE_ORDER.length];
   $('mMode').textContent='◎ РЕЖИМ: '+MODE_LABEL[mode];
@@ -1413,9 +1418,13 @@ const NET = {
       const sx = (this.myId.charCodeAt(1)||6) % 13;
       return { x:sx, y:12, spec:true, hp:100, t:Date.now() };
     }
-    return { x:av.gx, y:av.gy, yaw:Math.round(sensor.yawFused), pitch:+sensor.pitch.toFixed(2),
+    return { x:av.gx, y:av.gy,
+      yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
+      pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), spec:false, t:Date.now() }; },
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2),
+      cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
+      spec:false, t:Date.now() }; },
   async start(){
     try{
       const app=initializeApp(this.cfg,'vessel-blade');
@@ -1476,7 +1485,7 @@ const NET = {
     this.sendT-=dt;
     if(this.sendT>0) return;
     this.sendT=0.08;                                     // ~12 Гц
-    if(mode!=='map' && mode!=='follow') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
       const obj={};
@@ -1646,6 +1655,28 @@ function frame(now){
       const px=worldX(r.gx), pz=worldZ(r.gy);
       camPos.set(px-dx*3.6, TIER_H*3.1, pz-dz*3.6);
       camTarget.set(px+dx*2.5, TIER_H*1.1, pz+dz*2.5);
+    }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
+  }else if(mode==='action'){
+    // ЭКШН-КАМЕРА: динамичная слежка ЗА игроком; в КЛИНЧЕ — кинематографичный вид СБОКУ
+    // (как в файтингах, оба бойца в профиль), по окончании клинча плавно возвращается за
+    // игрока (плавность даёт лерп камеры в кадре).
+    camera.up.set(0,1,0);
+    const ids=fighterIds();
+    if(!ids.includes(followTarget)) followTarget = ids[0]||null;
+    const r = followTarget && NET.remotes[followTarget];
+    if(r){
+      const p=r.latest||{}; const yaw=p.yaw||0; const [dx,dz]=dirXZ(yaw);
+      const px=worldX(r.gx), pz=worldZ(r.gy);
+      if(p.cl){
+        const len=clamp(Math.round(p.swordLength||1),1,6);
+        const clx=px+dx*len*CELL*0.5, clz=pz+dz*len*CELL*0.5;   // середина оси клинков
+        const sx=-dz, sz=dx;                                    // перпендикуляр = вбок от линии боя
+        camPos.set(clx + sx*5.2, TIER_H*2.5, clz + sz*5.2);     // камера сбоку — оба бойца в профиль
+        camTarget.set(clx, TIER_H*1.2, clz);
+      }else{
+        camPos.set(px-dx*3.8, TIER_H*3.2, pz-dz*3.8);           // за спиной, чуть динамичнее слежки
+        camTarget.set(px+dx*2.6, TIER_H*1.1, pz+dz*2.6);
+      }
     }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
   }else{ // map — строго сверху, фиксировано
     camera.up.set(0,0,-1);   // север (−Z) вверх экрана
