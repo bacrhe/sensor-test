@@ -239,6 +239,7 @@ const sensor = {
   level: 1,       // 1=ровно, 0=вертикально
   headConf: 1,    // надёжность ролл-независимого азимута (0 плашмя … 1 вертикально)
   yawRate: 0,     // °/с вокруг мировой вертикали (от гироскопа)
+  chx: null, chz: null,   // сглаженный компас как вектор (нет рывка на 359°→0°)
 };
 let invertPitch = false;   // перемикач у меню (страховка)
 let mode = 'fighter';      // 'fighter' | 'spectator' | 'follow' | 'map'
@@ -307,15 +308,25 @@ function onMotion(e){
   // ориентации и не шумит на сингулярности «плашмя» (в отличие от сырого компаса).
   const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
   const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
-  const omegaG=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;   // °/с
+  const omegaG=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали
   sensor.yawRate=omegaG;
+  // 1) ГИРОСКОП — мгновенный отклик, работает при ЛЮБОМ наклоне (в т.ч. когда смотрим вниз на доску).
   sensor.yawFused=wrap360(sensor.yawFused + YAW_GYRO_SIGN*omegaG*dt);
-  // Компас лишь МЕДЛЕННО правит дрейф — только когда он надёжен (телефон не плашмя) и
-  // когда мы не крутимся быстро. Именно это убирает дрожь камеры, не давая «уплыть» Северу.
+  // 2) КОМПАС — абсолютный ориентир, гасит дрейф гироскопа. Сглаживаем его как ВЕКТОР (cos/sin),
+  //    чтобы не было рывка на стыке 359°→0°. Сглаживание АДАПТИВНОЕ: стоим ровно → сильное (нет
+  //    дрожи), крутим телефон → слабое (нет запаздывания) — это и лечит «дёргается / тормозит».
   if(sensor.compass!=null){
-    const turning=clamp(Math.abs(omegaG)/50,0,1);
-    const k=clamp(1.6*dt*sensor.headConf*(1-0.85*turning), 0, 0.2);
-    sensor.yawFused=smoothAngle(sensor.yawFused, sensor.compass, k);
+    const cr=sensor.compass*Math.PI/180, cx=Math.sin(cr), cz=-Math.cos(cr);
+    const rot=clamp(Math.abs(omegaG)/45,0,1);
+    const aC=lerp(0.05,0.5,rot);
+    sensor.chx = sensor.chx==null ? cx : lerp(sensor.chx, cx, aC);
+    sensor.chz = sensor.chz==null ? cz : lerp(sensor.chz, cz, aC);
+    const comp=wrap360(Math.atan2(sensor.chx,-sensor.chz)*180/Math.PI);
+    // Порог доверия к компасу с ПОЛОМ: НЕ отключается на умеренном наклоне (доска),
+    // гаснет только у самой «плашмя», где азимут физически не определён (там ведёт гироскоп).
+    const conf=clamp((sensor.headConf-0.10)/0.5, 0, 1);
+    const k=clamp(5.0*dt*conf, 0, 0.4);
+    sensor.yawFused=smoothAngle(sensor.yawFused, comp, k);
   }
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
@@ -767,7 +778,7 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
-  if(clinch.active){ setClinchCamera(); return; }   // в клинче — приподнятая фронтальная камера
+  if(clinch.active){ setClinchCamera(); return; }   // в клинче — плавный вид от 1-го лица
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
@@ -791,10 +802,10 @@ function updateStanceAndCamera(dt){
   player.mesh.visible = fp < 0.85;          // тело исчезает только у самого 1-го лица
 
   // камера — плавный бленд между 3-м и 1-м лицом
-  const tpx=px-dx*3.4, tpy=TIER_H*3.0, tpz=pz-dz*3.4;      // 3-е лицо
+  const tpx=px-dx*1.6, tpy=TIER_H*4.8, tpz=pz-dz*1.6;      // 3-е лицо: почти сверху, ближе к затылку и выше
   const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
   camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
-  const ttx=px+dx*3.0, tty=TIER_H*1.1, ttz=pz+dz*3.0;
+  const ttx=px+dx*3.2, tty=TIER_H*0.2, ttz=pz+dz*3.2;     // прицел вперёд-вниз: спереди ~2/3 кадра, сзади ~1/3
   const ftx=px+dx*6,   fty=TIER_H*1.7, ftz=pz+dz*6;
   camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
 }
@@ -896,13 +907,18 @@ function updateClinch(dt){
     const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);
     player.stamina = clamp(player.stamina - dt*(12+26*n), 0, 100);
   }
-  // парирование: после разрыва вернул телефон в точку блокировки (Δ≈0)
-  if(clinch.broke && clinch.delta < 10){
+  // ПАРИРОВАНИЕ (победа в клинче): держишь клинок в точке (Δ<10) — продавливаешь.
+  // После разрыва зачёт быстрый (контра); без разрыва (просто не дал себя сбить) — чуть дольше.
+  if(clinch.delta < 10){
     clinch.parryWindow += dt;
-    if(clinch.parryWindow > 0.15){ endClinch('parry'); return; }
+    const need = clinch.broke ? 0.15 : 1.2;
+    if(clinch.parryWindow > need){ endClinch('parry'); return; }
   }else clinch.parryWindow = 0;
-  // разоружение: превышение дельты/времени или ноль выносливости
-  if(clinch.delta > CLINCH_DELTA_CRIT || clinch.t > CLINCH_TIME_CRIT || player.stamina<=0){
+  // РАЗОРУЖЕНИЕ — только реальный провал: увёл клинок за критический угол, ЛИБО ДОЛГО держал
+  // рассинхрон, ЛИБО кончилась выносливость. Ровно держащего НЕ разоружаем по таймеру
+  // (иначе честное удержание = гарантированный проигрыш → бесконечная петля disarm↔телекинез).
+  const heldDesynced = clinch.broke && clinch.delta > 25 && clinch.t > CLINCH_TIME_CRIT;
+  if(clinch.delta > CLINCH_DELTA_CRIT || heldDesynced || player.stamina<=0){
     endClinch('disarm');
   }
 }
@@ -965,12 +981,14 @@ function setAvatarAlpha(av, a){
   const t = a < 0.999;
   for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
 }
-// приподнятая фронтальная камера «почти сверху»: спереди ~2/3 кадра, сзади ~1/3
+// камера клинча — плавный вид от 1-го лица на скрещение клинков
 function setClinchCamera(){
   const [dx,dz]=dirXZ(clinch.lockYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
-  camPos.set(px - dx*1.5, TIER_H*4.0, pz - dz*1.5);
-  camTarget.set(px + dx*2.8, TIER_H*0.5, pz + dz*2.8);
+  // ВИД ОТ 1-ГО ЛИЦА: камера в голове, смотрит вперёд прямо на точку скрещения клинков.
+  // К этим целям камера подъезжает плавно (lerp в кадре) → мягкое переключение в клинч.
+  camPos.set(px - dx*0.18, TIER_H*1.92, pz - dz*0.18);
+  camTarget.set(clinch.lockX, clinch.lockY + TIER_H*0.15, clinch.lockZ);
   camera.up.set(0,1,0);
 }
 // астральный риг (создаётся один раз, невидим вне клинча)
@@ -1661,7 +1679,7 @@ function frame(now){
 
   // камера: карта — жёстко, остальное — плавно
   if(mode==='map'){ camera.position.copy(camPos); camLook.copy(camTarget); camera.lookAt(camLook); }
-  else { camera.position.lerp(camPos, clamp(dt*4.5,0,1)); camLook.lerp(camTarget, clamp(dt*5,0,1)); camera.lookAt(camLook); }
+  else { camera.position.lerp(camPos, clamp(dt*8,0,1)); camLook.lerp(camTarget, clamp(dt*9,0,1)); camera.lookAt(camLook); }
   setListener(camera);
 
   // HUD (минимальный — основное состояние видно по цвету тел)
