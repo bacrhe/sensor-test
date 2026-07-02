@@ -236,7 +236,9 @@ const sensor = {
   pitchRaw: 0,    // сырой наклон (−1..1)
   haveGrav: false,
   gz: 9.4,        // проекция g на ось «перпендикуляр экрану» → «ровно ли держим»
-  level: 1,       // 1=ровно (компасу доверяем), 0=вертикально (сингулярность компаса)
+  level: 1,       // 1=ровно, 0=вертикально
+  headConf: 1,    // надёжность ролл-независимого азимута (0 плашмя … 1 вертикально)
+  yawRate: 0,     // °/с вокруг мировой вертикали (от гироскопа)
 };
 let invertPitch = false;   // перемикач у меню (страховка)
 let mode = 'fighter';      // 'fighter' | 'spectator' | 'follow' | 'map'
@@ -246,6 +248,9 @@ const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent)
   || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1)
   || (typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function');
 const GRAV_SIGN = IS_IOS ? -1 : 1;
+// знак интегрирования гироскопа для азимута. Если поворот окажется «зеркальным»
+// (крутишь вправо — мир едет влево) — поменяй на +1. Проверяется на реальном телефоне.
+const YAW_GYRO_SIGN = -1;
 let lastMotT = 0;
 
 // ── РОЛЛ-НЕЗАВИСИМЫЙ АЗИМУТ из полной ориентации устройства ──
@@ -262,6 +267,9 @@ function orientationHeading(alpha,beta,gamma){
   _oQuat.multiply(_q1h);
   _oQuat.multiply(_q0h.setFromAxisAngle(_upZh,-o));
   _lookh.set(0,0,-1).applyQuaternion(_oQuat);
+  // надёжность этого азимута: горизонтальная проекция «спинки» телефона.
+  // ~1 когда телефон вертикально (спинка смотрит в горизонт), →0 когда плашмя (спинка вниз).
+  sensor.headConf = Math.min(1, Math.hypot(_lookh.x, _lookh.z));
   return wrap360(Math.atan2(_lookh.x,-_lookh.z)*180/Math.PI);
 }
 
@@ -293,12 +301,21 @@ function onMotion(e){
   }
   // level (для отладки/HUD): 1 ровно, 0 вертикально
   sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
-  // ЯЗ: следуем за ролл-независимым азимутом в ЛЮБОЙ ориентации.
-  // Это убирает «реверс» в 1-м лице — поворот всегда предсказуемый.
+  // ── АЗИМУТ: комплементарный фильтр (гироскоп + медленная коррекция компасом) ──
+  // Мгновенный, ГЛАДКИЙ поворот берём от гироскопа: omegaG — скорость вращения вокруг
+  // МИРОВОЙ вертикали = проекция угловой скорости на вектор гравитации. Устойчиво в любой
+  // ориентации и не шумит на сингулярности «плашмя» (в отличие от сырого компаса).
+  const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
+  const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
+  const omegaG=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;   // °/с
+  sensor.yawRate=omegaG;
+  sensor.yawFused=wrap360(sensor.yawFused + YAW_GYRO_SIGN*omegaG*dt);
+  // Компас лишь МЕДЛЕННО правит дрейф — только когда он надёжен (телефон не плашмя) и
+  // когда мы не крутимся быстро. Именно это убирает дрожь камеры, не давая «уплыть» Северу.
   if(sensor.compass!=null){
-    sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.35);
-  }else{
-    sensor.yawFused = wrap360(sensor.yawFused + (r.alpha||0)*dt);   // запас, если ориентации нет
+    const turning=clamp(Math.abs(omegaG)/50,0,1);
+    const k=clamp(1.6*dt*sensor.headConf*(1-0.85*turning), 0, 0.2);
+    sensor.yawFused=smoothAngle(sensor.yawFused, sensor.compass, k);
   }
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
@@ -567,6 +584,7 @@ function makeAvatar(baseHue){
     hp:100, stamina:100, swordLen:1, charging:false, charge:1,
     hitActive:false, strikeT:0, disarmed:false,
     dead:false, respawnT:0, score:0, painT:0, hitGlow:0, hue:baseHue,
+    disarmT:0, fpSmooth:0,   // таймер телекинеза; сглаженный переход в 1-е лицо
   };
 }
 
@@ -749,10 +767,13 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
+  if(clinch.active){ setClinchCamera(); return; }   // в клинче — приподнятая фронтальная камера
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
-  // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1). Без резкого щелчка.
-  const fp = clamp((Math.abs(sensor.roll)-40)/30, 0, 1);
+  // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
+  const fpRaw = clamp((Math.abs(sensor.roll)-40)/30, 0, 1);
+  player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
+  const fp = player.fpSmooth;
   const beacon = fp>0.5;
   const prevStance = stance;
   stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
@@ -782,12 +803,14 @@ function updateStanceAndCamera(dt){
 const clinch = {
   active:false, foe:null, lockYaw:0, lockX:0, lockY:0, lockZ:0,
   delta:0, t:0, parryWindow:0, vibT:0,
+  lockPitch:0, lockLen:1, broke:false,   // замороженные наклон/длина клинка на миг зацепа
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
 let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
 const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СЛОЖНО'}];
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
+const CLINCH_RETURN_T = 6.0;    // без клинка столько секунд → телекинез возвращает меч в руку
 
 function bladeContestCell(av){   // клетка-кончик клинка
   const [dx,dy]=DIRV[av.dirIdx];
@@ -810,12 +833,20 @@ function startClinch(foe){
   // звонкий «лязг» столкновения клинков (две ноты)
   blip(900,0.09,'square',0.22); blip(70,0.45,'sawtooth',0.2);
   buzz([0,90]);   // чёткий старт-импульс
+  // ── ЗАМОРОЗКА: тело и клинок игрока застывают в позе зацепа ──
+  clinch.lockPitch = sensor.pitch;
+  clinch.lockLen   = clamp(Math.round(player.swordLen),1,6);
+  clinch.broke     = false;
+  player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
+  player.strikeT = 0; player.mesh.visible = true;   // из 1-го лица возвращаем тело в кадр
+  setAvatarAlpha(player, 0.4);                       // полупрозрачно — видно оба клинка
 }
 function endClinch(reason){
   logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', t'+clinch.t.toFixed(1)+')');
   clinch.active=false; clinch.delta=0;
   setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
+  setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
   if(reason==='parry'){
     showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
     doFlash('#22d3ee');
@@ -826,8 +857,12 @@ function endClinch(reason){
     }
     blip(880,0.18,'sine',0.2);
     buzz([0,40,40,40]);
+  }else if(reason==='retreat'){
+    showBanner('↩ РАЗРЫВ — ОТСТУП','#93c5fd');       // ушёл из клинча шагом назад
+    blip(300,0.12,'sine',0.12);
+    player.stamina=clamp(player.stamina-10,0,100);
   }else if(reason==='disarm'){
-    player.disarmed=true; player.stamina=0;
+    player.disarmed=true; player.stamina=0; player.disarmT=0;
     dropBlade(player);
     showBanner('✖ РАЗОРУЖЕНИЕ — ШАГНИ К МЕЧУ','#ef4444');
     blip(50,0.6,'sawtooth',0.22);
@@ -855,7 +890,12 @@ function updateClinch(dt){
   // сначала рассинхрон должен «разорваться» (телефон ушёл от точки меча),
   // и только потом возврат считается парированием — иначе мгновенный фрипарри
   if(clinch.delta > 25) clinch.broke = true;
-  if(clinch.broke) player.stamina = clamp(player.stamina - dt*18, 0, 100);
+  if(clinch.broke){
+    // РАССИНХРОН истощает тем быстрее, чем дальше телефон ушёл от точки меча.
+    // Действия «астрала» отделены от аватара — это дорого стоит выносливости.
+    const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);
+    player.stamina = clamp(player.stamina - dt*(12+26*n), 0, 100);
+  }
   // парирование: после разрыва вернул телефон в точку блокировки (Δ≈0)
   if(clinch.broke && clinch.delta < 10){
     clinch.parryWindow += dt;
@@ -895,10 +935,85 @@ function tryPickupBlade(){
   const dx=Math.abs(player.gx-droppedBlade.userData.gx);
   const dy=Math.abs(player.gy-droppedBlade.userData.gy);
   if(dx<=1 && dy<=1){                        // рядом (или на клетке) — поднимаем
-    player.disarmed=false; player.stamina=40; player.swordLen=1;
+    player.disarmed=false; player.stamina=40; player.swordLen=1; player.disarmT=0;
     scene.remove(droppedBlade); droppedBlade=null;
     showBanner('↺ КЛИНОК ВОЗВРАЩЁН','#22c55e'); blip(660,0.15,'sine',0.18); logE('меч поднят');
   }
+}
+// ТЕЛЕКИНЕЗ: без клинка слишком долго → аватар жестом призывает меч обратно в руку
+function returnBlade(){
+  if(!player.disarmed) return;
+  player.disarmed=false; player.stamina=Math.max(player.stamina,45); player.swordLen=1;
+  player.strikeT=0.4; player.disarmT=0;                 // короткий «жест рукой навстречу»
+  if(droppedBlade){
+    emitSparks(worldX(droppedBlade.userData.gx),TIER_H,worldZ(droppedBlade.userData.gy),'#7cf3ff',20,4.0);
+    scene.remove(droppedBlade); droppedBlade=null;
+  }
+  emitSparks(worldX(player.gx),TIER_H*1.2,worldZ(player.gy),'#7cf3ff',16,3.2);
+  showBanner('✋ ТЕЛЕКИНЕЗ — КЛИНОК ВЕРНУЛСЯ','#7cf3ff');
+  blip(500,0.2,'sine',0.18); buzz([0,30,20,60]); logE('меч возвращён телекинезом');
+}
+
+/* ════════════════════ КЛИНЧ: КАМЕРА / АСТРАЛ / ОРИЕНТИР ══════════
+   На зацепе аватар и его клинок ЗАСТЫВАЮТ (поза момента столкновения),
+   а игрок временно правит «астралом» — полупрозрачной рукой-клинком,
+   что отражает фактическое положение телефона. Задача — свести астрал
+   к бледному замороженному клинку (Δ→0 = парирование).                 */
+// прозрачность всех кубов тела аватара (0..1). Клинок рисуется отдельно.
+function setAvatarAlpha(av, a){
+  if(!av||!av.parts) return;
+  const t = a < 0.999;
+  for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
+}
+// приподнятая фронтальная камера «почти сверху»: спереди ~2/3 кадра, сзади ~1/3
+function setClinchCamera(){
+  const [dx,dz]=dirXZ(clinch.lockYaw);
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  camPos.set(px - dx*1.5, TIER_H*4.0, pz - dz*1.5);
+  camTarget.set(px + dx*2.8, TIER_H*0.5, pz + dz*2.8);
+  camera.up.set(0,1,0);
+}
+// астральный риг (создаётся один раз, невидим вне клинча)
+const astral = (function(){
+  const mk=(w,h,d,op)=>new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshBasicMaterial({color:0xbfe0ff,transparent:true,opacity:op,blending:THREE.AdditiveBlending,depthWrite:false}));
+  const grip=mk(0.22,0.22,0.24,0.5); grip.frustumCulled=false; grip.visible=false; scene.add(grip);
+  const arm =mk(0.10,0.10,1.0,0.4);  arm.frustumCulled=false;  arm.visible=false;  scene.add(arm);
+  const bg=new THREE.BoxGeometry(0.17,0.17,CELL*0.95);
+  const bm=new THREE.MeshBasicMaterial({transparent:true,blending:THREE.AdditiveBlending,depthWrite:false});
+  const blade=new THREE.InstancedMesh(bg,bm,6); blade.frustumCulled=false; blade.count=0; blade.visible=false; scene.add(blade);
+  return {grip,arm,blade};
+})();
+function hideAstral(){ astral.blade.visible=false; astral.blade.count=0; astral.grip.visible=false; astral.arm.visible=false; }
+function renderClinchGuideAndAstral(){
+  // 1) ЗАМОРОЖЕННЫЙ клинок игрока = ОЧЕНЬ БЛЕДНЫЙ ориентир (хитбокс), куда возвращать телефон
+  updateBlade(player);
+  player.blade.material.opacity = 0.22;
+  for(let i=0;i<player.blade.count;i++){ _c.setHSL(player.bladeHue??0.5,0.35,0.34); player.blade.setColorAt(i,_c); }
+  player.blade.instanceColor.needsUpdate=true;
+  // 2) АСТРАЛ — живой клинок по ТЕКУЩЕМУ положению телефона (им управляет игрок)
+  const live={visYaw:sensor.yawFused, gx:player.gx, gy:player.gy, crouch:player.crouch,
+              pitch:sensor.pitch, roll:sensor.roll, strikeT:0, swordLen:clinch.lockLen};
+  const H=handInfo(live);
+  const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz, blen=Math.hypot(bx,by,bz)||1;
+  const segs=clamp(Math.round(blen/(CELL*0.9)),1,6), segLen=blen/segs;
+  const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);   // 0 — точно на линии, 1 — критический увод
+  const hue=lerp(0.5,0.0,n);                            // близко голубой → далеко красный
+  astral.blade.count=segs; astral.blade.visible=true;
+  for(let i=0;i<segs;i++){ const f=(i+0.5)/segs;
+    _d.position.set(lerp(H.hx,H.tipX,f),lerp(H.hy,H.tipY,f),lerp(H.hz,H.tipZ,f));
+    _d.lookAt(_d.position.x+bx,_d.position.y+by,_d.position.z+bz);
+    _d.scale.set(1,1,segLen/(CELL*0.95)); _d.updateMatrix(); astral.blade.setMatrixAt(i,_d.matrix);
+    _c.setHSL(hue,0.85,clamp(0.55+f*0.2,0,0.95)); astral.blade.setColorAt(i,_c);
+  }
+  _d.scale.set(1,1,1);
+  astral.blade.instanceMatrix.needsUpdate=true; astral.blade.instanceColor.needsUpdate=true;
+  astral.blade.material.opacity=0.85;
+  astral.grip.visible=true; astral.grip.position.set(H.hx,H.hy,H.hz);
+  // рука-тень от груди к рукояти
+  const [ldx,ldz]=dirXZ(sensor.yawFused);
+  const cx=worldX(player.gx)-ldx*0.1, cy=TIER_H*1.4, cz=worldZ(player.gy)-ldz*0.1;
+  astral.arm.visible=true; setLimb(astral.arm, cx,cy,cz, H.hx,H.hy,H.hz);
 }
 
 /* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
@@ -1081,13 +1196,26 @@ function updatePhantoms(dt){
     ph.tier = tgt.local ? player.tier : 1;
     ph.pitch = (ph.tier-1)*0.7; ph.roll=0;
     ph.hitActive = true;                              // клинок ЖИВ всегда (как у игрока)
-    // движение к цели
-    if(ai.moveT<=0 && dist>1 && !clinch.active){
-      ai.moveT = 0.9;
-      let nx=ph.gx, ny=ph.gy;
-      if(Math.abs(tgt.gx-ph.gx) >= Math.abs(tgt.gy-ph.gy)) nx=clamp(ph.gx+ddx,0,12);
-      else ny=clamp(ph.gy+ddy,0,12);
-      if(!obstacleAt(nx,ny) && !phantomBlocks(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
+    // ── ДВИЖЕНИЕ: сближение с обходом препятствий + фланг/отход (живее прямого наскока) ──
+    if(ai.moveT<=0 && !clinch.active){
+      ai.moveT = [1.0,0.8,0.6][botDiff] * (0.85+Math.random()*0.4);   // темп зависит от сложности
+      const occupied=(nx,ny)=>{
+        if(mode==='fighter' && !player.dead && player.gx===nx && player.gy===ny) return true;
+        for(const id in NET.remotes){ const rr=NET.remotes[id]; if(rr && !rr.spec && rr.gx===nx && rr.gy===ny) return true; }
+        return false;
+      };
+      const canGo=(nx,ny)=> nx>=0&&nx<=12&&ny>=0&&ny<=12 && !obstacleAt(nx,ny) && !phantomBlocks(nx,ny,ph) && !occupied(nx,ny);
+      const stepX=[clamp(ph.gx+ddx,0,12),ph.gy], stepY=[ph.gx,clamp(ph.gy+ddy,0,12)];
+      // приоритет по доминантной оси, затем по второй (это и есть «обход», когда первая занята)
+      let cand = (Math.abs(tgt.gx-ph.gx)>=Math.abs(tgt.gy-ph.gy)) ? [stepX,stepY] : [stepY,stepX];
+      // на средней/высокой сложности иногда заходит сбоку (перпендикуляр к линии на цель)
+      if(botDiff>0 && Math.random()<0.3){
+        const px=(-Math.sign(tgt.gy-ph.gy))||1, py=(Math.sign(tgt.gx-ph.gx))||1;
+        cand.unshift([clamp(ph.gx+px,0,12),clamp(ph.gy+py,0,12)]);
+      }
+      // вплотную — иногда отойти, чтобы снова разогнать выпад (кайтинг вместо «липнет вплотную»)
+      if(dist<=1 && Math.random()<0.35) cand=[[clamp(ph.gx-ddx,0,12),ph.gy],[ph.gx,clamp(ph.gy-ddy,0,12)]];
+      for(const [nx,ny] of cand){ if((nx!==ph.gx||ny!==ph.gy) && canGo(nx,ny)){ ph.gx=nx; ph.gy=ny; break; } }
     }
     // периодический ВИЗУАЛЬНЫЙ выпад (удлиняет луч на миг), урон при этом непрерывный
     if(ai.windT>0){
@@ -1117,6 +1245,7 @@ function updatePhantoms(dt){
    ВНИЗ = назад, ВЛЕВО/ВПРАВО = вбок. Привязано к направлению клинка,
    а не к абсолютной сетке — так интуитивно.                       */
 function stepRelative(dx, dy){            // dx,dy — экранный свайп
+  if(clinch.active) endClinch('retreat');  // шаг разрывает клинч (отступ) — затем сам шаг
   const f = DIRV[player.dirIdx];          // вперёд (куда смотрит игрок)
   const r = [-f[1], f[0]];                // вправо (перпендикуляр)
   let mx=0,my=0;
@@ -1442,31 +1571,35 @@ function frame(now){
   if(keys[' ']) sensor.roll = (sensor.roll>45?0:60); // пробел — переключить стойку
 
   if(mode==='fighter'){
-    // направление и ярус клинка из сенсоров
-    player.dirIdx = yawToDirIdx(sensor.yawFused);
-    // периодическая жёсткая сверка с компасом (борьба с дрейфом → синхрон между устройствами)
-    resyncT -= dt;
-    if(resyncT<=0 && sensor.compass!=null && sensor.level>0.5 && Math.abs(angDiff(sensor.compass, sensor.yawFused))<60){
-      resyncT=3.0; sensor.yawFused = smoothAngle(sensor.yawFused, sensor.compass, 0.9);
+    // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
+    const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
+    sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*10,0,1));
+
+    if(!clinch.active){
+      // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
+      player.dirIdx = yawToDirIdx(sensor.yawFused);
+      player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
+      player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1));
+      player.pitch = sensor.pitch; player.roll = sensor.roll;
+      player.speedPulse = clamp(sensor.speed/16,0,0.4);
+      // ЖЕСТ ВЗМАХА: резкое движение руки → видимый удар клинком (снап-выпад)
+      player.swingCd = (player.swingCd||0) - dt;
+      if(sensor.speed > 11 && player.swingCd<=0 && !player.disarmed && !player.dead){
+        player.strikeT = STRIKE_DUR; player.swingCd = 0.4;
+        blip(300+sensor.speed*4, 0.07, 'sawtooth', 0.06);   // «вжух»
+      }
+      // КЛИНОК/тело трейлит за движением; камера уже мгновенная
+      player.visYaw = smoothAngle(player.visYaw, sensor.yawFused, dt*6);
     }
-    sensor.pitch = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);   // наклон (+ инверсия из меню)
-    player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
-    player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1)); // присед при прицеле вниз
-    player.pitch = sensor.pitch; player.roll = sensor.roll;
-    player.speedPulse = clamp(sensor.speed/16,0,0.4);
-    // ЖЕСТ ВЗМАХА: резкое движение руки → видимый удар клинком (снап-выпад)
-    player.swingCd = (player.swingCd||0) - dt;
-    if(sensor.speed > 11 && player.swingCd<=0 && !clinch.active && !player.disarmed && !player.dead){
-      player.strikeT = STRIKE_DUR; player.swingCd = 0.4;
-      blip(300+sensor.speed*4, 0.07, 'sawtooth', 0.06);   // «вжух»
-    }
-    // КЛИНОК отстаёт (visYaw) — камера уже мгновенная; тело трейлит за движением
-    player.visYaw  = smoothAngle(player.visYaw,  sensor.yawFused,   dt*6);
 
     updateStanceAndCamera(dt);
     if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
     updateClinch(dt);
     handleDeath(player, dt);
+
+    // без клинка слишком долго → телекинез возвращает меч
+    if(player.disarmed){ player.disarmT=(player.disarmT||0)+dt; if(player.disarmT>=CLINCH_RETURN_T) returnBlade(); }
+    else player.disarmT=0;
 
     if(!clinch.active && !player.disarmed) player.stamina=clamp(player.stamina+dt*8,0,100);
     if(player.painT>0) player.painT-=dt;
@@ -1476,7 +1609,8 @@ function frame(now){
       setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl, 120 + sensor.speed*6);
     }
     updateAvatarMesh(player, now);
-    updateBlade(player);
+    if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
+    else updateBlade(player);
   }else if(mode==='spectator'){
     // облёт сверху: высота ~9, вращение вокруг центра по компасу
     const ang = sensor.yawFused*Math.PI/180;
