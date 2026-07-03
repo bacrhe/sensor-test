@@ -266,38 +266,45 @@ let lastMotT = 0;
 // становится γ-инвариантным по построению, отклик на α остаётся 1:1.
 const _oEuler=new THREE.Euler(), _oQuat=new THREE.Quaternion();
 const _q0h=new THREE.Quaternion(), _q1h=new THREE.Quaternion(-Math.SQRT1_2,0,0,Math.SQRT1_2);
-const _upZh=new THREE.Vector3(0,0,1), _lookh=new THREE.Vector3();
-function orientationHeading(alpha,beta,gamma){
+const _upZh=new THREE.Vector3(0,0,1), _lookh=new THREE.Vector3(), _toph=new THREE.Vector3();
+function orientationHeading(alpha,beta){
   const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
   _oEuler.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180, 0,'YXZ');   // γ→0: крен не трогает камеру
   _oQuat.setFromEuler(_oEuler);
   _oQuat.multiply(_q1h);
   _oQuat.multiply(_q0h.setFromAxisAngle(_upZh,-o));
-  _lookh.set(0,0,-1).applyQuaternion(_oQuat);
-  // надёжность этого азимута: горизонтальная проекция «спинки» телефона.
-  // ~1 когда телефон вертикально (спинка смотрит в горизонт), →0 когда плашмя (спинка вниз).
-  const conf = Math.hypot(_lookh.x, _lookh.z);
-  sensor.headConf = Math.min(1, conf);
-  // ЗАЩИТА ОТ ПЕРЕВОРОТА (gimbal lock): у самой «плашмя» горизонтальная проекция спинки ≈0,
-  // и atan2 скачет на 180° при чистом наклоне ВНИЗ. Ниже порога держим ПОСЛЕДНИЙ устойчивый
-  // азимут — ложный переворот не проходит в yaw (гироскоп ведёт реальный поворот, а наклон вниз
-  // сам по себе yaw не меняет). Это чинит «аватар разворачивается спиной при опускании клинка».
-  if(conf < 0.2 && sensor.compass!=null) return sensor.compass;
-  return wrap360(Math.atan2(_lookh.x,-_lookh.z)*180/Math.PI);
+  // НЕВЫРОЖДЕННЫЙ азимут: «верхушка» телефона (клинок, +Y) определена, когда телефон
+  // плашмя-в-горизонт, «спинка» (−Z) — когда телефон вертикально. Их горизонтальные
+  // проекции лежат на ОДНОМ азимуте (крен обнулён), сумма |H|≥1.0 ПО ВСЕЙ СФЕРЕ —
+  // проверено численно. Компасу больше не нужны ни порог доверия, ни удержание
+  // последнего значения: он корректирует ВСЕГДА, в любом хвате.
+  _lookh.set(0,0,-1).applyQuaternion(_oQuat);   // спинка
+  _toph.set(0,1,0).applyQuaternion(_oQuat);     // верхушка (клинок)
+  const s = _toph.y>=0 ? 1 : -1;                // клинок ниже горизонта → азимут спинки зеркален
+  const hx=_toph.x + s*_lookh.x, hz=_toph.z + s*_lookh.z;
+  sensor.headConf = 1;                          // азимут определён всегда
+  return wrap360(Math.atan2(hx,-hz)*180/Math.PI);
 }
 
+// Приоритет источников азимута: 'deviceorientationabsolute' (магнитометр, привязан к
+// реальной комнате) > 'deviceorientation' (ОТНОСИТЕЛЬНЫЙ: произвольный ноль, дрейфует).
+// Раньше оба писали в sensor.compass наперегонки, и относительный (частый) затирал
+// абсолютный — «вернулся в тот же угол комнаты» ≠ «тот же угол в игре». Теперь как
+// только абсолютный источник появился, относительный к компасу не допускается.
+let haveAbsOrient=false;
 function onOrient(e){
   // beta — запасной наклон (используется, только если нет гравитации)
   if(e.beta!=null && !sensor.haveGrav) sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
   if(e.gamma!=null) sensor.roll = e.gamma;
-  // РОЛЛ-НЕЗАВИСИМЫЙ азимут из ориентации (стабилен в альбомной/1-м лице)
   if(e.alpha!=null && !isNaN(e.alpha)){
-    sensor.compass = orientationHeading(e.alpha, e.beta, e.gamma); sensor.haveCompass = true;
+    if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютный азимут активен (orientation.absolute)'); }
+    if(e.absolute===true || !haveAbsOrient){ sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true; }
   }
 }
 function onOrientAbs(e){
   if(e.alpha!=null && !isNaN(e.alpha)){
-    sensor.compass = orientationHeading(e.alpha, e.beta, e.gamma); sensor.haveCompass = true;
+    if(!haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютный азимут активен (deviceorientationabsolute)'); }
+    sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true;
   }
 }
 function onMotion(e){
@@ -335,14 +342,16 @@ function onMotion(e){
   if(sensor.compass!=null){
     const cr=sensor.compass*Math.PI/180, cx=Math.sin(cr), cz=-Math.cos(cr);
     const rot=clamp(Math.abs(omegaG)/45,0,1);
-    const aC=lerp(0.05,0.5,rot);
+    // Сглаживание МИНИМАЛЬНОЕ (пользовательский вердикт: «плавность только мешает»):
+    // лёгкий вектор-фильтр против дрожи магнитометра, при движении — почти сырой сигнал.
+    const aC=lerp(0.3,0.95,rot);
     sensor.chx = sensor.chx==null ? cx : lerp(sensor.chx, cx, aC);
     sensor.chz = sensor.chz==null ? cz : lerp(sensor.chz, cz, aC);
     const comp=wrap360(Math.atan2(sensor.chx,-sensor.chz)*180/Math.PI);
-    // Порог доверия к компасу с ПОЛОМ: НЕ отключается на умеренном наклоне (доска),
-    // гаснет только у самой «плашмя», где азимут физически не определён (там ведёт гироскоп).
-    const conf=clamp((sensor.headConf-0.10)/0.5, 0, 1);
-    const k=clamp(5.0*dt*conf, 0, 0.4);
+    // Коррекция ВСЕГДА ВКЛЮЧЕНА и сильная: комбинированный азимут (верхушка+спинка)
+    // невырожден по всей сфере, порог доверия больше не нужен. Постоянная времени ~0.1с:
+    // тот же угол реальной комнаты = тот же угол в игре, буквально по компасу.
+    const k=clamp(12.0*dt, 0, 0.5);
     sensor.yawFused=smoothAngle(sensor.yawFused, comp, k);
   }
   // скорость руки = чистое ускорение
@@ -1534,7 +1543,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03d · axis-split(α=камера,β=ярус,γ=клинок) · ghost-hide+db-clean · gpu-dispose';
+const BUILD_TAG='2026-07-03e · компас-всюду(верхушка+спинка) · абс-приоритет · мин-сглаживание · axis-split';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1981,7 +1990,7 @@ $('btnReq').addEventListener('click', async ()=>{
     NET.room = rm || 'HALL';           // комната из меню (а не из URL)
     NET.start();                       // живое подключение к vessel-mir-13
     buzz([0,120,60,120]);              // тест вибрации при входе
-    logE('СТАРТ. HAPTICS='+HAPTICS+' compass='+sensor.haveCompass+' room='+NET.room);
+    logE('СТАРТ. HAPTICS='+HAPTICS+' компас='+(haveAbsOrient?'АБС':(sensor.haveCompass?'отн(дрейфует!)':'НЕТ'))+' room='+NET.room);
     logE('BUILD '+BUILD_TAG);
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
