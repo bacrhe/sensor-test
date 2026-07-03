@@ -627,7 +627,7 @@ function makePhantom(i){
   return ph;
 }
 function spawnPhantoms(n){
-  phantoms.forEach(p=>{ scene.remove(p.mesh); scene.remove(p.blade); });
+  phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
   phantoms = [];
   for(let i=0;i<n;i++) phantoms.push(makePhantom(i));
   logE('фантомов: '+n);
@@ -1525,7 +1525,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03b · TDZ-fix(spawn) · stance-hyst · tier-hyst · clinch-cd · bot-bfs · net-ttl';
+const BUILD_TAG='2026-07-03c · ghost-hide+db-clean · gpu-dispose · TDZ-fix · stance/tier-hyst · clinch-cd · bot-bfs';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1634,6 +1634,17 @@ const NET = {
     if(!this.online||!this.db) return;
     push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, src:src||'player', t:Date.now()}).catch(()=>{});
   },
+  // «УБОРЩИК»: стереть из БД узлы ушедшего игрока, чей onDisconnect так и не сработал.
+  // После удаления onValue у ВСЕХ клиентов штатно вызовет removeRemote/removeRemotePhantom.
+  cleanupPlayer(id){
+    if(!this.online||!this.db) return;
+    remove(ref(this.db,`blade/${this.room}/players/${id}`)).catch(()=>{});
+    remove(ref(this.db,`blade/${this.room}/phantoms/${id}`)).catch(()=>{});
+  },
+  cleanupPhantoms(owner){
+    if(!this.online||!this.db) return;
+    remove(ref(this.db,`blade/${this.room}/phantoms/${owner}`)).catch(()=>{});
+  },
   sendPhantomHit(owner, i, tier, dmg){
     if(!this.online||!this.db) return;
     push(ref(this.db,`blade/${this.room}/phantomHits/${owner}`), {from:this.myId, i, tier, dmg, t:Date.now()}).catch(()=>{});
@@ -1684,16 +1695,28 @@ function upsertRemote(id, p){
   r.latest = p;                              // тело обновим в renderRemotes каждый кадр
   r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
 }
+function setRemoteVisible(r,vis){
+  if(r.av){ r.av.mesh.visible=vis; r.av.blade.visible=vis; }
+  if(r.nose) r.nose.visible=vis;
+}
 function renderRemotes(now, dt){
-  // подметание призраков: узел молчит дольше NET_PURGE_MS → убрать из сцены,
-  // не дожидаясь серверного onDisconnect (на мобильных он может тянуться минуты)
-  const purge=[];
-  for(const id in NET.remotes){ const r=NET.remotes[id];
-    if(!r.spec && r.latest && (r.latest.t||0) < Date.now()-NET_PURGE_MS) purge.push(id); }
-  for(const id of purge){ removeRemote(id); logE('призрак игрока '+id.slice(0,4)+' удалён (тайм-аут)'); }
+  // ПРИЗРАКИ: узел молчит дольше NET_PURGE_MS. НЕЛЬЗЯ удалять запись из NET.remotes —
+  // узел ещё жив в БД, и ближайший onValue (а он приходит ~12 Гц от НАШИХ же записей)
+  // пересоздаст аватар заново → бесконечный цикл makeAvatar/remove, утечка GPU, белый экран.
+  // Вместо этого: СКРЫВАЕМ один раз + один раз стираем узел из БД («уборщик») —
+  // тогда onValue сам вызовет removeRemote с полной утилизацией.
+  const nowMs=Date.now();
   for(const id in NET.remotes){
     const r = NET.remotes[id];
     if(r.spec || !r.av) continue;
+    const stale = ((r.latest&&r.latest.t)||0) < nowMs-NET_PURGE_MS;
+    if(stale){
+      if(!r.hidden){ r.hidden=true; setRemoteVisible(r,false);
+        logE('призрак игрока '+id.slice(0,4)+' скрыт, чищу узел в БД');
+        NET.cleanupPlayer(id); }
+      continue;                                    // скрытого не рендерим и не трогаем
+    }
+    if(r.hidden){ r.hidden=false; setRemoteVisible(r,true); logE('игрок '+id.slice(0,4)+' вернулся'); }
     const p = r.latest || {};
     const av = r.av;
     av.gx = r.gx; av.gy = r.gy; av.hp = r.hp;
@@ -1711,12 +1734,29 @@ function renderRemotes(now, dt){
     r.nose.position.set(worldX(r.gx)+d[0]*0.5, TIER_H*2.25, worldZ(r.gy)+d[1]*0.5);
   }
 }
+/* ── ПОЛНАЯ утилизация аватара: three.js НЕ освобождает GPU-буферы сам —
+   без dispose() каждая удалённая фигура (≈15 геометрий+материалов) навсегда
+   зависает в видеопамяти. Именно это убивало игру: цикл «призрак удалён →
+   onValue пересоздал» на 12 Гц тёк тысячами буферов → потеря WebGL-контекста
+   → белый экран.                                                            */
+function disposeAvatar(av){
+  if(!av) return;
+  if(av.mesh){
+    av.mesh.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    scene.remove(av.mesh);
+  }
+  if(av.blade){
+    if(av.blade.geometry) av.blade.geometry.dispose();
+    if(av.blade.material) av.blade.material.dispose();
+    scene.remove(av.blade);
+  }
+}
 function removeRemote(id){
   const r=NET.remotes[id];
   if(r){
-    if(r.group) scene.remove(r.group);
-    if(r.av){ scene.remove(r.av.mesh); scene.remove(r.av.blade); }
-    if(r.nose) scene.remove(r.nose);
+    if(r.group){ r.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); scene.remove(r.group); }
+    disposeAvatar(r.av);
+    if(r.nose){ if(r.nose.geometry) r.nose.geometry.dispose(); if(r.nose.material) r.nose.material.dispose(); scene.remove(r.nose); }
     delete NET.remotes[id];
   }
 }
@@ -1728,12 +1768,16 @@ function upsertRemotePhantom(key, s){
   r.latest=s;
 }
 function renderRemotePhantoms(now, dt){
-  const purge=[];
-  for(const key in NET.rphantoms){ const s=(NET.rphantoms[key].latest)||{};
-    if((s.t||0) < Date.now()-NET_PURGE_MS) purge.push(key); }
-  for(const key of purge) removeRemotePhantom(key);
+  const nowMs=Date.now();
   for(const key in NET.rphantoms){
     const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
+    const stale=(s.t||0) < nowMs-NET_PURGE_MS;   // старые сборки без t тоже считаются протухшими
+    if(stale){
+      if(!r.hidden){ r.hidden=true; av.mesh.visible=false; av.blade.visible=false;
+        NET.cleanupPhantoms(key.split('_')[0]); }   // стереть весь узел фантомов ушедшего владельца
+      continue;
+    }
+    if(r.hidden){ r.hidden=false; av.mesh.visible=true; av.blade.visible=true; }
     av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
     av.visYaw=smoothAngle(av.visYaw, s.yaw||0, clamp(dt*8,0,1));
     av.dirIdx=yawToDirIdx(s.yaw||0);
@@ -1742,7 +1786,7 @@ function renderRemotePhantoms(now, dt){
     updateAvatarMesh(av,now); updateBlade(av);
   }
 }
-function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ scene.remove(r.av.mesh); scene.remove(r.av.blade); delete NET.rphantoms[key]; } }
+function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ disposeAvatar(r.av); delete NET.rphantoms[key]; } }
 function remotePhantomAt(cx,cy){
   for(const key in NET.rphantoms){ const r=NET.rphantoms[key]; const s=r.latest||{};
     if(!s.dead && (s.t||0)>Date.now()-NET_FRESH_MS && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
@@ -1896,7 +1940,7 @@ function frame(now){
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.keys(NET.remotes).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
