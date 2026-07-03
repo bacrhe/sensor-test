@@ -633,7 +633,10 @@ function spawnPhantoms(n){
   logE('фантомов: '+n);
 }
 function phantomAtCell(cx,cy){ return phantoms.find(p=>!p.dead && p.gx===cx && p.gy===cy); }
-spawnPhantoms(phantomCount);
+// ВАЖНО: НЕ спавнить фантомов на верхнем уровне модуля! freeSpawnCell → isCellOccupied
+// трогает const obstacles (объявлен ниже) и NET (объявлен сильно ниже) → TDZ ReferenceError,
+// модуль умирает при загрузке и НИ ОДИН обработчик кнопок не вешается («меню мёртвое»).
+// Первый спавн делает startGame(), когда модуль уже целиком инициализирован.
 
 /* ════════════════════ ПРЕПЯТСТВИЯ ════════════════════════════
    4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
@@ -1522,7 +1525,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03a · stance-hyst · tier-hyst · clinch-cd · bot-bfs · net-ttl';
+const BUILD_TAG='2026-07-03b · TDZ-fix(spawn) · stance-hyst · tier-hyst · clinch-cd · bot-bfs · net-ttl';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1929,6 +1932,7 @@ $('btnReq').addEventListener('click', async ()=>{
     logE('BUILD '+BUILD_TAG);
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
+    if(!phantoms.length && phantomCount>0) spawnPhantoms(phantomCount);   // первый спавн — здесь (модуль уже целиком жив, TDZ невозможен)
     started=true; last=0;
     applyMode();
   }catch(err){
