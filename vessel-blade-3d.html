@@ -256,16 +256,20 @@ const GRAV_SIGN = IS_IOS ? -1 : 1;
 const YAW_GYRO_SIGN = -1;
 let lastMotT = 0;
 
-// ── РОЛЛ-НЕЗАВИСИМЫЙ АЗИМУТ из полной ориентации устройства ──
-// Берём направление «из спинки телефона» (−Z экрана) в мире и проецируем на
-// горизонталь. Не зависит от наклона/поворота корпуса → в альбомной ориентации
-// (1-е лицо) поворот предсказуемый, без переворотов и «реверса».
+// ── АЗИМУТ КАМЕРЫ: только α (и β), γ ИСКЛЮЧЕНА ───────────────
+// Разделение осей по назначению:
+//   α (alpha) — куда смотрит камера (этот азимут);
+//   β (beta)  — наклон → ярус/присед (pitch, уже корректен);
+//   γ (gamma) — ТОЛЬКО сторона клинка + плавный переход в 1-е лицо. Камеру НЕ трогает.
+// Проверено численно: при β=60° старая формула утаскивала азимут на ~72° за поворот
+// запястья γ 0→70° (ривок камеры при входе в МАЯК). Обнуляем γ в эйлере — азимут
+// становится γ-инвариантным по построению, отклик на α остаётся 1:1.
 const _oEuler=new THREE.Euler(), _oQuat=new THREE.Quaternion();
 const _q0h=new THREE.Quaternion(), _q1h=new THREE.Quaternion(-Math.SQRT1_2,0,0,Math.SQRT1_2);
 const _upZh=new THREE.Vector3(0,0,1), _lookh=new THREE.Vector3();
 function orientationHeading(alpha,beta,gamma){
   const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
-  _oEuler.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,-(gamma||0)*Math.PI/180,'YXZ');
+  _oEuler.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180, 0,'YXZ');   // γ→0: крен не трогает камеру
   _oQuat.setFromEuler(_oEuler);
   _oQuat.multiply(_q1h);
   _oQuat.multiply(_q0h.setFromAxisAngle(_upZh,-o));
@@ -316,7 +320,12 @@ function onMotion(e){
   // ориентации и не шумит на сингулярности «плашмя» (в отличие от сырого компаса).
   const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
   const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
-  const omegaG=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали
+  // γ-СЛАГАЕМОЕ ИСКЛЮЧЕНО: r.gamma — вращение вокруг ДЛИННОЙ оси телефона (крен запястья).
+  // При поднятом телефоне (ярус 2) эта ось почти вертикальна, и старый omegaG интегрировал
+  // крен прямо в yaw — камера уезжала при каждом входе/выходе из МАЯКА. Теперь крен
+  // по определению не крутит камеру; телесный поворот ловится через α/β-компоненты
+  // гироскопа + γ-инвариантный компас (orientationHeading) добирает остальное.
+  const omegaG=((r.beta||0)*cgx + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали, БЕЗ крена
   sensor.yawRate=omegaG;
   // 1) ГИРОСКОП — мгновенный отклик, работает при ЛЮБОМ наклоне (в т.ч. когда смотрим вниз на доску).
   sensor.yawFused=wrap360(sensor.yawFused + YAW_GYRO_SIGN*omegaG*dt);
@@ -1525,7 +1534,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03c · ghost-hide+db-clean · gpu-dispose · TDZ-fix · stance/tier-hyst · clinch-cd · bot-bfs';
+const BUILD_TAG='2026-07-03d · axis-split(α=камера,β=ярус,γ=клинок) · ghost-hide+db-clean · gpu-dispose';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
