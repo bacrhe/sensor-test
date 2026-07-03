@@ -355,7 +355,14 @@ function yawToDirIdx(yaw){ return Math.round(wrap360(yaw)/45) % 8; }
 function dirXZ(yaw){ const a=yaw*Math.PI/180; return [Math.sin(a), -Math.cos(a)]; }
 // наклон телефона → ярус. ВНИЗ (луч в ноги) = ярус 0, ВВЕРХ (в голову) = ярус 2.
 // pitch<0 когда телефон наклонён лучом вниз — значит низкий ярус.
-function pitchTier(p){ return p < -0.3 ? 0 : (p > 0.3 ? 2 : 1); }
+// С prev — ГИСТЕРЕЗИС: выйти из среднего яруса можно за ±0.35, вернуться — только под ±0.22.
+// Без него ярус дрожал у границы 0.3 (лог: ярус1 pitch0.12 → ярус2 pitch0.31 → назад).
+function pitchTier(p, prev){
+  if(prev==null) return p < -0.3 ? 0 : (p > 0.3 ? 2 : 1);
+  if(prev===0) return p > -0.22 ? (p > 0.35 ? 2 : 1) : 0;
+  if(prev===2) return p <  0.22 ? (p < -0.35 ? 0 : 1) : 2;
+  return p < -0.35 ? 0 : (p > 0.35 ? 2 : 1);
+}
 
 /* ════════════════════════ WEB AUDIO ══════════════════════════ */
 let AC=null, master=null, worldFilter=null, ambGain=null;
@@ -793,24 +800,34 @@ function updateStanceAndCamera(dt){
   const fpRaw = clamp((Math.abs(sensor.roll)-40)/30, 0, 1);
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
   const fp = player.fpSmooth;
-  const beacon = fp>0.5;
+  // ГИСТЕРЕЗИС стойки: вход в МАЯК при fp>0.58, выход при fp<0.42.
+  // Один порог (0.5) в обе стороны давал десятки ложных переключений от дрожи руки у границы 55°
+  // (лог 2026-07-02: серии МАЯК↔МОЛНИЯ по 2-3 за секунду + случайные «ВЫБРОС длина=1.1»).
+  player.beaconLatch = player.beaconLatch ? fp>0.42 : fp>0.58;
+  const beacon = player.beaconLatch;
   // ГОЛОВУ/визор прячем ЛОКАЛЬНО как только уходим в 1-е лицо — иначе они закрывают обзор.
   // Другие клиенты рендерят свою копию этого игрока → у них голова на месте.
-  const hideHead = fp>0.5;
+  const hideHead = beacon;
   player.parts.head.visible = !hideHead; player.parts.visor.visible = !hideHead;
   const prevStance = stance;
   stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
   if(prevStance!==stance) logE('СТОЙКА → '+(beacon?'МАЯК (1-е лицо)':'МОЛНИЯ'));
   player.hitActive = !player.disarmed && !player.dead;   // клинок жив всегда
 
-  // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах)
-  if(fp>0.6){ player.charging=true; player.charge=clamp(player.charge+dt,1,3); }
+  // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах).
+  // Выброс засчитывается ТОЛЬКО если заряд держали ≥0.25с (charge>1.25) — короткое
+  // дрожание у порога стойки тихо отменяется: без звука, лога и штрафа выносливости.
+  if(beacon){ player.charging=true; player.charge=clamp(player.charge+dt,1,3); }
   else if(player.charging){
-    player.charging=false; player.swordLen=player.charge; player.charge=1; player.strikeT=0.4;
-    blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.swordLen.toFixed(1)); addExhaustion(player, 14);
+    player.charging=false;
+    if(player.charge>1.25){
+      player.swordLen=player.charge; player.strikeT=0.4;
+      blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.charge.toFixed(1)); addExhaustion(player, 14);
+    }
+    player.charge=1;
   }
   if(player.strikeT>0) player.strikeT-=dt;
-  player.swordLen = lerp(player.swordLen, fp>0.6?1.4:1, clamp(dt*(fp>0.6?4:1.6),0,1));
+  player.swordLen = lerp(player.swordLen, beacon?1.4:1, clamp(dt*(beacon?4:1.6),0,1));
   player.mesh.visible = fp < 0.85;          // тело исчезает только у самого 1-го лица
 
   // камера — плавный бленд между 3-м и 1-м лицом
@@ -825,7 +842,7 @@ function updateStanceAndCamera(dt){
 /* ════════════════════ КЛИНЧ / РАССИНХРОН ═════════════════════ */
 const clinch = {
   active:false, foe:null, lockYaw:0, lockX:0, lockY:0, lockZ:0,
-  delta:0, t:0, parryWindow:0, vibT:0,
+  delta:0, t:0, parryWindow:0, vibT:0, cd:0,   // cd — пауза после клинча, чтобы не залипать в цепочку
   lockPitch:0, lockLen:1, broke:false, participants:[],   // замороженные наклон/длина + участники клинча (Часть 2)
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
@@ -882,6 +899,7 @@ function startClinch(foe){
 function endClinch(reason){
   logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', t'+clinch.t.toFixed(1)+')');
   clinch.active=false; clinch.delta=0;
+  clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
   setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
   setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
@@ -1095,8 +1113,15 @@ function applyIncomingHit(h){
   emitSparks(worldX(player.gx), TIER_H*(0.6+tier*0.7), worldZ(player.gy), '#ff5a5a', 18, 3.4);
   logE(`ПОПАДАНИЕ соперника, ярус ${tier} → HP ${Math.round(player.hp)}`);
 }
+/* ── СВЕЖЕСТЬ сетевых данных ────────────────────────────────────
+   onDisconnect у Firebase срабатывает с задержкой (мобильный Safari в фоне —
+   минуты), а до тех пор «призрак» ушедшего игрока висит в комнате: боты его
+   таргетят и вечно кружат рядом, он блокирует клетки и ловит клинчи.
+   Пакеты несут t=Date.now() → всё старше 6с игнорируем, старше 12с — сносим. */
+const NET_FRESH_MS = 6000, NET_PURGE_MS = 12000;
+function remoteFresh(r){ return !!r && (((r.latest&&r.latest.t)||0) > Date.now()-NET_FRESH_MS); }
 function remoteFighterAt(cx,cy){
-  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && r.gx===cx && r.gy===cy) return {id,r}; }
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && remoteFresh(r) && r.gx===cx && r.gy===cy) return {id,r}; }
   return null;
 }
 let burnCd = 0;            // кулдаун прожига (с)
@@ -1121,7 +1146,7 @@ function resolveBurn(dt){
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
-      if(burnCd<=0){ NET.sendHit(rf.id, pitchTier(sensor.pitch), 14); burnCd=0.35;
+      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, 14); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
@@ -1129,7 +1154,7 @@ function resolveBurn(dt){
     const ph = phantomAtCell(cx,cy);
     if(ph){
       if(burnCd>0) return;
-      const tier = pitchTier(sensor.pitch);
+      const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
       damageTier(ph, tier, 16); burnCd = 0.3; ph.hitGlow = 0.3;
       player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
       doFlash('#22c55e'); buzz(40);
@@ -1140,7 +1165,7 @@ function resolveBurn(dt){
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
       if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
-        NET.sendPhantomHit(owner, +pi, pitchTier(sensor.pitch), 16); burnCd=0.3;
+        NET.sendPhantomHit(owner, +pi, player.tier, 16); burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       return;
     }
@@ -1166,7 +1191,7 @@ function remoteBladeCells(r){
 }
 /* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
 function resolveClinch(){
-  if(clinch.active || player.disarmed || player.dead) return;
+  if(clinch.active || clinch.cd>0 || player.disarmed || player.dead) return;
   const pc=bladeCells(player);
   // с фантомами
   for(const ph of phantoms){
@@ -1176,7 +1201,7 @@ function resolveClinch(){
   }
   // с реальными игроками (PvP-фехтование)
   if(friendlyFire) for(const id in NET.remotes){
-    const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0) continue;
+    const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
     const ec=new Set(remoteBladeCells(r));
     if(pc.some(c=>ec.has(c))){ startClinch({remote:true, id}); logE('ФЕХТ с игроком '+id.slice(0,4)); return; }
   }
@@ -1214,7 +1239,7 @@ function respawn(av){
   av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
   av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
   if(av!==player){
-    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5;
+    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5; av.ai.lastDist=null; av.ai.noProg=0;
     const c=freeSpawnCell(player.gx<=6?12:0, player.gy<=6?12:0, av); av.gx=c[0]; av.gy=c[1];   // подальше от игрока, в свободную клетку
   }else{
     const c=freeSpawnCell(CX,CY,player); av.gx=c[0]; av.gy=c[1];
@@ -1227,7 +1252,7 @@ function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead 
 function nearestTarget(ph){
   let best=null, bd=1e9;
   if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
-  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0) continue;
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
     const d=Math.abs(ph.gx-r.gx)+Math.abs(ph.gy-r.gy); if(d<bd){ bd=d; best={gx:r.gx,gy:r.gy,local:false,id}; } }
   return best;
 }
@@ -1239,7 +1264,7 @@ function isCellOccupied(gx,gy,ignore){
   for(const p of phantoms){ if(p!==ignore && !p.dead && p.gx===gx && p.gy===gy) return {layer0:true, kind:'phantom', av:p}; }
   if(remotePhantomAt(gx,gy)) return {layer0:true, kind:'rphantom'};
   if(ignore!==player && mode==='fighter' && !player.dead && player.gx===gx && player.gy===gy) return {layer0:true, kind:'player', av:player};
-  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && (r.hp??100)>0 && r.gx===gx && r.gy===gy) return {layer0:true, kind:'rplayer'}; }
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && (r.hp??100)>0 && remoteFresh(r) && r.gx===gx && r.gy===gy) return {layer0:true, kind:'rplayer'}; }
   return null;
 }
 function freeSpawnCell(gx,gy,ignore){
@@ -1250,6 +1275,30 @@ function freeSpawnCell(gx,gy,ignore){
     if(!isCellOccupied(nx,ny,ignore)) return [nx,ny];
   }
   return [gx,gy];
+}
+/* ── BFS: первый шаг кратчайшего 8-направленного пути к клетке, СОСЕДНЕЙ с целью ──
+   Жадный шаг «по знаку разности» намертво застревает за препятствием/углом
+   (лог 2026-07-02: фантом 2 минуты качался у стены (12,4)↔(12,7), dist 10-13).
+   Сетка 13×13 → полный обход дешевле одного кадра рендера.                     */
+function bfsStep(sx,sy,tx,ty,self){
+  const key=(x,y)=>y*13+x, prev=new Int16Array(169).fill(-1), q=[key(sx,sy)];
+  prev[key(sx,sy)]=key(sx,sy);
+  let head=0;
+  while(head<q.length){
+    const c=q[head++], cx=c%13, cy=(c/13)|0;
+    if(Math.max(Math.abs(cx-tx),Math.abs(cy-ty))<=1 && !(cx===sx&&cy===sy)){
+      let k=c; while(prev[k]!==key(sx,sy)) k=prev[k];   // раскрутка до первого шага
+      return [k%13,(k/13)|0];
+    }
+    for(const [ox,oy] of DIRV){
+      const nx=cx+ox, ny=cy+oy;
+      if(nx<0||nx>12||ny<0||ny>12) continue;
+      const nk=key(nx,ny);
+      if(prev[nk]!==-1 || isCellOccupied(nx,ny,self)) continue;
+      prev[nk]=c; q.push(nk);
+    }
+  }
+  return null;   // цель полностью замурована — стоим
 }
 function updatePhantoms(dt){
   for(const ph of phantoms){
@@ -1272,25 +1321,39 @@ function updatePhantoms(dt){
     ph.roll = ai.side*55;   // «рукость» бота: клинок/руки на сторону (как игрок в альбомной ориентации)
     ph.hitActive = true;                              // клинок ЖИВ всегда (как у игрока)
     // ── ДВИЖЕНИЕ: сближение с обходом препятствий + фланг/отход (живее прямого наскока) ──
+    // Анти-застревание: копим время без сближения; >2.5с — жадный шаг отставлен, ведёт BFS.
+    if(dist>1){
+      if(ai.lastDist==null || dist<ai.lastDist){ ai.lastDist=dist; ai.noProg=0; }
+      else ai.noProg=(ai.noProg||0)+dt;
+    } else { ai.lastDist=dist; ai.noProg=0; }
     if(ai.moveT<=0){
       ai.moveT = [1.0,0.8,0.6][botDiff] * (0.85+Math.random()*0.4);   // темп зависит от сложности
-      const occupied=(nx,ny)=>{
-        if(mode==='fighter' && !player.dead && player.gx===nx && player.gy===ny) return true;
-        for(const id in NET.remotes){ const rr=NET.remotes[id]; if(rr && !rr.spec && rr.gx===nx && rr.gy===ny) return true; }
-        return false;
-      };
       const canGo=(nx,ny)=> !isCellOccupied(nx,ny,ph);
-      const stepX=[clamp(ph.gx+ddx,0,12),ph.gy], stepY=[ph.gx,clamp(ph.gy+ddy,0,12)];
-      // приоритет по доминантной оси, затем по второй (это и есть «обход», когда первая занята)
-      let cand = (Math.abs(tgt.gx-ph.gx)>=Math.abs(tgt.gy-ph.gy)) ? [stepX,stepY] : [stepY,stepX];
-      // на средней/высокой сложности иногда заходит сбоку (перпендикуляр к линии на цель)
-      if(botDiff>0 && Math.random()<0.3){
-        const px=(-Math.sign(tgt.gy-ph.gy))||1, py=(Math.sign(tgt.gx-ph.gx))||1;
-        cand.unshift([clamp(ph.gx+px,0,12),clamp(ph.gy+py,0,12)]);
+      let moved=false;
+      if((ai.noProg||0)>2.5 && dist>1){
+        const s=bfsStep(ph.gx,ph.gy,tgt.gx,tgt.gy,ph);
+        if(s){ ph.gx=s[0]; ph.gy=s[1]; moved=true; }
       }
-      // вплотную — иногда отойти, чтобы снова разогнать выпад (кайтинг вместо «липнет вплотную»)
-      if(dist<=1 && Math.random()<0.35) cand=[[clamp(ph.gx-ddx,0,12),ph.gy],[ph.gx,clamp(ph.gy-ddy,0,12)]];
-      for(const [nx,ny] of cand){ if((nx!==ph.gx||ny!==ph.gy) && canGo(nx,ny)){ ph.gx=nx; ph.gy=ny; break; } }
+      if(!moved){
+        const stepX=[clamp(ph.gx+ddx,0,12),ph.gy], stepY=[ph.gx,clamp(ph.gy+ddy,0,12)];
+        // приоритет по доминантной оси, затем по второй (это и есть «обход», когда первая занята)
+        let cand = (Math.abs(tgt.gx-ph.gx)>=Math.abs(tgt.gy-ph.gy)) ? [stepX,stepY] : [stepY,stepX];
+        // на средней/высокой сложности иногда заходит сбоку — ЧЕСТНЫЙ перпендикуляр (-ddy,ddx)
+        // со случайной стороной. Прежняя формула с «||1» на нулевой компоненте толкала бота
+        // прямиком в стену (источник качания у кромки поля).
+        if(botDiff>0 && Math.random()<0.3 && (ddx||ddy)){
+          const sgn=Math.random()<0.5?1:-1;
+          cand.unshift([clamp(ph.gx-ddy*sgn,0,12),clamp(ph.gy+ddx*sgn,0,12)]);
+        }
+        // вплотную — иногда отойти, чтобы снова разогнать выпад (кайтинг вместо «липнет вплотную»)
+        if(dist<=1 && Math.random()<0.35) cand=[[clamp(ph.gx-ddx,0,12),ph.gy],[ph.gx,clamp(ph.gy-ddy,0,12)]];
+        for(const [nx,ny] of cand){ if((nx!==ph.gx||ny!==ph.gy) && canGo(nx,ny)){ ph.gx=nx; ph.gy=ny; moved=true; break; } }
+      }
+      // совсем некуда пойти жадно и BFS ещё не включился — форсируем его сразу
+      if(!moved && dist>1){
+        const s=bfsStep(ph.gx,ph.gy,tgt.gx,tgt.gy,ph);
+        if(s){ ph.gx=s[0]; ph.gy=s[1]; }
+      }
     }
     // периодический ВИЗУАЛЬНЫЙ выпад (удлиняет луч на миг), урон при этом непрерывный
     if(ai.windT>0){
@@ -1459,7 +1522,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-02c · gimbal-fix · cell-physics · push · dyn-stamina · multiclinch';
+const BUILD_TAG='2026-07-03a · stance-hyst · tier-hyst · clinch-cd · bot-bfs · net-ttl';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1582,7 +1645,7 @@ const NET = {
     if(phantoms.length){
       const obj={};
       phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
-        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0}; });
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,t:Date.now()}; });
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
     }else{
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
@@ -1619,6 +1682,12 @@ function upsertRemote(id, p){
   r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
 }
 function renderRemotes(now, dt){
+  // подметание призраков: узел молчит дольше NET_PURGE_MS → убрать из сцены,
+  // не дожидаясь серверного onDisconnect (на мобильных он может тянуться минуты)
+  const purge=[];
+  for(const id in NET.remotes){ const r=NET.remotes[id];
+    if(!r.spec && r.latest && (r.latest.t||0) < Date.now()-NET_PURGE_MS) purge.push(id); }
+  for(const id of purge){ removeRemote(id); logE('призрак игрока '+id.slice(0,4)+' удалён (тайм-аут)'); }
   for(const id in NET.remotes){
     const r = NET.remotes[id];
     if(r.spec || !r.av) continue;
@@ -1656,6 +1725,10 @@ function upsertRemotePhantom(key, s){
   r.latest=s;
 }
 function renderRemotePhantoms(now, dt){
+  const purge=[];
+  for(const key in NET.rphantoms){ const s=(NET.rphantoms[key].latest)||{};
+    if((s.t||0) < Date.now()-NET_PURGE_MS) purge.push(key); }
+  for(const key of purge) removeRemotePhantom(key);
   for(const key in NET.rphantoms){
     const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
     av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
@@ -1669,7 +1742,7 @@ function renderRemotePhantoms(now, dt){
 function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ scene.remove(r.av.mesh); scene.remove(r.av.blade); delete NET.rphantoms[key]; } }
 function remotePhantomAt(cx,cy){
   for(const key in NET.rphantoms){ const r=NET.rphantoms[key]; const s=r.latest||{};
-    if(!s.dead && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
+    if(!s.dead && (s.t||0)>Date.now()-NET_FRESH_MS && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
   return null;
 }
 
@@ -1697,7 +1770,7 @@ function frame(now){
     if(!clinch.active){
       // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
       player.dirIdx = yawToDirIdx(sensor.yawFused);
-      player.tier = pitchTier(sensor.pitch);            // вниз→ноги, вверх→голова
+      player.tier = pitchTier(sensor.pitch, player.tier);   // вниз→ноги, вверх→голова (с гистерезисом)
       player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1));
       player.pitch = sensor.pitch; player.roll = sensor.roll;
       player.speedPulse = clamp(sensor.speed/16,0,0.4);
@@ -1712,7 +1785,7 @@ function frame(now){
     }
 
     updateStanceAndCamera(dt);
-    if(!clinch.active){ resolveClinch(); if(!clinch.active) resolveBurn(dt); }
+    if(!clinch.active){ clinch.cd=Math.max(0,clinch.cd-dt); resolveClinch(); if(!clinch.active) resolveBurn(dt); }
     updateClinch(dt);
     handleDeath(player, dt);
 
