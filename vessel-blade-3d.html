@@ -494,6 +494,29 @@ const floor = new THREE.InstancedMesh(floorGeo, floorMat, G*G);
 floor.instanceColor.needsUpdate = true;
 floor.frustumCulled = false;
 scene.add(floor);
+/* ── ПОВЕРХНОСТИ: у каждой комнаты свой узор пола (цвет + рельеф тайлов) ── */
+const _fd=new THREE.Object3D(), _fc=new THREE.Color();
+function paintFloor(rx,ry){
+  const st=roomStyle(rx,ry), a=st.archetype, rng=mulberry32(rx*911+ry*37+5);
+  const bg=new THREE.Color(st.bg); let hBase=0.58, i=0;
+  try{ const hsl={h:0,s:0,l:0}; bg.getHSL(hsl); hBase=hsl.h; }catch(e){}
+  for(let y=0;y<G;y++)for(let x=0;x<G;x++){
+    const dx=(x-CX)/6, dy=(y-CY)/6, rad=Math.hypot(dx,dy);
+    let l=0.06, h2=hBase, sat=0.5, lift=0;
+    if(a==='center'){ l=0.05+0.05*(0.5+0.5*Math.sin(rad*9)); }               // кольца
+    else if(a.startsWith('ascension')){ l=0.06+0.06*(0.5+0.5*Math.sin((y/G)*Math.PI*4)); lift=Math.sin((y/G)*Math.PI*4)*0.05; sat=0.6; }  // ступени-волны
+    else if(a.startsWith('descent')){ const cr=rng()<0.16; l=cr?0.14:0.035; if(cr){h2=0.02;sat=0.9;} lift=cr?-0.04:0; }                    // трещины
+    if(a.includes('echo')||a==='echo'){ if((x+y)%2===0) l+=0.05; }           // шахматка
+    if(a.includes('noise')||a==='noise'){ l+=rng()*0.07; lift+=(rng()-0.5)*0.08; sat=0.75; }  // рваный шум
+    _fd.position.set(worldX(x), -0.45+lift, worldZ(y));
+    _fd.scale.set(1, 1+Math.abs(lift)*6, 1);
+    _fd.updateMatrix(); floor.setMatrixAt(i,_fd.matrix);
+    _fc.setHSL(h2, sat, clamp(l,0.02,0.2)); floor.setColorAt(i,_fc);
+    i++;
+  }
+  floor.instanceMatrix.needsUpdate=true;
+  if(floor.instanceColor) floor.instanceColor.needsUpdate=true;
+}
 
 /* ── бесконечная тёмная площадка под сеткой (убирает «пустоту» по краям) ── */
 const ground = new THREE.Mesh(
@@ -1548,12 +1571,22 @@ function updateWeaponFX(dt){
     const vx=(p[0]-pp[0])*damp, vy=(p[1]-pp[1])*damp, vz=(p[2]-pp[2])*damp;
     pp[0]=p[0]; pp[1]=p[1]; pp[2]=p[2];
     p[0]+=vx; p[1]+=vy-11*dt*dt; p[2]+=vz;
-    // запястье: боковой перпендикуляр к взгляду и «вперёд» — две независимые оси раскрутки
+    // ПРИВОД: численные производные углов — работают на ЛЮБОМ телефоне, даже когда
+    // devicemotion.rotationRate пустой (на части Android он null — тогда старый привод
+    // был мёртв и качало только рукой = «только вперёд-назад»).
+    if(S.lr==null){ S.lr=sensor.roll||0; S.lp=sensor.pitch||0; S.ly=player.visYaw||0; }
+    const dRoll = ((sensor.roll||0)-S.lr)/Math.max(dt,1e-3);           // °/с крена запястья
+    const dPitch= ((sensor.pitch||0)-S.lp)/Math.max(dt,1e-3)*90;       // pitch −1..1 → ~°/с
+    let dYaw  = ((player.visYaw||0)-S.ly); dYaw=((dYaw+540)%360)-180; dYaw/=Math.max(dt,1e-3);
+    S.lr=sensor.roll||0; S.lp=sensor.pitch||0; S.ly=player.visYaw||0;
+    const gyroR=sensor.rollRate||0, gyroP=sensor.pitchRate||0;
+    const rr=clamp(Math.abs(gyroR)>Math.abs(dRoll)?gyroR:dRoll,-500,500)*(Math.PI/180);
+    const pr=clamp(Math.abs(gyroP)>Math.abs(dPitch)?gyroP:dPitch,-500,500)*(Math.PI/180);
+    const yr=clamp(dYaw,-400,400)*(Math.PI/180);
     const kSpin = wfx.kind==='flail'?1.2:2.0;
-    const rr=clamp(sensor.rollRate||0,-500,500)*(Math.PI/180);
-    const pr=clamp(sensor.pitchRate||0,-500,500)*(Math.PI/180);
-    p[0]+=( uz*rr + ux*pr )*L*kSpin*dt*dt*60;
-    p[2]+=(-ux*rr + uz*pr )*L*kSpin*dt*dt*60;
+    // крен → вбок, наклон → вперёд, поворот корпуса → центробежно вбок (интуитивно: повернул — грузик вынесло)
+    p[0]+=( uz*(rr+yr*0.9) + ux*pr )*L*kSpin*dt*dt*60;
+    p[2]+=(-ux*(rr+yr*0.9) + uz*pr )*L*kSpin*dt*dt*60;
     // жёсткий стержень: |p−якорь| = L строго (и растяжение, и сжатие)
     let dx=p[0]-ax, dy=p[1]-ay, dz=p[2]-az;
     const d=Math.hypot(dx,dy,dz)||1e-6;
@@ -1617,13 +1650,18 @@ function updateWeaponFX(dt){
     const R=Math.max(Math.hypot(H.tipX-H.hx,H.tipY-H.hy,H.tipZ-H.hz),0.5);
     let hx2=H.tipX, hy2=H.tipY, hz2=H.tipZ;
     if(player.strikeT>0){
-      const ph2=1-clamp(player.strikeT/0.4,0,1);              // 0→1 за удар
-      const ang=Math.sin(ph2*Math.PI)*0*0 + (ph2-0.5)*2*(100*Math.PI/180); // −100°→+100°
+      // ЗАМАХ СО СТОРОНЫ: сторона выбирается ЗНАКОМ НАКЛОНА ЭКРАНА в момент выброса —
+      // наклонил влево → секира заходит слева, вправо → справа. Не выпад, а мах:
+      // от ±115° сбоку через фронт до −35° противоположной стороны, хлёсткая середина.
+      if(S.axeSide==null) S.axeSide = (sensor.roll||1)>=0 ? 1 : -1;
+      const ph2=1-clamp(player.strikeT/0.4,0,1);                       // 0→1 за удар
+      const ease=ph2*ph2*(3-2*ph2);                                     // smoothstep
+      const ang=S.axeSide*(115-150*ease)*(Math.PI/180);                 // +115° → −35° (или зеркально)
       const ca=Math.cos(ang), sa=Math.sin(ang);
-      const sxv= uz, szv=-ux;                                  // горизонтальный перпендикуляр
-      hx2=H.hx+(ux*ca+sxv*sa)*R; hy2=H.hy+ (H.tipY-H.hy)*0.6; hz2=H.hz+(uz*ca+szv*sa)*R;
-      if(Math.random()<dt*22) emitSparks(hx2,hy2,hz2,'#ef4444',3,2.0);   // шлейф дуги
-    }
+      const sxv= uz, szv=-ux;                                           // горизонтальный перпендикуляр
+      hx2=H.hx+(ux*ca+sxv*sa)*R; hy2=H.hy+(H.tipY-H.hy)*0.6; hz2=H.hz+(uz*ca+szv*sa)*R;
+      if(Math.random()<dt*24) emitSparks(hx2,hy2,hz2,'#ef4444',3,2.0);  // шлейф дуги
+    } else S.axeSide=null;
     P.blade1.position.set(hx2,hy2,hz2); P.blade1.lookAt(H.hx,H.hy,H.hz);
     P.blade2.position.set(lerp(hx2,H.hx,0.16), lerp(hy2,H.hy,0.16), lerp(hz2,H.hz,0.16));
     P.blade2.lookAt(H.hx,H.hy,H.hz);
@@ -1702,6 +1740,7 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 function applyAdvRoom(rx,ry){
   ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
   clearRacks(); clearShots();
+  paintFloor(rx,ry);
   const st=roomStyle(rx,ry), home=advHome();
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
   // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
@@ -1741,9 +1780,56 @@ function composeRoomEnemies(rx,ry){
   }
   return k;
 }
+/* ── СТЕНЫ/КОРИДОРЫ/ЛАЗЫ: комнаты собираются из СТРУКТУР, а не одиночных кубов ──
+   wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
+   (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
+   pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
+function addObstacle(gx,gy,type,taken){
+  const key=gx+','+gy;
+  if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
+  taken.add(key);
+  const solid=(type==='wall'||type==='crawl');
+  const crawl=(type==='crawl');
+  const h = type==='rubble'?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8;
+  const geo=new THREE.BoxGeometry(type==='rubble'?0.8:0.86, crawl?h*0.62:h, type==='rubble'?0.8:0.86);
+  const mat= solid? new THREE.MeshBasicMaterial({color:crawl?0x31435f:0x28374f})
+    : new THREE.MeshBasicMaterial({color:type==='rubble'?0x8a6a2e:0xc9a03a, transparent:true, opacity:0.9});
+  const grp=new THREE.Group(); grp.frustumCulled=false;
+  const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
+  boxM.position.y = crawl ? h*0.19 : 0;      // ЛАЗ: стена приподнята, под ней видимый отвір
+  const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color: solid?(crawl?0x86b6f0:0x5f86c0):0xffd47a, transparent:true,
+      opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
+  edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
+  grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
+  obstacles.push({gx,gy,solid,pass:crawl?'crawl':null,
+    hp: solid?Infinity : (type==='rubble'?24:40), alive:true, mesh:grp, mat});
+}
+function buildRoomStructures(rng, weight){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
+  for(let i=0;i<13;i++){ taken.add(i+',0'); taken.add(i+',12'); taken.add('0,'+i); taken.add('12,'+i); }  // кромки свободны — там сбор
+  const walls=1+Math.round(weight*2.4), pillars=1+Math.round(weight*2), rubble=Math.round(weight*2);
+  for(let w2=0;w2<walls;w2++){
+    const horiz=rng()<0.5, len=3+Math.floor(rng()*4);
+    let gx=2+Math.floor(rng()*8), gy=2+Math.floor(rng()*8);
+    const gap=Math.floor(rng()*len);                       // проём-дверь → коридоры и комнатки
+    const hole=rng()<0.55 ? Math.floor(rng()*len) : -1;    // лаз для повзуна
+    for(let k=0;k<len;k++){
+      if(k===gap) continue;
+      addObstacle(gx+(horiz?k:0), gy+(horiz?0:k), k===hole?'crawl':'wall', taken);
+    }
+  }
+  for(let k2=0;k2<pillars;k2++) addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'pillar',taken);
+  for(let k3=0;k3<rubble;k3++)  addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'rubble',taken);
+  logE('структуры: стен '+obstacles.filter(o=>o.solid&&!o.pass).length
+    +' лазов '+obstacles.filter(o=>o.pass==='crawl').length
+    +' разрушаемых '+obstacles.filter(o=>!o.solid).length);
+}
 function spawnObstaclesSeededSafe(rx,ry,home){
   const rng=mulberry32(rx*131+ry*17+7);
-  spawnObstacles(rng, home?0 : 2+Math.round(roomStyle(rx,ry).weight*4));
+  if(home){ spawnObstacles(rng,0); return; }
+  buildRoomStructures(rng, roomStyle(rx,ry).weight);
 }
 function updateAdventure(dt){
   if(!ADV.on || player.dead || mode!=='fighter') return;
@@ -1938,7 +2024,9 @@ function nearestTarget(ph){
 // Возвращает null если свободна; иначе объект-описание (задел под ярусы/астральное прохождение).
 function isCellOccupied(gx,gy,ignore){
   if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
-  if(obstacleAt(gx,gy)) return {layer0:true, kind:'obstacle'};
+  { const o=obstacleAt(gx,gy);
+    if(o && !(ignore && ignore.kind==='crawler' && o.pass==='crawl'))
+      return {layer0:true, kind:'obstacle'}; }   // ЛАЗ: повзун проползает под стеной
   for(const p of phantoms){ if(p!==ignore && !p.dead
     && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)) return {layer0:true, kind:'phantom', av:p}; }
   if(remotePhantomAt(gx,gy)) return {layer0:true, kind:'rphantom'};
@@ -2277,7 +2365,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04d · 3D-маятник(во все стороны) · дуга-сокири · выпад-списа · щелчок-хлыста · фикс:призрачный-меч-у-зверей';
+const BUILD_TAG='2026-07-04e · привод-маятника-без-гироскопа · сокира:замах-со-стороны-наклона · поверхности-пола · стены/коридоры/лазы';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
