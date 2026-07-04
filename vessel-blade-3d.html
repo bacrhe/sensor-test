@@ -127,6 +127,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mPhan">☠ ФАНТОМОВ: 1</button>
   <button id="mDiff">🎯 СЛОЖНОСТЬ: НОРМА</button>
   <button id="mFF">⚔ УРОН ИГРОКАМ: ВКЛ</button>
+  <button id="mEq">⚖ РАВНОВЕСИЕ: ВКЛ</button>
+  <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВЫКЛ</button>
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
@@ -660,13 +662,16 @@ function phantomAtCell(cx,cy){ return phantoms.find(p=>!p.dead && p.gx===cx && p
    4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
    и клинок, и движение) + 2 разрушаемых (можно прожечь).          */
 const obstacles = [];
-function spawnObstacles(){
+function spawnObstacles(rng, count){
+  rng = rng || Math.random;                       // сид → у всех клиентов ОДИНАКОВАЯ комната
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   // не ставим препятствия на центр игрока и на стартовые клетки фантомов
   const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
-  for(const solid of [true,true,false,false]){
+  const plan=[]; const total=(count==null?4:count);
+  for(let i=0;i<total;i++) plan.push(i<Math.ceil(total/2));
+  for(const solid of plan){
     let gx,gy,key,tries=0;
-    do{ gx=1+Math.floor(Math.random()*11); gy=1+Math.floor(Math.random()*11); key=gx+','+gy; tries++; }
+    do{ gx=1+Math.floor(rng()*11); gy=1+Math.floor(rng()*11); key=gx+','+gy; tries++; }
     while(taken.has(key) && tries<50);
     taken.add(key);
     // прочное — тёмный стальной блок; разрушаемое — светящийся янтарный кристалл
@@ -684,7 +689,7 @@ function spawnObstacles(){
     grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
     obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:grp,mat});
   }
-  logE('препятствия: 2 прочных + 2 разрушаемых');
+  logE('препятствия: '+obstacles.filter(o=>o.solid).length+' прочных + '+obstacles.filter(o=>!o.solid).length+' разрушаемых');
 }
 function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.gy===gy); }
 function damageObstacle(o,amount){
@@ -843,7 +848,7 @@ function updateStanceAndCamera(dt){
     player.charging=false;
     if(player.charge>1.25){
       player.swordLen=player.charge; player.strikeT=0.4;
-      blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.charge.toFixed(1)); addExhaustion(player, 14);
+      blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.charge.toFixed(1)); addExhaustion(player, 14*WEAPONS[playerWpn].w/5);
     }
     player.charge=1;
   }
@@ -1037,7 +1042,7 @@ function updateClinch(dt){
     }else if(clinch.foe && !clinch.foe.dead){
       // бот давит по сложности и своей выносливости — механика тестируется соло
       const bs = clamp((clinch.foe.stamina??100)/60, 0.15, 1);
-      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*dt;
+      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*(clinch.foe.boss?1.35:1)*dt;
     }
     const X = clamp((clinch.myImp - clinch.foeImp)/2.2, -1, 1);
     clinch.pressX = X;
@@ -1232,7 +1237,7 @@ function damageTier(av, tier, amount){
    чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
 function applyIncomingHit(h){
   // эхо равновесия: я добил игрока — его клиент прислал сигнал перерождения (не урон)
-  if(h.src==='rebirth'){ equalizerRebirth(); return; }
+  if(h.src==='rebirth'){ if(equalizerOn) equalizerRebirth(); return; }
   if(h.src!=='phantom' && !friendlyFire) return;   // урон от игроков — по настройке; от фантомов — всегда
   if(h.src==='player' && h.from){ lastPlayerHitFrom=h.from; lastPlayerHitT=performance.now(); }
   const tier = clamp((h.tier|0),0,2);
@@ -1274,7 +1279,7 @@ function resolveBurn(dt){
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
-      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, 14); burnCd=0.35;
+      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg)); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
@@ -1293,7 +1298,7 @@ function resolveBurn(dt){
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
       if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
-        NET.sendPhantomHit(owner, +pi, player.tier, 16); burnCd=0.3;
+        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg)); burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       return;
     }
@@ -1301,21 +1306,175 @@ function resolveBurn(dt){
 }
 
 /* ── все клетки, которые накрывает клинок (для клинча) ────────── */
+/* ════════════ ОРУЖЕЙНЯ (канон «МИР 13×13», myr13x13-mp) ════════════
+   w=вес (расход сил), maxLen=предел длины (меч=6 — прежнее поведение),
+   arc=боковые клетки у гарды, sweep=кольцо вокруг бойца, dmg=множитель урона */
+const WEAPONS={
+  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  desc:'баланс линии'},
+  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, desc:'длинная линия вперёд'},
+  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  desc:'короткая, широкая дуга, тяжёлая'},
+  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, desc:'кольцо вокруг тебя'},
+  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  desc:'лёгкие и вертлявые'},
+  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, desc:'очень длинный, слабый'},
+};
+let playerWpn='sword';
+function weaponCells(gx,gy,dirIdx,len,wpn){
+  const W=WEAPONS[wpn]||WEAPONS.sword, out=[];
+  const L=clamp(Math.round(len*W.maxLen/6),1,W.maxLen);   // меч (maxLen=6) — прежняя длина 1:1
+  if(W.sweep){
+    for(const [ox,oy] of DIRV) out.push((gx+ox)+','+(gy+oy));   // кольцо из 8 клеток
+    const [dx,dy]=DIRV[dirIdx];
+    for(let i=2;i<=L;i++) out.push((gx+dx*i)+','+(gy+dy*i));
+    return out;
+  }
+  const [dx,dy]=DIRV[dirIdx];
+  for(let i=1;i<=L;i++) out.push((gx+dx*i)+','+(gy+dy*i));
+  for(let a=1;a<=W.arc;a++){
+    const dl=DIRV[(dirIdx+a)%8], dr=DIRV[(dirIdx+8-a)%8];
+    out.push((gx+dl[0])+','+(gy+dl[1]));
+    out.push((gx+dr[0])+','+(gy+dr[1]));
+  }
+  return out;
+}
+
+/* ════════════ ПРИГОДА: МЕТАСЕТКА КОМНАТ 13×13 ════════════
+   Порт математики из style_map_13x13: центр (6,6) = Чистая Свідомість = ДОМ.
+   Вес опасности = ((|dX|/6)²+(|dY|/6)²)/2 — чем дальше от дома, тем сложнее.  */
+const ROOM_PAL={
+  center:        {bg:0x020c1a,accent:'#60a5fa',name:'Чиста Свідомість',sym:'◌'},
+  ascension:     {bg:0x0a1410,accent:'#bbf7d0',name:'Сходження',sym:'▲'},
+  descent:       {bg:0x140a0a,accent:'#fca5a5',name:'Спуск',sym:'▼'},
+  echo:          {bg:0x0a0f16,accent:'#93c5fd',name:'Відлуння',sym:'◈'},
+  noise:         {bg:0x160a14,accent:'#f0abfc',name:'Шум',sym:'※'},
+  ascension_echo:{bg:0x0a1416,accent:'#a5f3fc',name:'Храм Світла',sym:'✦'},
+  ascension_noise:{bg:0x141014,accent:'#fde68a',name:'Спалах',sym:'❋'},
+  descent_echo:  {bg:0x0f0c14,accent:'#c7d2fe',name:'Механізм',sym:'⬢'},
+  descent_noise: {bg:0x120608,accent:'#fecaca',name:'Безодня',sym:'✖'},
+};
+function roomStyle(rx,ry){
+  const dX=rx-6, dY=ry-6;
+  const wX=Math.pow(Math.abs(dX)/6,2), wY=Math.pow(Math.abs(dY)/6,2);
+  const weight=Math.min(1,(wX+wY)/2);
+  const axisV=dY/6, axisH=dX/6, absV=Math.abs(axisV), absH=Math.abs(axisH);
+  let a='center';
+  if(absV<0.18&&absH<0.18)a='center';
+  else if(absV>=absH)a=axisV>0?'ascension':'descent';
+  else a=axisH>0?'echo':'noise';
+  if(absV>=0.4&&absH>=0.4){
+    if(axisV>0&&axisH>0)a='ascension_echo';
+    else if(axisV>0&&axisH<0)a='ascension_noise';
+    else if(axisV<0&&axisH>0)a='descent_echo';
+    else a='descent_noise';
+  }
+  return Object.assign({weight,archetype:a},ROOM_PAL[a]);
+}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
+const RACK_CELLS={spear:[3,3],axe:[9,3],flail:[3,9],nunchaku:[9,9],whip:[6,2],sword:[6,10]};
+let rackT=0;
+function advHome(){ return ADV.rx===6 && ADV.ry===6; }
+function applyAdvRoom(rx,ry){
+  ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
+  const st=roomStyle(rx,ry), home=advHome();
+  try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
+  // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
+  spawnObstaclesSeededSafe(rx,ry,home);
+  const enemies = home?0 : clamp(1+Math.round(st.weight*5),1,6);
+  phantomCount=enemies; spawnPhantoms(enemies);
+  const dist=Math.abs(rx-6)+Math.abs(ry-6);
+  const boss = !home && dist>0 && dist%4===0;
+  if(boss && phantoms[0]){ const b=phantoms[0]; b.hp=280; b.boss=true;
+    try{ b.mesh.scale.setScalar(1.35); }catch(e){} }
+  botDiff = st.weight<0.15?0 : (st.weight<0.5?1:2);
+  if(home){
+    player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
+    showBanner('◌ ДОМ — стойки оружия по углам, практикуйся и выбирай','#60a5fa');
+    logE('ДОМ: стойки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10)');
+  }else{
+    showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОСС':''), st.accent);
+  }
+  logE('КОМНАТА ('+rx+','+ry+') «'+st.name+'» вес '+st.weight.toFixed(2)+(boss?' БОСС':''));
+}
+function spawnObstaclesSeededSafe(rx,ry,home){
+  const rng=mulberry32(rx*131+ry*17+7);
+  spawnObstacles(rng, home?0 : 2+Math.round(roomStyle(rx,ry).weight*4));
+}
+function updateAdventure(dt){
+  if(!ADV.on || player.dead || mode!=='fighter') return;
+  const cleared = advHome() || phantoms.every(p=>p.dead);
+  const edgeOf=(x,y)=>{
+    if((x===0||x===12)&&(y===0||y===12)) return null;      // углы неоднозначны — как в 2D-каноне
+    if(y===0)return'N'; if(y===12)return'S'; if(x===0)return'W'; if(x===12)return'E'; return null;
+  };
+  const myE=cleared ? edgeOf(player.gx,player.gy) : null;
+  let all = myE!=null;
+  if(all) for(const id in NET.remotes){ const r=NET.remotes[id];
+    if(r.spec || !remoteFresh(r) || (r.hp??100)<=0) continue;   // мёртвые/призраки не голосуют
+    if(edgeOf(r.gx,r.gy)!==myE){ all=false; break; }
+  }
+  if(!all){
+    if(ADV.edgeDir) showBanner('переход отменён — сбор распался','#64748b');
+    ADV.edgeT=0; ADV.edgeDir=null; return;
+  }
+  const step={N:[0,-1],S:[0,1],W:[-1,0],E:[1,0]}[myE];
+  const nrx=ADV.rx+step[0], nry=ADV.ry+step[1];
+  if(nrx<0||nrx>12||nry<0||nry>12){                        // край метамира
+    if(ADV.edgeDir!==myE){ ADV.edgeDir=myE; showBanner('∅ дальше метамира нет','#64748b'); }
+    ADV.edgeT=0; return;
+  }
+  if(ADV.edgeDir!==myE){                                    // ПОДСКАЗКА: что впереди + право отступить
+    ADV.edgeDir=myE; ADV.edgeT=0;
+    const st=roomStyle(nrx,nry);
+    showBanner('⏳ ВПЕРЕДИ: '+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стой 3с или отойди', st.accent);
+    blip(440,0.12,'sine',0.12);
+  }
+  ADV.edgeT+=dt;
+  if(ADV.edgeT>=3){
+    const from=myE;
+    applyAdvRoom(nrx,nry);
+    // входим с противоположной кромки новой комнаты
+    const opp={N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]}[from];
+    const c=freeSpawnCell(opp[0],opp[1],player); player.gx=c[0]; player.gy=c[1];
+    NET.advPub();                                           // консенсус комнаты для всех
+  }
+}
+function updateRacks(dt){
+  if(!ADV.on || !advHome()) return;
+  for(const w in RACK_CELLS){
+    const [x,y]=RACK_CELLS[w];
+    if(player.gx===x && player.gy===y){
+      if(playerWpn!==w){
+        rackT+=dt;
+        if(rackT>=1.2){
+          playerWpn=w; rackT=0; const W=WEAPONS[w];
+          showBanner('✥ ВЗЯТО: '+W.label+' — '+W.desc,'#eab308');
+          logE('оружие: '+W.label); blip(700,0.12,'sine',0.15); buzz([0,40]);
+        }
+      }
+      return;
+    }
+  }
+  rackT=0;
+}
+
 function bladeCells(av){
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn);
+  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword');
+}
+function bladeCells_LEGACY(av){
   const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6), out=[];
   for(let i=1;i<=len;i++) out.push((av.gx+dx*i)+','+(av.gy+dy*i));
   return out;
 }
+void bladeCells_LEGACY;
 function bladeCovers(av,gx,gy){
   const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6);
   for(let i=1;i<=len;i++) if(av.gx+dx*i===gx && av.gy+dy*i===gy) return true;
   return false;
 }
 function remoteBladeCells(r){
-  const p=r.latest||{}; const idx=yawToDirIdx(p.yaw||0); const [dx,dy]=DIRV[idx];
-  const len=clamp(Math.round(p.swordLength||1),1,6); const out=[];
-  for(let i=1;i<=len;i++) out.push((r.gx+dx*i)+','+(r.gy+dy*i));
-  return out;
+  const p=r.latest||{};
+  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword');
 }
 /* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
 function resolveClinch(){
@@ -1375,7 +1534,7 @@ function handleDeath(av, dt){
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
-      equalizerRebirth();   // правило равновесия: убил — сам рождён заново
+      if(equalizerOn) equalizerRebirth();   // правило равновесия: убил — сам рождён заново (тумблер в меню)
     }else{
       logE('ИГРОК погиб');
       showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
@@ -1383,7 +1542,7 @@ function handleDeath(av, dt){
       buzz([0,80,60,160]);
       // PvP-эхо равновесия: если добил живой игрок — его клиент тоже переродится.
       // Идёт по СУЩЕСТВУЮЩЕМУ каналу hits (dmg=0, src='rebirth') — новых узлов в БД нет.
-      if(lastPlayerHitFrom && performance.now()-lastPlayerHitT<3000){
+      if(equalizerOn && lastPlayerHitFrom && performance.now()-lastPlayerHitT<3000){
         NET.sendHit(lastPlayerHitFrom, 1, 0, 'rebirth');
         lastPlayerHitFrom=null;
       }
@@ -1672,12 +1831,21 @@ $('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomC
   $('mPhan').textContent='☠ ФАНТОМОВ: '+phantomCount; };
 $('mDiff').onclick=()=>{ botDiff=(botDiff+1)%3;
   $('mDiff').textContent='🎯 СЛОЖНОСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
+let equalizerOn=true;
+$('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
+  $('mEq').textContent='⚖ РАВНОВЕСИЕ: '+(equalizerOn?'ВКЛ':'ВЫКЛ');
+  logE('правило равновесия: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
+$('mAdv').onclick=()=>{ ADV.on=!ADV.on;
+  $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'ВКЛ':'ВЫКЛ');
+  if(ADV.on){ applyAdvRoom(6,6); NET.advPub(); }
+  else { try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
+  logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
   $('mFF').textContent='⚔ УРОН ИГРОКАМ: '+(friendlyFire?'ВКЛ':'ВЫКЛ'); logE('friendlyFire='+friendlyFire); };
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03f · взаимное-давление-в-клинче(Firebase) · правило-равновесия(убил=оба заново) · компас-всюду';
+const BUILD_TAG='2026-07-04a · ПРИГОДА(метасетка 13×13, дом, боссы) · оружейня(6 видов) · тумблер-равновесия';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1732,7 +1900,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2),
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn,
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
       spec:false, t:Date.now() }; },
   async start(){
@@ -1779,8 +1947,23 @@ const NET = {
         }
       });
       onDisconnect(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`)).remove();
+      // ОБЩАЯ КОМНАТА ПРИГОДЫ: любой перешедший пишет (rx,ry), остальные следуют.
+      // Записи идемпотентны (все пишут одно и то же по одному консенсусу кромки).
+      onValue(ref(this.db,`blade/${this.room}/adv`), snap=>{
+        const v=snap.val();
+        if(v && ADV.on && (v.rx!==ADV.rx || v.ry!==ADV.ry)
+           && Number.isInteger(v.rx) && Number.isInteger(v.ry)
+           && v.rx>=0 && v.rx<=12 && v.ry>=0 && v.ry<=12){
+          applyAdvRoom(v.rx, v.ry);
+          const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
+        }
+      });
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  advPub(){
+    if(!this.online||!this.db||!ADV.on) return;
+    set(ref(this.db,`blade/${this.room}/adv`), {rx:ADV.rx, ry:ADV.ry, t:Date.now(), by:this.myId}).catch(()=>{});
   },
   sendHit(targetId, tier, dmg, src){
     if(!this.online||!this.db) return;
@@ -2092,6 +2275,8 @@ function frame(now){
   renderRemotes(now, dt);              // чужие игроки
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
+  updateAdventure(dt);                 // сбор на кромке → переход между комнатами
+  updateRacks(dt);                     // стойки оружия в ДОМЕ
 
   // периодическая выборка состояния в лог
   sampleT -= dt;
@@ -2118,7 +2303,7 @@ function frame(now){
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
+    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
