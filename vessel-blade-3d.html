@@ -864,6 +864,11 @@ function updateStanceAndCamera(dt){
 const clinch = {
   active:false, foe:null, lockYaw:0, lockX:0, lockY:0, lockZ:0,
   delta:0, t:0, parryWindow:0, vibT:0, cd:0,   // cd — пауза после клинча, чтобы не залипать в цепочку
+  // ── ВЗАИМНОЕ ДАВЛЕНИЕ НА МЕЧ ──: X∈[−1,+1] — смещение точки скрещения.
+  // Каждая сторона копит СВОЙ монотонный импульс (myImp); по сети публикуется только он.
+  // X = (мой − чужой)/шкала считается детерминированно на обоих клиентах (у противника
+  // ровно −X) → арбитр не нужен. Урон от продавливания каждый применяет СЕБЕ сам.
+  myImp:0, foeImp:0, foeBase:null, foeT:0, pressX:0, pressDmgT:0, pressPubT:0, pvpPair:null,
   lockPitch:0, lockLen:1, broke:false, participants:[],   // замороженные наклон/длина + участники клинча (Часть 2)
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
@@ -872,6 +877,13 @@ const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'}
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
 const CLINCH_RETURN_T = 6.0;    // без клинка столько секунд → телекинез возвращает меч в руку
+// шкала давления для HUD: ⟨▓▓▓▓│▓░░░⟩ — заливка уезжает к проигрывающему
+function pressBar(x){
+  const n=clamp(Math.round((x+1)*4),0,8);   // 0..8, 4 = равновесие
+  let s='⟨';
+  for(let i=0;i<8;i++){ if(i===4) s+='│'; s += i<n ? '▓' : '░'; }
+  return s+'⟩';
+}
 const PUSH_COST = 15;           // выносливость, снимаемая при обоюдном толчке (Часть 4.1)
 const ACTIVITY_COOL = 28;       // скорость остывания «недавней активности» в покое (ед/с) (Часть 4.2)
 function addExhaustion(av, amt){ if(av) av.activityExhaustion = clamp((av.activityExhaustion||0)+amt, 0, 100); }
@@ -914,13 +926,19 @@ function startClinch(foe){
   clinch.lockPitch = sensor.pitch;
   clinch.lockLen   = clamp(Math.round(player.swordLen),1,6);
   clinch.broke     = false;
+  // давление: обнулить счётчики; для PvP — открыть канал в Firebase
+  clinch.myImp=0; clinch.foeImp=0; clinch.foeBase=null; clinch.foeT=0;
+  clinch.pressX=0; clinch.pressDmgT=0; clinch.pressPubT=0; clinch.pvpPair=null;
+  if(foe && foe.remote){ clinch.pvpPair = NET.pressPair(foe.id); NET.pressSub(clinch.pvpPair); }
   player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
   player.strikeT = 0; player.mesh.visible = false;   // тело игрока скрыто (1-е лицо): видны только клинок-ориентир и астрал
 }
 function endClinch(reason){
-  logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', t'+clinch.t.toFixed(1)+')');
+  logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
   clinch.active=false; clinch.delta=0;
   clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
+  if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
+  clinch.pressX=0;
   setWorldMuffle(0);
   if(navigator.vibrate) navigator.vibrate(0);
   setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
@@ -945,6 +963,22 @@ function endClinch(reason){
     showBanner('✖ РАЗОРУЖЕНИЕ — ШАГНИ К МЕЧУ','#ef4444');
     blip(50,0.6,'sawtooth',0.22);
     buzz([0,200]);
+  }else if(reason==='pressed'){
+    // тебя ПРОДАВИЛИ: клинок отброшен — это разоружение, заработанное противником
+    player.disarmed=true; player.stamina=0; player.disarmT=0;
+    dropBlade(player);
+    showBanner('⇣ ПРОДАВЛЕН — КЛИНОК ОТБРОШЕН','#ef4444');
+    doFlash('#ef4444');
+    blip(60,0.7,'sawtooth',0.24);
+    buzz([0,260]);
+  }else if(reason==='presswin'){
+    showBanner('⇡ ПРОДАВИЛ КЛИНОК ПРОТИВНИКА','#4ade80');
+    doFlash('#4ade80');
+    blip(660,0.22,'sine',0.2); blip(990,0.16,'sine',0.16);
+    buzz([0,40,30,90]);
+  }else if(reason==='net'){
+    showBanner('◌ СВЯЗЬ ПОТЕРЯНА — КЛИНЧ РАСПАЛСЯ','#94a3b8');   // без штрафа
+    blip(220,0.15,'sine',0.1);
   }else if(reason==='shattered'){
     showBanner('✷ КЛИНЧ РАЗБИТ ТРЕТЬЕЙ СИЛОЙ','#f59e0b');   // третий боец пробил зацеп для всех
     doFlash('#f59e0b');
@@ -974,6 +1008,76 @@ function updateClinch(dt){
   // сначала рассинхрон должен «разорваться» (телефон ушёл от точки меча),
   // и только потом возврат считается парированием — иначе мгновенный фрипарри
   if(clinch.delta > 25) clinch.broke = true;
+
+  // ── ВЗАИМНОЕ ДАВЛЕНИЕ ────────────────────────────────────────
+  // Жмёшь, пока держишь клинок В ТОЧКЕ (Δ мал): сила = точность удержания × запас
+  // выносливости × рывок руки (sensor.speed). Давить дорого — выносливость капает.
+  {
+    const hold = clamp(1 - clinch.delta/25, 0, 1);
+    const staF = clamp(player.stamina/60, 0.15, 1);
+    const push = hold * (0.55 + 0.45*clamp(sensor.speed/5,0,1)) * staF;
+    clinch.myImp += push*dt;
+    player.stamina = clamp(player.stamina - dt*4*hold, 0, 100);
+    // сторона противника
+    if(clinch.foe && clinch.foe.remote){
+      // PvP: читаем ЕГО опубликованный импульс (базлайн-вычитание страхует от
+      // остаточного узла прошлого клинча), публикуем свой ~8 Гц
+      const fp=NET.pressFoe;
+      if(fp && clinch.pvpPair===fp.pair){
+        // базлайн ловит сироту прошлого клинча И следует ВНИЗ за сбросом счётчика:
+        // противник начал заново с 0 → принимаем его новую базу, иначе он «невидим»,
+        // пока не перерастёт сироту (симуляция это поймала)
+        if(clinch.foeBase==null || fp.imp<clinch.foeBase) clinch.foeBase=fp.imp;
+        clinch.foeImp=Math.max(0, fp.imp-clinch.foeBase); clinch.foeT=fp.t||0;
+      }
+      clinch.pressPubT-=dt;
+      if(clinch.pressPubT<=0){ clinch.pressPubT=0.12; NET.pressPub(clinch.pvpPair, clinch.myImp); }
+      // связь с противником потеряна (его onDisconnect ещё молчит) → клинч тихо распадается
+      if(clinch.t>1.5 && (Date.now()-(clinch.foeT||0))>3000){ endClinch('net'); return; }
+    }else if(clinch.foe && !clinch.foe.dead){
+      // бот давит по сложности и своей выносливости — механика тестируется соло
+      const bs = clamp((clinch.foe.stamina??100)/60, 0.15, 1);
+      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*dt;
+    }
+    const X = clamp((clinch.myImp - clinch.foeImp)/2.2, -1, 1);
+    clinch.pressX = X;
+    // искры на точке скрещения ползут К ПРОИГРЫВАЮЩЕМУ — давление видно в мире, не только в HUD
+    clinch.sparkT=(clinch.sparkT||0)-dt;
+    if(clinch.sparkT<=0 && Math.abs(X)>0.15){
+      clinch.sparkT=0.28;
+      const [sdx,sdz]=dirXZ(clinch.lockYaw);
+      const off=-X*CELL*0.7;
+      emitSparks(clinch.lockX+sdx*off, clinch.lockY, clinch.lockZ+sdz*off,
+                 X<0?'#f87171':'#86efac', 6, 2.2);
+    }
+    // ПРОДАВЛИВАНИЕ: глубже ±0.55 — проигрывающий получает порезы у самой гарды.
+    // Себе урон применяю только Я (hp разлетается моими пакетами); противнику — только ОН
+    // (у него X зеркален) → сеть без двойного счёта. Боту режу локально, я же его владелец.
+    clinch.pressDmgT -= dt;
+    if(clinch.pressDmgT<=0){
+      if(X < -0.55){
+        clinch.pressDmgT=0.45;
+        damageTier(player, 1, 7);
+        logE('ПРОДАВЛИВАНИЕ: клинок у горла → HP '+Math.round(player.hp));
+        doFlash('#ef4444'); buzz([0,60,40,60]);
+      }else if(X > 0.55 && clinch.foe && !clinch.foe.remote && !clinch.foe.dead){
+        clinch.pressDmgT=0.45;
+        damageTier(clinch.foe, 1, 7);
+        logE('ПРОДАВЛИВАНИЕ: продавливаю фантома → HP '+Math.round(clinch.foe.hp));
+      }else clinch.pressDmgT=0.1;
+    }
+    // ПРОБИТИЕ: |X|=1. Проигравший сам себя разоружает (endClinch('pressed') на ЕГО клиенте),
+    // победитель просто закрывает клинч с фанфарой — состояния сходятся без арбитра.
+    if(X<=-1){ endClinch('pressed'); return; }
+    if(X>=1){
+      if(clinch.foe && !clinch.foe.remote && !clinch.foe.dead) damageTier(clinch.foe, 1, 26);
+      // финальный толчок: без него противник мог застрять на X≈−0.97 (лаг публикаций)
+      // и уйти без разоружения. Один set — и его клиент детерминированно дожимает до −1.
+      if(clinch.pvpPair) NET.pressPub(clinch.pvpPair, clinch.myImp+9);
+      endClinch('presswin'); return;
+    }
+  }
+
   if(clinch.broke){
     // РАССИНХРОН истощает тем быстрее, чем дальше телефон ушёл от точки меча.
     // Действия «астрала» отделены от аватара — это дорого стоит выносливости.
@@ -1127,7 +1231,10 @@ function damageTier(av, tier, amount){
    Срабатывает непрерывно (не только на перекате стойки). Кулдаун,
    чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
 function applyIncomingHit(h){
+  // эхо равновесия: я добил игрока — его клиент прислал сигнал перерождения (не урон)
+  if(h.src==='rebirth'){ equalizerRebirth(); return; }
   if(h.src!=='phantom' && !friendlyFire) return;   // урон от игроков — по настройке; от фантомов — всегда
+  if(h.src==='player' && h.from){ lastPlayerHitFrom=h.from; lastPlayerHitT=performance.now(); }
   const tier = clamp((h.tier|0),0,2);
   damageTier(player, tier, h.dmg||14);
   player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
@@ -1229,6 +1336,26 @@ function resolveClinch(){
 }
 
 /* ════════════════════ СМЕРТЬ И ВОЗРОЖДЕНИЕ ═══════════════════ */
+/* ── ПРАВИЛО РАВНОВЕСИЯ мира 13×13 ────────────────────────────
+   «Убил — и сам рождаешься заново, как убитый. Оба становитесь равны,
+   у начала». Убийство не даёт накопленного преимущества: убитый
+   возрождается штатно, убийца проходит то же перерождение мгновенно —
+   полный сброс тела (HP, выносливость, усталость, клинок) и возврат
+   в стартовую клетку. Счёт (память мира) — единственное, что остаётся. */
+let lastPlayerHitFrom=null, lastPlayerHitT=0;   // кто ударил меня последним (для PvP-эха)
+function equalizerRebirth(){
+  player.hp=100; player.stamina=100; player.activityExhaustion=0;
+  player.swordLen=1; player.charge=1; player.charging=false;
+  player.disarmed=false; player.disarmT=0; player.painT=0; player.strikeT=0;
+  clearClinch(); if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
+  const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
+  if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  showBanner('⚖ РАВНОВЕСИЕ: ОБА РОЖДЕНЫ ЗАНОВО','#eab308');
+  logE('РАВНОВЕСИЕ: убийца рождается заново, как убитый');
+  doFlash('#eab308');
+  blip(392,0.28,'sine',0.16); blip(523,0.28,'sine',0.16);
+  buzz([0,30,30,30,30,90]);
+}
 function clearClinch(){
   if(!clinch.active) return;
   clinch.active=false; clinch.foe=null; clinch.delta=0; setWorldMuffle(0);
@@ -1248,11 +1375,18 @@ function handleDeath(av, dt){
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
+      equalizerRebirth();   // правило равновесия: убил — сам рождён заново
     }else{
       logE('ИГРОК погиб');
       showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
       blip(80,0.6,'sawtooth',0.25);
       buzz([0,80,60,160]);
+      // PvP-эхо равновесия: если добил живой игрок — его клиент тоже переродится.
+      // Идёт по СУЩЕСТВУЮЩЕМУ каналу hits (dmg=0, src='rebirth') — новых узлов в БД нет.
+      if(lastPlayerHitFrom && performance.now()-lastPlayerHitT<3000){
+        NET.sendHit(lastPlayerHitFrom, 1, 0, 'rebirth');
+        lastPlayerHitFrom=null;
+      }
     }
   }
 }
@@ -1543,7 +1677,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-03e · компас-всюду(верхушка+спинка) · абс-приоритет · мин-сглаживание · axis-split';
+const BUILD_TAG='2026-07-03f · взаимное-давление-в-клинче(Firebase) · правило-равновесия(убил=оба заново) · компас-всюду';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -1662,6 +1796,33 @@ const NET = {
   cleanupPhantoms(owner){
     if(!this.online||!this.db) return;
     remove(ref(this.db,`blade/${this.room}/phantoms/${owner}`)).catch(()=>{});
+  },
+  /* ── КАНАЛ ВЗАИМНОГО ДАВЛЕНИЯ (клинч PvP) ─────────────────────
+     Узел blade/{room}/press/{pair}/{playerId} = {imp, t}. Каждый пишет ТОЛЬКО свой
+     монотонный импульс; смещение X обе стороны выводят сами (детерминированно,
+     у противника ровно −X) — арбитра нет, гонок нет. Конец клинча = снять подписку
+     и стереть свой дочерний узел; сирота от прошлого клинча гасится базлайном.   */
+  pressFoe:null, _pressUnsub:null,
+  pressPair(foeId){ return [this.myId, foeId].sort().join('~'); },
+  pressSub(pair){
+    if(!this.online||!this.db) return;
+    this.pressEnd(null);                      // страховка от висящей старой подписки
+    this.pressFoe=null;
+    set(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`), {imp:0, t:Date.now()}).catch(()=>{});
+    this._pressUnsub = onValue(ref(this.db,`blade/${this.room}/press/${pair}`), snap=>{
+      const v=snap.val()||{};
+      for(const id in v){ if(id!==this.myId && v[id] && typeof v[id].imp==='number'){
+        this.pressFoe={pair, imp:v[id].imp, t:v[id].t||0}; } }
+    });
+  },
+  pressPub(pair, imp){
+    if(!this.online||!this.db) return;
+    set(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`), {imp:+imp.toFixed(3), t:Date.now()}).catch(()=>{});
+  },
+  pressEnd(pair){
+    if(this._pressUnsub){ try{this._pressUnsub();}catch(e){} this._pressUnsub=null; }
+    this.pressFoe=null;
+    if(pair && this.online && this.db) remove(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`)).catch(()=>{});
   },
   sendPhantomHit(owner, i, tier, dmg){
     if(!this.online||!this.db) return;
@@ -1957,7 +2118,7 @@ function frame(now){
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0):''}\n`+
+    `HP ${Math.round(player.hp)}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
 
   // баннер/вспышка таймеры
