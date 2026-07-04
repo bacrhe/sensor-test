@@ -1411,7 +1411,14 @@ function renderClinchGuideAndAstral(){
 function damageTier(av, tier, amount){
   if(av.dead) return;
   if(tier===0){
-    // ноги → теряется мобильность (Ритм/Выносливость)
+    // ноги → теряется мобильность (Ритм/Выносливость).
+    // ПРОГРЫЗ ДО КРОВИ: когда выносливость уже добита (≤15), защита ног кончилась —
+    // излишек уходит в HP. Без этого атаки в ярус 0 полностью съедала регенерация
+    // (лог: 20+ укусов повзуна за 22с → ВЫН 92→65, HP нетронут — рой был безобиден).
+    if(av.stamina<=15){
+      av.hp = clamp(av.hp - Math.round(amount*0.7), 0, 100);
+      if(av===player) logE('ПРОГРЫЗ до крови → HP '+Math.round(av.hp));
+    }
     av.stamina = clamp(av.stamina - amount, 0, 100);
   }else{
     // торс/голова → HP (Душа)
@@ -2161,12 +2168,14 @@ function updatePhantoms(dt){
         }
       }
       if(ai.burnCd<=0 && d0<=1){
-        const bt = ph.kind==='flyer'?2:0;   // літун жалить голову, повзун гризе ноги
+        const bt = ph.kind==='flyer'?2:0;         // літун жалить голову, повзун гризе ноги
+        const dmg = ph.kind==='flyer'?8:13;       // укус повзуна ощутимее: реген его не съедает
         if(tgt.local && !player.dead){
-          damageTier(player, bt, 8); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
+          damageTier(player, bt, dmg); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
+          if(bt===0) addExhaustion(player, 12);   // укусы утомляют → реген глохнет → дренаж копится
           logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВЫН ')
             + Math.round(bt===0?player.stamina:player.hp));
-        }else if(!tgt.local){ NET.sendHit(tgt.id, bt, 8, 'phantom'); ai.burnCd=0.8; }
+        }else if(!tgt.local){ NET.sendHit(tgt.id, bt, dmg, 'phantom'); ai.burnCd=0.8; }
       }
       continue;
     }
@@ -2433,7 +2442,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04f · выброс-по-оружию(мах/раскрутка/щелчок/выпад, без дубляжа) · руки-в-дуге · клинч-по-оружию(spinout/slipout) · босс-без-луча';
+const BUILD_TAG='2026-07-04g · повзун-с-зубами(13+усталость) · прогрыз-до-крови(ярус 0 при ВЫН≤15) · вся-механика-04f';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
