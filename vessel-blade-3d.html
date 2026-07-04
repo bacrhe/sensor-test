@@ -359,6 +359,8 @@ function onMotion(e){
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
   sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
+  sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
+  sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
 }
 
 function bindSensors(){
@@ -646,6 +648,76 @@ const PH_STARTS = [[6,1],[2,2],[10,2],[6,11],[2,10],[10,10]];
    boss:    занимает 2×2 (в глубоких комнатах 3×3), длинное оружие, легко продавливает
             клинч, но НЕПОВОРОТЛИВ (разворот раз в 1.2с — обходи за спину!), слабое место
             — СПИНА (×3 урона), раз в ~7с круговой замах с 1с предупреждения (уклоняйся). */
+/* ── МОДЕЛИ ЗВЕРЕЙ: каждому виду — своё тело и процедурная анимация ──
+   Гуманоид прячется, в ph.mesh добавляется kmodel; ph.kanim(av,t) гоняет анимацию. */
+function _kbox(g,w,h,d,color){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+  new THREE.MeshBasicMaterial({color})); m.frustumCulled=false; g.add(m); return m; }
+function applyKindModel(ph){
+  if(ph.kind==='fighter') return;
+  for(const k in ph.parts){ try{ ph.parts[k].visible=false; }catch(e){} }   // манекен спит
+  const g=new THREE.Group(); g.frustumCulled=false; ph.mesh.add(g); ph.kmodel=g;
+  if(ph.kind==='crawler'){
+    // приземистая тварь: панцирь, 4 лапы, щёлкающая пасть
+    const body=_kbox(g,0.8,0.3,1.0,0xb45309); body.position.y=0.28;
+    const jawT=_kbox(g,0.5,0.1,0.4,0xf59e0b); jawT.position.set(0,0.34,0.62);
+    const jawB=_kbox(g,0.5,0.08,0.36,0x92400e); jawB.position.set(0,0.2,0.6);
+    const legs=[];
+    for(const [lx,lz] of [[-0.42,0.3],[0.42,0.3],[-0.42,-0.3],[0.42,-0.3]]){
+      const l=_kbox(g,0.14,0.3,0.14,0x7c2d12); l.position.set(lx,0.14,lz); legs.push(l); }
+    const eL=_kbox(g,0.08,0.08,0.05,0xffe08a); eL.position.set(-0.16,0.42,0.52);
+    const eR=_kbox(g,0.08,0.08,0.05,0xffe08a); eR.position.set(0.16,0.42,0.52);
+    ph.kanim=(av,t)=>{ const s=t*0.02;
+      legs.forEach((l,i)=>{ l.position.y=0.14+Math.max(0,Math.sin(s*3+i*1.7))*0.1; });
+      jawB.position.y=0.2-Math.max(0,Math.sin(s*2.2))*0.09;         // клацает пастью
+      g.position.y=Math.abs(Math.sin(s*3))*0.04; };
+  }else if(ph.kind==='flyer'){
+    // парящее жало: ядро-ромб и пара машущих крыльев
+    const core=new THREE.Mesh(new THREE.OctahedronGeometry(0.3),
+      new THREE.MeshBasicMaterial({color:0x8b5cf6})); core.frustumCulled=false;
+    core.position.y=0.5; g.add(core);
+    const sting=_kbox(g,0.07,0.07,0.4,0xd8b4fe); sting.position.set(0,0.36,0.35);
+    const wL=_kbox(g,0.66,0.04,0.3,0xc4b5fd); wL.position.set(-0.4,0.56,0);
+    const wR=_kbox(g,0.66,0.04,0.3,0xc4b5fd); wR.position.set(0.4,0.56,0);
+    ph.kanim=(av,t)=>{ const s=t*0.02;
+      wL.rotation.z= Math.sin(s*9)*0.9; wR.rotation.z=-Math.sin(s*9)*0.9;   // частые взмахи
+      g.position.y=Math.sin(s*1.6)*0.12;                                    // покачивание в воздухе
+      core.rotation.y=s*0.7; };
+  }else if(ph.kind==='gunner'){
+    // стрелец: корпус, «глаз» и ствол-бластер с накалом перед выстрелом
+    const body=_kbox(g,0.6,0.9,0.5,0x475569); body.position.y=0.6;
+    const eye=_kbox(g,0.3,0.16,0.08,0xfca5a5); eye.position.set(0,0.95,0.28);
+    const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,0.7,8),
+      new THREE.MeshBasicMaterial({color:0xff8844})); barrel.frustumCulled=false;
+    barrel.rotation.x=Math.PI/2; barrel.position.set(0.22,0.72,0.5); g.add(barrel);
+    ph.kanim=(av,t)=>{ const chg=clamp(1-(av.shootT||2)/1.0,0,1);           // накал за 1с до выстрела
+      barrel.material.color.setHSL(0.07,1,0.35+chg*0.45);
+      barrel.position.z=0.5-(av.shootT!=null&&av.shootT>2.2?0.12:0);        // отдача сразу после
+      body.rotation.y=Math.sin(t*0.001)*0.08; };
+  }else if(ph.kind==='boss'){
+    // ТИТАН: массивный корпус, рогатая голова, ГИГАНТСКАЯ секира в руке
+    const torso=_kbox(g,1.1,1.2,0.8,0x7f1d1d); torso.position.y=1.1;
+    const shL=_kbox(g,0.44,0.44,0.7,0x991b1b);  shL.position.set(-0.76,1.62,0);
+    const shR=_kbox(g,0.44,0.44,0.7,0x991b1b);  shR.position.set(0.76,1.62,0);
+    const head=_kbox(g,0.56,0.5,0.56,0xb91c1c); head.position.y=2.06;
+    const hL=_kbox(g,0.12,0.4,0.12,0xfbbf24);   hL.position.set(-0.26,2.42,0); hL.rotation.z=0.4;
+    const hR=_kbox(g,0.12,0.4,0.12,0xfbbf24);   hR.position.set(0.26,2.42,0);  hR.rotation.z=-0.4;
+    const eye=_kbox(g,0.4,0.1,0.06,0xfef08a);   eye.position.set(0,2.1,0.3);
+    const axe=new THREE.Group(); axe.frustumCulled=false; g.add(axe); axe.position.set(1.05,1.2,0.2);
+    const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,2.4,6),
+      new THREE.MeshBasicMaterial({color:0x78350f})); shaft.frustumCulled=false; axe.add(shaft);
+    const blade1=_kbox(axe,0.08,0.7,0.9,0xef4444); blade1.position.set(0,1.0,0.3);
+    const blade2=_kbox(axe,0.08,0.5,0.5,0xfca5a5); blade2.position.set(0,1.0,-0.28);
+    ph.kanim=(av,t)=>{ const s=t*0.001;
+      torso.rotation.y=Math.sin(s*0.9)*0.06;                                 // тяжёлое дыхание
+      eye.material.color.setHSL(0.12,1, av.sweepWarned?0.75:0.45);
+      // ЗАМАХ: во время предупреждения секира поднимается над головой, после — резкий круг
+      const warn=av.sweepWarned?clamp(1-(av.sweepT||0),0,1):0;
+      axe.rotation.z=lerp(axe.rotation.z, warn? -2.2 : -0.35, 0.12);
+      axe.rotation.y=av.sweepWarned?0:axe.rotation.y*0.9;
+      if(av.sweepJustHit){ av.sweepJustHit-=0.016; axe.rotation.y+=0.55; }   // видимый круговой мах
+    };
+  }
+}
 function makePhantom(i, kind){
   const ph = makeAvatar(0.92);        // пурпур/красный спектр
   ph.kind = kind||'fighter';
@@ -660,7 +732,8 @@ function makePhantom(i, kind){
     try{ ph.mesh.scale.set(0.8,0.85,0.8); }catch(e){} }
   else if(ph.kind==='boss'){ ph.hp=320; ph.boss=true; ph.size=2; ph.wpn='bossaxe';
     ph.sweepT=7; ph.slow=1.9; ph.turnT=0;
-    try{ ph.mesh.scale.setScalar(2.0); }catch(e){} }
+    try{ ph.mesh.scale.setScalar(1.35); }catch(e){} }   // модель титана и так крупная
+  applyKindModel(ph);
   return ph;
 }
 function spawnPhantoms(n, kinds){
@@ -777,6 +850,8 @@ function updateAvatarMesh(av, t){
   const _fo=((av.size||1)-1)*0.5;
   g.position.set(worldX(av.gx+_fo), av.hover||0, worldZ(av.gy+_fo));
   g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
+  // КАСТОМНАЯ МОДЕЛЬ зверя (повзун/літун/стрілець/босс): своя анимация, мимо гуманоида
+  if(av.kmodel){ if(av.kanim) av.kanim(av, t); return; }
   // ── ноги/стопы: присед опускает и разводит колени ──
   const spread=0.17+cr*0.13;
   P.legL.position.set(-spread,0.33*sq,0); P.legL.scale.y=sq;
@@ -806,8 +881,17 @@ function updateAvatarMesh(av, t){
 
 /* ── обновление клинка: ровный луч-сегменты от кисти к кончику ── */
 const _bladeDir = new THREE.Vector3();
+/* стиль луча-зоны по оружию: толщина, «скрыть луч» (у цепа/хлыста место луча занимает физ-модель) */
+const WEAPON_FX={
+  sword:{thick:1.0}, spear:{thick:0.55}, axe:{thick:1.7},
+  flail:{hideBeam:true}, nunchaku:{hideBeam:true}, whip:{hideBeam:true},
+  bossaxe:{thick:2.2},
+};
 function updateBlade(av){
   if(av.disarmed || av.dead){ av.blade.count=0; return; }
+  const wname = av===player ? playerWpn : av.wpn;
+  const wst = wname && WEAPON_FX[wname];
+  if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
   const H = handInfo(av);
   const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;   // вектор клинка
   const blen = Math.hypot(bx,by,bz)||1;
@@ -820,7 +904,8 @@ function updateBlade(av){
     const f=(i+0.5)/segs;
     _d.position.set(lerp(H.hx,H.tipX,f), lerp(H.hy,H.tipY,f), lerp(H.hz,H.tipZ,f));
     _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);   // +Z вдоль клинка
-    _d.scale.set(1, 1, segLen/(CELL*0.95));                            // подгон длины сегмента
+    const _th=(wst&&wst.thick)||1;
+    _d.scale.set(_th, _th, segLen/(CELL*0.95));                        // толщина по оружию + подгон длины
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
     // яркое ядро у рукояти + разгорается к кончику; во время удара — вспышка и белее
     const lum = clamp((hot?0.72:0.55) + f*0.22 + (hot?H.atk*0.15:0), 0, 0.97);
@@ -1302,7 +1387,7 @@ function resolveBurn(dt){
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
-      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg)); burnCd=0.35;
+      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg*(player.spinBonus||1))); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
@@ -1311,7 +1396,7 @@ function resolveBurn(dt){
     if(ph){
       if(burnCd>0) return;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
-      let dmg=Math.round(16*WEAPONS[playerWpn].dmg);
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1));
       if(ph.kind==='boss'){
         const [fdx,fdy]=DIRV[ph.dirIdx];
         const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
@@ -1330,7 +1415,7 @@ function resolveBurn(dt){
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
       if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
-        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg)); burnCd=0.3;
+        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1))); burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       return;
     }
@@ -1405,6 +1490,119 @@ function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a
 const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
 /* ── СНАРЯДЫ стрельцов: медленные, ОТБИВАЮТСЯ мечом (зона клинка) обратно в хозяина ── */
 const SHOTS=[];
+/* ═══ ФИЗИКА И МОДЕЛИ ОРУЖИЯ ИГРОКА ══════════════════════════════
+   нунчаки: вторая палка ВИСИТ на маятнике у конца первой; крутишь запястьем
+            (sensor.rollRate) — раскручивается до полных оборотов; быстрый спин = урон ×1.3;
+   ціп:     шар на цепи от кисти, тот же маятник, инерция тяжелее;
+   хлыст:   7-звенный верле-хвост от кисти — им реально машешь, хвост следует с запаздыванием;
+   сокира/спис: свои наконечники поверх луча (широкие клинья / жало).                       */
+let wfx={kind:null, group:null, parts:null, sim:{a:0.6, w:0, pts:null, pp:null}};
+function disposeWfx(){ if(wfx.group){ wfx.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); scene.remove(wfx.group); } wfx={kind:null,group:null,parts:null,sim:{a:0.6,w:0,pts:null,pp:null}}; }
+function buildWeaponFX(wpn){
+  disposeWfx(); wfx.kind=wpn;
+  const g=new THREE.Group(); g.frustumCulled=false; scene.add(g); wfx.group=g;
+  const box=(w,h,d,c)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshBasicMaterial({color:c})); m.frustumCulled=false; g.add(m); return m; };
+  const ball=(r,c)=>{ const m=new THREE.Mesh(new THREE.SphereGeometry(r,10,10),
+    new THREE.MeshBasicMaterial({color:c})); m.frustumCulled=false; g.add(m); return m; };
+  if(wpn==='nunchaku'){
+    wfx.parts={ stick1:box(0.09,0.09,0.6,0xfbbf24), stick2:box(0.09,0.09,0.6,0xf59e0b),
+      link:ball(0.05,0xd1d5db) };
+  }else if(wpn==='flail'){
+    wfx.parts={ chain:[ball(0.06,0x9ca3af),ball(0.06,0x9ca3af),ball(0.06,0x9ca3af),ball(0.06,0x9ca3af)],
+      head:ball(0.24,0xa78bfa) };
+  }else if(wpn==='whip'){
+    const seg=[]; for(let i=0;i<7;i++) seg.push(box(0.07,0.07,0.34,0x22d3ee));
+    wfx.parts={ seg };
+    wfx.sim.pts=null;
+  }else if(wpn==='axe'){
+    wfx.parts={ blade1:box(0.08,0.55,0.7,0xef4444), blade2:box(0.08,0.4,0.4,0xfca5a5) };
+  }else if(wpn==='spear'){
+    const tip=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.5,8),
+      new THREE.MeshBasicMaterial({color:0x4ade80})); tip.frustumCulled=false; g.add(tip);
+    wfx.parts={ tip };
+  }
+  g.visible = !!wfx.parts;
+}
+function updateWeaponFX(dt){
+  if(!wfx.group || player.dead || player.disarmed){ if(wfx.group) wfx.group.visible=false; player.spinBonus=1; return; }
+  wfx.group.visible=true;
+  const H=handInfo(player);
+  const fx=(H.tipX-H.hx), fy=(H.tipY-H.hy), fz=(H.tipZ-H.hz);
+  const fl=Math.hypot(fx,fy,fz)||1, ux=fx/fl, uy=fy/fl, uz=fz/fl;   // единичный «вперёд по клинку»
+  const S=wfx.sim;
+  player.spinBonus=1;
+  if(wfx.kind==='nunchaku' || wfx.kind==='flail'){
+    // МАЯТНИК в вертикальной плоскости вдоль взгляда: a=0 — висит вниз; полный оборот возможен
+    const L = wfx.kind==='flail'?0.85:0.62, G=14, damp=wfx.kind==='flail'?0.5:0.9;
+    const drive = clamp(sensor.rollRate||0,-500,500)*(Math.PI/180)*(wfx.kind==='flail'?2.4:4.2);
+    S.w += (-(G/L)*Math.sin(S.a) - damp*S.w + drive)*dt;
+    S.w = clamp(S.w,-26,26);
+    S.a += S.w*dt;
+    const sp=Math.abs(S.w);
+    if(sp>9){ player.spinBonus=1.3;                                  // раскрутка = урон ×1.3
+      if(Math.random()<dt*6) emitSparks(H.hx,H.hy,H.hz,'#fbbf24',3,1.6); }
+    // конец подвеса: у нунчаков — конец первой палки, у цепа — сама кисть
+    const ax = wfx.kind==='nunchaku'? H.hx+ux*0.6 : H.hx;
+    const ay = wfx.kind==='nunchaku'? H.hy+uy*0.6 : H.hy;
+    const az = wfx.kind==='nunchaku'? H.hz+uz*0.6 : H.hz;
+    // отвес: вниз при a=0, по кругу в плоскости (вперёд, вертикаль)
+    const px = ax + ux*Math.sin(S.a)*L;
+    const py = ay - Math.cos(S.a)*L;
+    const pz = az + uz*Math.sin(S.a)*L;
+    if(wfx.kind==='nunchaku'){
+      const P=wfx.parts;
+      P.stick1.position.set(H.hx+ux*0.3, H.hy+uy*0.3, H.hz+uz*0.3);
+      P.stick1.lookAt(ax,ay,az);
+      P.link.position.set(ax,ay,az);
+      P.stick2.position.set((ax+px)/2,(ay+py)/2,(az+pz)/2);
+      P.stick2.lookAt(px,py,pz);
+    }else{
+      const P=wfx.parts;
+      for(let i=0;i<P.chain.length;i++){ const f=(i+1)/(P.chain.length+1);
+        P.chain[i].position.set(lerp(H.hx,px,f), lerp(H.hy,py,f), lerp(H.hz,pz,f)); }
+      P.head.position.set(px,py,pz);
+    }
+  }else if(wfx.kind==='whip'){
+    // ВЕРЛЕ-ХВОСТ: 8 точек, кисть — якорь; хвост тянется за рукой, провисает и хлещет
+    const N=8, SEG=0.4;
+    if(!S.pts){ S.pts=[]; S.pp=[];
+      for(let i=0;i<N;i++){ S.pts.push([H.hx+ux*SEG*i, H.hy, H.hz+uz*SEG*i]);
+        S.pp.push([S.pts[i][0],S.pts[i][1],S.pts[i][2]]); } }
+    S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
+    for(let i=1;i<N;i++){ const p=S.pts[i], q=S.pp[i];
+      const vx=(p[0]-q[0])*0.985, vy=(p[1]-q[1])*0.985, vz=(p[2]-q[2])*0.985;
+      q[0]=p[0]; q[1]=p[1]; q[2]=p[2];
+      p[0]+=vx; p[1]+=vy-7.5*dt*dt; p[2]+=vz;                        // гравитация провешивает
+    }
+    for(let it=0; it<3; it++) for(let i=1;i<N;i++){                  // жёсткость звеньев
+      const a=S.pts[i-1], b=S.pts[i];
+      const dx=b[0]-a[0], dy=b[1]-a[1], dz=b[2]-a[2];
+      const d=Math.hypot(dx,dy,dz)||1e-6, corr=(d-SEG)/d;
+      if(i===1){ b[0]-=dx*corr; b[1]-=dy*corr; b[2]-=dz*corr; }
+      else { b[0]-=dx*corr*0.5; b[1]-=dy*corr*0.5; b[2]-=dz*corr*0.5;
+             a[0]+=dx*corr*0.5; a[1]+=dy*corr*0.5; a[2]+=dz*corr*0.5; }
+    }
+    S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
+    const P=wfx.parts;
+    for(let i=0;i<P.seg.length;i++){ const a=S.pts[i], b=S.pts[i+1];
+      P.seg[i].position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
+      P.seg[i].lookAt(b[0],b[1],b[2]); }
+    // хлёсткий кончик — искры на большой скорости
+    const tip=S.pts[N-1], tp=S.pp[N-1];
+    if(Math.hypot(tip[0]-tp[0],tip[1]-tp[1],tip[2]-tp[2])/Math.max(dt,1e-3) > 6 && Math.random()<dt*8)
+      emitSparks(tip[0],tip[1],tip[2],'#22d3ee',3,1.4);
+  }else if(wfx.kind==='axe'){
+    const P=wfx.parts;
+    P.blade1.position.set(H.tipX,H.tipY,H.tipZ); P.blade1.lookAt(H.tipX+ux,H.tipY+uy,H.tipZ+uz);
+    P.blade2.position.set(H.tipX-ux*0.18,H.tipY-uy*0.18,H.tipZ-uz*0.18);
+    P.blade2.lookAt(H.tipX+ux,H.tipY+uy,H.tipZ+uz);
+  }else if(wfx.kind==='spear'){
+    const P=wfx.parts;
+    P.tip.position.set(H.tipX,H.tipY,H.tipZ);
+    P.tip.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
+  }
+}
 function clearShots(){ for(const sh of SHOTS){ scene.remove(sh.mesh);
   try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){} } SHOTS.length=0; }
 function fireShot(ph){
@@ -1563,6 +1761,8 @@ function updateRacks(dt){
         rackT+=dt;
         if(rackT>=1.2){
           playerWpn=w; rackT=0; const W=WEAPONS[w];
+          buildWeaponFX(w);
+          player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55}[w]??0.5;
           showBanner('✥ ВЗЯТО: '+W.label+' — '+W.desc,'#eab308');
           logE('оружие: '+W.label); blip(700,0.12,'sine',0.15); buzz([0,40]);
         }
@@ -1809,7 +2009,7 @@ function updatePhantoms(dt){
         blip(140,0.7,'sawtooth',0.2); buzz([0,120]);
       }
       if(ph.sweepT<=0){
-        ph.sweepT=6+Math.random()*2.5; ph.sweepWarned=false;
+        ph.sweepT=6+Math.random()*2.5; ph.sweepWarned=false; ph.sweepJustHit=0.6;
         const inR = Math.max(Math.abs(player.gx-bcx),Math.abs(player.gy-bcy))<=2.5;
         emitSparks(worldX(bcx), TIER_H*1.2, worldZ(bcy), '#ef4444', 44, 7);
         blip(70,0.5,'sawtooth',0.26);
@@ -2045,7 +2245,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04b · звери(повзун/літун/стрілець+снаряды) · босс 2×2/3×3(спина×3,замах) · без-респауна · видимые-стойки';
+const BUILD_TAG='2026-07-04c · модели-зверей(анимации) · титан-с-секирой · физика-оружия(маятник-нунчаки/цеп, верле-хлыст) · спин×1.3';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2289,6 +2489,7 @@ function renderRemotes(now, dt){
     av.swordLen = p.swordLength||1;
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
     av.dead = (r.hp<=0);
+    av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
     updateAvatarMesh(av, now);
     updateBlade(av);
     // «нос» — куда смотрит
@@ -2486,6 +2687,7 @@ function frame(now){
   updateAdventure(dt);                 // сбор на кромке → переход между комнатами
   updateRacks(dt);                     // стойки оружия в ДОМЕ
   updateShots(dt);                     // снаряды стрельцов (и отбитые)
+  updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
 
   // периодическая выборка состояния в лог
   sampleT -= dt;
