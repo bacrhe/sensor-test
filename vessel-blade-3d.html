@@ -639,20 +639,42 @@ player.bladeHue = 0.5;             // клинок игрока — голубо
 let phantomCount = 1;                 // настройка: 0..N фантомов
 let phantoms = [];
 const PH_STARTS = [[6,1],[2,2],[10,2],[6,11],[2,10],[10,10]];
-function makePhantom(i){
+/* ── ЗВЕРИНЕЦ: kind ∈ fighter | crawler(повзун) | flyer(літун) | gunner(стрілець) | boss ──
+   crawler: 1 клетка, кусает ЯРУС 0 (ноги/выносливость), быстрый, без клинка;
+   flyer:   парит НАД полом (не касается), жалит ЯРУС 2, летает сквозь препятствия;
+   gunner:  держит дистанцию 3–6, стреляет МЕДЛЕННЫМИ снарядами — их МОЖНО ОТБИТЬ мечом;
+   boss:    занимает 2×2 (в глубоких комнатах 3×3), длинное оружие, легко продавливает
+            клинч, но НЕПОВОРОТЛИВ (разворот раз в 1.2с — обходи за спину!), слабое место
+            — СПИНА (×3 урона), раз в ~7с круговой замах с 1с предупреждения (уклоняйся). */
+function makePhantom(i, kind){
   const ph = makeAvatar(0.92);        // пурпур/красный спектр
+  ph.kind = kind||'fighter';
   const s = PH_STARTS[i%PH_STARTS.length];
   const c = freeSpawnCell(s[0],s[1],ph); ph.gx=c[0]; ph.gy=c[1];
   ph.ai = { moveT:Math.random()*0.6, swingT:1+Math.random()*2, windT:0 };
+  if(ph.kind==='crawler'){ ph.hp=40; ph.noBlade=true;
+    try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
+  else if(ph.kind==='flyer'){ ph.hp=35; ph.noBlade=true; ph.hover=TIER_H*1.7;
+    try{ ph.mesh.scale.set(0.45,0.45,0.45); }catch(e){} }
+  else if(ph.kind==='gunner'){ ph.hp=55; ph.noBlade=true; ph.shootT=1.6+Math.random();
+    try{ ph.mesh.scale.set(0.8,0.85,0.8); }catch(e){} }
+  else if(ph.kind==='boss'){ ph.hp=320; ph.boss=true; ph.size=2; ph.wpn='bossaxe';
+    ph.sweepT=7; ph.slow=1.9; ph.turnT=0;
+    try{ ph.mesh.scale.setScalar(2.0); }catch(e){} }
   return ph;
 }
-function spawnPhantoms(n){
+function spawnPhantoms(n, kinds){
   phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
   phantoms = [];
-  for(let i=0;i<n;i++) phantoms.push(makePhantom(i));
-  logE('фантомов: '+n);
+  for(let i=0;i<n;i++) phantoms.push(makePhantom(i, kinds&&kinds[i]));
+  logE('врагов: '+n+(kinds&&kinds.length?' ['+kinds.join(',')+']':''));
 }
-function phantomAtCell(cx,cy){ return phantoms.find(p=>!p.dead && p.gx===cx && p.gy===cy); }
+// клетка принадлежит фантому с учётом СЛЕДА (босс 2×2/3×3)
+function phantomAtCell(cx,cy){
+  return phantoms.find(p=>!p.dead
+    && cx>=p.gx && cx<p.gx+(p.size||1)
+    && cy>=p.gy && cy<p.gy+(p.size||1));
+}
 // ВАЖНО: НЕ спавнить фантомов на верхнем уровне модуля! freeSpawnCell → isCellOccupied
 // трогает const obstacles (объявлен ниже) и NET (объявлен сильно ниже) → TDZ ReferenceError,
 // модуль умирает при загрузке и НИ ОДИН обработчик кнопок не вешается («меню мёртвое»).
@@ -752,7 +774,8 @@ function updateAvatarMesh(av, t){
   const cr=av.crouch||0, sq=1-cr*0.26;
   const col=(m,l,s)=>m.material.color.setHSL(hue, s??0.75, clamp(l,0.06,0.6));
   // ── позиция + поворот всей фигуры по направлению взгляда ──
-  g.position.set(worldX(av.gx),0,worldZ(av.gy));
+  const _fo=((av.size||1)-1)*0.5;
+  g.position.set(worldX(av.gx+_fo), av.hover||0, worldZ(av.gy+_fo));
   g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
   // ── ноги/стопы: присед опускает и разводит колени ──
   const spread=0.17+cr*0.13;
@@ -1042,7 +1065,7 @@ function updateClinch(dt){
     }else if(clinch.foe && !clinch.foe.dead){
       // бот давит по сложности и своей выносливости — механика тестируется соло
       const bs = clamp((clinch.foe.stamina??100)/60, 0.15, 1);
-      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*(clinch.foe.boss?1.35:1)*dt;
+      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*(clinch.foe.boss?2.2:1)*dt;   // босса в лоб не передавить — обходи
     }
     const X = clamp((clinch.myImp - clinch.foeImp)/2.2, -1, 1);
     clinch.pressX = X;
@@ -1288,7 +1311,16 @@ function resolveBurn(dt){
     if(ph){
       if(burnCd>0) return;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
-      damageTier(ph, tier, 16); burnCd = 0.3; ph.hitGlow = 0.3;
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg);
+      if(ph.kind==='boss'){
+        const [fdx,fdy]=DIRV[ph.dirIdx];
+        const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
+        if(fdx*rx2+fdy*ry2 < -0.3){   // игрок в заднем секторе — СЛАБОЕ МЕСТО
+          dmg*=3; showBanner('✧ СЛАБОЕ МЕСТО — СПИНА БОССА ×3','#4ade80');
+          logE('удар в слабое место босса ×3');
+        }
+      }
+      damageTier(ph, tier, dmg); burnCd = 0.3; ph.hitGlow = 0.3;
       player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
       doFlash('#22c55e'); buzz(40);
       emitSparks(worldX(cx), TIER_H*(0.5+tier), worldZ(cy), '#63ffa0', 16, 3.6);
@@ -1316,6 +1348,7 @@ const WEAPONS={
   flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, desc:'кольцо вокруг тебя'},
   nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  desc:'лёгкие и вертлявые'},
   whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, desc:'очень длинный, слабый'},
+  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, desc:'оружие босса'},
 };
 let playerWpn='sword';
 function weaponCells(gx,gy,dirIdx,len,wpn){
@@ -1370,30 +1403,113 @@ function roomStyle(rx,ry){
 }
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
+/* ── СНАРЯДЫ стрельцов: медленные, ОТБИВАЮТСЯ мечом (зона клинка) обратно в хозяина ── */
+const SHOTS=[];
+function clearShots(){ for(const sh of SHOTS){ scene.remove(sh.mesh);
+  try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){} } SHOTS.length=0; }
+function fireShot(ph){
+  const dx=player.gx-ph.gx, dy=player.gy-ph.gy, L=Math.hypot(dx,dy)||1;
+  const m=new THREE.Mesh(new THREE.SphereGeometry(0.17,8,8),
+    new THREE.MeshBasicMaterial({color:0xff8844}));
+  m.frustumCulled=false; scene.add(m);
+  SHOTS.push({x:ph.gx, y:ph.gy, vx:dx/L*2.1, vy:dy/L*2.1, owner:ph, hostile:true, mesh:m, life:9});
+  blip(480,0.1,'square',0.12);
+}
+function updateShots(dt){
+  for(let i=SHOTS.length-1;i>=0;i--){
+    const sh=SHOTS[i]; sh.x+=sh.vx*dt; sh.y+=sh.vy*dt; sh.life-=dt;
+    const cx=Math.round(sh.x), cy=Math.round(sh.y);
+    let kill = sh.life<=0 || cx<0||cx>12||cy<0||cy>12 || !!obstacleAt(cx,cy);
+    if(!kill && sh.hostile){
+      if(!player.dead && !player.disarmed && bladeCells(player).includes(cx+','+cy)){
+        sh.hostile=false; const o=sh.owner;   // ОТБИТ — летит обратно, быстрее, нашим цветом
+        const tox=(o&&!o.dead?o.gx:cx)-sh.x, toy=(o&&!o.dead?o.gy:cy)-sh.y, L2=Math.hypot(tox,toy)||1;
+        sh.vx=tox/L2*3.4; sh.vy=toy/L2*3.4;
+        try{ sh.mesh.material.color.setHex(0x66e0ff); }catch(e){}
+        showBanner('↩ СНАРЯД ОТБИТ','#22d3ee'); blip(880,0.1,'sine',0.15); buzz([0,30]);
+        logE('снаряд відбито мечем');
+      }else if(!player.dead && player.gx===cx && player.gy===cy){
+        damageTier(player, 1, 12); doFlash('#f97316'); buzz([0,50]);
+        logE('снаряд влучив → HP '+Math.round(player.hp)); kill=true;
+      }
+    }else if(!kill && !sh.hostile){
+      const hp2=phantomAtCell(cx,cy);
+      if(hp2){ damageTier(hp2, 1, 20); hp2.hitGlow=0.3;
+        logE('відбитий снаряд влучив у ворога → HP '+Math.round(hp2.hp)); kill=true; }
+    }
+    if(kill){ scene.remove(sh.mesh);
+      try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){}
+      SHOTS.splice(i,1); }
+    else sh.mesh.position.set(worldX(sh.x), TIER_H*1.2, worldZ(sh.y));
+  }
+}
 const RACK_CELLS={spear:[3,3],axe:[9,3],flail:[3,9],nunchaku:[9,9],whip:[6,2],sword:[6,10]};
-let rackT=0;
+const RACK_COLORS={spear:0x4ade80,axe:0xef4444,flail:0xa78bfa,nunchaku:0xfbbf24,whip:0x22d3ee,sword:0x93c5fd};
+let rackT=0, rackMeshes=[];
+function clearRacks(){
+  for(const m of rackMeshes){ try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(e){} scene.remove(m); }
+  rackMeshes=[];
+}
+function buildRacks(){
+  clearRacks();
+  for(const w in RACK_CELLS){
+    const [x,y]=RACK_CELLS[w], col=RACK_COLORS[w];
+    const g=new THREE.Group(); g.frustumCulled=false;
+    const ped=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),
+      new THREE.MeshBasicMaterial({color:0x223047}));
+    ped.position.y=-0.2; ped.frustumCulled=false; g.add(ped);
+    const gem=new THREE.Mesh(new THREE.OctahedronGeometry(0.28),
+      new THREE.MeshBasicMaterial({color:col, transparent:true, opacity:0.95}));
+    gem.position.y=0.55; gem.frustumCulled=false; g.add(gem);
+    const halo=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(0.9,0.05,0.9)),
+      new THREE.LineBasicMaterial({color:col, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false}));
+    halo.position.y=-0.42; halo.frustumCulled=false; g.add(halo);
+    g.position.set(worldX(x),0.4,worldZ(y));
+    scene.add(g); rackMeshes.push(g);
+  }
+}
 function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 function applyAdvRoom(rx,ry){
   ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
+  clearRacks(); clearShots();
   const st=roomStyle(rx,ry), home=advHome();
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
   // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
   spawnObstaclesSeededSafe(rx,ry,home);
-  const enemies = home?0 : clamp(1+Math.round(st.weight*5),1,6);
-  phantomCount=enemies; spawnPhantoms(enemies);
-  const dist=Math.abs(rx-6)+Math.abs(ry-6);
-  const boss = !home && dist>0 && dist%4===0;
-  if(boss && phantoms[0]){ const b=phantoms[0]; b.hp=280; b.boss=true;
-    try{ b.mesh.scale.setScalar(1.35); }catch(e){} }
+  const kinds = composeRoomEnemies(rx,ry);
+  phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
+  const bossPh=phantoms.find(p=>p.kind==='boss');
+  if(bossPh && st.weight>0.7){ bossPh.size=3; bossPh.hp=520;   // глубокий босс — 3×3
+    try{ bossPh.mesh.scale.setScalar(2.8); }catch(e){} }
+  const boss=!!bossPh;
   botDiff = st.weight<0.15?0 : (st.weight<0.5?1:2);
   if(home){
     player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
-    showBanner('◌ ДОМ — стойки оружия по углам, практикуйся и выбирай','#60a5fa');
+    buildRacks();
+    showBanner('◌ ДОМ — светящиеся стойки: встань на клетку на 1.2с','#60a5fa');
     logE('ДОМ: стойки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10)');
   }else{
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОСС':''), st.accent);
   }
   logE('КОМНАТА ('+rx+','+ry+') «'+st.name+'» вес '+st.weight.toFixed(2)+(boss?' БОСС':''));
+}
+function composeRoomEnemies(rx,ry){
+  const st=roomStyle(rx,ry), dist=Math.abs(rx-6)+Math.abs(ry-6);
+  if(rx===6&&ry===6) return [];
+  const rng=mulberry32(rx*57+ry*901+3);
+  if(dist%4===0){                                   // комната БОССА (каждые 4 шага)
+    const k=['boss'], extra=Math.round(st.weight*2);
+    for(let i=0;i<extra;i++) k.push(rng()<0.5?'crawler':'flyer');
+    return k;
+  }
+  const n=clamp(1+Math.round(st.weight*5),1,6), k=[];
+  for(let i=0;i<n;i++){
+    const r=rng();
+    if(st.weight<0.12)      k.push(r<0.55?'fighter':'crawler');
+    else if(st.weight<0.35) k.push(r<0.35?'fighter':r<0.6?'crawler':r<0.82?'flyer':'gunner');
+    else                    k.push(r<0.3?'fighter':r<0.55?'gunner':r<0.78?'flyer':'crawler');
+  }
+  return k;
 }
 function spawnObstaclesSeededSafe(rx,ry,home){
   const rng=mulberry32(rx*131+ry*17+7);
@@ -1459,6 +1575,7 @@ function updateRacks(dt){
 
 function bladeCells(av){
   if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn);
+  if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
   return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword');
 }
 function bladeCells_LEGACY(av){
@@ -1550,6 +1667,12 @@ function handleDeath(av, dt){
   }
 }
 function respawn(av){
+  // ПРИГОДА: убитые враги НЕ возрождаются — иначе комнату не зачистить и переход невозможен
+  if(ADV.on && av!==player){
+    av.respawnT=1e9;
+    try{ av.mesh.visible=false; av.blade.visible=false; }catch(e){}
+    return;
+  }
   av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
   av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
   if(av!==player){
@@ -1558,11 +1681,20 @@ function respawn(av){
   }else{
     const c=freeSpawnCell(CX,CY,player); av.gx=c[0]; av.gy=c[1];
     if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+    // ПРИГОДА: гибель отбрасывает домой (соло). С живыми напарниками — остаёшься в комнате.
+    if(ADV.on && !advHome()){
+      let allies=false;
+      for(const id in NET.remotes){ const r=NET.remotes[id];
+        if(!r.spec && remoteFresh(r) && (r.hp??100)>0){ allies=true; break; } }
+      if(!allies){ applyAdvRoom(6,6); NET.advPub();
+        showBanner('▼ СОЗНАНИЕ ВЕРНУЛОСЬ ДОМОЙ','#94a3b8'); }
+    }
   }
 }
 
 /* ════════════════════ ФАНТОМЫ (ИИ) ══════════════════════════ */
-function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead && p.gx===gx && p.gy===gy); }
+function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead
+  && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)); }
 function nearestTarget(ph){
   let best=null, bd=1e9;
   if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
@@ -1575,7 +1707,8 @@ function nearestTarget(ph){
 function isCellOccupied(gx,gy,ignore){
   if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
   if(obstacleAt(gx,gy)) return {layer0:true, kind:'obstacle'};
-  for(const p of phantoms){ if(p!==ignore && !p.dead && p.gx===gx && p.gy===gy) return {layer0:true, kind:'phantom', av:p}; }
+  for(const p of phantoms){ if(p!==ignore && !p.dead
+    && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)) return {layer0:true, kind:'phantom', av:p}; }
   if(remotePhantomAt(gx,gy)) return {layer0:true, kind:'rphantom'};
   if(ignore!==player && mode==='fighter' && !player.dead && player.gx===gx && player.gy===gy) return {layer0:true, kind:'player', av:player};
   for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && (r.hp??100)>0 && remoteFresh(r) && r.gx===gx && r.gy===gy) return {layer0:true, kind:'rplayer'}; }
@@ -1622,12 +1755,79 @@ function updatePhantoms(dt){
     ai.burnCd = Math.max(0, (ai.burnCd||0)-dt);
     const tgt = nearestTarget(ph);
     if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
+    // ── НЕСТАНДАРТНЫЕ ВИДЫ: своя логика, мимо меч-конвейера ──
+    if(ph.kind==='crawler' || ph.kind==='flyer'){
+      ph.hitActive=false;
+      const d0=Math.max(Math.abs(tgt.gx-ph.gx),Math.abs(tgt.gy-ph.gy));
+      if(ai.moveT<=0){
+        ai.moveT=(ph.kind==='flyer'?0.5:0.42)*(0.8+Math.random()*0.4);
+        const sx=Math.sign(tgt.gx-ph.gx), sy=Math.sign(tgt.gy-ph.gy);
+        const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+        const free = ph.kind==='flyer'
+          ? !(phantomAtCell(nx,ny) && phantomAtCell(nx,ny)!==ph) && !(player.gx===nx&&player.gy===ny)
+          : !isCellOccupied(nx,ny,ph);
+        if(free && (nx!==ph.gx||ny!==ph.gy)){ ph.gx=nx; ph.gy=ny; }
+        else{
+          const ax=clamp(ph.gx+(Math.random()<0.5?1:-1),0,12), ay=clamp(ph.gy+(Math.random()<0.5?1:-1),0,12);
+          if(!isCellOccupied(ax,ay,ph)){ ph.gx=ax; ph.gy=ay; }
+        }
+      }
+      if(ai.burnCd<=0 && d0<=1){
+        const bt = ph.kind==='flyer'?2:0;   // літун жалить голову, повзун гризе ноги
+        if(tgt.local && !player.dead){
+          damageTier(player, bt, 8); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
+          logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВЫН ')
+            + Math.round(bt===0?player.stamina:player.hp));
+        }else if(!tgt.local){ NET.sendHit(tgt.id, bt, 8, 'phantom'); ai.burnCd=0.8; }
+      }
+      continue;
+    }
+    if(ph.kind==='gunner'){
+      ph.hitActive=false;
+      const dM=Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
+      if(ai.moveT<=0){
+        ai.moveT=0.7*(0.8+Math.random()*0.4);
+        let want=0; if(dM<3)want=-1; else if(dM>6)want=1;   // кайтинг: держит 3..6
+        const sx=Math.sign(tgt.gx-ph.gx)*want, sy=Math.sign(tgt.gy-ph.gy)*want;
+        const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+        if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
+      }
+      ph.shootT=(ph.shootT||2)-dt;
+      if(ph.shootT<=0 && dM<=8 && tgt.local && !player.dead){
+        ph.shootT=2.4+Math.random()*0.9; fireShot(ph);
+      }
+      continue;
+    }
+    if(ph.kind==='boss'){
+      // ЗАМАХ-СОБЫТИЕ: 1с предупреждения → круговой удар радиуса 2.5 (уклоняйся!)
+      ph.sweepT=(ph.sweepT??7)-dt;
+      const bcx=ph.gx+((ph.size||1)-1)*0.5, bcy=ph.gy+((ph.size||1)-1)*0.5;
+      if(ph.sweepT<=1 && !ph.sweepWarned){
+        ph.sweepWarned=true;
+        showBanner('⚠ БОСС РАСКРУЧИВАЕТ ЗАМАХ — ОТОЙДИ НА 3+','#f59e0b');
+        emitSparks(worldX(bcx), TIER_H*1.4, worldZ(bcy), '#f59e0b', 30, 5.5);
+        blip(140,0.7,'sawtooth',0.2); buzz([0,120]);
+      }
+      if(ph.sweepT<=0){
+        ph.sweepT=6+Math.random()*2.5; ph.sweepWarned=false;
+        const inR = Math.max(Math.abs(player.gx-bcx),Math.abs(player.gy-bcy))<=2.5;
+        emitSparks(worldX(bcx), TIER_H*1.2, worldZ(bcy), '#ef4444', 44, 7);
+        blip(70,0.5,'sawtooth',0.26);
+        if(tgt.local && inR && !player.dead){
+          damageTier(player, 1, 24); doFlash('#ef4444'); buzz([0,90,50,90]);
+          logE('КРУГОВОЙ ЗАМАХ босса задел → HP '+Math.round(player.hp));
+        }else logE('круговой замах босса — уклонение');
+      }
+    }
     const ddx = Math.sign(tgt.gx - ph.gx);
     const ddy = Math.sign(tgt.gy - ph.gy);
     const dist = Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
     let bestIdx=ph.dirIdx, bestDot=-9;
     for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
-    ph.dirIdx=bestIdx;
+    if(ph.kind==='boss'){                       // НЕПОВОРОТЛИВОСТЬ: разворот не чаще раза в 1.2с
+      ph.turnT=(ph.turnT||0)-dt;
+      if(ph.turnT<=0 && bestIdx!==ph.dirIdx){ ph.dirIdx=bestIdx; ph.turnT=1.2; }
+    }else ph.dirIdx=bestIdx;
     // ПРИЦЕЛ ПО ЯРУСУ как игрок: целится в тело цели (для локальной — в её ярус)
     ph.tier = tgt.local ? player.tier : 1;
     ph.pitch = (ph.tier-1)*0.7;
@@ -1641,7 +1841,7 @@ function updatePhantoms(dt){
       else ai.noProg=(ai.noProg||0)+dt;
     } else { ai.lastDist=dist; ai.noProg=0; }
     if(ai.moveT<=0){
-      ai.moveT = [1.0,0.8,0.6][botDiff] * (0.85+Math.random()*0.4);   // темп зависит от сложности
+      ai.moveT = [1.0,0.8,0.6][botDiff] * (0.85+Math.random()*0.4) * (ph.slow||1);   // темп: сложность × неповоротливость босса
       const canGo=(nx,ny)=> !isCellOccupied(nx,ny,ph);
       let moved=false;
       if((ai.noProg||0)>2.5 && dist>1){
@@ -1838,14 +2038,14 @@ $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'ВКЛ':'ВЫКЛ');
   if(ADV.on){ applyAdvRoom(6,6); NET.advPub(); }
-  else { try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
+  else { clearRacks(); clearShots(); try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
   logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
   $('mFF').textContent='⚔ УРОН ИГРОКАМ: '+(friendlyFire?'ВКЛ':'ВЫКЛ'); logE('friendlyFire='+friendlyFire); };
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04a · ПРИГОДА(метасетка 13×13, дом, боссы) · оружейня(6 видов) · тумблер-равновесия';
+const BUILD_TAG='2026-07-04b · звери(повзун/літун/стрілець+снаряды) · босс 2×2/3×3(спина×3,замах) · без-респауна · видимые-стойки';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2021,7 +2221,7 @@ const NET = {
     if(phantoms.length){
       const obj={};
       phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
-        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,t:Date.now()}; });
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now()}; });
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
     }else{
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
@@ -2126,7 +2326,15 @@ function removeRemote(id){
 /* ── ОБЩИЕ ФАНТОМЫ чужих владельцев: рисуем как красные аватары ── */
 function upsertRemotePhantom(key, s){
   let r = NET.rphantoms[key];
-  if(!r){ const av=makeAvatar(0.02); av.bladeHue=0.02; r=NET.rphantoms[key]={av, latest:s}; }
+  if(!r){ const av=makeAvatar(0.02); av.bladeHue=0.02; r=NET.rphantoms[key]={av, latest:s};
+    try{
+      if(s&&s.k==='crawler') av.mesh.scale.set(0.55,0.35,0.55);
+      else if(s&&s.k==='flyer') av.mesh.scale.set(0.45,0.45,0.45);
+      else if(s&&s.k==='gunner') av.mesh.scale.set(0.8,0.85,0.8);
+      else if(s&&s.k==='boss') av.mesh.scale.setScalar((s.sz||2)>2?2.8:2.0);
+    }catch(e){}
+    av.size=(s&&s.sz)||1; av.hover=(s&&s.hov)||0;
+  }
   r.latest=s;
 }
 function renderRemotePhantoms(now, dt){
@@ -2277,6 +2485,7 @@ function frame(now){
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
   updateAdventure(dt);                 // сбор на кромке → переход между комнатами
   updateRacks(dt);                     // стойки оружия в ДОМЕ
+  updateShots(dt);                     // снаряды стрельцов (и отбитые)
 
   // периодическая выборка состояния в лог
   sampleT -= dt;
