@@ -889,9 +889,20 @@ function updateAvatarMesh(av, t){
   col(P.pelvis,base*0.9); col(P.torso,base,0.8); col(P.head,base*1.08,0.7);
   P.visor.material.color.setHSL(av.bladeHue??0.95, 0.9, clamp(0.5+glow,0.2,0.95));
   // ── руки к рукояти (двуручный хват), локоть наружу-вниз; выпад тянет руки вперёд ──
-  const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1), lunge=atk*0.7;
+  const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1);
+  let lunge=atk*0.7, latk=0;   // по умолчанию: выпад вперёд (меч)
+  if(av===player){
+    const _rel=WEAPONS[playerWpn].rel;
+    if(_rel==='arc'){        // руки ведут ДУГУ вместе с секирой: вбок → через фронт
+      lunge=atk*0.12;
+      const side=(wfx.sim&&wfx.sim.axeSide)||1, ph3=1-atk, e3=ph3*ph3*(3-2*ph3);
+      latk=side*Math.cos(e3*Math.PI)*0.55;
+    }else if(_rel==='spin'){ lunge=0; }                       // раскрутка — корпус спокоен
+    else if(_rel==='crack'){ lunge=atk*0.25; }                // короткий кистевой посыл
+    else if(playerWpn==='spear'){ lunge=atk*1.15; }           // выпад глубже и дальше
+  }
   const guard=clamp((av.roll||0)/70,-1,1);
-  const hlx=guard*0.5, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять (=мировая кисть в handInfo): руки на сторону по наклону
+  const hlx=guard*0.5+latk, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять: наклон + ДУГА маха
   const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
   const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
   const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
@@ -911,7 +922,7 @@ const WEAPON_FX={
   bossaxe:{thick:2.2},
 };
 function updateBlade(av){
-  if(av.disarmed || av.dead || av.noBlade){ av.blade.count=0; return; }   // у повзуна/літуна/стрільця клинка НЕТ
+  if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
   const wname = av===player ? playerWpn : av.wpn;
   const wst = wname && WEAPON_FX[wname];
   if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
@@ -978,8 +989,30 @@ function updateStanceAndCamera(dt){
   else if(player.charging){
     player.charging=false;
     if(player.charge>1.25){
-      player.swordLen=player.charge; player.strikeT=0.4;
-      blip(180,0.12,'sawtooth',0.18); logE('ВЫБРОС клинка, длина='+player.charge.toFixed(1)); addExhaustion(player, 14*WEAPONS[playerWpn].w/5);
+      const W=WEAPONS[playerWpn];
+      player.strikeT=0.4;
+      if(W.rel==='arc'){
+        // МАХ: длина НЕ растёт — заряд уходит в веер (зона ±2 направления на 2 клетки)
+        player.swordLen=1.6;
+        blip(120,0.16,'sawtooth',0.2); logE('МАХ '+W.label+' со стороны '+((sensor.roll||1)>=0?'права':'ліва'));
+      }else if(W.rel==='spin'){
+        // РАСКРУТКА: заряд конвертируется в угловую скорость маятника — импульс в pp
+        player.swordLen=1.2;
+        if(wfx.sim && wfx.sim.p){ const S2=wfx.sim, side=(sensor.roll||1)>=0?1:-1;
+          const kick=(player.charge-1)*0.42*side;
+          S2.pp[0]-=kick; }                     // мгновенная боковая скорость грузу
+        blip(300,0.1,'sine',0.16); blip(520,0.08,'sine',0.12);
+        logE('РАСКРУТКА '+W.label+' ×'+player.charge.toFixed(1));
+      }else if(W.rel==='crack'){
+        // ЩЕЛЧОК: хвост выпрямляется вперёд на полную длину (импульс уже в верле-блоке)
+        player.swordLen=player.charge;
+        blip(1200,0.06,'square',0.16); logE('ЩЕЛЧОК хлиста, длина='+player.charge.toFixed(1));
+      }else{
+        // ЛИНИЯ (меч/спис): классический выпад вперёд
+        player.swordLen=player.charge;
+        blip(180,0.12,'sawtooth',0.18); logE('ВЫПАД, длина='+player.charge.toFixed(1));
+      }
+      addExhaustion(player, 14*W.w/5);
     }
     player.charge=1;
   }
@@ -1063,7 +1096,7 @@ function startClinch(foe){
   clinch.lockLen   = clamp(Math.round(player.swordLen),1,6);
   clinch.broke     = false;
   // давление: обнулить счётчики; для PvP — открыть канал в Firebase
-  clinch.myImp=0; clinch.foeImp=0; clinch.foeBase=null; clinch.foeT=0;
+  clinch.myImp=0; clinch.foeImp=0; clinch.foeBase=null; clinch.foeT=0; clinch.spinHold=0;
   clinch.pressX=0; clinch.pressDmgT=0; clinch.pressPubT=0; clinch.pvpPair=null;
   if(foe && foe.remote){ clinch.pvpPair = NET.pressPair(foe.id); NET.pressSub(clinch.pvpPair); }
   player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
@@ -1112,6 +1145,12 @@ function endClinch(reason){
     doFlash('#4ade80');
     blip(660,0.22,'sine',0.2); blip(990,0.16,'sine',0.16);
     buzz([0,40,30,90]);
+  }else if(reason==='spinout'){
+    showBanner('🌀 РАСКРУТИЛСЯ — ВЫРВАЛСЯ ИЗ СВЯЗКИ','#fbbf24');
+    blip(500,0.1,'sine',0.16); blip(760,0.1,'sine',0.14); buzz([0,40,20,40]);
+  }else if(reason==='slipout'){
+    showBanner('〰 ВЫСКОЛЬЗНУЛ','#22d3ee');   // хлыст: без штрафа выносливости
+    blip(900,0.08,'sine',0.12);
   }else if(reason==='net'){
     showBanner('◌ СВЯЗЬ ПОТЕРЯНА — КЛИНЧ РАСПАЛСЯ','#94a3b8');   // без штрафа
     blip(220,0.15,'sine',0.1);
@@ -1149,9 +1188,25 @@ function updateClinch(dt){
   // Жмёшь, пока держишь клинок В ТОЧКЕ (Δ мал): сила = точность удержания × запас
   // выносливости × рывок руки (sensor.speed). Давить дорого — выносливость капает.
   {
-    const hold = clamp(1 - clinch.delta/25, 0, 1);
+    /* КЛИНЧ РАЗНЫМ ОРУЖИЕМ — разные пути к победе:
+       меч/спис — ТОЧНОСТЬ: держи точку (Δ мал) → давишь и паришь (спис чуть слабее в связке);
+       сокира   — СИЛА: точность почти не важна (hold мягкий), давит ×1.45, но парирование грубое;
+       нунчаки/ціп — РАСКРУТКА: давить и ВЫРВАТЬСЯ можно только вращением (маятник >7 рад/с);
+       хлист    — ВЫСКАЛЬЗЫВАНИЕ: в связке слаб (×0.4), зато уводишь Δ>15 — просто выдернул. */
+    const Wc=WEAPONS[playerWpn];
+    let hold;
+    if(Wc.rel==='spin'){
+      const sp=(wfx.sim&&wfx.sim.p)?Math.hypot(wfx.sim.p[0]-wfx.sim.pp[0],wfx.sim.p[1]-wfx.sim.pp[1],wfx.sim.p[2]-wfx.sim.pp[2])/Math.max(dt,1e-3)/0.7:0;
+      hold=clamp(sp/9,0,1);                                    // сила связки = скорость вращения
+      clinch.spinHold=(clinch.spinHold||0)+(sp>7?dt:0);
+      if(clinch.spinHold>0.5){ endClinch('spinout'); return; } // РАЗОГНАЛ → ВЫРВАЛСЯ
+    }else if(Wc.rel==='arc'){ hold=clamp(1-clinch.delta/60,0.35,1); }
+    else if(Wc.rel==='crack'){ hold=clamp(1-clinch.delta/25,0,1);
+      if(clinch.delta>15 && clinch.t>0.4){ endClinch('slipout'); return; } }  // гибкий — выдернул
+    else hold=clamp(1-clinch.delta/25,0,1);
+    const pressMul = Wc.rel==='arc'?1.45 : Wc.rel==='crack'?0.4 : playerWpn==='spear'?0.85 : 1;
     const staF = clamp(player.stamina/60, 0.15, 1);
-    const push = hold * (0.55 + 0.45*clamp(sensor.speed/5,0,1)) * staF;
+    const push = hold * (0.55 + 0.45*clamp(sensor.speed/5,0,1)) * staF * pressMul;
     clinch.myImp += push*dt;
     player.stamina = clamp(player.stamina - dt*4*hold, 0, 100);
     // сторона противника
@@ -1223,11 +1278,15 @@ function updateClinch(dt){
   }
   // ПАРИРОВАНИЕ (победа в клинче): держишь клинок в точке (Δ<10) — продавливаешь.
   // После разрыва зачёт быстрый (контра); без разрыва (просто не дал себя сбить) — чуть дольше.
-  if(clinch.delta < 10){
-    clinch.parryWindow += dt;
-    const need = clinch.broke ? 0.15 : 1.2;
-    if(clinch.parryWindow > need){ endClinch('parry'); return; }
-  }else clinch.parryWindow = 0;
+  {
+    const Wc2=WEAPONS[playerWpn];
+    const tol = Wc2.rel==='arc'?16 : playerWpn==='spear'?8 : 10;   // сокира груба, спис требует точности
+    if(Wc2.rel!=='spin' && clinch.delta < tol){
+      clinch.parryWindow += dt;
+      const need = (clinch.broke ? 0.15 : 1.2) * (Wc2.rel==='arc'?1.25:1);
+      if(clinch.parryWindow > need){ endClinch('parry'); return; }
+    }else clinch.parryWindow = 0;
+  }
   // РАЗОРУЖЕНИЕ — только реальный провал: увёл клинок за критический угол, ЛИБО ДОЛГО держал
   // рассинхрон, ЛИБО кончилась выносливость. Ровно держащего НЕ разоружаем по таймеру
   // (иначе честное удержание = гарантированный проигрыш → бесконечная петля disarm↔телекинез).
@@ -1450,17 +1509,26 @@ function resolveBurn(dt){
    w=вес (расход сил), maxLen=предел длины (меч=6 — прежнее поведение),
    arc=боковые клетки у гарды, sweep=кольцо вокруг бойца, dmg=множитель урона */
 const WEAPONS={
-  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  desc:'баланс линии'},
-  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, desc:'длинная линия вперёд'},
-  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  desc:'короткая, широкая дуга, тяжёлая'},
-  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, desc:'кольцо вокруг тебя'},
-  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  desc:'лёгкие и вертлявые'},
-  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, desc:'очень длинный, слабый'},
-  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, desc:'оружие босса'},
+  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  rel:'line',  desc:'баланс линии'},
+  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, rel:'line',  desc:'длинная линия вперёд'},
+  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  rel:'arc',   desc:'мах веером со стороны наклона'},
+  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, rel:'spin',  desc:'кольцо; выброс = раскрутка'},
+  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  rel:'spin',  desc:'выброс = раскрутка'},
+  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, rel:'crack', desc:'щелчок: длинный, слабый'},
+  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, rel:'arc', desc:'оружие босса'},
 };
 let playerWpn='sword';
-function weaponCells(gx,gy,dirIdx,len,wpn){
+function weaponCells(gx,gy,dirIdx,len,wpn,striking){
   const W=WEAPONS[wpn]||WEAPONS.sword, out=[];
+  // МАХ (rel:'arc' во время strikeT): веер из 5 направлений на 2 клетки — сектор дуги
+  if(W.rel==='arc' && striking){
+    for(const off of [-2,-1,0,1,2]){
+      const d=DIRV[(dirIdx+off+8)%8];
+      out.push((gx+d[0])+','+(gy+d[1]));
+      out.push((gx+d[0]*2)+','+(gy+d[1]*2));
+    }
+    return out;
+  }
   const L=clamp(Math.round(len*W.maxLen/6),1,W.maxLen);   // меч (maxLen=6) — прежняя длина 1:1
   if(W.sweep){
     for(const [ox,oy] of DIRV) out.push((gx+ox)+','+(gy+oy));   // кольцо из 8 клеток
@@ -1660,8 +1728,8 @@ function updateWeaponFX(dt){
       const ca=Math.cos(ang), sa=Math.sin(ang);
       const sxv= uz, szv=-ux;                                           // горизонтальный перпендикуляр
       hx2=H.hx+(ux*ca+sxv*sa)*R; hy2=H.hy+(H.tipY-H.hy)*0.6; hz2=H.hz+(uz*ca+szv*sa)*R;
-      if(Math.random()<dt*24) emitSparks(hx2,hy2,hz2,'#ef4444',3,2.0);  // шлейф дуги
-    } else S.axeSide=null;
+      if(ease>0.45 && ease<0.55 && !S.axeMidFx){ S.axeMidFx=true; emitSparks(hx2,hy2,hz2,'#ef4444',10,2.6); }  // одна вспышка в середине маха
+    } else { S.axeSide=null; S.axeMidFx=false; }
     P.blade1.position.set(hx2,hy2,hz2); P.blade1.lookAt(H.hx,H.hy,H.hz);
     P.blade2.position.set(lerp(hx2,H.hx,0.16), lerp(hy2,H.hy,0.16), lerp(hz2,H.hz,0.16));
     P.blade2.lookAt(H.hx,H.hy,H.hz);
@@ -1892,9 +1960,9 @@ function updateRacks(dt){
 }
 
 function bladeCells(av){
-  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn);
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0);
   if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
-  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword');
+  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0);
 }
 function bladeCells_LEGACY(av){
   const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6), out=[];
@@ -2365,7 +2433,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04e · привод-маятника-без-гироскопа · сокира:замах-со-стороны-наклона · поверхности-пола · стены/коридоры/лазы';
+const BUILD_TAG='2026-07-04f · выброс-по-оружию(мах/раскрутка/щелчок/выпад, без дубляжа) · руки-в-дуге · клинч-по-оружию(spinout/slipout) · босс-без-луча';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
