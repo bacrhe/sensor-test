@@ -888,7 +888,7 @@ const WEAPON_FX={
   bossaxe:{thick:2.2},
 };
 function updateBlade(av){
-  if(av.disarmed || av.dead){ av.blade.count=0; return; }
+  if(av.disarmed || av.dead || av.noBlade){ av.blade.count=0; return; }   // у повзуна/літуна/стрільця клинка НЕТ
   const wname = av===player ? playerWpn : av.wpn;
   const wst = wname && WEAPON_FX[wname];
   if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
@@ -1533,35 +1533,47 @@ function updateWeaponFX(dt){
   const S=wfx.sim;
   player.spinBonus=1;
   if(wfx.kind==='nunchaku' || wfx.kind==='flail'){
-    // МАЯТНИК в вертикальной плоскости вдоль взгляда: a=0 — висит вниз; полный оборот возможен
-    const L = wfx.kind==='flail'?0.85:0.62, G=14, damp=wfx.kind==='flail'?0.5:0.9;
-    const drive = clamp(sensor.rollRate||0,-500,500)*(Math.PI/180)*(wfx.kind==='flail'?2.4:4.2);
-    S.w += (-(G/L)*Math.sin(S.a) - damp*S.w + drive)*dt;
-    S.w = clamp(S.w,-26,26);
-    S.a += S.w*dt;
-    const sp=Math.abs(S.w);
-    if(sp>9){ player.spinBonus=1.3;                                  // раскрутка = урон ×1.3
-      if(Math.random()<dt*6) emitSparks(H.hx,H.hy,H.hz,'#fbbf24',3,1.6); }
-    // конец подвеса: у нунчаков — конец первой палки, у цепа — сама кисть
+    /* СФЕРИЧЕСКИЙ 3D-МАЯТНИК: точка-груз на ЖЁСТКОМ стержне от подвеса.
+       Качается СВОБОДНО ВО ВСЕ СТОРОНЫ: движение руки (якорь едет с кистью)
+       раскачивает само по себе; запястье докручивает — rollRate вбок, pitchRate вперёд.
+       Полные обороты в любой плоскости возможны — это просто верле без ограничений угла. */
+    const L = wfx.kind==='flail'?0.85:0.62, damp=wfx.kind==='flail'?0.988:0.982;
+    // подвес: конец первой палки нунчаков / кисть для цепа
     const ax = wfx.kind==='nunchaku'? H.hx+ux*0.6 : H.hx;
     const ay = wfx.kind==='nunchaku'? H.hy+uy*0.6 : H.hy;
     const az = wfx.kind==='nunchaku'? H.hz+uz*0.6 : H.hz;
-    // отвес: вниз при a=0, по кругу в плоскости (вперёд, вертикаль)
-    const px = ax + ux*Math.sin(S.a)*L;
-    const py = ay - Math.cos(S.a)*L;
-    const pz = az + uz*Math.sin(S.a)*L;
+    if(!S.p){ S.p=[ax,ay-L,az]; S.pp=[ax,ay-L,az]; }
+    const p=S.p, pp=S.pp;
+    // верле-шаг с гравитацией
+    const vx=(p[0]-pp[0])*damp, vy=(p[1]-pp[1])*damp, vz=(p[2]-pp[2])*damp;
+    pp[0]=p[0]; pp[1]=p[1]; pp[2]=p[2];
+    p[0]+=vx; p[1]+=vy-11*dt*dt; p[2]+=vz;
+    // запястье: боковой перпендикуляр к взгляду и «вперёд» — две независимые оси раскрутки
+    const kSpin = wfx.kind==='flail'?1.2:2.0;
+    const rr=clamp(sensor.rollRate||0,-500,500)*(Math.PI/180);
+    const pr=clamp(sensor.pitchRate||0,-500,500)*(Math.PI/180);
+    p[0]+=( uz*rr + ux*pr )*L*kSpin*dt*dt*60;
+    p[2]+=(-ux*rr + uz*pr )*L*kSpin*dt*dt*60;
+    // жёсткий стержень: |p−якорь| = L строго (и растяжение, и сжатие)
+    let dx=p[0]-ax, dy=p[1]-ay, dz=p[2]-az;
+    const d=Math.hypot(dx,dy,dz)||1e-6;
+    p[0]=ax+dx/d*L; p[1]=ay+dy/d*L; p[2]=az+dz/d*L;
+    // скорость груза → раскрутка (в ЛЮБОЙ плоскости) = урон ×1.3 + искры
+    const sp=Math.hypot(p[0]-pp[0],p[1]-pp[1],p[2]-pp[2])/Math.max(dt,1e-3)/L;
+    if(sp>9){ player.spinBonus=1.3;
+      if(Math.random()<dt*7) emitSparks(p[0],p[1],p[2],'#fbbf24',3,1.6); }
     if(wfx.kind==='nunchaku'){
       const P=wfx.parts;
       P.stick1.position.set(H.hx+ux*0.3, H.hy+uy*0.3, H.hz+uz*0.3);
       P.stick1.lookAt(ax,ay,az);
       P.link.position.set(ax,ay,az);
-      P.stick2.position.set((ax+px)/2,(ay+py)/2,(az+pz)/2);
-      P.stick2.lookAt(px,py,pz);
+      P.stick2.position.set((ax+p[0])/2,(ay+p[1])/2,(az+p[2])/2);
+      P.stick2.lookAt(p[0],p[1],p[2]);
     }else{
       const P=wfx.parts;
       for(let i=0;i<P.chain.length;i++){ const f=(i+1)/(P.chain.length+1);
-        P.chain[i].position.set(lerp(H.hx,px,f), lerp(H.hy,py,f), lerp(H.hz,pz,f)); }
-      P.head.position.set(px,py,pz);
+        P.chain[i].position.set(lerp(ax,p[0],f), lerp(ay,p[1],f), lerp(az,p[2],f)); }
+      P.head.position.set(p[0],p[1],p[2]);
     }
   }else if(wfx.kind==='whip'){
     // ВЕРЛЕ-ХВОСТ: 8 точек, кисть — якорь; хвост тянется за рукой, провисает и хлещет
@@ -1584,6 +1596,13 @@ function updateWeaponFX(dt){
              a[0]+=dx*corr*0.5; a[1]+=dy*corr*0.5; a[2]+=dz*corr*0.5; }
     }
     S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
+    // ЩЕЛЧОК: на выбросе клинка хвост получает волну-импульс вперёд (кончик хлещет)
+    if(player.strikeT>0.34 && !S.cracked){ S.cracked=true;
+      for(let i=3;i<N;i++){ const w2=(i-2)/(N-3);
+        S.pp[i][0]-=ux*0.5*w2; S.pp[i][2]-=uz*0.5*w2; }   // сдвиг прошлой позиции = мгновенная скорость
+      blip(1200,0.06,'square',0.14);
+    }
+    if(player.strikeT<=0) S.cracked=false;
     const P=wfx.parts;
     for(let i=0;i<P.seg.length;i++){ const a=S.pts[i], b=S.pts[i+1];
       P.seg[i].position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
@@ -1593,13 +1612,26 @@ function updateWeaponFX(dt){
     if(Math.hypot(tip[0]-tp[0],tip[1]-tp[1],tip[2]-tp[2])/Math.max(dt,1e-3) > 6 && Math.random()<dt*8)
       emitSparks(tip[0],tip[1],tip[2],'#22d3ee',3,1.4);
   }else if(wfx.kind==='axe'){
+    // РАЗМАШИСТЫЙ ДУГОВОЙ ЗАМАХ: на выбросе голова метёт дугу ±100° вокруг кисти
     const P=wfx.parts;
-    P.blade1.position.set(H.tipX,H.tipY,H.tipZ); P.blade1.lookAt(H.tipX+ux,H.tipY+uy,H.tipZ+uz);
-    P.blade2.position.set(H.tipX-ux*0.18,H.tipY-uy*0.18,H.tipZ-uz*0.18);
-    P.blade2.lookAt(H.tipX+ux,H.tipY+uy,H.tipZ+uz);
+    const R=Math.max(Math.hypot(H.tipX-H.hx,H.tipY-H.hy,H.tipZ-H.hz),0.5);
+    let hx2=H.tipX, hy2=H.tipY, hz2=H.tipZ;
+    if(player.strikeT>0){
+      const ph2=1-clamp(player.strikeT/0.4,0,1);              // 0→1 за удар
+      const ang=Math.sin(ph2*Math.PI)*0*0 + (ph2-0.5)*2*(100*Math.PI/180); // −100°→+100°
+      const ca=Math.cos(ang), sa=Math.sin(ang);
+      const sxv= uz, szv=-ux;                                  // горизонтальный перпендикуляр
+      hx2=H.hx+(ux*ca+sxv*sa)*R; hy2=H.hy+ (H.tipY-H.hy)*0.6; hz2=H.hz+(uz*ca+szv*sa)*R;
+      if(Math.random()<dt*22) emitSparks(hx2,hy2,hz2,'#ef4444',3,2.0);   // шлейф дуги
+    }
+    P.blade1.position.set(hx2,hy2,hz2); P.blade1.lookAt(H.hx,H.hy,H.hz);
+    P.blade2.position.set(lerp(hx2,H.hx,0.16), lerp(hy2,H.hy,0.16), lerp(hz2,H.hz,0.16));
+    P.blade2.lookAt(H.hx,H.hy,H.hz);
   }else if(wfx.kind==='spear'){
+    // ВЫПАД: жало резко уходит вперёд и возвращается
     const P=wfx.parts;
-    P.tip.position.set(H.tipX,H.tipY,H.tipZ);
+    const lung = player.strikeT>0 ? Math.sin((1-clamp(player.strikeT/0.4,0,1))*Math.PI)*0.8 : 0;
+    P.tip.position.set(H.tipX+ux*lung, H.tipY+uy*lung, H.tipZ+uz*lung);
     P.tip.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
   }
 }
@@ -2245,7 +2277,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-04c · модели-зверей(анимации) · титан-с-секирой · физика-оружия(маятник-нунчаки/цеп, верле-хлыст) · спин×1.3';
+const BUILD_TAG='2026-07-04d · 3D-маятник(во все стороны) · дуга-сокири · выпад-списа · щелчок-хлыста · фикс:призрачный-меч-у-зверей';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
