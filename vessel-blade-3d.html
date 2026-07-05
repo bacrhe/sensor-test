@@ -132,6 +132,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
+  <button id="mScan">🏠 СКАН 46м² (элементы)</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -2135,23 +2136,35 @@ function addObstacle(gx,gy,type,taken,tint,tallMul){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
-  const solid=(type==='wall'||type==='crawl');
+  // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
+  const solid=(type==='wall'||type==='crawl'||type==='base');
   const crawl=(type==='crawl');
-  const h = (type==='rubble'?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);
-  const geo=new THREE.BoxGeometry(type==='rubble'?0.8:0.86, crawl?h*0.62:h, type==='rubble'?0.8:0.86);
-  const wallCol = tint!=null ? tint : (crawl?0x31435f:0x28374f);
-  const mat= solid? new THREE.MeshBasicMaterial({color:wallCol})
-    : new THREE.MeshBasicMaterial({color:type==='rubble'?0x8a6a2e:0xc9a03a, transparent:true, opacity:0.9});
+  const passel=(type==='liquid'||type==='gas'||type==='plasma');      // проходимые элементы
+  const pass = crawl?'crawl' : (passel?type : null);
+  const destr=(type==='rubble'||type==='fragile');
+  const low = (type==='rubble'||type==='gas');                         // низкие блоки
+  const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
+  const h = (flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);
+  const w = (type==='rubble'?0.8:0.86);
+  const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, w);
+  const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
+  const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
+  let mat;
+  if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:type==='gas'?0.26:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
+  else if(type==='liquid')          mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:0.55, depthWrite:false});
+  else if(solid)                    mat=new THREE.MeshBasicMaterial({color:wallCol});
+  else                              mat=new THREE.MeshBasicMaterial({color:type==='fragile'?0x7cc8ff:(type==='rubble'?0x8a6a2e:0xc9a03a), transparent:true, opacity:0.9});
   const grp=new THREE.Group(); grp.frustumCulled=false;
   const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
   boxM.position.y = crawl ? h*0.19 : 0;      // ЛАЗ: стена приподнята, под ней видимый отвір
+  const edgeCol = solid?(crawl?0x86b6f0:(type==='base'?0x6b7280:0x5f86c0)) : (ECOL[type]!=null?ECOL[type]:0xffd47a);
   const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo),
-    new THREE.LineBasicMaterial({color: solid?(crawl?0x86b6f0:0x5f86c0):0xffd47a, transparent:true,
+    new THREE.LineBasicMaterial({color: edgeCol, transparent:true,
       opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
   grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
-  obstacles.push({gx,gy,solid,pass:crawl?'crawl':null,
-    hp: solid?Infinity : (type==='rubble'?24:40), alive:true, mesh:grp, mat});
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',
+    hp: solid?Infinity : (destr?(type==='fragile'?16:24):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
   // ПРОХОДИМОСТЬ: от центра до середин всех 4 кромок (лаз для игрока — стена)
@@ -2163,6 +2176,43 @@ function roomReachable(){
       const k=nx+','+ny; if(seen.has(k)||blocked(nx,ny)) continue;
       seen.add(k); q.push([nx,ny]); } }
   return seen.has('6,0')&&seen.has('6,12')&&seen.has('0,6')&&seen.has('12,6');
+}
+/* ── ГЕНЕРАЦИЯ ОТСКАНИРОВАННОЙ КОМНАТЫ (Floorplan ~46 m²) + демо элементных блоков ── */
+function buildScannedRoom(tintHex){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
+  const tint = tintHex!=null ? tintHex : 0x28374f;
+  // W/L — капитальная стена; k/t/c — мебель (хрупкое); ~ — жидкость (сквозь, ×0.5 скорость);
+  // * — плазма (сквозь, жжёт Душу); o — газ-лампа (сквозь, свет-источник)
+  const layout = [
+    "             ",
+    "             ",
+    "  WWWWWWW    ",
+    "  Wk    WWW  ",
+    "  Wk  t   W  ",
+    "  WW  ~   W  ",
+    "   W o c LL  ",
+    "   W * c  W  ",
+    "   WWWWWWWW  ",
+    "             ",
+    "             ",
+    "             ",
+    "             "
+  ];
+  const M={ 'W':'wall','L':'wall','k':'rubble','t':'rubble','c':'rubble','~':'liquid','*':'plasma','o':'gas' };
+  for(let y=0;y<13;y++) for(let x=0;x<13;x++){
+    const ch=layout[y] && layout[y][x]; const t=M[ch]; if(!t) continue;
+    if(t==='wall')        addObstacle(x,y,'wall',taken,tint,1.2);
+    else if(t==='rubble') addObstacle(x,y,'rubble',taken,0x4a5568,1);
+    else                  addObstacle(x,y,t,taken,null,1);
+  }
+  logE('Загружена карта реального помещения ~46м² (+элементные блоки)');
+}
+function loadScannedRoom(){
+  buildScannedRoom();
+  const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];   // безопасный старт
+  if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  spawnPhantoms(phantomCount); clearClinch(); applyMode(); closeMenu();
 }
 function buildRoomStructures(rng, weight, tintHex){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
@@ -2419,8 +2469,9 @@ function nearestTarget(ph){
 function isCellOccupied(gx,gy,ignore){
   if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
   { const o=obstacleAt(gx,gy);
-    if(o && !(ignore && ignore.kind==='crawler' && o.pass==='crawl'))
-      return {layer0:true, kind:'obstacle'}; }   // ЛАЗ: повзун проползает под стеной
+    if(o && o.pass!=='liquid' && o.pass!=='gas' && o.pass!=='plasma'
+       && !(ignore && ignore.kind==='crawler' && o.pass==='crawl'))
+      return {layer0:true, kind:'obstacle'}; }   // ЛАЗ: повзун проползает; жидкость/газ/плазма — сквозь
   for(const p of phantoms){ if(p!==ignore && !p.dead
     && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)) return {layer0:true, kind:'phantom', av:p}; }
   if(remotePhantomAt(gx,gy)) return {layer0:true, kind:'rphantom'};
@@ -2629,6 +2680,7 @@ function updatePhantoms(dt){
    ВНИЗ = назад, ВЛЕВО/ВПРАВО = вбок. Привязано к направлению клинка,
    а не к абсолютной сетке — так интуитивно.                       */
 function stepRelative(dx, dy){            // dx,dy — экранный свайп
+  if((player.moveLockT||0)>0) return;     // Раздел 6: жидкость замедляет — движение на кулдауне
   if(clinch.active) endClinch('retreat');  // шаг разрывает клинч (отступ) — затем сам шаг
   const f = DIRV[player.dirIdx];          // вперёд (куда смотрит игрок)
   const r = [-f[1], f[0]];                // вправо (перпендикуляр)
@@ -2652,6 +2704,7 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
     return;                                                     // в занятую клетку не шагаем
   }
   player.gx=nx; player.gy=ny;
+  { const dc=obstacleAt(nx,ny); if(dc && dc.pass==='liquid') player.moveLockT=0.4; }   // Раздел 6: бредём по жидкости вдвое медленнее
   tryPickupBlade(); blip(520,0.05,'sine',0.06);
 }
 let touchStart=null;
@@ -2761,7 +2814,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05c · кольцо/дуга-бьют-вокруг · подбор-с-выдержкой(0.6с+кд) · бластер:встряхивание · пол-v2(палитры/рельеф/акценты) · лабиринты+будиночки+проходимость';
+const BUILD_TAG='2026-07-05d · +скан-комната-46м² · +элементные-блоки(база/хрупкое/жидкость/газ/плазма)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2772,6 +2825,7 @@ $('mCache').onclick=async()=>{
   setTimeout(()=>location.replace(u.toString()), 350);
 };
 $('mNew').onclick=newGame;
+$('mScan').onclick=loadScannedRoom;
 $('mMenu').onclick=()=>location.reload();
 // подхватить ?room= из ссылки (без обращения к NET — он объявлен ниже)
 { const ur=(new URLSearchParams(location.search).get('room')||'').toUpperCase().replace(/[^A-Z0-9_-]/g,'');
@@ -3132,6 +3186,14 @@ function frame(now){
     if(!clinch.active && !player.disarmed){
       const regen = 8 * (1 - 0.85*clamp((player.activityExhaustion||0)/100,0,1));
       player.stamina = clamp(player.stamina + dt*regen, 0, 100);
+    }
+    // Раздел 6: элементная клетка под игроком — плазма жжёт Душу; кулдаун движения (жидкость) тает
+    if((player.moveLockT||0)>0) player.moveLockT-=dt;
+    { const oc=obstacleAt(player.gx,player.gy);
+      if(oc && oc.pass==='plasma' && !player.dead){
+        player.plasmaCd=(player.plasmaCd||0)-dt;
+        if(player.plasmaCd<=0){ player.plasmaCd=0.5; damageTier(player,1,6); doFlash('#e879f9'); buzz(40); logE('плазма жжёт Душу → HP '+Math.round(player.hp)); }
+      }
     }
     if(player.painT>0) player.painT-=dt;
     if(!clinch.active){
