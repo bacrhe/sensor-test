@@ -496,22 +496,29 @@ floor.frustumCulled = false;
 scene.add(floor);
 /* ── ПОВЕРХНОСТИ: у каждой комнаты свой узор пола (цвет + рельеф тайлов) ── */
 const _fd=new THREE.Object3D(), _fc=new THREE.Color();
+const FLOOR_HUES={ center:0.58, ascension:0.38, descent:0.02, echo:0.6, noise:0.85,
+  ascension_echo:0.5, ascension_noise:0.13, descent_echo:0.68, descent_noise:0.98 };
 function paintFloor(rx,ry){
   const st=roomStyle(rx,ry), a=st.archetype, rng=mulberry32(rx*911+ry*37+5);
-  const bg=new THREE.Color(st.bg); let hBase=0.58, i=0;
-  try{ const hsl={h:0,s:0,l:0}; bg.getHSL(hsl); hBase=hsl.h; }catch(e){}
+  const hBase=FLOOR_HUES[a]??0.58; let i=0;
+  const acc=new THREE.Color(st.accent||'#60a5fa');
   for(let y=0;y<G;y++)for(let x=0;x<G;x++){
     const dx=(x-CX)/6, dy=(y-CY)/6, rad=Math.hypot(dx,dy);
-    let l=0.06, h2=hBase, sat=0.5, lift=0;
-    if(a==='center'){ l=0.05+0.05*(0.5+0.5*Math.sin(rad*9)); }               // кольца
-    else if(a.startsWith('ascension')){ l=0.06+0.06*(0.5+0.5*Math.sin((y/G)*Math.PI*4)); lift=Math.sin((y/G)*Math.PI*4)*0.05; sat=0.6; }  // ступени-волны
-    else if(a.startsWith('descent')){ const cr=rng()<0.16; l=cr?0.14:0.035; if(cr){h2=0.02;sat=0.9;} lift=cr?-0.04:0; }                    // трещины
-    if(a.includes('echo')||a==='echo'){ if((x+y)%2===0) l+=0.05; }           // шахматка
-    if(a.includes('noise')||a==='noise'){ l+=rng()*0.07; lift+=(rng()-0.5)*0.08; sat=0.75; }  // рваный шум
+    let l=0.07, h2=hBase, sat=0.6, lift=0, isAcc=false;
+    if(a==='center'){ l=0.05+0.11*(0.5+0.5*Math.sin(rad*9)); sat=0.5; }           // кольца
+    else if(a.startsWith('ascension')){ const w2=0.5+0.5*Math.sin((y/G)*Math.PI*4);
+      l=0.05+0.16*w2; lift=w2*0.14; sat=0.65; }                                    // светлые СТУПЕНИ
+    else if(a.startsWith('descent')){ const cr=rng()<0.18;
+      l=cr?0.22:0.03; if(cr){h2=0.02;sat=1;} lift=cr?-0.1:0; }                      // раскалённые ТРЕЩИНЫ
+    if(a.includes('echo')||a==='echo'){ if((x+y)%2===0){ l+=0.1; sat=0.35; } }      // контрастная ШАХМАТКА
+    if(a.includes('noise')||a==='noise'){ l+=rng()*0.14; lift+=(rng()-0.5)*0.16; sat=0.85; h2=(h2+rng()*0.08)%1; }
+    if(rng()<0.04 && !(x===CX&&y===CY)){ isAcc=true; l=0.3; }                       // редкие АКЦЕНТ-плиты
     _fd.position.set(worldX(x), -0.45+lift, worldZ(y));
-    _fd.scale.set(1, 1+Math.abs(lift)*6, 1);
+    _fd.scale.set(1, 1+Math.abs(lift)*7, 1);
     _fd.updateMatrix(); floor.setMatrixAt(i,_fd.matrix);
-    _fc.setHSL(h2, sat, clamp(l,0.02,0.2)); floor.setColorAt(i,_fc);
+    if(isAcc) _fc.copy(acc).multiplyScalar(0.55);
+    else _fc.setHSL(h2, sat, clamp(l,0.02,0.32));
+    floor.setColorAt(i,_fc);
     i++;
   }
   floor.instanceMatrix.needsUpdate=true;
@@ -1426,14 +1433,34 @@ function updatePickupCollect(){
     }
   }
 }
-function updateDropPickup(){
-  // подбор ЧУЖОГО оружия: встань на клетку — свап (твоё нынешнее ложится на пол).
-  // Если ты безоружен — просто берёшь, разоружение снято.
+let dropDwell=0, pickupCd=0, dwellDrop=null;
+function dropToNeighbor(wpn){
+  // своё оружие ложится РЯДОМ, не под ноги — иначе пинг-понг «свап туда-сюда» каждый кадр
+  for(const [ox,oy] of DIRV){
+    const nx=player.gx+ox, ny=player.gy+oy;
+    if(nx<0||nx>12||ny<0||ny>12) continue;
+    if(obstacleAt(nx,ny)) continue;
+    if(DROPS.some(d=>d.gx===nx&&d.gy===ny)) continue;
+    const mesh=dropModel(wpn);
+    mesh.position.set(worldX(nx), -0.3, worldZ(ny)); scene.add(mesh);
+    DROPS.push({gx:nx, gy:ny, wpn, mesh});
+    return;
+  }
+  spawnDrop(player.gx, player.gy, wpn);   // всё занято — как получится (кулдаун защитит)
+}
+function updateDropPickup(dt){
+  pickupCd=Math.max(0, pickupCd-(dt||0.016));
+  if(pickupCd>0) return;
+  // подбор с ВЫДЕРЖКОЙ: стой на чужом оружии 0.6с — свап; сошёл — счёт сбрасывается
   for(const d of DROPS){
     if(player.gx===d.gx && player.gy===d.gy){
+      if(!player.disarmed && playerWpn===d.wpn){ dropDwell=0; dwellDrop=null; return; }
+      if(dwellDrop!==d){ dwellDrop=d; dropDwell=0; }
+      dropDwell+=(dt||0.016);
+      if(dropDwell<0.6) return;
+      dropDwell=0; dwellDrop=null; pickupCd=1.2;
       const old=playerWpn;
-      if(!player.disarmed && old===d.wpn) return;                 // то же самое — незачем
-      if(!player.disarmed) spawnDrop(player.gx, player.gy, old);  // своё — на пол
+      if(!player.disarmed) dropToNeighbor(old);                   // своё — РЯДОМ
       playerWpn = d.wpn==='bossaxe' ? 'bossaxe' : d.wpn;
       player.disarmed=false; player.disarmT=0;
       buildWeaponFX(playerWpn==='bossaxe'?'axe':playerWpn);
@@ -1609,10 +1636,12 @@ let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
   if(!player.hitActive || player.disarmed || player.dead) return;
-  const [dx,dy]=DIRV[player.dirIdx];
-  const len=clamp(Math.round(player.swordLen),1,6);
-  for(let i=1;i<=len;i++){
-    const cx=player.gx+dx*i, cy=player.gy+dy*i;
+  // ЕДИНАЯ ЗОНА ОРУЖИЯ: та же геометрия, что и у клинча/заклина — weaponCells.
+  // Раньше тут была своя линия по DIRV, из-за чего кольцо ціпа и дуга сокири
+  // НИКОГДА не наносили урон вбок/назад («бьёт только спереди»).
+  for(const c of bladeCells(player)){
+    const [cx,cy]=c.split(',').map(Number);
+    if(cx<0||cx>12||cy<0||cy>12) continue;
     const o=obstacleAt(cx,cy);
     if(o){                                     // клинок упёрся в препятствие
       if(o.solid){                             // прочное — луч заблокирован (лязг)
@@ -1620,9 +1649,9 @@ function resolveBurn(dt){
       }else if(burnCd<=0){                      // разрушаемое — прожигаем
         damageObstacle(o,16); burnCd=0.3; buzz(35);
         emitSparks(worldX(cx), TIER_H, worldZ(cy), '#ffb454', 14, 3.2);
-        logE(`ПРОЖИГ препятствия+${i}, hp→${Math.max(0,o.hp)}`);
+        logE(`ПРОЖИГ препятствия, hp→${Math.max(0,o.hp)}`);
       }
-      return;                                   // за препятствием луч не идёт
+      continue;                                 // блок линии уже в weaponCells; кольцо — контактное
     }
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
@@ -1634,7 +1663,7 @@ function resolveBurn(dt){
     }
     const ph = phantomAtCell(cx,cy);
     if(ph){
-      if(burnCd>0) return;
+      if(burnCd>0) continue;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
       let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg);
       if(ph.kind==='boss'){
@@ -1649,15 +1678,15 @@ function resolveBurn(dt){
       player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
       doFlash('#22c55e'); buzz(40);
       emitSparks(worldX(cx), TIER_H*(0.5+tier), worldZ(cy), '#63ffa0', 16, 3.6);
-      logE(`ПРОЖИГ: клетка+${i} ярус ${tier} → HP ${Math.round(ph.hp)}`);
-      return;
+      logE(`ПРОЖИГ: ярус ${tier} → HP ${Math.round(ph.hp)}`);
+      continue;
     }
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
       if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
         NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
-      return;
+      continue;
     }
   }
 }
@@ -1960,6 +1989,13 @@ function updateWeaponFX(dt){
     const P=wfx.parts;
     P.bar.position.set(H.hx+ux*0.35, H.hy+uy*0.35, H.hz+uz*0.35);
     P.bar.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
+    // СТРЕЛЬБА НА ВСТРЯХИВАНИЕ: резкий рывок телефона = быстрый слабый выстрел
+    S.shakeCd=Math.max(0,(S.shakeCd||0)-dt);
+    if(S.shakeCd<=0 && (sensor.speed||0)>8 && !player.charging){
+      S.shakeCd=0.5; firePlayerShot(1.15);
+      blip(700,0.06,'square',0.14); buzz(25);
+      logE('ВЫСТРЕЛ на встряхивание');
+    }
   }else if(wfx.kind==='spear'){
     // ВЫПАД: жало резко уходит вперёд и возвращается
     const P=wfx.parts;
@@ -2095,15 +2131,16 @@ function composeRoomEnemies(rx,ry){
    wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
    (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
-function addObstacle(gx,gy,type,taken){
+function addObstacle(gx,gy,type,taken,tint,tallMul){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
   const solid=(type==='wall'||type==='crawl');
   const crawl=(type==='crawl');
-  const h = type==='rubble'?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8;
+  const h = (type==='rubble'?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);
   const geo=new THREE.BoxGeometry(type==='rubble'?0.8:0.86, crawl?h*0.62:h, type==='rubble'?0.8:0.86);
-  const mat= solid? new THREE.MeshBasicMaterial({color:crawl?0x31435f:0x28374f})
+  const wallCol = tint!=null ? tint : (crawl?0x31435f:0x28374f);
+  const mat= solid? new THREE.MeshBasicMaterial({color:wallCol})
     : new THREE.MeshBasicMaterial({color:type==='rubble'?0x8a6a2e:0xc9a03a, transparent:true, opacity:0.9});
   const grp=new THREE.Group(); grp.frustumCulled=false;
   const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
@@ -2116,31 +2153,76 @@ function addObstacle(gx,gy,type,taken){
   obstacles.push({gx,gy,solid,pass:crawl?'crawl':null,
     hp: solid?Infinity : (type==='rubble'?24:40), alive:true, mesh:grp, mat});
 }
-function buildRoomStructures(rng, weight){
+function roomReachable(){
+  // ПРОХОДИМОСТЬ: от центра до середин всех 4 кромок (лаз для игрока — стена)
+  const blocked=(x,y)=>{ const o=obstacleAt(x,y); return !!(o&&o.solid); };
+  const seen=new Set(['6,6']), q=[[6,6]];
+  while(q.length){ const [x,y]=q.shift();
+    for(const [ox,oy] of DIRV){ const nx=x+ox, ny=y+oy;
+      if(nx<0||nx>12||ny<0||ny>12) continue;
+      const k=nx+','+ny; if(seen.has(k)||blocked(nx,ny)) continue;
+      seen.add(k); q.push([nx,ny]); } }
+  return seen.has('6,0')&&seen.has('6,12')&&seen.has('0,6')&&seen.has('12,6');
+}
+function buildRoomStructures(rng, weight, tintHex){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
-  for(let i=0;i<13;i++){ taken.add(i+',0'); taken.add(i+',12'); taken.add('0,'+i); taken.add('12,'+i); }  // кромки свободны — там сбор
-  const walls=1+Math.round(weight*2.4), pillars=1+Math.round(weight*2), rubble=Math.round(weight*2);
+  for(let i=0;i<13;i++){ taken.add(i+',0'); taken.add(i+',12'); taken.add('0,'+i); taken.add('12,'+i); }
+  const tint=tintHex!=null?tintHex:0x28374f;
+  const tall=1+weight*0.5;                                 // глубже — стены выше
+  // ПЛОТНОСТЬ ЛАБИРИНТА растёт с удалением от дома
+  const walls=2+Math.round(weight*6), pillars=1+Math.round(weight*2), rubble=Math.round(weight*2);
   for(let w2=0;w2<walls;w2++){
     const horiz=rng()<0.5, len=3+Math.floor(rng()*4);
     let gx=2+Math.floor(rng()*8), gy=2+Math.floor(rng()*8);
-    const gap=Math.floor(rng()*len);                       // проём-дверь → коридоры и комнатки
-    const hole=rng()<0.55 ? Math.floor(rng()*len) : -1;    // лаз для повзуна
+    const gap=Math.floor(rng()*len);
+    const hole=rng()<0.5 ? Math.floor(rng()*len) : -1;
     for(let k=0;k<len;k++){
       if(k===gap) continue;
-      addObstacle(gx+(horiz?k:0), gy+(horiz?0:k), k===hole?'crawl':'wall', taken);
+      addObstacle(gx+(horiz?k:0), gy+(horiz?0:k), k===hole?'crawl':'wall', taken, tint, tall);
+    }
+  }
+  // «БУДИНОЧКИ»: замкнутая комнатка 3×3/4×4 с 1-2 дверьми; внутри бывает сокровище
+  const houses = weight>0.6?2 : weight>0.22?1 : 0;
+  for(let hI=0;hI<houses;hI++){
+    const w3=3+Math.floor(rng()*2), h3=3+Math.floor(rng()*2);
+    const gx=2+Math.floor(rng()*(9-w3)), gy=2+Math.floor(rng()*(9-h3));
+    const per=[];
+    for(let x=gx;x<gx+w3;x++){ per.push([x,gy]); per.push([x,gy+h3-1]); }
+    for(let y=gy+1;y<gy+h3-1;y++){ per.push([gx,y]); per.push([gx+w3-1,y]); }
+    const doors=new Set([Math.floor(rng()*per.length), Math.floor(rng()*per.length)]);
+    per.forEach((pc,idx)=>{ if(!doors.has(idx)) addObstacle(pc[0],pc[1],'wall',taken,tint,tall*1.15); });
+    if(rng()<0.6){
+      const pool=['up_dmg','up_charge','up_reach','heal'];
+      spawnPickup(gx+1+Math.floor(rng()*(w3-2)), gy+1+Math.floor(rng()*(h3-2)),
+        pool[Math.floor(rng()*pool.length)]);
     }
   }
   for(let k2=0;k2<pillars;k2++) addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'pillar',taken);
   for(let k3=0;k3<rubble;k3++)  addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'rubble',taken);
-  logE('структуры: стен '+obstacles.filter(o=>o.solid&&!o.pass).length
+  // гарантия прохода: пока центр не видит все 4 кромки — сносим случайную стену
+  let guard=0;
+  while(!roomReachable() && guard++<24){
+    const solidW=obstacles.filter(o=>o.solid);
+    if(!solidW.length) break;
+    const o=solidW[Math.floor(rng()*solidW.length)];
+    o.alive=false; scene.remove(o.mesh);
+    obstacles.splice(obstacles.indexOf(o),1);
+  }
+  logE('лабиринт: стен '+obstacles.filter(o=>o.solid&&!o.pass).length
     +' лазов '+obstacles.filter(o=>o.pass==='crawl').length
-    +' разрушаемых '+obstacles.filter(o=>!o.solid).length);
+    +' хрупких '+obstacles.filter(o=>!o.solid).length
+    +(houses?(' домиков '+houses):'')+(guard?(' пробито:'+guard):''));
 }
 function spawnObstaclesSeededSafe(rx,ry,home){
   const rng=mulberry32(rx*131+ry*17+7);
   if(home){ spawnObstacles(rng,0); return; }
-  buildRoomStructures(rng, roomStyle(rx,ry).weight);
+  const st=roomStyle(rx,ry);
+  // цвет стен: тёмная смесь фона комнаты с её акцентом — у каждого архетипа своя кладка
+  let tint=0x28374f;
+  try{ const c=new THREE.Color(st.bg).lerp(new THREE.Color(st.accent),0.35).multiplyScalar(1.6);
+    tint=c.getHex(); }catch(e){}
+  buildRoomStructures(rng, st.weight, tint);
 }
 function updateAdventure(dt){
   if(!ADV.on || player.dead || mode!=='fighter') return;
@@ -2679,7 +2761,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05b · заклин-только-жёстким(линией) · ціп:зачеп(тянет-мобов,двигает-хрупкое) · БЛАСТЕР · лут:50/50+апгрейды(урон/заряд/досяжність/HP)';
+const BUILD_TAG='2026-07-05c · кольцо/дуга-бьют-вокруг · подбор-с-выдержкой(0.6с+кд) · бластер:встряхивание · пол-v2(палитры/рельеф/акценты) · лабиринты+будиночки+проходимость';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3122,7 +3204,7 @@ function frame(now){
   updateRacks(dt);                     // стойки оружия в ДОМЕ
   updateShots(dt);                     // снаряды стрельцов (и отбитые)
   updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
-  updateDropPickup();                  // подбор чужого оружия со свапом
+  updateDropPickup(dt);                // подбор чужого оружия (выдержка 0.6с, кулдаун)
   updatePickupCollect();               // сбор апгрейдов
 
   // периодическая выборка состояния в лог
