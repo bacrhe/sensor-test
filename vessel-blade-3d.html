@@ -48,14 +48,22 @@ h1 span{color:#1e3a5f;font-size:10px}
   background:#0a1a2e;color:#60a5fa;border:1px solid #1e3a5f;border-radius:6px;padding:4px 10px;display:none}
 #followBtn{position:fixed;top:44px;right:30px;z-index:16;font:inherit;font-size:12px;
   background:#0a1a2e;color:#a5f3fc;border:1px solid #1e3a5f;border-radius:6px;padding:5px 10px;display:none}
-#menu{position:fixed;inset:0;z-index:28;display:none;flex-direction:column;align-items:center;justify-content:center;
-  gap:12px;background:rgba(1,6,15,.92);padding:24px}
+#menu{position:fixed;inset:0;z-index:28;display:none;flex-direction:column;align-items:center;justify-content:flex-start;
+  gap:12px;background:rgba(1,6,15,.92);padding:24px 24px 56px;overflow-y:auto;-webkit-overflow-scrolling:touch}
 #menu .mt{color:#3a6a9f;font-size:14px;letter-spacing:.2em;margin-bottom:6px}
 #menu .msub{color:#1e3a5f;font-size:10px;margin-bottom:14px}
 #menu button{width:100%;max-width:320px;padding:14px;font:inherit;font-size:13px;letter-spacing:.06em;
   background:#0c2030;color:#60a5fa;border:1px solid #1e3a5f;border-radius:7px}
 #menu button:active{background:#12304a}
 #menu #mNew{color:#22c55e;border-color:#16a34a;background:#0c2a1f}
+#crosshair{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;z-index:20;display:none;pointer-events:none;
+  border:2px solid rgba(249,115,22,.9);border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,.6)}
+#crosshair::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;background:#f97316;border-radius:50%}
+#creatorUI{position:fixed;left:0;right:0;bottom:14px;z-index:21;display:none;justify-content:center;gap:10px;pointer-events:none}
+#creatorUI button{pointer-events:auto;padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.92);color:#f97316;
+  border:1px solid #7a4a12;border-radius:9px;letter-spacing:.05em}
+#creatorUI button:active{background:#3a2410}
+#creatorUI #cPlace{color:#7cffb0;border-color:#1f6a3f}
 .mbtn{flex:1;font:inherit;font-size:11px;background:#01101f;color:#3a6a9f;border:1px solid #1e3a5f;border-radius:6px;padding:9px 4px}
 .mbtn.on{background:#0c2a3f;color:#60a5fa;border-color:#3b82f6}
 /* ── BANNER (события: клинч / разоружение / парирование) ── */
@@ -119,6 +127,12 @@ h1 span{color:#1e3a5f;font-size:10px}
 <button id="logBtn">LOG</button>
 <button id="pauseBtn">⏸</button>
 <button id="followBtn">◎ ИГРОК ▷</button>
+<div id="crosshair"></div>
+<div id="creatorUI">
+  <button id="cPal">◈ <span id="cPalName">БАЗА</span></button>
+  <button id="cPlace">✚ БЛОК</button>
+  <button id="cRemove">✖ УБРАТЬ</button>
+</div>
 <div id="menu">
   <div class="mt">ПАУЗА</div>
   <div class="msub" id="mInfo">—</div>
@@ -133,6 +147,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
   <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
   <button id="mScan">🏠 СКАН 46м² (элементы)</button>
+  <button id="mCreate">🔨 СОЗДАТЕЛЬ (строить)</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -979,7 +994,7 @@ function updateStanceAndCamera(dt){
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
-  const fpRaw = clamp((Math.abs(sensor.roll)-40)/30, 0, 1);
+  const fpRaw = (mode==='creator') ? 1 : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // творец — всегда 1-е лицо
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
   const fp = player.fpSmooth;
   // ГИСТЕРЕЗИС стойки: вход в МАЯК при fp>0.58, выход при fp<0.42.
@@ -1589,6 +1604,7 @@ function renderClinchGuideAndAstral(){
 /* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
 function damageTier(av, tier, amount){
   if(av.dead) return;
+  if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
   if(tier===0){
     // ноги → теряется мобильность (Ритм/Выносливость).
     // ПРОГРЫЗ ДО КРОВИ: когда выносливость уже добита (≤15), защита ног кончилась —
@@ -2083,6 +2099,17 @@ function buildRacks(){
   }
 }
 function advHome(){ return ADV.rx===6 && ADV.ry===6; }
+// ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
+const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
+function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
+function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall'}))}); }
+function restoreRoomEdits(rx,ry){
+  const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set();
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,null,(b.type==='wall'||b.type==='base')?1.2:1);
+  return true;
+}
 function applyAdvRoom(rx,ry){
   ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
   clearRacks(); clearShots();
@@ -2093,6 +2120,7 @@ function applyAdvRoom(rx,ry){
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
   // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
   spawnObstaclesSeededSafe(rx,ry,home);
+  restoreRoomEdits(rx,ry);   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = composeRoomEnemies(rx,ry);
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
   const bossPh=phantoms.find(p=>p.kind==='boss');
@@ -2186,17 +2214,17 @@ function buildScannedRoom(tintHex){
   // * — плазма (сквозь, жжёт Душу); o — газ-лампа (сквозь, свет-источник)
   const layout = [
     "             ",
-    "             ",
-    "  WWWWWWW    ",
-    "  Wk    WWW  ",
-    "  Wk  t   W  ",
-    "  WW  ~   W  ",
-    "   W o c LL  ",
-    "   W * c  W  ",
-    "   WWWWWWWW  ",
-    "             ",
-    "             ",
-    "             ",
+    " WWWWWWWWWWW ",
+    " Wkk    cc W ",
+    " Wk  tt  c W ",
+    " W    ~    W ",
+    " WLLL   o  W ",
+    " W  L      W ",
+    " W  L   *  W ",
+    " W  cc  cc W ",
+    " W         W ",
+    " W    tt   W ",
+    " WWWWWWWWWWW ",
     "             "
   ];
   const M={ 'W':'wall','L':'wall','k':'rubble','t':'rubble','c':'rubble','~':'liquid','*':'plasma','o':'gas' };
@@ -2210,6 +2238,7 @@ function buildScannedRoom(tintHex){
 }
 function loadScannedRoom(){
   buildScannedRoom();
+  snapshotRoom();   // сохранить как постоянную постройку текущей комнаты
   const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];   // безопасный старт
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
   spawnPhantoms(phantomCount); clearClinch(); applyMode(); closeMenu();
@@ -2767,14 +2796,38 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
   mode=b.dataset.mode;
   document.querySelectorAll('.mbtn').forEach(x=>x.classList.toggle('on', x===b));
 });
+// ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
+const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
+const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
+let creatorMat=0;
+function updatePaletteLabel(){ const el=$('cPalName'); if(el) el.textContent=MAT_NAMES[CREATOR_MATS[creatorMat]]; }
+function aimedCell(){ const f=DIRV[player.dirIdx]; return [clamp(player.gx+f[0],0,12), clamp(player.gy+f[1],0,12)]; }
+function creatorPlace(){
+  const [gx,gy]=aimedCell();
+  if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
+  const ex=obstacleAt(gx,gy); if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); }
+  const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,(CREATOR_MATS[creatorMat]==='base')?1.2:1);
+  snapshotRoom(); blip(620,0.05,'sine',0.09);
+}
+function creatorRemove(){
+  const [gx,gy]=aimedCell(); const ex=obstacleAt(gx,gy);
+  if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); }
+  else blip(120,0.06,'square',0.08);
+}
 function applyMode(){
   const fighter = mode==='fighter';
+  const creator = mode==='creator';
   player.mesh.visible=fighter; player.blade.visible=fighter;
-  phantoms.forEach(ph=>{ ph.mesh.visible=true; ph.blade.visible=true; });  // общий мир — видны всегда
+  phantoms.forEach(ph=>{ ph.mesh.visible=!creator; ph.blade.visible=!creator; });  // в творце врагов прячем
   obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
   if(droppedBlade) droppedBlade.visible=fighter;
   camera.up.set(0,1,0);
   $('followBtn').style.display = (mode==='follow'||mode==='action')?'block':'none';
+  { const h=$('hud'); if(h) h.style.display=creator?'none':''; }
+  { const c=$('creatorUI'); if(c) c.style.display=creator?'flex':'none'; }
+  { const x=$('crosshair'); if(x) x.style.display=creator?'block':'none'; }
+  if(creator) updatePaletteLabel();
   logE('режим: '+mode);
 }
 const MODE_ORDER=['fighter','spectator','follow','action','map'];
@@ -2814,7 +2867,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05d · +скан-комната-46м² · +элементные-блоки(база/хрупкое/жидкость/газ/плазма)';
+const BUILD_TAG='2026-07-05e · меню-скролл · скан-11×11 · постоянство-комнат · режим-СОЗДАТЕЛЬ(палитра/строить)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2826,6 +2879,10 @@ $('mCache').onclick=async()=>{
 };
 $('mNew').onclick=newGame;
 $('mScan').onclick=loadScannedRoom;
+$('mCreate').onclick=()=>{ mode='creator'; applyMode(); closeMenu(); };
+$('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); blip(500,0.04,'sine',0.06); };
+$('cPlace').onclick=creatorPlace;
+$('cRemove').onclick=creatorRemove;
 $('mMenu').onclick=()=>location.reload();
 // подхватить ?room= из ссылки (без обращения к NET — он объявлен ниже)
 { const ur=(new URLSearchParams(location.search).get('room')||'').toUpperCase().replace(/[^A-Z0-9_-]/g,'');
@@ -3150,7 +3207,14 @@ function frame(now){
   if(keys['ArrowDown']) sensor.pitch=clamp(sensor.pitch+dt,-1,1);
   if(keys[' ']) sensor.roll = (sensor.roll>45?0:60); // пробел — переключить стойку
 
-  if(mode==='fighter'){
+  if(mode==='creator'){
+    const pTgt=clamp(sensor.pitchRaw*(invertPitch?-1:1),-1,1);
+    sensor.pitch=lerp(sensor.pitch,pTgt,clamp(dt*10,0,1));
+    player.dirIdx=yawToDirIdx(sensor.yawFused); player.tier=1;
+    player.pitch=sensor.pitch; player.roll=sensor.roll;
+    player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
+    updateStanceAndCamera(dt);
+  } else if(mode==='fighter'){
     // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
     const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
     sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*10,0,1));
