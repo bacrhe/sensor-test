@@ -656,6 +656,7 @@ function makeAvatar(baseHue){
     hitActive:false, strikeT:0, disarmed:false,
     dead:false, respawnT:0, score:0, painT:0, hitGlow:0, hue:baseHue,
     disarmT:0, fpSmooth:0,   // таймер телекинеза; сглаженный переход в 1-е лицо
+    mods:{dmg:1, charge:1, reach:0},   // подбираемые улучшения (лут)
   };
 }
 
@@ -751,7 +752,7 @@ function makePhantom(i, kind){
     try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
   else if(ph.kind==='flyer'){ ph.hp=35; ph.noBlade=true; ph.hover=TIER_H*1.7;
     try{ ph.mesh.scale.set(0.45,0.45,0.45); }catch(e){} }
-  else if(ph.kind==='gunner'){ ph.hp=55; ph.noBlade=true; ph.shootT=1.6+Math.random();
+  else if(ph.kind==='gunner'){ ph.hp=55; ph.noBlade=true; ph.wpn='blaster'; ph.shootT=1.6+Math.random();
     try{ ph.mesh.scale.set(0.8,0.85,0.8); }catch(e){} }
   else if(ph.kind==='boss'){ ph.hp=320; ph.boss=true; ph.size=2; ph.wpn='bossaxe';
     ph.sweepT=7; ph.slow=1.9; ph.turnT=0;
@@ -813,7 +814,12 @@ function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.g
 function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
-  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); }
+  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a');
+    if(Math.random()<0.4){                      // из разбитого — иногда полезное
+      const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
+      spawnPickup(o.gx, o.gy, pool[Math.floor(Math.random()*pool.length)]);
+    }
+  }
 }
 spawnObstacles();
 
@@ -918,7 +924,7 @@ const _bladeDir = new THREE.Vector3();
 /* стиль луча-зоны по оружию: толщина, «скрыть луч» (у цепа/хлыста место луча занимает физ-модель) */
 const WEAPON_FX={
   sword:{thick:1.0}, spear:{thick:0.55}, axe:{thick:1.7},
-  flail:{hideBeam:true}, nunchaku:{hideBeam:true}, whip:{hideBeam:true},
+  flail:{hideBeam:true}, nunchaku:{hideBeam:true}, whip:{hideBeam:true}, blaster:{thick:0.45},
   bossaxe:{thick:2.2},
 };
 function updateBlade(av){
@@ -985,7 +991,7 @@ function updateStanceAndCamera(dt){
   // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах).
   // Выброс засчитывается ТОЛЬКО если заряд держали ≥0.25с (charge>1.25) — короткое
   // дрожание у порога стойки тихо отменяется: без звука, лога и штрафа выносливости.
-  if(beacon){ player.charging=true; player.charge=clamp(player.charge+dt,1,3); }
+  if(beacon){ player.charging=true; player.charge=clamp(player.charge+dt*(player.mods.charge||1),1,3); }
   else if(player.charging){
     player.charging=false;
     if(player.charge>1.25){
@@ -1003,6 +1009,11 @@ function updateStanceAndCamera(dt){
           S2.pp[0]-=kick; }                     // мгновенная боковая скорость грузу
         blip(300,0.1,'sine',0.16); blip(520,0.08,'sine',0.12);
         logE('РАСКРУТКА '+W.label+' ×'+player.charge.toFixed(1));
+      }else if(W.rel==='shot'){
+        // ВЫСТРЕЛ: заряд уходит в снаряд (скорость+урон). Ближней зоны почти нет.
+        player.swordLen=1;
+        firePlayerShot(player.charge);
+        blip(760,0.08,'square',0.18); logE('ВЫСТРЕЛ бластера ×'+player.charge.toFixed(1));
       }else if(W.rel==='crack'){
         // ЩЕЛЧОК: хвост выпрямляется вперёд на полную длину (импульс уже в верле-блоке)
         player.swordLen=player.charge;
@@ -1021,12 +1032,20 @@ function updateStanceAndCamera(dt){
   // Держишь оружие в стене — выносливость горит; не отвёл (укоротил/увёл в сторону)
   // за 2.5с или выносливость кончилась → оружие ВЫРЫВАЕТ из рук. Разрушаемые не клинят —
   // их ПРОЖИГ и так грызёт до нуля.
-  if(!player.disarmed && !player.dead && !clinch.active){
+  // ГИБКОЕ (ціп/нунчаки/хлист) НЕ КЛИНИТ: раньше кольцо ціпа накрывало соседнюю клетку,
+  // и достаточно было СТОЯТЬ по диагонали от стены, чтобы терять оружие. Гибкое платит
+  // только физикой шара (столкновение в маятнике). Жёсткое клинит ТОЛЬКО линией вперёд.
+  if(!player.disarmed && !player.dead && !clinch.active
+     && (WEAPONS[playerWpn].rel==='line' || WEAPONS[playerWpn].rel==='arc')){
     let jammed=null;
-    for(const c of bladeCells(player)){
-      const [jx,jy]=c.split(',').map(Number);
-      const o=obstacleAt(jx,jy);
-      if(o && o.solid){ jammed=o; break; }
+    {
+      const [dx,dy]=DIRV[player.dirIdx];
+      const L=clamp(Math.round(player.swordLen*WEAPONS[playerWpn].maxLen/6),1,WEAPONS[playerWpn].maxLen);
+      for(let i=1;i<=L;i++){
+        const jx=player.gx+dx*i, jy=player.gy+dy*i;
+        const o=obstacleAt(jx,jy);
+        if(o){ if(o.solid) jammed=o; break; }   // контакт: прочное клинит, хрупкое — просто стоп (его грызёт прожиг)
+      }
     }
     if(jammed){
       player.jamT=(player.jamT||0)+dt;
@@ -1363,6 +1382,50 @@ function removeDrop(d){
   try{ d.mesh.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(e){}
   scene.remove(d.mesh);
 }
+/* ── АПГРЕЙДЫ: подбираемые улучшения. Общие модификаторы бойца:
+   dmg ×1.15 за штуку, charge ×1.2 (скорость набора заряда), reach +1 клетка, heal +25HP.
+   (гілки развития ПО КАЖДОМУ оружию — следующий пласт; каркас mods уже готов.)      */
+const PICKUPS=[];
+const PICKUP_DEF={
+  up_dmg:   {col:0xef4444, label:'УРОН ×1.15',    apply(){ player.mods.dmg*=1.15; }},
+  up_charge:{col:0xfbbf24, label:'ЗАРЯД ×1.2',    apply(){ player.mods.charge*=1.2; }},
+  up_reach: {col:0x4ade80, label:'ДОСЯЖНІСТЬ +1', apply(){ player.mods.reach+=1; }},
+  heal:     {col:0xf9a8d4, label:'+25 HP',        apply(){ player.hp=clamp(player.hp+25,0,100); }},
+};
+function spawnPickup(gx,gy,kind){
+  const c=freeCellNear(gx,gy), d=PICKUP_DEF[kind];
+  const m=new THREE.Mesh(new THREE.OctahedronGeometry(0.22),
+    new THREE.MeshBasicMaterial({color:d.col, transparent:true, opacity:0.95}));
+  m.frustumCulled=false; m.position.set(worldX(c.gx), 0.35, worldZ(c.gy)); scene.add(m);
+  PICKUPS.push({gx:c.gx, gy:c.gy, kind, mesh:m});
+}
+function removePickup(pk){
+  const i=PICKUPS.indexOf(pk); if(i>=0) PICKUPS.splice(i,1);
+  try{ pk.mesh.geometry.dispose(); pk.mesh.material.dispose(); }catch(e){}
+  scene.remove(pk.mesh);
+}
+function rollMobLoot(ph){
+  // 50% — ЕГО оружие на пол; 50% — апгрейд. У бесствольной мелочи всегда апгрейд.
+  const hasWpn=!ph.noBlade || ph.kind==='gunner';
+  if(hasWpn && Math.random()<0.5) spawnDrop(ph.gx, ph.gy, ph.wpn||'sword');
+  else{
+    const pool=['up_dmg','up_charge','up_reach','heal'];
+    spawnPickup(ph.gx, ph.gy, pool[Math.floor(Math.random()*pool.length)]);
+  }
+}
+function updatePickupCollect(){
+  for(const pk of PICKUPS){
+    if(player.gx===pk.gx && player.gy===pk.gy){
+      const d=PICKUP_DEF[pk.kind]; d.apply();
+      showBanner('◆ '+d.label,'#'+d.col.toString(16).padStart(6,'0'));
+      blip(880,0.1,'sine',0.16); blip(1180,0.08,'sine',0.12); buzz([0,30]);
+      logE('апгрейд: '+d.label+'  [урон ×'+player.mods.dmg.toFixed(2)
+        +' заряд ×'+player.mods.charge.toFixed(2)+' +'+player.mods.reach+'дос]');
+      removePickup(pk);
+      return;
+    }
+  }
+}
 function updateDropPickup(){
   // подбор ЧУЖОГО оружия: встань на клетку — свап (твоё нынешнее ложится на пол).
   // Если ты безоружен — просто берёшь, разоружение снято.
@@ -1564,7 +1627,7 @@ function resolveBurn(dt){
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
-      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg*(player.spinBonus||1))); burnCd=0.35;
+      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
@@ -1573,7 +1636,7 @@ function resolveBurn(dt){
     if(ph){
       if(burnCd>0) return;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
-      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1));
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg);
       if(ph.kind==='boss'){
         const [fdx,fdy]=DIRV[ph.dirIdx];
         const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
@@ -1592,7 +1655,7 @@ function resolveBurn(dt){
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
       if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
-        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1))); burnCd=0.3;
+        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       return;
     }
@@ -1611,9 +1674,10 @@ const WEAPONS={
   nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  rel:'spin',  desc:'выброс = раскрутка'},
   whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, rel:'crack', desc:'щелчок: длинный, слабый'},
   bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, rel:'arc', desc:'оружие босса'},
+  blaster: {label:'БЛАСТЕР ⌖',  w:4, maxLen:1, arc:0, sweep:false, dmg:1.0,  rel:'shot',  desc:'медленный снаряд; заряд = скорость и урон'},
 };
 let playerWpn='sword';
-function weaponCells(gx,gy,dirIdx,len,wpn,striking){
+function weaponCells(gx,gy,dirIdx,len,wpn,striking,extraL){
   const W=WEAPONS[wpn]||WEAPONS.sword, out=[];
   // МАХ (rel:'arc' во время strikeT): веер из 5 направлений на 2 клетки — сектор дуги
   if(W.rel==='arc' && striking){
@@ -1624,7 +1688,7 @@ function weaponCells(gx,gy,dirIdx,len,wpn,striking){
     }
     return out;
   }
-  const L=clamp(Math.round(len*W.maxLen/6),1,W.maxLen);   // меч (maxLen=6) — прежняя длина 1:1
+  const L=clamp(Math.round(len*W.maxLen/6)+(extraL||0),1,W.maxLen+2);   // меч 1:1 + лут-досяжність
   if(W.sweep){
     for(const [ox,oy] of DIRV) out.push((gx+ox)+','+(gy+oy));   // кольцо из 8 клеток
     const [dx,dy]=DIRV[dirIdx];
@@ -1717,6 +1781,10 @@ function buildWeaponFX(wpn){
     const tip=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.5,8),
       new THREE.MeshBasicMaterial({color:0x4ade80})); tip.frustumCulled=false; g.add(tip);
     wfx.parts={ tip };
+  }else if(wpn==='blaster'){
+    const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.1,0.5,8),
+      new THREE.MeshBasicMaterial({color:0x66e0ff})); bar.frustumCulled=false; g.add(bar);
+    wfx.parts={ bar };
   }
   g.visible = !!wfx.parts;
 }
@@ -1764,18 +1832,49 @@ function updateWeaponFX(dt){
     let dx=p[0]-ax, dy=p[1]-ay, dz=p[2]-az;
     const d=Math.hypot(dx,dy,dz)||1e-6;
     p[0]=ax+dx/d*L; p[1]=ay+dy/d*L; p[2]=az+dz/d*L;
-    // СТОЛКНОВЕНИЕ С МИРОМ: груз не пролетает сквозь препятствия — отскок с потерей хода
+    // СТОЛКНОВЕНИЕ С МИРОМ + ЗАЧЕП (только ціп): обвил — тянет/сдвигает
     {
       const cgx=Math.round(p[0]/CELL+CX), cgy=Math.round(p[2]/CELL+CY);
+      const spd=Math.hypot(p[0]-pp[0],p[2]-pp[2])/Math.max(dt,1e-3);
       const ob=obstacleAt(cgx,cgy);
       if(ob && p[1]<TIER_H*2.4){
-        const spd=Math.hypot(p[0]-pp[0],p[2]-pp[2])/Math.max(dt,1e-3);
-        p[0]=pp[0]; p[2]=pp[2];                        // назад к прошлой точке
-        pp[0]=p[0]+(p[0]-pp[0])*0.4; pp[2]=p[2]+(p[2]-pp[2])*0.4;   // гасим ход
+        p[0]=pp[0]; p[2]=pp[2];
+        pp[0]=p[0]+(p[0]-pp[0])*0.4; pp[2]=p[2]+(p[2]-pp[2])*0.4;
         if(spd>3){ emitSparks(p[0],p[1],p[2], ob.solid?'#f59e0b':'#ffd47a', 4, 1.8);
           blip(200,0.05,'square',0.1);
-          if(!ob.solid) damageObstacle(ob, Math.round(spd*2));       // хлёсткий удар грызёт хрупкое
-          else player.stamina=clamp(player.stamina-1.5,0,100); }    // о прочное — отдача в руки
+          if(!ob.solid){
+            damageObstacle(ob, Math.round(spd*2));
+            // ЗАЧЕП хрупкого на скорости: ціп СДВИГАЕТ его с места (и им же ломает)
+            if(wfx.kind==='flail' && spd>6 && ob.alive && Math.random()<0.5){
+              const sdx=Math.sign(p[0]-pp[0])||0, sdy=Math.sign(p[2]-pp[2])||0;
+              const nx2=clamp(ob.gx+sdx,1,11), ny2=clamp(ob.gy+sdy,1,11);
+              if(!isCellOccupied(nx2,ny2,null) && !(nx2===ob.gx&&ny2===ob.gy)){
+                ob.gx=nx2; ob.gy=ny2;
+                ob.mesh.position.set(worldX(nx2), ob.mesh.position.y, worldZ(ny2));
+                damageObstacle(ob, 10);
+                logE('ціп зрушив перешкоду → ('+nx2+','+ny2+')');
+              }
+            }
+          } else player.stamina=clamp(player.stamina-1.5,0,100);
+        }
+      }
+      // ЗАЧЕП МОБА: шар ціпа обвивается вокруг врага на скорости → ПРИТЯГИВАЕТ к себе
+      if(wfx.kind==='flail'){
+        S.hookCd=Math.max(0,(S.hookCd||0)-dt);
+        if(S.hookCd<=0 && spd>6){
+          const hp3=phantomAtCell(cgx,cgy);
+          if(hp3 && !hp3.dead && (hp3.size||1)===1){   // босса 2×2 ціпом не утащишь
+            const tdx=Math.sign(player.gx-hp3.gx), tdy=Math.sign(player.gy-hp3.gy);
+            const nx3=clamp(hp3.gx+tdx,0,12), ny3=clamp(hp3.gy+tdy,0,12);
+            if(!isCellOccupied(nx3,ny3,hp3) && !(nx3===player.gx&&ny3===player.gy)){
+              hp3.gx=nx3; hp3.gy=ny3; damageTier(hp3,1,6); hp3.hitGlow=0.3;
+              S.hookCd=1.1;
+              emitSparks(worldX(nx3),TIER_H*1.1,worldZ(ny3),'#a78bfa',8,2.4);
+              blip(340,0.1,'sine',0.16); buzz([0,50]);
+              logE('ціп ЗАЧЕПИВ — ворога притягнуто');
+            }
+          }
+        }
       }
     }
     // скорость груза → раскрутка (в ЛЮБОЙ плоскости) = урон ×1.3 + искры
@@ -1857,6 +1956,10 @@ function updateWeaponFX(dt){
     P.blade1.position.set(hx2,hy2,hz2); P.blade1.lookAt(H.hx,H.hy,H.hz);
     P.blade2.position.set(lerp(hx2,H.hx,0.16), lerp(hy2,H.hy,0.16), lerp(hz2,H.hz,0.16));
     P.blade2.lookAt(H.hx,H.hy,H.hz);
+  }else if(wfx.kind==='blaster'){
+    const P=wfx.parts;
+    P.bar.position.set(H.hx+ux*0.35, H.hy+uy*0.35, H.hz+uz*0.35);
+    P.bar.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
   }else if(wfx.kind==='spear'){
     // ВЫПАД: жало резко уходит вперёд и возвращается
     const P=wfx.parts;
@@ -1874,6 +1977,15 @@ function fireShot(ph){
   m.frustumCulled=false; scene.add(m);
   SHOTS.push({x:ph.gx, y:ph.gy, vx:dx/L*2.1, vy:dy/L*2.1, owner:ph, hostile:true, mesh:m, life:9});
   blip(480,0.1,'square',0.12);
+}
+function firePlayerShot(charge){
+  const [dx,dy]=DIRV[player.dirIdx];
+  const m=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,8),
+    new THREE.MeshBasicMaterial({color:0x66e0ff}));
+  m.frustumCulled=false; scene.add(m);
+  SHOTS.push({x:player.gx, y:player.gy, vx:dx*(2.4+0.8*(charge-1)), vy:dy*(2.4+0.8*(charge-1)),
+    owner:null, hostile:false, mesh:m, life:8,
+    dmg:Math.round(10*charge*(player.mods?player.mods.dmg:1))});
 }
 function updateShots(dt){
   for(let i=SHOTS.length-1;i>=0;i--){
@@ -1894,8 +2006,13 @@ function updateShots(dt){
       }
     }else if(!kill && !sh.hostile){
       const hp2=phantomAtCell(cx,cy);
-      if(hp2){ damageTier(hp2, 1, 20); hp2.hitGlow=0.3;
-        logE('відбитий снаряд влучив у ворога → HP '+Math.round(hp2.hp)); kill=true; }
+      if(hp2){ damageTier(hp2, 1, sh.dmg||20); hp2.hitGlow=0.3;
+        logE('снаряд влучив у ворога → HP '+Math.round(hp2.hp)); kill=true; }
+      else if(friendlyFire){
+        const rf2=(typeof remoteFighterAt==='function')&&remoteFighterAt(cx,cy);
+        if(rf2){ NET.sendHit(rf2.id, 1, sh.dmg||14, 'player'); kill=true;
+          logE('снаряд влучив у гравця '+rf2.id.slice(0,4)); }
+      }
     }
     if(kill){ scene.remove(sh.mesh);
       try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){}
@@ -1903,8 +2020,8 @@ function updateShots(dt){
     else sh.mesh.position.set(worldX(sh.x), TIER_H*1.2, worldZ(sh.y));
   }
 }
-const RACK_CELLS={spear:[3,3],axe:[9,3],flail:[3,9],nunchaku:[9,9],whip:[6,2],sword:[6,10]};
-const RACK_COLORS={spear:0x4ade80,axe:0xef4444,flail:0xa78bfa,nunchaku:0xfbbf24,whip:0x22d3ee,sword:0x93c5fd};
+const RACK_CELLS={spear:[3,3],axe:[9,3],flail:[3,9],nunchaku:[9,9],whip:[6,2],sword:[6,10],blaster:[2,6]};
+const RACK_COLORS={spear:0x4ade80,axe:0xef4444,flail:0xa78bfa,nunchaku:0xfbbf24,whip:0x22d3ee,sword:0x93c5fd,blaster:0x66e0ff};
 let rackT=0, rackMeshes=[];
 function clearRacks(){
   for(const m of rackMeshes){ try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(e){} scene.remove(m); }
@@ -1933,6 +2050,7 @@ function applyAdvRoom(rx,ry){
   ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
   clearRacks(); clearShots();
   while(DROPS.length) removeDrop(DROPS[0]);   // оружие не путешествует между комнатами
+  while(PICKUPS.length) removePickup(PICKUPS[0]);
   paintFloor(rx,ry);
   const st=roomStyle(rx,ry), home=advHome();
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
@@ -2085,7 +2203,7 @@ function updateRacks(dt){
 }
 
 function bladeCells(av){
-  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0);
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0);
   if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
   return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0);
 }
@@ -2158,6 +2276,7 @@ function handleDeath(av, dt){
     av.dead=true; av.respawnT=2.2; av.hitActive=false; av.blade.count=0;
     clearClinch();
     if(av!==player){
+      rollMobLoot(av);                          // 50% его оружие / 50% апгрейд
       player.score=(player.score||0)+1;
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
@@ -2552,7 +2671,7 @@ $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
   logE('правило равновесия: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'ВКЛ':'ВЫКЛ');
-  if(ADV.on){ applyAdvRoom(6,6); NET.advPub(); }
+  if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
   else { clearRacks(); clearShots(); try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
   logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
@@ -2560,7 +2679,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05a · оружие-останавливается-о-мир · заклин-о-стену(вырывает) · дропы-моделью+свап-чужого · босс-теряет-секиру · уязвим-без-оружия';
+const BUILD_TAG='2026-07-05b · заклин-только-жёстким(линией) · ціп:зачеп(тянет-мобов,двигает-хрупкое) · БЛАСТЕР · лут:50/50+апгрейды(урон/заряд/досяжність/HP)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3004,6 +3123,7 @@ function frame(now){
   updateShots(dt);                     // снаряды стрельцов (и отбитые)
   updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
   updateDropPickup();                  // подбор чужого оружия со свапом
+  updatePickupCollect();               // сбор апгрейдов
 
   // периодическая выборка состояния в лог
   sampleT -= dt;
