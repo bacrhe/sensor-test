@@ -2809,10 +2809,11 @@ function creatorPlace(){
   const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
   addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,(CREATOR_MATS[creatorMat]==='base')?1.2:1);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
+  logE('поставлен блок '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
 function creatorRemove(){
   const [gx,gy]=aimedCell(); const ex=obstacleAt(gx,gy);
-  if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); }
+  if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); logE('убран блок ('+gx+','+gy+')'); }
   else blip(120,0.06,'square',0.08);
 }
 function applyMode(){
@@ -2867,7 +2868,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05e · меню-скролл · скан-11×11 · постоянство-комнат · режим-СОЗДАТЕЛЬ(палитра/строить)';
+const BUILD_TAG='2026-07-05f · творец:враги-заморожены · без-спама-лога · лог-построек';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3314,7 +3315,7 @@ function frame(now){
     camTarget.set(0, 0, 0);
   }
   // ── ОБЩИЙ МИР (во всех режимах): свои фантомы + чужие тела/фантомы ──
-  updatePhantoms(dt);
+  if(mode!=='creator') updatePhantoms(dt);   // в творце враги заморожены — не рушат постройки
   for(const ph of phantoms){
     handleDeath(ph, dt);
     if(ph.painT>0) ph.painT-=dt;
@@ -3342,7 +3343,7 @@ function frame(now){
       const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомов нет';
       logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
            `dir${DSYM[player.dirIdx]} ярус${player.tier} стойка:${stance===STANCE.BEACON?'маяк':'молн'} pitch${sensor.pitch.toFixed(2)}`);
-    }else logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
+    }else if(mode!=='creator') logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
   }
 
   // камера: карта — жёстко, остальное — плавно
