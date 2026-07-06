@@ -56,6 +56,14 @@ h1 span{color:#1e3a5f;font-size:10px}
   background:#0c2030;color:#60a5fa;border:1px solid #1e3a5f;border-radius:7px}
 #menu button:active{background:#12304a}
 #menu #mNew{color:#22c55e;border-color:#16a34a;background:#0c2a1f}
+#lorePanel{position:fixed;inset:0;z-index:29;display:none;flex-direction:column;align-items:center;justify-content:center;
+  gap:12px;background:rgba(1,6,15,.94);padding:24px}
+#lorePanel .lp-title{color:#a78bfa;letter-spacing:.12em;font-size:14px}
+#lorePanel textarea{width:min(92vw,560px);height:38vh;background:rgba(10,24,40,.85);color:#cfe3ff;border:1px solid #35507a;
+  border-radius:10px;padding:12px;font:inherit;font-size:13px;resize:none}
+#lorePanel .lp-row{display:flex;gap:10px}
+#lorePanel button{padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.9);color:#a78bfa;border:1px solid #4c3a7a;border-radius:9px}
+#lorePanel #loreStatus{color:#7cc8ff;font-size:12px;min-height:16px}
 #crosshair{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;z-index:20;display:none;pointer-events:none;
   border:2px solid rgba(249,115,22,.9);border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,.6)}
 #crosshair::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;background:#f97316;border-radius:50%}
@@ -128,6 +136,15 @@ h1 span{color:#1e3a5f;font-size:10px}
 <button id="pauseBtn">⏸</button>
 <button id="followBtn">◎ ИГРОК ▷</button>
 <div id="crosshair"></div>
+<div id="lorePanel">
+  <div class="lp-title">🜁 ЛОР ВСЕЛЕННОЙ → АЛГО-КРАТ</div>
+  <textarea id="loreText" placeholder="Вставь описание вымышленной вселенной: фракции, герои, злодеи. Алго-крат разложит их по сетке 13×13 (Сходження/Спуск × Відлуння/Шум) и оживит комнату."></textarea>
+  <div class="lp-row">
+    <button id="loreSubmit">⤴ ОТПРАВИТЬ ВСЕЛЕННУЮ</button>
+    <button id="loreClose">✕ ЗАКРЫТЬ</button>
+  </div>
+  <div id="loreStatus"></div>
+</div>
 <div id="creatorUI">
   <button id="cPal">◈ <span id="cPalName">БАЗА</span></button>
   <button id="cShape">⬒ <span id="cShapeName">КУБ</span></button>
@@ -149,6 +166,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
   <button id="mScan">🏠 СКАН 46м² (элементы)</button>
   <button id="mCreate">🔨 СОЗДАТЕЛЬ (строить)</button>
+  <button id="mLore">🜁 ВСЕЛЕННАЯ (лор → Алго-крат)</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -2909,7 +2927,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-06b · цеп/хлыст-длиннее-от-досяжності · урон=массивнее · хлыст-вредит-только-щелчком · формы-блоков(куб/плита/стовп/панель)';
+const BUILD_TAG='2026-07-07a · лор-панель→Алго-крат · env-канал(баннер/вспышка/пол) · сущности algocrat';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2922,6 +2940,15 @@ $('mCache').onclick=async()=>{
 $('mNew').onclick=newGame;
 $('mScan').onclick=loadScannedRoom;
 $('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
+$('mLore').onclick=()=>{ closeMenu(); $('lorePanel').style.display='flex'; };
+$('loreClose').onclick=()=>{ $('lorePanel').style.display='none'; };
+$('loreSubmit').onclick=()=>{
+  const txt=($('loreText').value||'').trim();
+  if(!txt){ $('loreStatus').textContent='Пусто — вставь текст лора.'; return; }
+  const ok=NET.submitLore(txt);
+  $('loreStatus').textContent = ok ? 'Отправлено. Алго-крат размышляет…' : 'Нет связи с БД (оффлайн?)';
+  if(ok){ blip(700,0.06,'sine',0.1); setTimeout(()=>{ $('lorePanel').style.display='none'; $('loreStatus').textContent=''; },900); }
+};
 $('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); creatorTouch(); blip(500,0.04,'sine',0.06); };
 $('cShape').onclick=()=>{ creatorShape=(creatorShape+1)%CREATOR_SHAPES.length; const el=$('cShapeName'); if(el) el.textContent=SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]; creatorTouch(); blip(560,0.04,'sine',0.06); };
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
@@ -3019,6 +3046,15 @@ const NET = {
       onDisconnect(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`)).remove();
       // ОБЩАЯ КОМНАТА ПРИГОДЫ: любой перешедший пишет (rx,ry), остальные следуют.
       // Записи идемпотентны (все пишут одно и то же по одному консенсусу кромки).
+      // АЛГО-КРАТ: env-канал бекенда — баннер/вспышка/перекраска пола без перезагрузки
+      onValue(ref(this.db,`blade/${this.room}/env`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._envT||0)) return; this._envT=v.t;
+        try{
+          if(v.banner) showBanner(v.banner, v.color||'#a78bfa');
+          if(v.flash) doFlash(v.flash);
+          if(v.repaint && ADV.on) paintFloor(ADV.rx, ADV.ry);   // пол перекрашивается по текущей комнате
+        }catch(e){}
+      });
       onValue(ref(this.db,`blade/${this.room}/adv`), snap=>{
         const v=snap.val();
         if(v && ADV.on && (v.rx!==ADV.rx || v.ry!==ADV.ry)
@@ -3030,6 +3066,11 @@ const NET = {
       });
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  submitLore(text){
+    if(!this.online||!this.db) return false;
+    push(ref(this.db,`blade/${this.room}/universe_lore_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
+    return true;
   },
   advPub(){
     if(!this.online||!this.db||!ADV.on) return;
