@@ -130,6 +130,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 <div id="crosshair"></div>
 <div id="creatorUI">
   <button id="cPal">◈ <span id="cPalName">БАЗА</span></button>
+  <button id="cShape">⬒ <span id="cShapeName">КУБ</span></button>
   <button id="cPlace">✚ БЛОК</button>
   <button id="cRemove">✖ УБРАТЬ</button>
 </div>
@@ -973,7 +974,8 @@ function updateBlade(av){
     const f=(i+0.5)/segs;
     _d.position.set(lerp(H.hx,H.tipX,f), lerp(H.hy,H.tipY,f), lerp(H.hz,H.tipZ,f));
     _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);   // +Z вдоль клинка
-    const _th=(wst&&wst.thick)||1;
+    const dmgF = av===player ? (1+clamp(((player.mods&&player.mods.dmg)||1)-1,0,2)*0.55) : 1;   // УРОН → клинок массивнее
+    const _th=((wst&&wst.thick)||1)*dmgF;
     _d.scale.set(_th, _th, segLen/(CELL*0.95));                        // толщина по оружию + подгон длины
     _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
     // яркое ядро у рукояти + разгорается к кончику; во время удара — вспышка и белее
@@ -1660,6 +1662,7 @@ let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
   if(!player.hitActive || player.disarmed || player.dead) return;
+  if(playerWpn==='whip' && player.strikeT<=0) return;   // хлыст вредит только в момент ЩЕЛЧКА — вися, он безвреден
   // ЕДИНАЯ ЗОНА ОРУЖИЯ: та же геометрия, что и у клинча/заклина — weaponCells.
   // Раньше тут была своя линия по DIRV, из-за чего кольцо ціпа и дуга сокири
   // НИКОГДА не наносили урон вбок/назад («бьёт только спереди»).
@@ -1854,7 +1857,8 @@ function updateWeaponFX(dt){
        Качается СВОБОДНО ВО ВСЕ СТОРОНЫ: движение руки (якорь едет с кистью)
        раскачивает само по себе; запястье докручивает — rollRate вбок, pitchRate вперёд.
        Полные обороты в любой плоскости возможны — это просто верле без ограничений угла. */
-    const L = wfx.kind==='flail'?0.85:0.62, damp=wfx.kind==='flail'?0.988:0.982;
+    const reachF = 1 + 0.5*((player.mods&&player.mods.reach)||0);   // ДОСЯЖНІСТЬ визуально/физически удлиняет цепь
+    const L = clamp((wfx.kind==='flail'?0.85:0.62)*reachF, 0.6, 3.6), damp=wfx.kind==='flail'?0.988:0.982;
     // подвес: конец первой палки нунчаков / кисть для цепа
     const ax = wfx.kind==='nunchaku'? H.hx+ux*0.6 : H.hx;
     const ay = wfx.kind==='nunchaku'? H.hy+uy*0.6 : H.hy;
@@ -1946,10 +1950,11 @@ function updateWeaponFX(dt){
       for(let i=0;i<P.chain.length;i++){ const f=(i+1)/(P.chain.length+1);
         P.chain[i].position.set(lerp(ax,p[0],f), lerp(ay,p[1],f), lerp(az,p[2],f)); }
       P.head.position.set(p[0],p[1],p[2]);
+      P.head.scale.setScalar(1+clamp(((player.mods&&player.mods.dmg)||1)-1,0,2)*0.5);   // УРОН → шар массивнее
     }
   }else if(wfx.kind==='whip'){
     // ВЕРЛЕ-ХВОСТ: 8 точек, кисть — якорь; хвост тянется за рукой, провисает и хлещет
-    const N=8, SEG=0.4;
+    const N=8, SEG=clamp(0.4*(1+0.45*((player.mods&&player.mods.reach)||0)), 0.4, 1.25);   // хвост хлыста удлиняется от «досяжності»
     if(!S.pts){ S.pts=[]; S.pp=[];
       for(let i=0;i<N;i++){ S.pts.push([H.hx+ux*SEG*i, H.hy, H.hz+uz*SEG*i]);
         S.pp.push([S.pts[i][0],S.pts[i][1],S.pts[i][2]]); } }
@@ -2109,12 +2114,12 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 // ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
-function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall'}))}); }
+function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0}))}); }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   const taken=new Set();
-  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,null,(b.type==='wall'||b.type==='base')?1.2:1);
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,null,(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0);
   return true;
 }
 function applyAdvRoom(rx,ry){
@@ -2167,7 +2172,7 @@ function composeRoomEnemies(rx,ry){
    wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
    (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
-function addObstacle(gx,gy,type,taken,tint,tallMul){
+function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
@@ -2179,9 +2184,13 @@ function addObstacle(gx,gy,type,taken,tint,tallMul){
   const destr=(type==='rubble'||type==='fragile');
   const low = (type==='rubble'||type==='gas');                         // низкие блоки
   const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
-  const h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
-  const w = (type==='rubble'?0.8:0.86);
-  const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, w);
+  let h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
+  let w = (type==='rubble'?0.8:0.86), d = w;
+  // ФОРМЫ ТВОРЦА: 'slab' плита лежачая, 'post' стрижень, 'panel' стоячая тонкая плита, 'cube'/default — как есть
+  if(shape==='slab'){ w=0.92; d=0.92; h=0.2; }
+  else if(shape==='post'){ w=0.2; d=0.2; h=TIER_H*2.0; }
+  else if(shape==='panel'){ w=0.92; d=0.14; h=TIER_H*1.8; }
+  const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, d);
   const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
   const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
   let mat;
@@ -2197,8 +2206,8 @@ function addObstacle(gx,gy,type,taken,tint,tallMul){
     new THREE.LineBasicMaterial({color: edgeCol, transparent:true,
       opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
-  grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
-  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',
+  grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,
     hp: solid?Infinity : (destr?(type==='fragile'?16:24):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
@@ -2806,6 +2815,9 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 });
 // ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
 const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
+const CREATOR_SHAPES=['cube','slab','post','panel'];
+const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
+let creatorShape=0;
 const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
 let creatorMat=0;
 // Возвышение взгляда творца: телефон ВЕРТИКАЛЬНО → горизонт; ПЛАШМЯ → взгляд в пол под ноги.
@@ -2834,9 +2846,11 @@ function creatorPlace(){
   if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
   const ex=obstacleAt(gx,gy); if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); }
   const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
-  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,1);
+  const shp=CREATOR_SHAPES[creatorShape];
+  const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;   // панель поперёк взгляда
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,1,shp==='cube'?null:shp,rotY);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
-  logE('поставлен блок '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
+  logE('поставлен '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
 function creatorRemove(){
   const [gx,gy]=aimedCell(); const ex=obstacleAt(gx,gy);
@@ -2895,7 +2909,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-06a · творец:камера=камера-смартфона · блок-в-прицел · база-кубик · скан-Г-форма · клинок:визуал=физике(+досяжність,PvP)';
+const BUILD_TAG='2026-07-06b · цеп/хлыст-длиннее-от-досяжності · урон=массивнее · хлыст-вредит-только-щелчком · формы-блоков(куб/плита/стовп/панель)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2909,6 +2923,7 @@ $('mNew').onclick=newGame;
 $('mScan').onclick=loadScannedRoom;
 $('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
 $('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); creatorTouch(); blip(500,0.04,'sine',0.06); };
+$('cShape').onclick=()=>{ creatorShape=(creatorShape+1)%CREATOR_SHAPES.length; const el=$('cShapeName'); if(el) el.textContent=SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]; creatorTouch(); blip(560,0.04,'sine',0.06); };
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
 $('cRemove').onclick=()=>{ creatorTouch(); creatorRemove(); };
 $('mMenu').onclick=()=>location.reload();
