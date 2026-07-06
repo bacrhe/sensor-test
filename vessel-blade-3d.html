@@ -879,10 +879,16 @@ function handInfo(av){
   const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
 
   const len = clamp(Math.round(av.swordLen),1,6);
+  // ВИЗУАЛ = ФИЗИКЕ: длина луча в клетках считается КАК в weaponCells (maxLen оружия + лут-«досяжність»).
+  // Иначе прокачка рушит на расстоянии взгляда, а клинок туда визуально не дотягивается.
+  const wnm = av===player ? playerWpn : (av.wpn||'sword');
+  const Wv = (typeof WEAPONS!=='undefined' && WEAPONS[wnm]) || {maxLen:6};
+  const extraL = av===player ? ((player.mods&&player.mods.reach)||0) : (av.reachMod||0);
+  const cellsL = clamp(Math.round(av.swordLen*Wv.maxLen/6)+extraL, 1, Wv.maxLen+2);
   // угол возвышения луча: прицел наклоном + рубящая дуга атаки
   const elev = clamp(pitch*0.9 - dipAtk, -1.15, 1.15);
   const ce=Math.cos(elev), se=Math.sin(elev);
-  const reach = CELL*(len+lenBoost);
+  const reach = CELL*(cellsL+lenBoost);
   const tipX = hx + dx*ce*reach;
   const tipY = clamp(hy + se*reach, -0.06, TIER_H*2.4);
   const tipZ = hz + dz*ce*reach;
@@ -990,6 +996,7 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
 
 function updateStanceAndCamera(dt){
+  if(mode==='creator'){ setCreatorCamera(); return; }   // творец: камера = задняя камера смартфона
   if(clinch.active){ player.mesh.visible=false; setClinchCamera(); return; }  // клинч — 1-е лицо, тело полностью скрыто
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
@@ -2172,7 +2179,7 @@ function addObstacle(gx,gy,type,taken,tint,tallMul){
   const destr=(type==='rubble'||type==='fragile');
   const low = (type==='rubble'||type==='gas');                         // низкие блоки
   const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
-  const h = (flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);
+  const h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
   const w = (type==='rubble'?0.8:0.86);
   const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, w);
   const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
@@ -2210,21 +2217,21 @@ function buildScannedRoom(tintHex){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
   const tint = tintHex!=null ? tintHex : 0x28374f;
-  // W/L — капитальная стена; k/t/c — мебель (хрупкое); ~ — жидкость (сквозь, ×0.5 скорость);
-  // * — плазма (сквозь, жжёт Душу); o — газ-лампа (сквозь, свет-источник)
+  // Контур по плану: кухня слева-вверху (уже), выступ Living Room 2 справа, широкая Living Room 1 внизу,
+  // Г-образное сужение слева (1.02м) и внутренняя L-перегородка у LR2.
   const layout = [
     "             ",
-    " WWWWWWWWWWW ",
-    " Wkk    cc W ",
-    " Wk  tt  c W ",
-    " W    ~    W ",
-    " WLLL   o  W ",
-    " W  L      W ",
-    " W  L   *  W ",
-    " W  cc  cc W ",
-    " W         W ",
-    " W    tt   W ",
-    " WWWWWWWWWWW ",
+    " WWWWWWWW    ",
+    " Wkk  tt WWW ",
+    " Wkk  tt   W ",
+    " WW   ~    W ",
+    "  W    LL  W ",
+    "  W    L c W ",
+    "  W o    c W ",
+    "  W c      W ",
+    "  W c    * W ",
+    "  WWWWWWWWWW ",
+    "             ",
     "             "
   ];
   const M={ 'W':'wall','L':'wall','k':'rubble','t':'rubble','c':'rubble','~':'liquid','*':'plasma','o':'gas' };
@@ -2381,7 +2388,7 @@ function bladeCovers(av,gx,gy){
 }
 function remoteBladeCells(r){
   const p=r.latest||{};
-  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword');
+  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword', false, p.reach||0);   // чужая досяжність учтена
 }
 /* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
 function resolveClinch(){
@@ -2801,16 +2808,33 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
 const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
 let creatorMat=0;
+// Возвышение взгляда творца: телефон ВЕРТИКАЛЬНО → горизонт; ПЛАШМЯ → взгляд в пол под ноги.
+function creatorElev(){ return clamp((sensor.pitch-0.88)*1.9, -1.5, 0.9); }
+function setCreatorCamera(){
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  const eye=TIER_H*1.95, e=creatorElev(), D=6;
+  camPos.set(px-dx*0.15, eye, pz-dz*0.15);
+  camTarget.set(px+dx*Math.cos(e)*D, eye+Math.sin(e)*D, pz+dz*Math.cos(e)*D);
+  camera.up.set(0,1,0);
+}
 let creatorIdleT=0;   // авто-затухание панели творца после 3с бездействия
 function creatorTouch(){ creatorIdleT=0; }
 function updatePaletteLabel(){ const el=$('cPalName'); if(el) el.textContent=MAT_NAMES[CREATOR_MATS[creatorMat]]; }
-function aimedCell(){ const f=DIRV[player.dirIdx]; return [clamp(player.gx+f[0],0,12), clamp(player.gy+f[1],0,12)]; }
+function aimedCell(){
+  // ЛУЧ ПРИЦЕЛА: смотришь вниз — клетка пересечения взгляда с полом; горизонт/вверх — клетка перед собой
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const e=creatorElev(), eye=TIER_H*1.95;
+  const dist = e<-0.06 ? clamp(eye/Math.tan(-e), 0.6, 11) : 1.5;
+  const wx=worldX(player.gx)+dx*dist, wz=worldZ(player.gy)+dz*dist;
+  return [clamp(Math.round(wx/CELL)+CX,0,12), clamp(Math.round(wz/CELL)+CY,0,12)];
+}
 function creatorPlace(){
   const [gx,gy]=aimedCell();
   if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
   const ex=obstacleAt(gx,gy); if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); }
   const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
-  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,(CREATOR_MATS[creatorMat]==='base')?1.2:1);
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,1);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
   logE('поставлен блок '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
@@ -2871,7 +2895,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-05g · творец:наклон-камеры-вверх/вниз · вода-не-капкан · UI-полупрозрачный+затухание';
+const BUILD_TAG='2026-07-06a · творец:камера=камера-смартфона · блок-в-прицел · база-кубик · скан-Г-форма · клинок:визуал=физике(+досяжність,PvP)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2931,7 +2955,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn,
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0),
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
       spec:false, t:Date.now() }; },
   async start(){
@@ -3117,7 +3141,7 @@ function renderRemotes(now, dt){
     av.dirIdx = yawToDirIdx(p.yaw||0);
     av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
     av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
-    av.swordLen = p.swordLength||1;
+    av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
     av.dead = (r.hp<=0);
     av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
