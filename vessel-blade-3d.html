@@ -902,7 +902,8 @@ function handInfo(av){
   // Иначе прокачка рушит на расстоянии взгляда, а клинок туда визуально не дотягивается.
   const wnm = av===player ? playerWpn : (av.wpn||'sword');
   const Wv = (typeof WEAPONS!=='undefined' && WEAPONS[wnm]) || {maxLen:6};
-  const extraL = av===player ? ((player.mods&&player.mods.reach)||0) : (av.reachMod||0);
+  let extraL = av===player ? ((player.mods&&player.mods.reach)||0) : (av.reachMod||0);
+  if(Wv.rel==='shot') extraL = 0;   // у бластера дуло не растёт — досяжність идёт в веер пуль
   const cellsL = clamp(Math.round(av.swordLen*Wv.maxLen/6)+extraL, 1, Wv.maxLen+2);
   // угол возвышения луча: прицел наклоном + рубящая дуга атаки
   const elev = clamp(pitch*0.9 - dipAtk, -1.15, 1.15);
@@ -1995,6 +1996,15 @@ function updateWeaponFX(dt){
       else { b[0]-=dx*corr*0.5; b[1]-=dy*corr*0.5; b[2]-=dz*corr*0.5;
              a[0]+=dx*corr*0.5; a[1]+=dy*corr*0.5; a[2]+=dz*corr*0.5; }
     }
+    // ЩЕЛЧОК ВИДЕН: пока идёт удар, хвост тянется к ПРЯМОЙ линии прицела на полную длину —
+    // игрок видит, куда именно бьёт хлыст (совпадает с физикой weaponCells)
+    if(player.strikeT>0){
+      const k=clamp(player.strikeT/STRIKE_DUR,0,1)*0.65;
+      for(let i=1;i<N;i++){
+        const tx=H.hx+ux*SEG*i, ty=H.hy+uy*SEG*i, tz=H.hz+uz*SEG*i;
+        S.pts[i][0]=lerp(S.pts[i][0],tx,k); S.pts[i][1]=lerp(S.pts[i][1],ty,k); S.pts[i][2]=lerp(S.pts[i][2],tz,k);
+      }
+    }
     S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
     // ЩЕЛЧОК: на выбросе клинка хвост получает волну-импульс вперёд (кончик хлещет)
     if(player.strikeT>0.34 && !S.cracked){ S.cracked=true;
@@ -2063,12 +2073,24 @@ function fireShot(ph){
 }
 function firePlayerShot(charge){
   const [dx,dy]=DIRV[player.dirIdx];
-  const m=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,8),
-    new THREE.MeshBasicMaterial({color:0x66e0ff}));
-  m.frustumCulled=false; scene.add(m);
-  SHOTS.push({x:player.gx, y:player.gy, vx:dx*(2.4+0.8*(charge-1)), vy:dy*(2.4+0.8*(charge-1)),
-    owner:null, hostile:false, mesh:m, life:8,
-    dmg:Math.round(10*charge*(player.mods?player.mods.dmg:1))});
+  const dmgMul=(player.mods?player.mods.dmg:1);
+  const rad=0.15*(1+clamp(dmgMul-1,0,2)*0.55);              // УРОН → пуля видимо крупнее
+  const spd=2.4+0.8*(charge-1);
+  const one=(vx,vy)=>{
+    const m=new THREE.Mesh(new THREE.SphereGeometry(rad,8,8),
+      new THREE.MeshBasicMaterial({color:0x66e0ff}));
+    m.frustumCulled=false; scene.add(m);
+    SHOTS.push({x:player.gx, y:player.gy, vx, vy, owner:null, hostile:false, mesh:m, life:8,
+      dmg:Math.round(10*charge*dmgMul)});
+  };
+  one(dx*spd, dy*spd);                                       // основная пуля — прямо
+  // ДОСЯЖНІСТЬ → веер дополнительных пуль по сторонам (±14°, ±28°, …)
+  const extra=clamp(Math.round((player.mods&&player.mods.reach)||0),0,8);
+  for(let i=1;i<=extra;i++){
+    const a=(Math.ceil(i/2))*0.24*(i%2?1:-1);                 // чередуем лево/право
+    const ca=Math.cos(a), sa=Math.sin(a);
+    one((dx*ca-dy*sa)*spd, (dx*sa+dy*ca)*spd);
+  }
 }
 function updateShots(dt){
   for(let i=SHOTS.length-1;i>=0;i--){
@@ -2927,7 +2949,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-07a · лор-панель→Алго-крат · env-канал(баннер/вспышка/пол) · сущности algocrat';
+const BUILD_TAG='2026-07-07b · бластер:пуля-крупнее-от-урона+веер-от-досяжності · хлыст:видимый-щелчок';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
