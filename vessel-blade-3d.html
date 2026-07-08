@@ -39,6 +39,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   background:#a78bfa;opacity:0;transition:opacity .04s;pointer-events:none;box-shadow:0 0 10px #a78bfa}
 #logBtn{position:fixed;left:8px;bottom:30px;z-index:16;font:inherit;font-size:10px;letter-spacing:.1em;
   background:#0a1a2e;color:#3a6a9f;border:1px solid #1e3a5f;border-radius:5px;padding:5px 10px}
+#sageIn{flex:1;min-width:0;background:rgba(10,24,40,.85);color:#cfe3ff;border:1px solid #35507a;border-radius:7px;padding:8px;font:inherit;font-size:12px}
+#sageSend{color:#a78bfa;border-color:#4c3a7a}
 #logPanel{position:fixed;inset:6% 4%;z-index:25;display:none;flex-direction:column;
   background:rgba(2,8,18,.96);border:1px solid #1e3a5f;border-radius:8px;overflow:hidden}
 #logbar{display:flex;gap:6px;padding:6px;border-bottom:1px solid #1e3a5f}
@@ -64,6 +66,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 #lorePanel .lp-row{display:flex;gap:10px}
 #lorePanel button{padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.9);color:#a78bfa;border:1px solid #4c3a7a;border-radius:9px}
 #lorePanel #loreStatus{color:#7cc8ff;font-size:12px;min-height:16px}
+.eLabel{position:fixed;z-index:6;pointer-events:none;transform:translate(-50%,-100%);
+  font:inherit;font-size:11px;letter-spacing:.06em;text-shadow:0 0 6px #000,0 0 2px #000;white-space:nowrap}
 #crosshair{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;z-index:20;display:none;pointer-events:none;
   border:2px solid rgba(249,115,22,.9);border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,.6)}
 #crosshair::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;background:#f97316;border-radius:50%}
@@ -172,6 +176,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 </div>
 <div id="logPanel">
   <div id="logbar">
+    <input id="sageIn" placeholder="вопрос Великому Мудрецу…" />
+    <button id="sageSend">→ МУДРЕЦУ</button>
     <button id="logCopy">COPY</button>
     <button id="logClear">CLR</button>
     <button id="logClose">✕ ЗАКРЫТЬ</button>
@@ -2949,7 +2955,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-07b · бластер:пуля-крупнее-от-урона+веер-от-досяжності · хлыст:видимый-щелчок';
+const BUILD_TAG='2026-07-08a · architecture-канал(перестройка-комнаты) · имена-над-сущностями · терминал-Мудреца';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2963,6 +2969,11 @@ $('mNew').onclick=newGame;
 $('mScan').onclick=loadScannedRoom;
 $('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
 $('mLore').onclick=()=>{ closeMenu(); $('lorePanel').style.display='flex'; };
+$('sageSend').onclick=()=>{
+  const el=$('sageIn'); const q=(el.value||'').trim(); if(!q) return;
+  if(NET.askSage(q)){ logE('Я → МУДРЕЦУ: '+q); el.value=''; blip(640,0.05,'sine',0.08); }
+  else logE('МУДРЕЦ недоступен (оффлайн)');
+};
 $('loreClose').onclick=()=>{ $('lorePanel').style.display='none'; };
 $('loreSubmit').onclick=()=>{
   const txt=($('loreText').value||'').trim();
@@ -3068,6 +3079,25 @@ const NET = {
       onDisconnect(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`)).remove();
       // ОБЩАЯ КОМНАТА ПРИГОДЫ: любой перешедший пишет (rx,ry), остальные следуют.
       // Записи идемпотентны (все пишут одно и то же по одному консенсусу кромки).
+      // АЛГО-КРАТ: канал architecture — сервер мгновенно перестраивает комнату (обвал, кристальный зал…)
+      onValue(ref(this.db,`blade/${this.room}/architecture`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._archT||0)) return; this._archT=v.t;
+        try{
+          obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+          const taken=new Set();
+          for(const b of Object.values(v.blocks||{}))
+            addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
+                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0);
+          snapshotRoom();                                   // постройка сервера переживает переходы
+          showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
+        }catch(e){}
+      });
+      // ВЕЛИКИЙ МУДРЕЦ: ответы сервера — ненавязчиво на экран (баннер) и в лог
+      onValue(ref(this.db,`blade/${this.room}/sage_out`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._sageT||0)) return; this._sageT=v.t;
+        showBanner('🜄 '+String(v.text||'').slice(0,80), '#7cc8ff');
+        logE('МУДРЕЦ: '+v.text);
+      });
       // АЛГО-КРАТ: env-канал бекенда — баннер/вспышка/перекраска пола без перезагрузки
       onValue(ref(this.db,`blade/${this.room}/env`), snap=>{
         const v=snap.val(); if(!v || !v.t || v.t<=(this._envT||0)) return; this._envT=v.t;
@@ -3088,6 +3118,11 @@ const NET = {
       });
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  askSage(text){
+    if(!this.online||!this.db) return false;
+    push(ref(this.db,`blade/${this.room}/sage_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
+    return true;
   },
   submitLore(text){
     if(!this.online||!this.db) return false;
@@ -3271,8 +3306,25 @@ function upsertRemotePhantom(key, s){
   }
   r.latest=s;
 }
+// ── 2D-МЕТКИ: имя/статус над головой сущности (проекция мира на экран) ──
+const LABELS=new Map(); let LBF=0;
+const KIND_COL={boss:'#ef4444',gunner:'#f59e0b',flyer:'#7cc8ff',crawler:'#a3e635',fighter:'#e879f9'};
+const _lv=new THREE.Vector3();
+function labelTick(key,text,color,x,y,z){
+  let el=LABELS.get(key);
+  if(!el){ el=document.createElement('div'); el.className='eLabel'; document.body.appendChild(el); LABELS.set(key,el); }
+  el._f=LBF;
+  if(el._t!==text){ el.textContent=text; el._t=text; }
+  el.style.color=color;
+  _lv.set(x,y,z).project(camera);
+  if(_lv.z>1 || _lv.z<-1){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.style.left=((_lv.x*0.5+0.5)*innerWidth)+'px';
+  el.style.top =((-_lv.y*0.5+0.5)*innerHeight)+'px';
+}
+function labelsSweep(){ for(const [k,el] of LABELS){ if(el._f!==LBF){ el.remove(); LABELS.delete(k); } } }
 function renderRemotePhantoms(now, dt){
-  const nowMs=Date.now();
+  const nowMs=Date.now(); LBF++;
   for(const key in NET.rphantoms){
     const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
     const stale=(s.t||0) < nowMs-NET_PURGE_MS;   // старые сборки без t тоже считаются протухшими
@@ -3288,7 +3340,13 @@ function renderRemotePhantoms(now, dt){
     av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
     av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
     updateAvatarMesh(av,now); updateBlade(av);
+    if(s.nm){                                              // имя + статус от Алго-крата
+      const col=KIND_COL[s.k]||'#cfe3ff';
+      const st=av.dead?'✝':(av.hp<=30?'⚠ '+Math.round(av.hp):Math.round(av.hp));
+      labelTick(key, s.nm+' · '+st, col, worldX(av.gx), TIER_H*(2.5*(s.sz||1))+0.3, worldZ(av.gy));
+    }
   }
+  labelsSweep();
 }
 function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ disposeAvatar(r.av); delete NET.rphantoms[key]; } }
 function remotePhantomAt(cx,cy){
