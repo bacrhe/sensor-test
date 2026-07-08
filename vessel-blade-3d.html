@@ -60,6 +60,10 @@ h1 span{color:#1e3a5f;font-size:10px}
 #menu #mNew{color:#22c55e;border-color:#16a34a;background:#0c2a1f}
 #lorePanel{position:fixed;inset:0;z-index:29;display:none;flex-direction:column;align-items:center;justify-content:center;
   gap:12px;background:rgba(1,6,15,.94);padding:24px}
+#forgePanel{position:fixed;inset:0;z-index:29;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(1,6,15,.94);padding:24px}
+#forgePanel input{width:min(84vw,420px);background:rgba(10,24,40,.85);color:#cfe3ff;border:1px solid #35507a;border-radius:8px;padding:10px;font:inherit;font-size:13px}
+#forgePanel button{padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.9);color:#f59e0b;border:1px solid #7a5a12;border-radius:9px}
+#forgePanel #fgStatus{color:#7cc8ff;font-size:12px;min-height:16px}
 #lorePanel .lp-title{color:#a78bfa;letter-spacing:.12em;font-size:14px}
 #lorePanel textarea{width:min(92vw,560px);height:38vh;background:rgba(10,24,40,.85);color:#cfe3ff;border:1px solid #35507a;
   border-radius:10px;padding:12px;font:inherit;font-size:13px;resize:none}
@@ -140,6 +144,14 @@ h1 span{color:#1e3a5f;font-size:10px}
 <button id="pauseBtn">⏸</button>
 <button id="followBtn">◎ ИГРОК ▷</button>
 <div id="crosshair"></div>
+<div id="forgePanel">
+  <div class="lp-title">⚒ КУЗНЯ СУЩНОСТЕЙ</div>
+  <input id="fgName" placeholder="имя сущности…" maxlength="20"/>
+  <div class="lp-row"><button id="fgKind">ВИД: БОЕЦ</button><button id="fgLoco">ХОД: ХОДЬБА</button></div>
+  <div class="lp-row"><button id="fgBody">ТЕЛО: ОБЫЧНОЕ</button><button id="fgPow">СИЛА: НОРМА</button></div>
+  <div class="lp-row"><button id="fgMake">⚒ СОТВОРИТЬ</button><button id="fgClose">✕ ЗАКРЫТЬ</button></div>
+  <div id="fgStatus"></div>
+</div>
 <div id="lorePanel">
   <div class="lp-title">🜁 ЛОР ВСЕЛЕННОЙ → АЛГО-КРАТ</div>
   <textarea id="loreText" placeholder="Вставь описание вымышленной вселенной: фракции, герои, злодеи. Алго-крат разложит их по сетке 13×13 (Сходження/Спуск × Відлуння/Шум) и оживит комнату."></textarea>
@@ -152,6 +164,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 <div id="creatorUI">
   <button id="cPal">◈ <span id="cPalName">БАЗА</span></button>
   <button id="cShape">⬒ <span id="cShapeName">КУБ</span></button>
+  <button id="cTint">🎨 <span id="cTintName">АВТО</span></button>
+  <button id="cAlpha">◐ <span id="cAlphaName">100%</span></button>
   <button id="cPlace">✚ БЛОК</button>
   <button id="cRemove">✖ УБРАТЬ</button>
 </div>
@@ -171,6 +185,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mScan">🏠 СКАН 46м² (элементы)</button>
   <button id="mCreate">🔨 СОЗДАТЕЛЬ (строить)</button>
   <button id="mLore">🜁 ВСЕЛЕННАЯ (лор → Алго-крат)</button>
+  <button id="mForge">⚒ КУЗНЯ СУЩНОСТЕЙ</button>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -1593,6 +1608,28 @@ function setClinchCamera(){
   camera.up.set(0,1,0);
 }
 // астральный риг (создаётся один раз, невидим вне клинча)
+// ── МОРФ ГРАВЦЯ: сервер може перетворити тебе (слайм). Тіло ховається, зброя вимкнена. ──
+const MORPH={form:'human', until:0};
+const slime=(function(){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.42,0.8),
+    new THREE.MeshBasicMaterial({color:0x6ee7a8, transparent:true, opacity:0.82}));
+  m.frustumCulled=false; m.visible=false; scene.add(m); return m;
+})();
+function applyMorph(form,dur){
+  MORPH.form=(form==='slime')?'slime':'human';
+  MORPH.until=(MORPH.form!=='human'&&dur)?Date.now()+dur*1000:0;
+  if(MORPH.form==='slime'){ showBanner('🜏 ТЫ ПРЕВРАЩЁН В СЛИЗЬ','#6ee7a8'); doFlash('#6ee7a8'); buzz([0,120]); logE('МОРФ: слизь'+(dur?(' на '+dur+'с'):'')); }
+  else { slime.visible=false; player.mesh.visible=(mode==='fighter'); showBanner('☉ ТЫ СНОВА СОБОЙ','#7cc8ff'); logE('МОРФ: человек'); }
+}
+function updateMorphVisual(now){
+  if(MORPH.form==='human') return;
+  if(MORPH.until && Date.now()>MORPH.until){ applyMorph('human'); return; }
+  player.mesh.visible=false; player.blade.visible=false; hideAstral();
+  slime.visible=(mode==='fighter');
+  const sq=1+Math.sin(now*0.006)*0.12;                       // дыхание-сквиш
+  slime.scale.set(sq,2-sq,sq);
+  slime.position.set(worldX(player.gx), 0.21*(2-sq)-0.24, worldZ(player.gy));
+}
 const astral = (function(){
   const mk=(w,h,d,op)=>new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
     new THREE.MeshBasicMaterial({color:0xbfe0ff,transparent:true,opacity:op,blending:THREE.AdditiveBlending,depthWrite:false}));
@@ -1686,7 +1723,7 @@ function remoteFighterAt(cx,cy){
 let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
-  if(!player.hitActive || player.disarmed || player.dead) return;
+  if(!player.hitActive || player.disarmed || player.dead || MORPH.form!=='human') return;   // слизь безоружна
   if(playerWpn==='whip' && player.strikeT<=0) return;   // хлыст вредит только в момент ЩЕЛЧКА — вися, он безвреден
   // ЕДИНАЯ ЗОНА ОРУЖИЯ: та же геометрия, что и у клинча/заклина — weaponCells.
   // Раньше тут была своя линия по DIRV, из-за чего кольцо ціпа и дуга сокири
@@ -2078,6 +2115,7 @@ function fireShot(ph){
   blip(480,0.1,'square',0.12);
 }
 function firePlayerShot(charge){
+  if(MORPH.form!=='human') return;   // слизь не стреляет
   const [dx,dy]=DIRV[player.dirIdx];
   const dmgMul=(player.mods?player.mods.dmg:1);
   const rad=0.15*(1+clamp(dmgMul-1,0,2)*0.55);              // УРОН → пуля видимо крупнее
@@ -2160,12 +2198,12 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 // ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
-function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0}))}); }
+function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null}))}); }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   const taken=new Set();
-  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,null,(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0);
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null));
   return true;
 }
 function applyAdvRoom(rx,ry){
@@ -2218,7 +2256,7 @@ function composeRoomEnemies(rx,ry){
    wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
    (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
-function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY){
+function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
@@ -2252,8 +2290,9 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY){
     new THREE.LineBasicMaterial({color: edgeCol, transparent:true,
       opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
+  if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }   // прозрачность от творца
   grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
-  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,
     hp: solid?Infinity : (destr?(type==='fragile'?16:24):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
@@ -2797,6 +2836,7 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
   }
   player.gx=nx; player.gy=ny;
   if(mode!=='creator'){ const dc=obstacleAt(nx,ny); if(dc && dc.pass==='liquid') player.moveLockT=0.4; }   // жидкость: вдвое медленнее (кроме творца)
+  if(MORPH.form!=='human') player.moveLockT=Math.max(player.moveLockT||0,0.32);   // слизь ползёт медленно
   tryPickupBlade(); blip(520,0.05,'sine',0.06);
 }
 let touchStart=null;
@@ -2862,6 +2902,9 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 // ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
 const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
 const CREATOR_SHAPES=['cube','slab','post','panel'];
+const CREATOR_TINTS=[[null,'АВТО'],[0xef4444,'АЛЫЙ'],[0xf59e0b,'ЯНТАРЬ'],[0x22c55e,'ИЗУМРУД'],[0x38bdf8,'НЕБО'],[0x8b5cf6,'АМЕТИСТ'],[0xf472b6,'РОЗА'],[0xf8fafc,'СНЕГ'],[0x111827,'НОЧЬ']];
+const CREATOR_ALPHAS=[[null,'100%'],[0.7,'70%'],[0.45,'45%'],[0.22,'22%']];
+let creatorTint=0, creatorAlpha=0;
 const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
 let creatorShape=0;
 const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
@@ -2894,7 +2937,7 @@ function creatorPlace(){
   const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
   const shp=CREATOR_SHAPES[creatorShape];
   const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;   // панель поперёк взгляда
-  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,null,1,shp==='cube'?null:shp,rotY);
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0]);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
   logE('поставлен '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
@@ -2955,7 +2998,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-08a · architecture-канал(перестройка-комнаты) · имена-над-сущностями · терминал-Мудреца';
+const BUILD_TAG='2026-07-08d · МОРФ-игрока(слизь:тело/оружие/ход/сеть) · вся-спека-закрыта';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -2969,6 +3012,27 @@ $('mNew').onclick=newGame;
 $('mScan').onclick=loadScannedRoom;
 $('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
 $('mLore').onclick=()=>{ closeMenu(); $('lorePanel').style.display='flex'; };
+const FG={kinds:[['fighter','БОЕЦ'],['crawler','ПОВЗУН'],['flyer','ЛІТУН'],['gunner','СТРЕЛЕЦ'],['boss','БОСС']],
+  locos:[['walk','ХОДЬБА'],['crawl','ПОЛЗ'],['fly','ПОЛЁТ'],['jump','ПРЫЖКИ']],
+  bodies:[['ОБЫЧНОЕ',1,1,1,1],['ШИРОКОЕ',2,0.8,2,1],['ДЛИННОЕ',0.7,0.6,2.5,1],['ГИГАНТ',1.4,1.6,1.4,2]],
+  pows:[['СЛАБАЯ',60,6,1.4],['НОРМА',100,10,1],['МОЩЬ',160,18,0.8],['БОСС',240,26,0.6]], k:0,l:0,b:0,p:0};
+$('mForge').onclick=()=>{ closeMenu(); $('forgePanel').style.display='flex'; };
+$('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
+$('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
+$('fgLoco').onclick=()=>{ FG.l=(FG.l+1)%FG.locos.length; $('fgLoco').textContent='ХОД: '+FG.locos[FG.l][1]; };
+$('fgBody').onclick=()=>{ FG.b=(FG.b+1)%FG.bodies.length; $('fgBody').textContent='ТЕЛО: '+FG.bodies[FG.b][0]; };
+$('fgPow').onclick=()=>{ FG.p=(FG.p+1)%FG.pows.length; $('fgPow').textContent='СИЛА: '+FG.pows[FG.p][0]; };
+$('fgMake').onclick=()=>{
+  const nm=($('fgName').value||'').trim()||'Творение';
+  const B=FG.bodies[FG.b], P=FG.pows[FG.p];
+  const c=freeSpawnCell(clamp(player.gx+2,0,12), player.gy, null);
+  const ok=NET.forgeEntity({ x:c[0], y:c[1], yaw:0, hp:P[1], len:1, strike:0, roll:0, dead:0,
+    k:FG.kinds[FG.k][0], sz:B[4], hov:FG.locos[FG.l][0]==='fly'?1:0,
+    mw:B[1], mh:B[2], md:B[3], loco:FG.locos[FG.l][0], spd:P[3], dg:P[2],
+    nm:nm.slice(0,20), t:Date.now() });
+  $('fgStatus').textContent = ok ? nm+' сотворён — сервер вдохнёт жизнь…' : 'Нет связи с БД';
+  if(ok){ blip(720,0.07,'sine',0.1); setTimeout(()=>{ $('forgePanel').style.display='none'; $('fgStatus').textContent=''; },900); }
+};
 $('sageSend').onclick=()=>{
   const el=$('sageIn'); const q=(el.value||'').trim(); if(!q) return;
   if(NET.askSage(q)){ logE('Я → МУДРЕЦУ: '+q); el.value=''; blip(640,0.05,'sine',0.08); }
@@ -2984,6 +3048,8 @@ $('loreSubmit').onclick=()=>{
 };
 $('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); creatorTouch(); blip(500,0.04,'sine',0.06); };
 $('cShape').onclick=()=>{ creatorShape=(creatorShape+1)%CREATOR_SHAPES.length; const el=$('cShapeName'); if(el) el.textContent=SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]; creatorTouch(); blip(560,0.04,'sine',0.06); };
+$('cTint').onclick=()=>{ creatorTint=(creatorTint+1)%CREATOR_TINTS.length; $('cTintName').textContent=CREATOR_TINTS[creatorTint][1]; creatorTouch(); blip(520,0.04,'sine',0.06); };
+$('cAlpha').onclick=()=>{ creatorAlpha=(creatorAlpha+1)%CREATOR_ALPHAS.length; $('cAlphaName').textContent=CREATOR_ALPHAS[creatorAlpha][1]; creatorTouch(); blip(480,0.04,'sine',0.06); };
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
 $('cRemove').onclick=()=>{ creatorTouch(); creatorRemove(); };
 $('mMenu').onclick=()=>location.reload();
@@ -3030,7 +3096,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0),
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0,
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
       spec:false, t:Date.now() }; },
   async start(){
@@ -3087,10 +3153,23 @@ const NET = {
           const taken=new Set();
           for(const b of Object.values(v.blocks||{}))
             addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
-                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0);
+                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0, (b.alpha??null));
           snapshotRoom();                                   // постройка сервера переживает переходы
           showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
         }catch(e){}
+      });
+      // МОРФ: сервер диктует форму игрока (blade/{room}/morph/{myId})
+      onValue(ref(this.db,`blade/${this.room}/morph/${this.myId}`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._mrphT||0)) return; this._mrphT=v.t;
+        applyMorph(v.form||'human', +(v.dur||0));
+      });
+      // УДАРЫ АЛГО-КРАТА: серверные сущности наносят урон (канал strikes/{myId})
+      onValue(ref(this.db,`blade/${this.room}/strikes/${this.myId}`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._strkT||0)) return; this._strkT=v.t;
+        if(mode!=='fighter' || player.dead) return;
+        damageTier(player, 1, clamp(+(v.dmg||8),1,40));
+        showBanner('☄ '+String(v.from||'СУЩНОСТЬ')+' РАНИТ ТЕБЯ','#ef4444'); doFlash('#ef4444'); buzz(70);
+        logE((v.from||'сущность')+' ранит → HP '+Math.round(player.hp));
       });
       // ВЕЛИКИЙ МУДРЕЦ: ответы сервера — ненавязчиво на экран (баннер) и в лог
       onValue(ref(this.db,`blade/${this.room}/sage_out`), snap=>{
@@ -3118,6 +3197,11 @@ const NET = {
       });
       this.online=true;
     }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  forgeEntity(spec){
+    if(!this.online||!this.db) return false;
+    set(ref(this.db,`blade/${this.room}/phantoms/forge/f${Date.now()%1000000}`), spec).catch(()=>{});
+    return true;
   },
   askSage(text){
     if(!this.online||!this.db) return false;
@@ -3255,6 +3339,8 @@ function renderRemotes(now, dt){
     av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
     av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
     av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
+    if(p.mf){ av.mesh.scale.set(0.8,0.35,0.8); av.swordLen=0.2; av.strikeT=0; }   // чужой слайм: плоское тельце, без клинка
+    else av.mesh.scale.set(1,1,1);
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
     av.dead = (r.hp<=0);
     av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
@@ -3302,6 +3388,10 @@ function upsertRemotePhantom(key, s){
       else if(s&&s.k==='gunner') av.mesh.scale.set(0.8,0.85,0.8);
       else if(s&&s.k==='boss') av.mesh.scale.setScalar((s.sz||2)>2?2.8:2.0);
     }catch(e){}
+    // МОРФОЛОГИЯ от Алго-крата: mw/mh/md (0.4..3) растягивают тело по осям поверх масштаба вида
+    try{ if(s&&(s.mw||s.mh||s.md)){
+      av.mesh.scale.x*=clamp(+(s.mw||1),0.4,3); av.mesh.scale.y*=clamp(+(s.mh||1),0.4,3); av.mesh.scale.z*=clamp(+(s.md||1),0.4,3);
+    }}catch(e){}
     av.size=(s&&s.sz)||1; av.hover=(s&&s.hov)||0;
   }
   r.latest=s;
@@ -3378,6 +3468,7 @@ function frame(now){
     player.pitch=sensor.pitch; player.roll=sensor.roll;
     player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
     updateStanceAndCamera(dt);
+    updateMorphVisual(now);
     creatorIdleT+=dt;   // авто-затухание панели творца через 3с бездействия (обзор чист)
     { const cui=$('creatorUI'); if(cui) cui.style.opacity = creatorIdleT>3 ? '0.18':'1'; }
   } else if(mode==='fighter'){
