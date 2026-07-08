@@ -57,10 +57,16 @@ h1 span{color:#1e3a5f;font-size:10px}
 #menu button{width:100%;max-width:320px;padding:14px;font:inherit;font-size:13px;letter-spacing:.06em;
   background:#0c2030;color:#60a5fa;border:1px solid #1e3a5f;border-radius:7px}
 #menu button:active{background:#12304a}
+.mrow{display:flex;align-items:center;gap:8px;width:min(86vw,420px);color:#cfe3ff;font-size:12px}
+.mrow input[type=range]{flex:1} .mrow span{min-width:2.4em;text-align:right}
+.mrow button{padding:8px 10px;font:inherit;font-size:11px;background:rgba(12,32,48,.9);color:#7cc8ff;border:1px solid #35507a;border-radius:8px}
 #menu #mNew{color:#22c55e;border-color:#16a34a;background:#0c2a1f}
 #lorePanel{position:fixed;inset:0;z-index:29;display:none;flex-direction:column;align-items:center;justify-content:center;
   gap:12px;background:rgba(1,6,15,.94);padding:24px}
 #forgePanel{position:fixed;inset:0;z-index:29;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(1,6,15,.94);padding:24px}
+#forgePanel .fg-sl{display:flex;align-items:center;gap:8px;width:min(84vw,420px);color:#cfe3ff;font-size:12px}
+#forgePanel .fg-sl input[type=range]{flex:1} #forgePanel .fg-sl span{min-width:2.4em;text-align:right}
+#fgCanvas{border:1px solid #35507a;border-radius:10px;background:rgba(6,14,26,.7)}
 #forgePanel input{width:min(84vw,420px);background:rgba(10,24,40,.85);color:#cfe3ff;border:1px solid #35507a;border-radius:8px;padding:10px;font:inherit;font-size:13px}
 #forgePanel button{padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.9);color:#f59e0b;border:1px solid #7a5a12;border-radius:9px}
 #forgePanel #fgStatus{color:#7cc8ff;font-size:12px;min-height:16px}
@@ -147,8 +153,15 @@ h1 span{color:#1e3a5f;font-size:10px}
 <div id="forgePanel">
   <div class="lp-title">⚒ КУЗНЯ СУЩНОСТЕЙ</div>
   <input id="fgName" placeholder="имя сущности…" maxlength="20"/>
-  <div class="lp-row"><button id="fgKind">ВИД: БОЕЦ</button><button id="fgLoco">ХОД: ХОДЬБА</button></div>
-  <div class="lp-row"><button id="fgBody">ТЕЛО: ОБЫЧНОЕ</button><button id="fgPow">СИЛА: НОРМА</button></div>
+  <div class="lp-row"><button id="fgKind">ВИД: БОЕЦ</button><button id="fgLoco">ХОД: ХОДЬБА</button><button id="fgSide">⚔ ВРАГ</button></div>
+  <canvas id="fgCanvas" width="170" height="170"></canvas>
+  <div class="fg-sl">Ш<input type="range" id="fgW" min="0.4" max="3" step="0.1" value="1"><span id="fgWv"></span></div>
+  <div class="fg-sl">В<input type="range" id="fgH" min="0.4" max="3" step="0.1" value="1"><span id="fgHv"></span></div>
+  <div class="fg-sl">Г<input type="range" id="fgD" min="0.4" max="3" step="0.1" value="1"><span id="fgDv"></span></div>
+  <div class="fg-sl">РАЗМ<input type="range" id="fgSz" min="1" max="3" step="1" value="1"><span id="fgSzv"></span></div>
+  <div class="fg-sl">СКОР<input type="range" id="fgSpd" min="0.3" max="2" step="0.1" value="1"><span id="fgSpdv"></span></div>
+  <div class="fg-sl">УРОН<input type="range" id="fgDmg" min="4" max="30" step="1" value="10"><span id="fgDmgv"></span></div>
+  <div class="fg-sl">HP<input type="range" id="fgHp" min="40" max="400" step="10" value="100"><span id="fgHpv"></span></div>
   <div class="lp-row"><button id="fgMake">⚒ СОТВОРИТЬ</button><button id="fgClose">✕ ЗАКРЫТЬ</button></div>
   <div id="fgStatus"></div>
 </div>
@@ -186,6 +199,9 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mCreate">🔨 СОЗДАТЕЛЬ (строить)</button>
   <button id="mLore">🜁 ВСЕЛЕННАЯ (лор → Алго-крат)</button>
   <button id="mForge">⚒ КУЗНЯ СУЩНОСТЕЙ</button>
+  <div class="mrow">📷 <input type="range" id="mZoom" min="0.5" max="2.4" step="0.1"><span id="mZoomV">1.0</span>
+    <button id="mView">ВЗГЛЯД: АВТО</button></div>
+  <div class="mrow">🎨 ТЕЛО <input type="range" id="mHue" min="0" max="1" step="0.01"></div>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -1043,7 +1059,10 @@ function updateStanceAndCamera(dt){
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
-  const fpRaw = (mode==='creator') ? 1 : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // творец — всегда 1-е лицо
+  const fpRaw = (mode==='creator') ? 1
+    : CAM.view==='fp' ? 1
+    : (CAM.view==='third'||CAM.view==='top') ? 0
+    : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // АВТО: наклон в альбомную = 1-е лицо
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
   const fp = player.fpSmooth;
   // ГИСТЕРЕЗИС стойки: вход в МАЯК при fp>0.58, выход при fp<0.42.
@@ -1141,10 +1160,11 @@ function updateStanceAndCamera(dt){
   player.mesh.visible = fp < 0.85;          // тело исчезает только у самого 1-го лица
 
   // камера — плавный бленд между 3-м и 1-м лицом
-  const tpx=px-dx*1.6, tpy=TIER_H*4.8, tpz=pz-dz*1.6;      // 3-е лицо: почти сверху, ближе к затылку и выше
+  const Zc=(mode==='creator')?1:CAM.zoom, topV=(CAM.view==='top');   // зум камеры + вид «сверху»
+  const tpx=px-dx*(topV?0.8:1.6)*Zc, tpy=TIER_H*(topV?8.0:4.8)*Zc, tpz=pz-dz*(topV?0.8:1.6)*Zc;
   const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
   camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
-  const ttx=px+dx*3.2, tty=TIER_H*0.2, ttz=pz+dz*3.2;     // прицел вперёд-вниз: спереди ~2/3 кадра, сзади ~1/3
+  const ttx=px+dx*(topV?1.4:3.2), tty=TIER_H*(topV?0.0:0.2), ttz=pz+dz*(topV?1.4:3.2);     // прицел вперёд-вниз
   const ftx=px+dx*6,   fty=TIER_H*1.7 + sensor.pitch*4.5, ftz=pz+dz*6;   // 1-е лицо смотрит вверх/вниз по наклону (видно себе под ноги)
   camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
 }
@@ -2899,6 +2919,24 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
   mode=b.dataset.mode;
   document.querySelectorAll('.mbtn').forEach(x=>x.classList.toggle('on', x===b));
 });
+// ── ХИМИЯ МАТЕРИАЛОВ (первая реакция): ПЛАЗМА рядом с ЖИДКОСТЬЮ «запекает» её в СТЕКЛО ──
+setInterval(()=>{ try{
+  if(!obstacles.length) return; let changed=false;
+  for(const o of obstacles.slice()){
+    if(!o.alive || o.mtype!=='plasma') continue;
+    for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const n=obstacleAt(o.gx+ox,o.gy+oy);
+      if(n && n.alive && n.mtype==='liquid'){
+        const gx=n.gx, gy=n.gy, shp=n.shape, rot=n.rotY;
+        n.alive=false; scene.remove(n.mesh); obstacles.splice(obstacles.indexOf(n),1);
+        const taken=new Set(obstacles.map(q=>q.gx+','+q.gy));
+        addObstacle(gx,gy,'fragile',taken,0xbfe8ff,1,shp,rot,0.35);   // стекло: хрупкое, светлое, прозрачное
+        logE('ХИМИЯ: плазма+жидкость → СТЕКЛО ('+gx+','+gy+')'); doFlash('#bfe8ff'); changed=true;
+      }
+    }
+  }
+  if(changed) snapshotRoom();
+}catch(e){} }, 700);
 // ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
 const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
 const CREATOR_SHAPES=['cube','slab','post','panel'];
@@ -2961,6 +2999,12 @@ function applyMode(){
   if(creator) updatePaletteLabel();
   logE('режим: '+mode);
 }
+// Спосіб перегляду ЗА СОБОЮ (не плутати з режимами спостерігача): зум + тип огляду
+const CAM={zoom:1, view:'auto', _hue:null};
+try{ const c=JSON.parse(localStorage.getItem('vb_cam')||'{}');
+  if(c.zoom) CAM.zoom=clamp(+c.zoom,0.5,2.4); if(c.view) CAM.view=c.view;
+  const h=localStorage.getItem('vb_hue'); if(h!=null) CAM._hue=+h; }catch(e){}
+function camSave(){ try{ localStorage.setItem('vb_cam',JSON.stringify({zoom:CAM.zoom,view:CAM.view})); }catch(e){} }
 const MODE_ORDER=['fighter','spectator','follow','action','map'];
 const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',action:'ЭКШН',map:'КАРТА'};
 function cycleMode(){
@@ -2998,7 +3042,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-08d · МОРФ-игрока(слизь:тело/оружие/ход/сеть) · вся-спека-закрыта';
+const BUILD_TAG='2026-07-09a · камера:зум+взгляды · КУЗНЯ-2.0(ползунки/превью/союзники) · оттенок-тела · химия:стекло';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3013,26 +3057,54 @@ $('mScan').onclick=loadScannedRoom;
 $('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
 $('mLore').onclick=()=>{ closeMenu(); $('lorePanel').style.display='flex'; };
 const FG={kinds:[['fighter','БОЕЦ'],['crawler','ПОВЗУН'],['flyer','ЛІТУН'],['gunner','СТРЕЛЕЦ'],['boss','БОСС']],
-  locos:[['walk','ХОДЬБА'],['crawl','ПОЛЗ'],['fly','ПОЛЁТ'],['jump','ПРЫЖКИ']],
-  bodies:[['ОБЫЧНОЕ',1,1,1,1],['ШИРОКОЕ',2,0.8,2,1],['ДЛИННОЕ',0.7,0.6,2.5,1],['ГИГАНТ',1.4,1.6,1.4,2]],
-  pows:[['СЛАБАЯ',60,6,1.4],['НОРМА',100,10,1],['МОЩЬ',160,18,0.8],['БОСС',240,26,0.6]], k:0,l:0,b:0,p:0};
-$('mForge').onclick=()=>{ closeMenu(); $('forgePanel').style.display='flex'; };
+  locos:[['walk','ХОДЬБА'],['crawl','ПОЛЗ'],['fly','ПОЛЁТ'],['jump','ПРЫЖКИ']], k:0,l:0, ally:false};
+const FG_COL={fighter:0xe879f9,crawler:0xa3e635,flyer:0x7cc8ff,gunner:0xf59e0b,boss:0xef4444};
+function fgv(id){ return +($(id).value); }
+function fgBind(id,out){ $(id).oninput=()=>{ $(out).textContent=fgv(id); }; $(id).oninput(); }
+let fgPrev=null;
+function fgPreviewInit(){                                   // живой 3D-предпросмотр модели
+  if(fgPrev) return;
+  ['fgW','fgH','fgD','fgSz','fgSpd','fgDmg','fgHp'].forEach(id=>fgBind(id,id+'v'));
+  const rn=new THREE.WebGLRenderer({canvas:$('fgCanvas'),antialias:false,alpha:true}); rn.setSize(170,170,false);
+  const sc=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(40,1,0.1,50); cam.position.set(0,2.2,4.8); cam.lookAt(0,1.0,0);
+  const grp=new THREE.Group(); sc.add(grp);
+  const mk=(w,h,d,y)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial()); m.position.y=y; grp.add(m); return m; };
+  const parts=[mk(0.55,0.7,0.4,0.35), mk(0.7,0.8,0.45,1.15), mk(0.5,0.5,0.5,1.85)];
+  fgPrev={rn,sc,cam,grp,parts};
+  (function loop(){ requestAnimationFrame(loop);
+    if($('forgePanel').style.display!=='flex') return;      // рендерим только когда панель открыта
+    const c=FG.ally?0x34d399:(FG_COL[FG.kinds[FG.k][0]]||0xe879f9);
+    for(const m of fgPrev.parts) m.material.color.set(c);
+    const sz=fgv('fgSz');
+    fgPrev.grp.scale.set(fgv('fgW')*sz, fgv('fgH')*sz, fgv('fgD')*sz);
+    fgPrev.grp.rotation.y+=0.02;
+    fgPrev.rn.render(fgPrev.sc,fgPrev.cam);
+  })();
+}
+$('mForge').onclick=()=>{ closeMenu(); $('forgePanel').style.display='flex'; fgPreviewInit(); };
 $('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
 $('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
 $('fgLoco').onclick=()=>{ FG.l=(FG.l+1)%FG.locos.length; $('fgLoco').textContent='ХОД: '+FG.locos[FG.l][1]; };
-$('fgBody').onclick=()=>{ FG.b=(FG.b+1)%FG.bodies.length; $('fgBody').textContent='ТЕЛО: '+FG.bodies[FG.b][0]; };
-$('fgPow').onclick=()=>{ FG.p=(FG.p+1)%FG.pows.length; $('fgPow').textContent='СИЛА: '+FG.pows[FG.p][0]; };
+$('fgSide').onclick=()=>{ FG.ally=!FG.ally; $('fgSide').textContent=FG.ally?'⚑ СОЮЗНИК':'⚔ ВРАГ'; };
 $('fgMake').onclick=()=>{
   const nm=($('fgName').value||'').trim()||'Творение';
-  const B=FG.bodies[FG.b], P=FG.pows[FG.p];
   const c=freeSpawnCell(clamp(player.gx+2,0,12), player.gy, null);
-  const ok=NET.forgeEntity({ x:c[0], y:c[1], yaw:0, hp:P[1], len:1, strike:0, roll:0, dead:0,
-    k:FG.kinds[FG.k][0], sz:B[4], hov:FG.locos[FG.l][0]==='fly'?1:0,
-    mw:B[1], mh:B[2], md:B[3], loco:FG.locos[FG.l][0], spd:P[3], dg:P[2],
-    nm:nm.slice(0,20), t:Date.now() });
+  const ok=NET.forgeEntity({ x:c[0], y:c[1], yaw:0, hp:Math.round(fgv('fgHp')), len:1, strike:0, roll:0, dead:0,
+    k:FG.kinds[FG.k][0], sz:Math.round(fgv('fgSz')), hov:FG.locos[FG.l][0]==='fly'?1:0,
+    mw:fgv('fgW'), mh:fgv('fgH'), md:fgv('fgD'), loco:FG.locos[FG.l][0], spd:fgv('fgSpd'), dg:Math.round(fgv('fgDmg')),
+    side:FG.ally?'ally':'enemy', nm:nm.slice(0,20), t:Date.now() });
   $('fgStatus').textContent = ok ? nm+' сотворён — сервер вдохнёт жизнь…' : 'Нет связи с БД';
   if(ok){ blip(720,0.07,'sine',0.1); setTimeout(()=>{ $('forgePanel').style.display='none'; $('fgStatus').textContent=''; },900); }
 };
+// обработчики камеры/оттенка (после создания player — применяем сохранённое)
+$('mZoom').value=CAM.zoom; $('mZoomV').textContent=CAM.zoom.toFixed(1);
+$('mZoom').oninput=()=>{ CAM.zoom=clamp(+$('mZoom').value,0.5,2.4); $('mZoomV').textContent=CAM.zoom.toFixed(1); camSave(); };
+const VIEWS=[['auto','АВТО'],['third','3-Е ЛИЦО'],['top','СВЕРХУ'],['fp','1-Е ЛИЦО']];
+$('mView').onclick=()=>{ let vi=VIEWS.findIndex(v=>v[0]===CAM.view); vi=(vi+1)%VIEWS.length; CAM.view=VIEWS[vi][0]; $('mView').textContent='ВЗГЛЯД: '+VIEWS[vi][1]; camSave(); };
+{ const vi=VIEWS.findIndex(v=>v[0]===CAM.view); if(vi>=0) $('mView').textContent='ВЗГЛЯД: '+VIEWS[vi][1]; }
+if(CAM._hue!=null){ player.baseHue=CAM._hue; player.hue=CAM._hue; $('mHue').value=CAM._hue; }
+$('mHue').oninput=()=>{ const v=+$('mHue').value; player.baseHue=v; player.hue=v; try{localStorage.setItem('vb_hue',v);}catch(e){} };
 $('sageSend').onclick=()=>{
   const el=$('sageIn'); const q=(el.value||'').trim(); if(!q) return;
   if(NET.askSage(q)){ logE('Я → МУДРЕЦУ: '+q); el.value=''; blip(640,0.05,'sine',0.08); }
@@ -3096,7 +3168,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0,
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
       spec:false, t:Date.now() }; },
   async start(){
@@ -3339,6 +3411,7 @@ function renderRemotes(now, dt){
     av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
     av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
     av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
+    if(p.hue!=null) av.baseHue=+p.hue;                       // чужая раскраска тела
     if(p.mf){ av.mesh.scale.set(0.8,0.35,0.8); av.swordLen=0.2; av.strikeT=0; }   // чужой слайм: плоское тельце, без клинка
     else av.mesh.scale.set(1,1,1);
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
@@ -3431,7 +3504,7 @@ function renderRemotePhantoms(now, dt){
     av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
     updateAvatarMesh(av,now); updateBlade(av);
     if(s.nm){                                              // имя + статус от Алго-крата
-      const col=KIND_COL[s.k]||'#cfe3ff';
+      const col=s.side==='ally' ? '#34d399' : (KIND_COL[s.k]||'#cfe3ff');
       const st=av.dead?'✝':(av.hp<=30?'⚠ '+Math.round(av.hp):Math.round(av.hp));
       labelTick(key, s.nm+' · '+st, col, worldX(av.gx), TIER_H*(2.5*(s.sz||1))+0.3, worldZ(av.gy));
     }
@@ -3576,6 +3649,9 @@ function frame(now){
     handleDeath(ph, dt);
     if(ph.painT>0) ph.painT-=dt;
     ph.crouch = lerp(ph.crouch||0, clamp(-(ph.pitch||0),0,1), clamp(dt*6,0,1));  // присед по прицелу — иначе руки/клинок уходят в пах
+    { const oc=obstacleAt(ph.gx,ph.gy);                                          // материал↔моб: плазма жжёт и ботов
+      if(oc && oc.pass==='plasma' && !ph.dead){ ph.plasmaCd=(ph.plasmaCd||0)-dt;
+        if(ph.plasmaCd<=0){ ph.plasmaCd=0.5; damageTier(ph,1,6); } } }
     ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
     updateAvatarMesh(ph, now);
     updateBlade(ph);
