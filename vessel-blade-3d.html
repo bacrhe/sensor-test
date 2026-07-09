@@ -179,6 +179,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="cShape">⬒ <span id="cShapeName">КУБ</span></button>
   <button id="cTint">🎨 <span id="cTintName">АВТО</span></button>
   <button id="cAlpha">◐ <span id="cAlphaName">100%</span></button>
+  <button id="cGrid">⊞ <span id="cGridName">МАКРО</span></button>
+  <button id="cPrefCopy">▣ КОПИЯ</button>
   <button id="cPlace">✚ БЛОК</button>
   <button id="cRemove">✖ УБРАТЬ</button>
 </div>
@@ -2218,12 +2220,16 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 // ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
-function snapshotRoom(){ roomEdits.set(curRoomKey(), {blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null}))}); }
+function snapshotRoom(){ roomEdits.set(curRoomKey(), {
+  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null})),
+  micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha})) }); }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  clearMicro();
   const taken=new Set();
   for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null));
+  for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha);
   return true;
 }
 function applyAdvRoom(rx,ry){
@@ -2236,6 +2242,7 @@ function applyAdvRoom(rx,ry){
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
   // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
   spawnObstaclesSeededSafe(rx,ry,home);
+  clearMicro();                              // микроблоки прошлой комнаты не тащим
   restoreRoomEdits(rx,ry);   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = composeRoomEnemies(rx,ry);
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
@@ -2943,6 +2950,57 @@ const CREATOR_SHAPES=['cube','slab','post','panel'];
 const CREATOR_TINTS=[[null,'АВТО'],[0xef4444,'АЛЫЙ'],[0xf59e0b,'ЯНТАРЬ'],[0x22c55e,'ИЗУМРУД'],[0x38bdf8,'НЕБО'],[0x8b5cf6,'АМЕТИСТ'],[0xf472b6,'РОЗА'],[0xf8fafc,'СНЕГ'],[0x111827,'НОЧЬ']];
 const CREATOR_ALPHAS=[[null,'100%'],[0.7,'70%'],[0.45,'45%'],[0.22,'22%']];
 let creatorTint=0, creatorAlpha=0;
+// ── МИКРОВОКСЕЛИ: подсетка клетки ТОЛЬКО НЕЧЁТНАЯ (3/5/7) — у неё всегда есть ЦЕНТР,
+//    как у самой 13×13 есть (6,6). На два не делится — таков закон мира.
+const SUBGRIDS=[0,3,5,7,-1];              // 0 = макро-клетка, -1 = ПРЕФАБ (штамп сохранённой группы)
+const MICRO={gi:0};                        // индекс в SUBGRIDS
+const microBlocks=[];                      // {gx,gy,n,sx,sy,sz,type,tint,alpha,mesh}
+const MAX_MICRO=500;
+const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
+function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
+function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha){
+  if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ ПРЕДЕЛ МИКРОБЛОКОВ ('+MAX_MICRO+')','#ef4444'); return null; }
+  const m=CELL/n, size=m*0.96;
+  const col = tint!=null ? tint : (MICRO_ECOL[type]??0xc9a03a);
+  let mat;
+  if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:type==='gas'?0.3:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
+  else if(type==='liquid') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.55,depthWrite:false});
+  else mat=new THREE.MeshBasicMaterial({color:col});
+  if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(size,size,size), mat);
+  mesh.frustumCulled=false;
+  mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+(sy+0.5)*m, worldZ(gy)-CELL/2+(sz+0.5)*m);
+  scene.add(mesh);
+  const rec={gx,gy,n,sx,sy,sz,type,tint:tint??null,alpha:alpha??null,mesh};
+  microBlocks.push(rec); return rec;
+}
+function clearMicro(){ for(const m of microBlocks) scene.remove(m.mesh); microBlocks.length=0; }
+// ── ПРЕФАБ: сохранённая группа микроблоков (кисть) — ставится в клетку одним касанием ──
+const PREFAB={blocks:[]};
+function microExists(gx,gy,n,sx,sy,sz){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sy===sy&&m.sz===sz); }
+function stampPrefab(){
+  if(!PREFAB.blocks.length){ blip(120,0.06,'square',0.08); showBanner('▣ ПРЕФАБ ПУСТ — сначала ▣ КОПИЯ','#ef4444'); return; }
+  const P=aimedPoint();
+  if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
+  let placed=0;
+  for(const b of PREFAB.blocks){
+    if(microExists(P.gx,P.gy,b.n,b.sx,b.sy,b.sz)) continue;
+    if(!addMicro(P.gx,P.gy,b.n,b.sx,b.sy,b.sz,b.type,b.tint,b.alpha)) break;
+    placed++;
+  }
+  if(placed){ snapshotRoom(); blip(700,0.05,'sine',0.09); logE('ПРЕФАБ ×'+placed+' → ('+P.gx+','+P.gy+')'); }
+  else blip(120,0.06,'square',0.08);
+}
+// точка прицела с ДОЛЯМИ внутри клетки — для выбора микроячейки
+function aimedPoint(){
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const e=creatorElev(), eye=TIER_H*1.95;
+  const dist = e<-0.06 ? clamp(eye/Math.tan(-e), 0.6, 11) : 1.5;
+  const wx=worldX(player.gx)+dx*dist, wz=worldZ(player.gy)+dz*dist;
+  const gx=clamp(Math.round(wx/CELL)+CX,0,12), gy=clamp(Math.round(wz/CELL)+CY,0,12);
+  const fx=clamp((wx-(worldX(gx)-CELL/2))/CELL,0,0.999), fz=clamp((wz-(worldZ(gy)-CELL/2))/CELL,0,0.999);
+  return {gx,gy,fx,fz};
+}
 const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
 let creatorShape=0;
 const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
@@ -2969,17 +3027,50 @@ function aimedCell(){
   return [clamp(Math.round(wx/CELL)+CX,0,12), clamp(Math.round(wz/CELL)+CY,0,12)];
 }
 function creatorPlace(){
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){ stampPrefab(); return; }            // ПРЕФАБ: штампуем сохранённую группу
+  if(n){                                          // МИКРО: кубик в прицельную ячейку, стеком вверх
+    const P=aimedPoint();
+    if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
+    const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    let top=-1;
+    for(const m of microBlocks) if(m.gx===P.gx&&m.gy===P.gy&&m.n===n&&m.sx===sx&&m.sz===sz&&m.sy>top) top=m.sy;
+    const sy=top+1;
+    if(sy>=n*2){ blip(120,0.07,'square',0.1); return; }   // колонка не выше двух клеток
+    const rec=addMicro(P.gx,P.gy,n,sx,sy,sz,CREATOR_MATS[creatorMat],CREATOR_TINTS[creatorTint][0],CREATOR_ALPHAS[creatorAlpha][0]);
+    if(rec){ snapshotRoom(); blip(680,0.04,'sine',0.08);
+      logE('микро·'+n+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+':'+sx+','+sy+','+sz+')'); }
+    return;
+  }
   const [gx,gy]=aimedCell();
   if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
   const ex=obstacleAt(gx,gy); if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); }
   const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
   const shp=CREATOR_SHAPES[creatorShape];
-  const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;   // панель поперёк взгляда
+  const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
   addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0]);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
   logE('поставлен '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
 function creatorRemove(){
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){                                     // ПРЕФАБ-режим: очистить ВСЕ микроблоки клетки
+    const P=aimedPoint();
+    const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
+    if(!grp.length){ blip(120,0.06,'square',0.08); return; }
+    for(const m of grp){ scene.remove(m.mesh); microBlocks.splice(microBlocks.indexOf(m),1); }
+    snapshotRoom(); blip(240,0.06,'sine',0.09); logE('клетка очищена от микро ×'+grp.length+' ('+P.gx+','+P.gy+')');
+    return;
+  }
+  if(n){                                          // МИКРО: снимаем ВЕРХНИЙ кубик прицельной колонки
+    const P=aimedPoint();
+    const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    let best=null;
+    for(const m of microBlocks) if(m.gx===P.gx&&m.gy===P.gy&&m.n===n&&m.sx===sx&&m.sz===sz&&(!best||m.sy>best.sy)) best=m;
+    if(best){ scene.remove(best.mesh); microBlocks.splice(microBlocks.indexOf(best),1); snapshotRoom(); blip(240,0.05,'sine',0.08); logE('убран микро ('+P.gx+','+P.gy+')'); }
+    else blip(120,0.06,'square',0.08);
+    return;
+  }
   const [gx,gy]=aimedCell(); const ex=obstacleAt(gx,gy);
   if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); logE('убран блок ('+gx+','+gy+')'); }
   else blip(120,0.06,'square',0.08);
@@ -3042,7 +3133,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-09a · камера:зум+взгляды · КУЗНЯ-2.0(ползунки/превью/союзники) · оттенок-тела · химия:стекло';
+const BUILD_TAG='2026-07-09c · микровоксели-нечётные(3/5/7)+ПРЕФАБЫ(копия/штамп/очистка)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3122,6 +3213,17 @@ $('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePal
 $('cShape').onclick=()=>{ creatorShape=(creatorShape+1)%CREATOR_SHAPES.length; const el=$('cShapeName'); if(el) el.textContent=SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]; creatorTouch(); blip(560,0.04,'sine',0.06); };
 $('cTint').onclick=()=>{ creatorTint=(creatorTint+1)%CREATOR_TINTS.length; $('cTintName').textContent=CREATOR_TINTS[creatorTint][1]; creatorTouch(); blip(520,0.04,'sine',0.06); };
 $('cAlpha').onclick=()=>{ creatorAlpha=(creatorAlpha+1)%CREATOR_ALPHAS.length; $('cAlphaName').textContent=CREATOR_ALPHAS[creatorAlpha][1]; creatorTouch(); blip(480,0.04,'sine',0.06); };
+$('cGrid').onclick=()=>{ MICRO.gi=(MICRO.gi+1)%SUBGRIDS.length; const n=SUBGRIDS[MICRO.gi];
+  $('cGridName').textContent = n===-1?'ПРЕФАБ':(n?('МИКРО·'+n):'МАКРО'); creatorTouch(); blip(600,0.04,'sine',0.06); };
+$('cPrefCopy').onclick=()=>{                                   // запомнить кубики прицельной клетки как кисть
+  const P=aimedPoint();
+  const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
+  if(!grp.length){ blip(120,0.06,'square',0.08); showBanner('▣ В КЛЕТКЕ НЕТ МИКРОБЛОКОВ','#ef4444'); return; }
+  PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha}));
+  creatorTouch(); blip(760,0.06,'sine',0.1);
+  showBanner('▣ ПРЕФАБ СОХРАНЁН: '+PREFAB.blocks.length+' кубиков','#7cc8ff');
+  logE('префаб сохранён: '+PREFAB.blocks.length+' из ('+P.gx+','+P.gy+')');
+};
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
 $('cRemove').onclick=()=>{ creatorTouch(); creatorRemove(); };
 $('mMenu').onclick=()=>location.reload();
@@ -3222,6 +3324,7 @@ const NET = {
         const v=snap.val(); if(!v || !v.t || v.t<=(this._archT||0)) return; this._archT=v.t;
         try{
           obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+          clearMicro();
           const taken=new Set();
           for(const b of Object.values(v.blocks||{}))
             addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
