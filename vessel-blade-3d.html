@@ -164,6 +164,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="fg-sl">УРОН<input type="range" id="fgDmg" min="4" max="30" step="1" value="10"><span id="fgDmgv"></span></div>
   <div class="fg-sl">HP<input type="range" id="fgHp" min="40" max="400" step="10" value="100"><span id="fgHpv"></span></div>
   <div class="lp-row"><button id="fgMake">⚒ СОТВОРИТЬ</button><button id="fgClose">✕ ЗАКРЫТЬ</button></div>
+  <div class="lp-row"><button id="fgPurgeMine">🗑 УБРАТЬ КОВАНЫХ</button><button id="fgPurgeAll">🗑 ВСЕ СУЩНОСТИ</button></div>
   <div id="fgStatus"></div>
 </div>
 <div id="lorePanel">
@@ -1182,6 +1183,7 @@ const clinch = {
   // ровно −X) → арбитр не нужен. Урон от продавливания каждый применяет СЕБЕ сам.
   myImp:0, foeImp:0, foeBase:null, foeT:0, pressX:0, pressDmgT:0, pressPubT:0, pvpPair:null,
   lockPitch:0, lockLen:1, broke:false, participants:[],   // замороженные наклон/длина + участники клинча (Часть 2)
+  push:0, myPress:0, pairKey:null, pressBn:0,              // ВЗАИМНЫЙ ТИСК: −1 (продавили меня) … +1 (продавил я)
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
 let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
@@ -1222,6 +1224,8 @@ function startClinch(foe){
   clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
   addExhaustion(player, 18);   // вход в клинч — энергозатратно (Часть 4.2)
   clinch.participants = foe ? [player, foe] : [player];   // Часть 2: участники клинча
+  clinch.push=0; clinch.myPress=0; clinch.pressBn=0;
+  clinch.pairKey = (foe && foe.remote && NET.myId) ? [NET.myId, foe.id].sort().join('~') : null;   // общий канал пары
   clinch.lockYaw = sensor.yawFused;
   const tip = bladeContestCell(player);
   clinch.lockX = worldX(clamp(tip.x,0,12));
@@ -1297,6 +1301,23 @@ function endClinch(reason){
   }else if(reason==='net'){
     showBanner('◌ СВЯЗЬ ПОТЕРЯНА — КЛИНЧ РАСПАЛСЯ','#94a3b8');   // без штрафа
     blip(220,0.15,'sine',0.1);
+  }else if(reason==='pressWin'){
+    showBanner('⚔ ПРОДАВИЛ! КЛИНОК СОПЕРНИКА СБИТ','#4ade80'); doFlash('#4ade80');
+    blip(880,0.12,'square',0.2); buzz(60);
+    if(clinch.foe && clinch.foe.remote){
+      // сопернику прилетает удар нашим же каналом strikes — его клиент применит урон
+      if(NET.online&&NET.db) set(ref(NET.db,`blade/${NET.room}/strikes/${clinch.foe.id}`),
+        {t:Date.now(), dmg:22, from:'клинч-тиск'}).catch(()=>{});
+    } else if(clinch.foe){
+      damageTier(clinch.foe,1,26); clinch.foe.stamina=clamp((clinch.foe.stamina??60)-30,0,100);
+    }
+    logE('КЛИНЧ: продавил соперника (push +1)');
+  }else if(reason==='pressLose'){
+    showBanner('✖ ТЕБЯ ПРОДАВИЛИ — КЛИНОК ВЫБИТ','#ef4444'); doFlash('#ef4444');
+    player.disarmed=true; player.disarmT=0; dropBlade(player);
+    damageTier(player,1,18);
+    blip(140,0.3,'sawtooth',0.2); buzz([0,140]);
+    logE('КЛИНЧ: меня продавили (push −1)');
   }else if(reason==='shattered'){
     showBanner('✷ КЛИНЧ РАЗБИТ ТРЕТЬЕЙ СИЛОЙ','#f59e0b');   // третий боец пробил зацеп для всех
     doFlash('#f59e0b');
@@ -1304,6 +1325,8 @@ function endClinch(reason){
     blip(200,0.2,'sawtooth',0.16); buzz([0,80]);
   }
   clinch.participants = [];
+  if(clinch.pairKey){ NET.clearClinchPair(clinch.pairKey); clinch.pairKey=null; }
+  clinch.push=0; clinch.myPress=0;
 }
 
 function updateClinch(dt){
@@ -1428,6 +1451,30 @@ function updateClinch(dt){
     const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);
     player.stamina = clamp(player.stamina - dt*(12+26*n), 0, 100);
     addExhaustion(player, dt*(18+38*n));   // удержание рассинхрона накапливает усталость (Часть 4.2)
+  }
+  // ── ВЗАИМНЫЙ ТИСК: обе стороны давят на скрещённые клинки; сильнее тот, кто РОВНЕЕ держит и СВЕЖЕЕ ──
+  {
+    const myPress = clamp((25-clinch.delta)/25,0,1) * (0.35+0.65*player.stamina/100);
+    clinch.myPress = myPress;
+    let foePress = 0;
+    if(clinch.foe && clinch.foe.remote){
+      const pk=clinch.pairKey, fid=clinch.foe.id;
+      const rec = pk && NET.clinches && NET.clinches[pk] && NET.clinches[pk][fid];
+      foePress = (rec && (rec.t||0) > Date.now()-2000) ? clamp(+rec.p||0,0,1) : 0;
+    } else if(clinch.foe){
+      const st=(clinch.foe.stamina??60);                    // бот давит от своей выносливости, с «дыханием»
+      foePress = (0.28+0.5*st/100) * (0.68+0.32*Math.sin(clinch.t*2.3));
+    }
+    clinch.push = clamp(clinch.push + (myPress-foePress)*dt*0.4, -1.05, 1.05);
+    player.stamina = clamp(player.stamina - dt*8*myPress, 0, 100);   // давить — выматывает
+    addExhaustion(player, dt*10*myPress);
+    if(Math.abs(clinch.push)>0.5 && clinch.pressBn!==Math.sign(clinch.push)){
+      clinch.pressBn=Math.sign(clinch.push);
+      showBanner(clinch.push>0?'⚔ ТЫ ПРОДАВЛИВАЕШЬ!':'⚠ ТЕБЯ ПРОДАВЛИВАЮТ!', clinch.push>0?'#4ade80':'#ef4444');
+      buzz(clinch.push>0?30:[0,60]);
+    }
+    if(clinch.push>=1){ endClinch('pressWin'); return; }
+    if(clinch.push<=-1){ endClinch('pressLose'); return; }
   }
   // ПАРИРОВАНИЕ (победа в клинче): держишь клинок в точке (Δ<10) — продавливаешь.
   // После разрыва зачёт быстрый (контра); без разрыва (просто не дал себя сбить) — чуть дольше.
@@ -1627,7 +1674,8 @@ function setClinchCamera(){
   // ВИД ОТ 1-ГО ЛИЦА: камера на уровне глаз, смотрит почти горизонтально на скрещение клинков.
   // Тело игрока в клинче полностью скрыто (см. updateStanceAndCamera) → голова не мешает.
   camPos.set(px - dx*0.3, TIER_H*1.55, pz - dz*0.3);
-  camTarget.set(clinch.lockX, clinch.lockY + TIER_H*0.35, clinch.lockZ);
+  const _po=(clinch.push||0)*0.55;                        // ТИСК видно: контакт съезжает к проигрывающему
+  camTarget.set(clinch.lockX+dx*_po, clinch.lockY + TIER_H*0.35, clinch.lockZ+dz*_po);
   camera.up.set(0,1,0);
 }
 // астральный риг (создаётся один раз, невидим вне клинча)
@@ -1801,8 +1849,11 @@ function resolveBurn(dt){
     }
     const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
     if(rp){
-      if(burnCd<=0){ const [owner,pi]=rp.key.split('_');
-        NET.sendPhantomHit(owner, +pi, player.tier, Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.3;
+      if(burnCd<=0){ const owner=rp.key.split('_')[0], pi=rp.key.slice(owner.length+1);
+        const dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg);
+        if(owner==='forge'||owner==='algocrat') NET.hitServerEntity(owner, pi, dmg, rp);   // у них нет клиента-владельца — бьём hp напрямую
+        else NET.sendPhantomHit(owner, pi, player.tier, dmg);
+        burnCd=0.3;
         doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
       continue;
     }
@@ -3245,7 +3296,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-10b · микро-ФОРМЫ+кросс-стек · микро-рушатся-клинком · сущности-не-исчезают · виды-без-оружия/силуэты';
+const BUILD_TAG='2026-07-11a · СУЩНОСТИ-УЯЗВИМЫ · кнопки-убрать · ВЗАИМНЫЙ-ТИСК-в-клинче(бот+сеть)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3305,6 +3356,8 @@ $('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
 $('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
 $('fgLoco').onclick=()=>{ FG.l=(FG.l+1)%FG.locos.length; $('fgLoco').textContent='ХОД: '+FG.locos[FG.l][1]; };
 $('fgSide').onclick=()=>{ FG.ally=!FG.ally; $('fgSide').textContent=FG.ally?'⚑ СОЮЗНИК':'⚔ ВРАГ'; };
+$('fgPurgeMine').onclick=()=>{ if(NET.purgeEntities(false)){ $('fgStatus').textContent='Кованые убраны.'; blip(300,0.06,'sine',0.08); } };
+$('fgPurgeAll').onclick=()=>{ if(NET.purgeEntities(true)){ $('fgStatus').textContent='ВСЕ сущности сервера убраны.'; blip(260,0.08,'sine',0.09); } };
 $('fgMake').onclick=()=>{
   const nm=($('fgName').value||'').trim()||'Творение';
   const c=freeSpawnCell(clamp(player.gx+2,0,12), player.gy, null);
@@ -3460,6 +3513,8 @@ const NET = {
           showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
         }catch(e){}
       });
+      // КЛИНЧ-ТИСК: давление соперников (blade/{room}/clinches)
+      onValue(ref(this.db,`blade/${this.room}/clinches`), snap=>{ this.clinches=snap.val()||{}; });
       // МОРФ: сервер диктует форму игрока (blade/{room}/morph/{myId})
       onValue(ref(this.db,`blade/${this.room}/morph/${this.myId}`), snap=>{
         const v=snap.val(); if(!v || !v.t || v.t<=(this._mrphT||0)) return; this._mrphT=v.t;
@@ -3561,6 +3616,27 @@ const NET = {
     this.pressFoe=null;
     if(pair && this.online && this.db) remove(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`)).catch(()=>{});
   },
+  hitServerEntity(owner, i, dmg, rp){                       // прямой урон сущностям Кузни/Алго-крата
+    if(!this.online||!this.db) return;
+    const cur=(rp&&rp.latest&&rp.latest.hp!=null)?rp.latest.hp:100;
+    const nhp=Math.max(0, Math.round(cur-dmg));
+    const upd={hp:nhp, t:Date.now()}; if(nhp<=0) upd.dead=1;
+    update(ref(this.db,`blade/${this.room}/phantoms/${owner}/${i}`), upd).catch(()=>{});
+    if(rp&&rp.latest){ rp.latest.hp=nhp; if(nhp<=0) rp.latest.dead=1; }   // мгновенно отразить локально
+    if(nhp<=0) logE('сущность повержена: '+(rp&&rp.latest&&rp.latest.nm||owner));
+  },
+  purgeEntities(all){                                        // убрать кованых (и всех серверных, если all)
+    if(!this.online||!this.db) return false;
+    set(ref(this.db,`blade/${this.room}/phantoms/forge`), null).catch(()=>{});
+    if(all) set(ref(this.db,`blade/${this.room}/phantoms/algocrat`), null).catch(()=>{});
+    return true;
+  },
+  clinchPub(){                                               // мой ТИСК в клинче — сопернику
+    if(!this.online||!this.db||!clinch.active||!clinch.pairKey) return;
+    update(ref(this.db,`blade/${this.room}/clinches/${clinch.pairKey}/${this.myId}`),
+      {p:+(clinch.myPress||0).toFixed(2), t:Date.now()}).catch(()=>{});
+  },
+  clearClinchPair(pk){ if(this.online&&this.db&&pk) set(ref(this.db,`blade/${this.room}/clinches/${pk}`), null).catch(()=>{}); },
   sendPhantomHit(owner, i, tier, dmg){
     if(!this.online||!this.db) return;
     push(ref(this.db,`blade/${this.room}/phantomHits/${owner}`), {from:this.myId, i, tier, dmg, t:Date.now()}).catch(()=>{});
@@ -3571,6 +3647,7 @@ const NET = {
     if(this.sendT>0) return;
     this.sendT=0.08;                                     // ~12 Гц
     if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    this.clinchPub();
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
       const obj={};
