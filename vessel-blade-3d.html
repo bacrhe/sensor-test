@@ -1765,6 +1765,12 @@ function resolveBurn(dt){
       }
       continue;                                 // блок линии уже в weaponCells; кольцо — контактное
     }
+    if(burnCd<=0 && damageMicroAt(cx,cy)){        // микроблоки тоже рушатся клинком
+      burnCd=0.25; buzz(25);
+      emitSparks(worldX(cx), TIER_H*0.6, worldZ(cy), '#ffb454', 10, 2.6);
+      logE('срезан микроблок ('+cx+','+cy+')');
+      continue;
+    }
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
@@ -2223,14 +2229,14 @@ const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (по�
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
 function snapshotRoom(){ roomEdits.set(curRoomKey(), {
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
-  micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha})) }); }
+  micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   clearMicro();
   const taken=new Set();
   for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
-  for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha);
+  for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
   return true;
 }
 function applyAdvRoom(rx,ry){
@@ -2945,6 +2951,13 @@ const REACTIONS=[
 ];
 function plasmaNear(gx,gy){ for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1],[0,0]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive&&o.mtype==='plasma') return true; } return false; }
 function killBlock(o){ o.alive=false; scene.remove(o.mesh); const k=obstacles.indexOf(o); if(k>=0) obstacles.splice(k,1); }
+function damageMicroAt(gx,gy){                       // клинок сносит ВЕРХНИЙ микроблок клетки
+  let best=null;
+  for(const m of microBlocks) if(m.gx===gx&&m.gy===gy&&(!best||((m.y0??0)+(m.hgt??0))>((best.y0??0)+(best.hgt??0)))) best=m;
+  if(!best) return false;
+  scene.remove(best.mesh); microBlocks.splice(microBlocks.indexOf(best),1); snapshotRoom();
+  return true;
+}
 function transmute(o,out){
   const {gx,gy,shape,rotY,baseY}=o; killBlock(o);
   if(!out) return;
@@ -2986,21 +2999,40 @@ const microBlocks=[];                      // {gx,gy,n,sx,sy,sz,type,tint,alpha,
 const MAX_MICRO=500;
 const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
 function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
-function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha){
+function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ ПРЕДЕЛ МИКРОБЛОКОВ ('+MAX_MICRO+')','#ef4444'); return null; }
-  const m=CELL/n, size=m*0.96;
+  const m=CELL/n;
+  if(y0==null) y0=sy*m;
+  if(hgt==null) hgt=(shape==='slab')?m*0.3:m;
   const col = tint!=null ? tint : (MICRO_ECOL[type]??0xc9a03a);
   let mat;
   if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:type==='gas'?0.3:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
   else if(type==='liquid') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.55,depthWrite:false});
   else mat=new THREE.MeshBasicMaterial({color:col});
   if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }
-  const mesh=new THREE.Mesh(new THREE.BoxGeometry(size,size,size), mat);
+  // ФОРМЫ и в микро-мире: куб / плита / стовп / панель (панель поворачивается)
+  let w=m*0.96, d=m*0.96;
+  if(shape==='post'){ w=m*0.34; d=m*0.34; }
+  else if(shape==='panel'){ d=m*0.2; }
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,hgt*0.96,d), mat);
   mesh.frustumCulled=false;
-  mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+(sy+0.5)*m, worldZ(gy)-CELL/2+(sz+0.5)*m);
+  mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+y0+hgt*0.5, worldZ(gy)-CELL/2+(sz+0.5)*m);
+  if(rotY) mesh.rotation.y=rotY;
   scene.add(mesh);
-  const rec={gx,gy,n,sx,sy,sz,type,tint:tint??null,alpha:alpha??null,mesh};
+  const rec={gx,gy,n,sx,sy:Math.round(y0/m),sz,type,tint:tint??null,alpha:alpha??null,shape:shape||null,rotY:rotY||0,y0,hgt,mesh};
   microBlocks.push(rec); return rec;
+}
+// вершина колонки прицела с УЧЁТОМ блоков ДРУГИХ подсеток (пересечение по XZ)
+function microTopY(gx,gy,n,sx,sz){
+  const ax0=sx/n, ax1=(sx+1)/n, az0=sz/n, az1=(sz+1)/n;
+  let top=0;
+  for(const b of microBlocks){
+    if(b.gx!==gx||b.gy!==gy) continue;
+    const bx0=b.sx/b.n, bx1=(b.sx+1)/b.n, bz0=b.sz/b.n, bz1=(b.sz+1)/b.n;
+    if(bx0<ax1-1e-6 && bx1>ax0+1e-6 && bz0<az1-1e-6 && bz1>az0+1e-6)
+      top=Math.max(top,(b.y0??b.sy*(CELL/b.n))+(b.hgt??CELL/b.n));
+  }
+  return top;
 }
 function clearMicro(){ for(const m of microBlocks) scene.remove(m.mesh); microBlocks.length=0; }
 // ── ПРИЗРАК: контур показывает, КУДА встанет блок (макро-стек / микроячейка / клетка префаба) ──
@@ -3019,13 +3051,17 @@ function updateGhost(){
     const P=aimedPoint();
     ghost.scale.set(0.96,0.96,0.96); ghost.rotation.y=0;
     ghost.position.set(worldX(P.gx), 0.48-0.45, worldZ(P.gy));
-  } else if(n){                                           // микро: точная ячейка поверх колонки
+  } else if(n){                                           // микро: точная ячейка поверх колонки (форма учтена)
     const P=aimedPoint();
     const m=CELL/n, sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
-    let top=-1; for(const b of microBlocks) if(b.gx===P.gx&&b.gy===P.gy&&b.n===n&&b.sx===sx&&b.sz===sz&&b.sy>top) top=b.sy;
-    const sy=Math.min(top+1, n*2-1);
-    ghost.scale.set(m*0.96,m*0.96,m*0.96); ghost.rotation.y=0;
-    ghost.position.set(worldX(P.gx)-CELL/2+(sx+0.5)*m, -0.45+(sy+0.5)*m, worldZ(P.gy)-CELL/2+(sz+0.5)*m);
+    const topY=Math.min(microTopY(P.gx,P.gy,n,sx,sz), CELL*2-m);
+    const shp=CREATOR_SHAPES[creatorShape];
+    const hgt=(shp==='slab')?m*0.3:m;
+    let w=m*0.96, d=m*0.96;
+    if(shp==='post'){ w=m*0.34; d=m*0.34; } else if(shp==='panel'){ d=m*0.2; }
+    ghost.scale.set(w,hgt*0.96,d);
+    ghost.rotation.y=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    ghost.position.set(worldX(P.gx)-CELL/2+(sx+0.5)*m, -0.45+topY+hgt*0.5, worldZ(P.gy)-CELL/2+(sz+0.5)*m);
   } else {                                                // макро: форма + вершина стека
     const [gx,gy]=aimedCell();
     let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
@@ -3039,15 +3075,15 @@ function updateGhost(){
 }
 // ── ПРЕФАБ: сохранённая группа микроблоков (кисть) — ставится в клетку одним касанием ──
 const PREFAB={blocks:[]};
-function microExists(gx,gy,n,sx,sy,sz){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sy===sy&&m.sz===sz); }
+function microExists(gx,gy,n,sx,sz,y0){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sz===sz&&Math.abs((m.y0??0)-(y0??0))<(CELL/n)*0.4); }
 function stampPrefab(){
   if(!PREFAB.blocks.length){ blip(120,0.06,'square',0.08); showBanner('▣ ПРЕФАБ ПУСТ — сначала ▣ КОПИЯ','#ef4444'); return; }
   const P=aimedPoint();
   if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
   let placed=0;
   for(const b of PREFAB.blocks){
-    if(microExists(P.gx,P.gy,b.n,b.sx,b.sy,b.sz)) continue;
-    if(!addMicro(P.gx,P.gy,b.n,b.sx,b.sy,b.sz,b.type,b.tint,b.alpha)) break;
+    if(microExists(P.gx,P.gy,b.n,b.sx,b.sz,b.y0)) continue;
+    if(!addMicro(P.gx,P.gy,b.n,b.sx,b.sy,b.sz,b.type,b.tint,b.alpha,b.shape||null,b.rotY||0,b.y0,b.hgt)) break;
     placed++;
   }
   if(placed){ snapshotRoom(); blip(700,0.05,'sine',0.09); logE('ПРЕФАБ ×'+placed+' → ('+P.gx+','+P.gy+')'); }
@@ -3093,17 +3129,19 @@ function aimedCell(){
 function creatorPlace(){
   const n=SUBGRIDS[MICRO.gi];
   if(n===-1){ stampPrefab(); return; }            // ПРЕФАБ: штампуем сохранённую группу
-  if(n){                                          // МИКРО: кубик в прицельную ячейку, стеком вверх
+  if(n){                                          // МИКРО: фигурка в прицельную ячейку, стеком вверх (любые подсетки)
     const P=aimedPoint();
     if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
+    const m=CELL/n;
     const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
-    let top=-1;
-    for(const m of microBlocks) if(m.gx===P.gx&&m.gy===P.gy&&m.n===n&&m.sx===sx&&m.sz===sz&&m.sy>top) top=m.sy;
-    const sy=top+1;
-    if(sy>=n*2){ blip(120,0.07,'square',0.1); return; }   // колонка не выше двух клеток
-    const rec=addMicro(P.gx,P.gy,n,sx,sy,sz,CREATOR_MATS[creatorMat],CREATOR_TINTS[creatorTint][0],CREATOR_ALPHAS[creatorAlpha][0]);
+    const topY=microTopY(P.gx,P.gy,n,sx,sz);
+    if(topY>CELL*2-0.02){ blip(120,0.07,'square',0.1); return; }   // колонка не выше двух клеток
+    const shp=CREATOR_SHAPES[creatorShape];
+    const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    const hgt=(shp==='slab')?m*0.3:m;
+    const rec=addMicro(P.gx,P.gy,n,sx,Math.round(topY/m),sz,CREATOR_MATS[creatorMat],CREATOR_TINTS[creatorTint][0],CREATOR_ALPHAS[creatorAlpha][0],shp==='cube'?null:shp,rotY,topY,hgt);
     if(rec){ snapshotRoom(); blip(680,0.04,'sine',0.08);
-      logE('микро·'+n+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+':'+sx+','+sy+','+sz+')'); }
+      logE('микро·'+n+' '+SHAPE_NAMES[shp]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+')'); }
     return;
   }
   const [gx,gy]=aimedCell();
@@ -3131,8 +3169,14 @@ function creatorRemove(){
   if(n){                                          // МИКРО: снимаем ВЕРХНИЙ кубик прицельной колонки
     const P=aimedPoint();
     const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    const ax0=sx/n, ax1=(sx+1)/n, az0=sz/n, az1=(sz+1)/n;
     let best=null;
-    for(const m of microBlocks) if(m.gx===P.gx&&m.gy===P.gy&&m.n===n&&m.sx===sx&&m.sz===sz&&(!best||m.sy>best.sy)) best=m;
+    for(const m of microBlocks){
+      if(m.gx!==P.gx||m.gy!==P.gy) continue;
+      const bx0=m.sx/m.n, bx1=(m.sx+1)/m.n, bz0=m.sz/m.n, bz1=(m.sz+1)/m.n;
+      if(bx0<ax1-1e-6 && bx1>ax0+1e-6 && bz0<az1-1e-6 && bz1>az0+1e-6)
+        if(!best||((m.y0??0)+(m.hgt??0))>((best.y0??0)+(best.hgt??0))) best=m;
+    }
     if(best){ scene.remove(best.mesh); microBlocks.splice(microBlocks.indexOf(best),1); snapshotRoom(); blip(240,0.05,'sine',0.08); logE('убран микро ('+P.gx+','+P.gy+')'); }
     else blip(120,0.06,'square',0.08);
     return;
@@ -3201,7 +3245,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-10a · панель-скролл · макро-СТЕК · призрак-подсветка · силуэты-видов · ЭТАП-A(элементы+реакции)';
+const BUILD_TAG='2026-07-10b · микро-ФОРМЫ+кросс-стек · микро-рушатся-клинком · сущности-не-исчезают · виды-без-оружия/силуэты';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3248,7 +3292,10 @@ function fgPreviewInit(){                                   // живой 3D-п�
     for(const m of fgPrev.tail)   m.visible=(kind==='crawler');
     for(const arr of [fgPrev.wings,fgPrev.horns,fgPrev.barrel,fgPrev.tail]) for(const m of arr) m.material.color.set(c);
     const sz=fgv('fgSz');
-    fgPrev.grp.scale.set(fgv('fgW')*sz, fgv('fgH')*sz, fgv('fgD')*sz);
+    const KMUL={crawler:[1.1,0.45,1.7],flyer:[0.85,0.85,0.85],boss:[1.25,1.2,1.15],gunner:[1,1,1],fighter:[1,1,1]};
+    const km=KMUL[kind]||[1,1,1];
+    fgPrev.grp.scale.set(fgv('fgW')*sz*km[0], fgv('fgH')*sz*km[1], fgv('fgD')*sz*km[2]);
+    fgPrev.parts[0].visible=!(kind==='flyer'||kind==='crawler');   // ноги: летун парит, ползун стелется
     fgPrev.grp.rotation.y+=0.02;
     fgPrev.rn.render(fgPrev.sc,fgPrev.cam);
   })();
@@ -3299,7 +3346,7 @@ $('cPrefCopy').onclick=()=>{                                   // запомни
   const P=aimedPoint();
   const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
   if(!grp.length){ blip(120,0.06,'square',0.08); showBanner('▣ В КЛЕТКЕ НЕТ МИКРОБЛОКОВ','#ef4444'); return; }
-  PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha}));
+  PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt}));
   creatorTouch(); blip(760,0.06,'sine',0.1);
   showBanner('▣ ПРЕФАБ СОХРАНЁН: '+PREFAB.blocks.length+' кубиков','#7cc8ff');
   logE('префаб сохранён: '+PREFAB.blocks.length+' из ('+P.gx+','+P.gy+')');
@@ -3650,6 +3697,10 @@ function upsertRemotePhantom(key, s){
       else if(s&&s.k==='boss'){ dec(0.12,0.4,0.12,-0.2,2.25,0,0xf3c14b); dec(0.12,0.4,0.12,0.2,2.25,0,0xf3c14b); }
       else if(s&&s.k==='gunner'){ dec(0.14,0.14,0.8,0.2,1.35,0.5,0x8fa1ad); }
       else if(s&&s.k==='crawler'){ dec(0.34,0.2,0.6,0,0.35,-0.6,0x86b06a); }
+      // СИЛУЭТ, а не человек: у ползуна прячем ноги и руки, у летуна — ноги
+      const hideP=(nms)=>{ for(const nm of nms){ const q=av.parts&&av.parts[nm]; if(q) q.visible=false; } };
+      if(s&&s.k==='crawler') hideP(['legL','legR','footL','footR','armLU','armLF','armRU','armRF']);
+      else if(s&&s.k==='flyer') hideP(['legL','legR','footL','footR']);
     }catch(e){}
     // МОРФОЛОГИЯ от Алго-крата: mw/mh/md (0.4..3) растягивают тело по осям поверх масштаба вида
     try{ if(s&&(s.mw||s.mh||s.md)){
@@ -3680,10 +3731,12 @@ function renderRemotePhantoms(now, dt){
   const nowMs=Date.now(); LBF++;
   for(const key in NET.rphantoms){
     const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
-    const stale=(s.t||0) < nowMs-NET_PURGE_MS;   // старые сборки без t тоже считаются протухшими
+    const own=key.split('_')[0];
+    const serverOwned=(own==='forge'||own==='algocrat');            // ими управляет СЕРВЕР, не владелец-клиент
+    const stale=(s.t||0) < nowMs-(serverOwned?60000:NET_PURGE_MS);  // серверным даём 60с (heartbeat тика)
     if(stale){
       if(!r.hidden){ r.hidden=true; av.mesh.visible=false; av.blade.visible=false;
-        NET.cleanupPhantoms(key.split('_')[0]); }   // стереть весь узел фантомов ушедшего владельца
+        if(!serverOwned) NET.cleanupPhantoms(own); }   // кованых/алго-кратовских НЕ стираем из БД — сервер оживит
       continue;
     }
     if(r.hidden){ r.hidden=false; av.mesh.visible=true; av.blade.visible=true; }
@@ -3692,7 +3745,9 @@ function renderRemotePhantoms(now, dt){
     av.dirIdx=yawToDirIdx(s.yaw||0);
     av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
     av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
-    updateAvatarMesh(av,now); updateBlade(av);
+    updateAvatarMesh(av,now);
+    const biter=(s.k==='crawler'||s.k==='flyer');          // кусающиеся виды — без клинка
+    if(biter){ av.blade.visible=false; av.blade.count=0; } else updateBlade(av);
     if(s.nm){                                              // имя + статус от Алго-крата
       const col=s.side==='ally' ? '#34d399' : (KIND_COL[s.k]||'#cfe3ff');
       const st=av.dead?'✝':(av.hp<=30?'⚠ '+Math.round(av.hp):Math.round(av.hp));
