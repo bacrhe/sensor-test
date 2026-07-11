@@ -81,7 +81,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 #crosshair{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;z-index:20;display:none;pointer-events:none;
   border:2px solid rgba(249,115,22,.9);border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,.6)}
 #crosshair::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;background:#f97316;border-radius:50%}
-#creatorUI{position:fixed;left:0;right:0;bottom:14px;z-index:21;display:none;justify-content:center;gap:10px;pointer-events:none;transition:opacity .45s}
+#creatorUI{position:fixed;left:0;right:0;bottom:14px;z-index:21;display:none;justify-content:flex-start;gap:10px;pointer-events:auto;transition:opacity .45s;overflow-x:auto;flex-wrap:nowrap;padding:0 12px;-webkit-overflow-scrolling:touch}
+#creatorUI button{flex:0 0 auto}
 #creatorUI button{pointer-events:auto;padding:12px 16px;font:inherit;font-size:13px;background:rgba(12,32,48,.5);color:#f97316;
   border:1px solid rgba(122,74,18,.7);border-radius:9px;letter-spacing:.05em;backdrop-filter:blur(3px)}
 #creatorUI button:active{background:#3a2410}
@@ -2221,14 +2222,14 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
 function snapshotRoom(){ roomEdits.set(curRoomKey(), {
-  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null})),
+  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha})) }); }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   clearMicro();
   const taken=new Set();
-  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null));
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
   for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha);
   return true;
 }
@@ -2283,17 +2284,19 @@ function composeRoomEnemies(rx,ry){
    wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
    (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
-function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha){
+const ELEM_GAS=['H','O','Cl','co2'];                 // газоподібні елементи: прохідні, світні
+const ELEM_SOLID=['C','Si','Na','Fe','sand','salt']; // тверді елементи/продукти: блокують, руйнівні
+function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
   // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
   const solid=(type==='wall'||type==='crawl'||type==='base');
   const crawl=(type==='crawl');
-  const passel=(type==='liquid'||type==='gas'||type==='plasma');      // проходимые элементы
-  const pass = crawl?'crawl' : (passel?type : null);
-  const destr=(type==='rubble'||type==='fragile');
-  const low = (type==='rubble'||type==='gas');                         // низкие блоки
+  const passel=(type==='liquid'||type==='gas'||type==='plasma'||ELEM_GAS.includes(type));      // проходимые элементы
+  const pass = crawl?'crawl' : (type==='liquid'?'liquid' : type==='plasma'?'plasma' : passel?'gas' : null);
+  const destr=(type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type));
+  const low = (type==='rubble'||type==='gas'||ELEM_GAS.includes(type));   // низкие блоки
   const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
   let h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
   let w = (type==='rubble'?0.8:0.86), d = w;
@@ -2302,13 +2305,15 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha){
   else if(shape==='post'){ w=0.2; d=0.2; h=TIER_H*2.0; }
   else if(shape==='panel'){ w=0.92; d=0.14; h=TIER_H*1.8; }
   const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, d);
-  const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
+  const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9,
+    H:0xdff4ff, C:0x3a3f47, O:0x9ad1ff, Na:0xe8d27a, Si:0x9aa6b6, Cl:0xa6e86a, Fe:0xb87c55,
+    sand:0xe7d8a1, salt:0xf6e7ea, co2:0x8fa1ad};
   const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
   let mat;
   if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:type==='gas'?0.26:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
   else if(type==='liquid')          mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:0.55, depthWrite:false});
   else if(solid)                    mat=new THREE.MeshBasicMaterial({color:wallCol});
-  else                              mat=new THREE.MeshBasicMaterial({color:type==='fragile'?0x7cc8ff:(type==='rubble'?0x8a6a2e:0xc9a03a), transparent:true, opacity:0.9});
+  else                              mat=new THREE.MeshBasicMaterial({color: tint!=null?tint:(ECOL[type]!=null?ECOL[type]:(type==='fragile'?0x7cc8ff:(type==='rubble'?0x8a6a2e:0xc9a03a))), transparent:true, opacity:0.9});
   const grp=new THREE.Group(); grp.frustumCulled=false;
   const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
   boxM.position.y = crawl ? h*0.19 : 0;      // ЛАЗ: стена приподнята, под ней видимый отвір
@@ -2318,9 +2323,9 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha){
       opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
   if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }   // прозрачность от творца
-  grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
-  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,
-    hp: solid?Infinity : (destr?(type==='fragile'?16:24):40), alive:true, mesh:grp, mat});
+  grp.position.set(worldX(gx), (baseY||0)+h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,baseY:baseY||0,h,
+    hp: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
   // ПРОХОДИМОСТЬ: от центра до середин всех 4 кромок (лаз для игрока — стена)
@@ -2926,26 +2931,49 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
   mode=b.dataset.mode;
   document.querySelectorAll('.mbtn').forEach(x=>x.classList.toggle('on', x===b));
 });
-// ── ХИМИЯ МАТЕРИАЛОВ (первая реакция): ПЛАЗМА рядом с ЖИДКОСТЬЮ «запекает» её в СТЕКЛО ──
+// ── ЭТАП A: ТАБЛИЦА РЕАКЦИЙ (данные, не код) — движок обходит соседей раз в 0.7с ──
+// a+b рядом (+heat: плазма в 4-соседстве) → продукт на месте b; keepA: a — катализатор/среда;
+// both: исчезают оба; out:null — b растворяется; boom: вспышка-взрыв.
+const REACTIONS=[
+  {a:'plasma', b:'liquid', keepA:true,           out:{type:'fragile',tint:0xbfe8ff,alpha:0.35}, log:'плазма+жидкость → СТЕКЛО'},
+  {a:'plasma', b:'sand',   keepA:true,           out:{type:'fragile',tint:0xbfe8ff,alpha:0.35}, log:'плазма+песок → СТЕКЛО'},
+  {a:'Si',     b:'O',      heat:true, both:true, out:{type:'sand'},                             log:'Si+O(нагрев) → ПЕСОК'},
+  {a:'Na',     b:'Cl',     both:true,            out:{type:'salt'},                             log:'Na+Cl → СОЛЬ'},
+  {a:'C',      b:'O',      heat:true, both:true, out:{type:'co2'},                              log:'C+O(нагрев) → CO₂'},
+  {a:'H',      b:'O',      heat:true, both:true, out:{type:'liquid',tint:0x59d0ff}, boom:true,  log:'H+O(нагрев) → ВОДА'},
+  {a:'liquid', b:'salt',   keepA:true,           out:null,                                      log:'соль растворилась в жидкости'},
+];
+function plasmaNear(gx,gy){ for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1],[0,0]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive&&o.mtype==='plasma') return true; } return false; }
+function killBlock(o){ o.alive=false; scene.remove(o.mesh); const k=obstacles.indexOf(o); if(k>=0) obstacles.splice(k,1); }
+function transmute(o,out){
+  const {gx,gy,shape,rotY,baseY}=o; killBlock(o);
+  if(!out) return;
+  const taken=new Set(obstacles.filter(q=>!(q.gx===gx&&q.gy===gy)).map(q=>q.gx+','+q.gy));
+  addObstacle(gx,gy,out.type,taken,out.tint??null,1,shape,rotY,out.alpha??null,baseY||0);
+}
 setInterval(()=>{ try{
   if(!obstacles.length) return; let changed=false;
+  outer:
   for(const o of obstacles.slice()){
-    if(!o.alive || o.mtype!=='plasma') continue;
-    for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){
-      const n=obstacleAt(o.gx+ox,o.gy+oy);
-      if(n && n.alive && n.mtype==='liquid'){
-        const gx=n.gx, gy=n.gy, shp=n.shape, rot=n.rotY;
-        n.alive=false; scene.remove(n.mesh); obstacles.splice(obstacles.indexOf(n),1);
-        const taken=new Set(obstacles.map(q=>q.gx+','+q.gy));
-        addObstacle(gx,gy,'fragile',taken,0xbfe8ff,1,shp,rot,0.35);   // стекло: хрупкое, светлое, прозрачное
-        logE('ХИМИЯ: плазма+жидкость → СТЕКЛО ('+gx+','+gy+')'); doFlash('#bfe8ff'); changed=true;
+    if(!o.alive) continue;
+    for(const R of REACTIONS){
+      if(o.mtype!==R.a) continue;
+      for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const n=obstacleAt(o.gx+ox,o.gy+oy);
+        if(!n || !n.alive || n.mtype!==R.b) continue;
+        if(R.heat && !plasmaNear(n.gx,n.gy)) continue;
+        logE('ХИМИЯ: '+R.log+' ('+n.gx+','+n.gy+')');
+        if(R.boom){ doFlash('#ffd166'); buzz([0,60]); blip(90,0.3,'sawtooth',0.22); } else doFlash('#bfe8ff');
+        if(R.both && !R.keepA) killBlock(o);
+        transmute(n, R.out);
+        changed=true; break outer;                      // одна реакция за тик — мир дышит ровно
       }
     }
   }
   if(changed) snapshotRoom();
 }catch(e){} }, 700);
 // ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
-const CREATOR_MATS=['base','fragile','liquid','gas','plasma'];
+const CREATOR_MATS=['base','fragile','liquid','gas','plasma','H','C','O','Na','Si','Cl','Fe'];
 const CREATOR_SHAPES=['cube','slab','post','panel'];
 const CREATOR_TINTS=[[null,'АВТО'],[0xef4444,'АЛЫЙ'],[0xf59e0b,'ЯНТАРЬ'],[0x22c55e,'ИЗУМРУД'],[0x38bdf8,'НЕБО'],[0x8b5cf6,'АМЕТИСТ'],[0xf472b6,'РОЗА'],[0xf8fafc,'СНЕГ'],[0x111827,'НОЧЬ']];
 const CREATOR_ALPHAS=[[null,'100%'],[0.7,'70%'],[0.45,'45%'],[0.22,'22%']];
@@ -2975,6 +3003,40 @@ function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha){
   microBlocks.push(rec); return rec;
 }
 function clearMicro(){ for(const m of microBlocks) scene.remove(m.mesh); microBlocks.length=0; }
+// ── ПРИЗРАК: контур показывает, КУДА встанет блок (макро-стек / микроячейка / клетка префаба) ──
+const ghost=(function(){
+  const g=new THREE.Group(); g.frustumCulled=false; g.visible=false;
+  const geo=new THREE.BoxGeometry(1,1,1);
+  const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0xffa94d,transparent:true,opacity:0.14,depthWrite:false}));
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0xffa94d,transparent:true,opacity:0.9}));
+  m.frustumCulled=false; e.frustumCulled=false; g.add(m); g.add(e); scene.add(g); return g;
+})();
+const GHOST_DIMS={cube:[0.88,0.9,0.88],slab:[0.92,0.2,0.92],post:[0.2,1.8,0.2],panel:[0.92,1.62,0.14]};
+function updateGhost(){
+  if(mode!=='creator'){ ghost.visible=false; return; }
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){                                             // префаб: контур целой клетки
+    const P=aimedPoint();
+    ghost.scale.set(0.96,0.96,0.96); ghost.rotation.y=0;
+    ghost.position.set(worldX(P.gx), 0.48-0.45, worldZ(P.gy));
+  } else if(n){                                           // микро: точная ячейка поверх колонки
+    const P=aimedPoint();
+    const m=CELL/n, sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    let top=-1; for(const b of microBlocks) if(b.gx===P.gx&&b.gy===P.gy&&b.n===n&&b.sx===sx&&b.sz===sz&&b.sy>top) top=b.sy;
+    const sy=Math.min(top+1, n*2-1);
+    ghost.scale.set(m*0.96,m*0.96,m*0.96); ghost.rotation.y=0;
+    ghost.position.set(worldX(P.gx)-CELL/2+(sx+0.5)*m, -0.45+(sy+0.5)*m, worldZ(P.gy)-CELL/2+(sz+0.5)*m);
+  } else {                                                // макро: форма + вершина стека
+    const [gx,gy]=aimedCell();
+    let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
+    const shp=CREATOR_SHAPES[creatorShape];
+    const d=GHOST_DIMS[shp]||GHOST_DIMS.cube;
+    ghost.scale.set(d[0],d[1],d[2]);
+    ghost.rotation.y=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    ghost.position.set(worldX(gx), baseY+d[1]*0.5-0.45, worldZ(gy));
+  }
+  ghost.visible=true;
+}
 // ── ПРЕФАБ: сохранённая группа микроблоков (кисть) — ставится в клетку одним касанием ──
 const PREFAB={blocks:[]};
 function microExists(gx,gy,n,sx,sy,sz){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sy===sy&&m.sz===sz); }
@@ -3003,7 +3065,9 @@ function aimedPoint(){
 }
 const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
 let creatorShape=0;
-const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА'};
+const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА',
+  H:'ВОДОРОД',C:'УГЛЕРОД',O:'КИСЛОРОД',Na:'НАТРИЙ',Si:'КРЕМНИЙ',Cl:'ХЛОР',Fe:'ЖЕЛЕЗО',
+  sand:'ПЕСОК',salt:'СОЛЬ',co2:'CO₂'};
 let creatorMat=0;
 // Возвышение взгляда творца: телефон ВЕРТИКАЛЬНО → горизонт; ПЛАШМЯ → взгляд в пол под ноги.
 function creatorElev(){ return clamp((sensor.pitch-0.88)*1.9, -1.5, 0.9); }
@@ -3044,11 +3108,13 @@ function creatorPlace(){
   }
   const [gx,gy]=aimedCell();
   if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
-  const ex=obstacleAt(gx,gy); if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); }
-  const taken=new Set(obstacles.map(o=>o.gx+','+o.gy));
+  // СТЕК: если в клетке уже есть блоки — новый ложится СВЕРХУ самого высокого
+  let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
+  if(baseY>TIER_H*3.4){ blip(120,0.07,'square',0.1); return; }   // башня не выше ~4 блоков
+  const taken=new Set(obstacles.filter(o=>!(o.gx===gx&&o.gy===gy)).map(o=>o.gx+','+o.gy));
   const shp=CREATOR_SHAPES[creatorShape];
   const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
-  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0]);
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0],baseY);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
   logE('поставлен '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
@@ -3071,7 +3137,8 @@ function creatorRemove(){
     else blip(120,0.06,'square',0.08);
     return;
   }
-  const [gx,gy]=aimedCell(); const ex=obstacleAt(gx,gy);
+  const [gx,gy]=aimedCell();
+  let ex=null; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy&&(!ex||(o.baseY||0)>(ex.baseY||0))) ex=o;   // верхний блок стека
   if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); logE('убран блок ('+gx+','+gy+')'); }
   else blip(120,0.06,'square',0.08);
 }
@@ -3087,6 +3154,7 @@ function applyMode(){
   { const h=$('hud'); if(h) h.style.display=creator?'none':''; }
   { const c=$('creatorUI'); if(c) c.style.display=creator?'flex':'none'; }
   { const x=$('crosshair'); if(x) x.style.display=creator?'block':'none'; }
+  ghost.visible=false;   // призрак включит первый же кадр творца
   if(creator) updatePaletteLabel();
   logE('режим: '+mode);
 }
@@ -3133,7 +3201,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-09c · микровоксели-нечётные(3/5/7)+ПРЕФАБЫ(копия/штамп/очистка)';
+const BUILD_TAG='2026-07-10a · панель-скролл · макро-СТЕК · призрак-подсветка · силуэты-видов · ЭТАП-A(элементы+реакции)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3162,11 +3230,23 @@ function fgPreviewInit(){                                   // живой 3D-п�
   const grp=new THREE.Group(); sc.add(grp);
   const mk=(w,h,d,y)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial()); m.position.y=y; grp.add(m); return m; };
   const parts=[mk(0.55,0.7,0.4,0.35), mk(0.7,0.8,0.45,1.15), mk(0.5,0.5,0.5,1.85)];
-  fgPrev={rn,sc,cam,grp,parts};
+  // силуэты видов в предпросмотре: крылья/рога/ствол/хвост включаются по ВИДУ
+  const dx=(w,h,d,x,y,z)=>{ const m2=mk(w,h,d,y); m2.position.set(x,y,z); return m2; };
+  const wings=[dx(0.95,0.06,0.3,-0.85,1.5,0), dx(0.95,0.06,0.3,0.85,1.5,0)];
+  const horns=[dx(0.12,0.42,0.12,-0.2,2.3,0), dx(0.12,0.42,0.12,0.2,2.3,0)];
+  const barrel=[dx(0.14,0.14,0.85,0.22,1.3,0.55)];
+  const tail=[dx(0.35,0.22,0.65,0,0.3,-0.6)];
+  fgPrev={rn,sc,cam,grp,parts,wings,horns,barrel,tail};
   (function loop(){ requestAnimationFrame(loop);
     if($('forgePanel').style.display!=='flex') return;      // рендерим только когда панель открыта
-    const c=FG.ally?0x34d399:(FG_COL[FG.kinds[FG.k][0]]||0xe879f9);
+    const kind=FG.kinds[FG.k][0];
+    const c=FG.ally?0x34d399:(FG_COL[kind]||0xe879f9);
     for(const m of fgPrev.parts) m.material.color.set(c);
+    for(const m of fgPrev.wings)  m.visible=(kind==='flyer');
+    for(const m of fgPrev.horns)  m.visible=(kind==='boss');
+    for(const m of fgPrev.barrel) m.visible=(kind==='gunner');
+    for(const m of fgPrev.tail)   m.visible=(kind==='crawler');
+    for(const arr of [fgPrev.wings,fgPrev.horns,fgPrev.barrel,fgPrev.tail]) for(const m of arr) m.material.color.set(c);
     const sz=fgv('fgSz');
     fgPrev.grp.scale.set(fgv('fgW')*sz, fgv('fgH')*sz, fgv('fgD')*sz);
     fgPrev.grp.rotation.y+=0.02;
@@ -3328,7 +3408,7 @@ const NET = {
           const taken=new Set();
           for(const b of Object.values(v.blocks||{}))
             addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
-                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0, (b.alpha??null));
+                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0, (b.alpha??null), (b.baseY||0));
           snapshotRoom();                                   // постройка сервера переживает переходы
           showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
         }catch(e){}
@@ -3563,6 +3643,13 @@ function upsertRemotePhantom(key, s){
       else if(s&&s.k==='flyer') av.mesh.scale.set(0.45,0.45,0.45);
       else if(s&&s.k==='gunner') av.mesh.scale.set(0.8,0.85,0.8);
       else if(s&&s.k==='boss') av.mesh.scale.setScalar((s.sz||2)>2?2.8:2.0);
+      // СИЛУЭТЫ ВИДОВ: летун — крылья, босс — рога, стрелец — ствол, повзун — хвост
+      const dec=(w,h,d,x,y,z,c)=>{ const q=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshBasicMaterial({color:c})); q.frustumCulled=false; q.position.set(x,y,z); av.mesh.add(q); return q; };
+      if(s&&s.k==='flyer'){ dec(0.9,0.06,0.3,-0.75,1.45,0,0x9fd8ff); dec(0.9,0.06,0.3,0.75,1.45,0,0x9fd8ff); }
+      else if(s&&s.k==='boss'){ dec(0.12,0.4,0.12,-0.2,2.25,0,0xf3c14b); dec(0.12,0.4,0.12,0.2,2.25,0,0xf3c14b); }
+      else if(s&&s.k==='gunner'){ dec(0.14,0.14,0.8,0.2,1.35,0.5,0x8fa1ad); }
+      else if(s&&s.k==='crawler'){ dec(0.34,0.2,0.6,0,0.35,-0.6,0x86b06a); }
     }catch(e){}
     // МОРФОЛОГИЯ от Алго-крата: mw/mh/md (0.4..3) растягивают тело по осям поверх масштаба вида
     try{ if(s&&(s.mw||s.mh||s.md)){
@@ -3645,6 +3732,7 @@ function frame(now){
     player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
     updateStanceAndCamera(dt);
     updateMorphVisual(now);
+    updateGhost();      // призрак показывает, куда встанет блок
     creatorIdleT+=dt;   // авто-затухание панели творца через 3с бездействия (обзор чист)
     { const cui=$('creatorUI'); if(cui) cui.style.opacity = creatorIdleT>3 ? '0.18':'1'; }
   } else if(mode==='fighter'){
