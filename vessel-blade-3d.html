@@ -206,6 +206,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="mrow">📷 <input type="range" id="mZoom" min="0.5" max="2.4" step="0.1"><span id="mZoomV">1.0</span>
     <button id="mView">ВЗГЛЯД: АВТО</button></div>
   <div class="mrow">🎨 ТЕЛО <input type="range" id="mHue" min="0" max="1" step="0.01"></div>
+  <div class="mrow">🎵 <input type="range" id="mVolMus" min="0" max="1" step="0.05"><span id="mVolMusV"></span></div>
+  <div class="mrow">🔊 <input type="range" id="mVolSfx" min="0" max="1" step="0.05"><span id="mVolSfxV"></span></div>
   <button id="mNew">↺ НОВАЯ ИГРА</button>
   <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
 </div>
@@ -502,6 +504,7 @@ function setListener(camera){
     L.setPosition(p.x,p.y,p.z);
     L.setOrientation(listenerForward.x,listenerForward.y,listenerForward.z, listenerUp.x,listenerUp.y,listenerUp.z);
   }
+  AUDIO.gridTick(1/60);
 }
 function setSwordSound(x,y,z, level, freq){
   if(!swordPanner) return;
@@ -514,6 +517,201 @@ function setWorldMuffle(t){ // t: 0 норма .. 1 полная глухота
   if(!worldFilter) return;
   worldFilter.frequency.setTargetAtTime(lerp(18000, 320, t), AC.currentTime, 0.08);
 }
+/* ═══ АУДИОДВИЖОК (файлы): music/sfx/ambient поверх существующего WebAudio ═══
+   Файлы лежат в репозитории рядом с игрой: audio/music/*.m4a, audio/sfx/*.m4a, audio/ambient/*.m4a
+   + audio/manifest.json описывает, что есть. Нет манифеста — движок молчит, синтез-звуки работают как раньше. */
+const AUDIO={
+  vol:{music:0.65, sfx:1.0, ambient:0.55},
+  buses:{}, cache:{}, manifest:null,
+  cur:null, curName:null, amb:null, ambName:null,
+  bus(name){                                            // шина громкости (лениво, когда AC уже есть)
+    if(!AC) return null;
+    if(!this.buses[name]){ const g=AC.createGain(); g.gain.value=this.vol[name]??1; g.connect(master||AC.destination); this.buses[name]=g; }
+    return this.buses[name];
+  },
+  setVol(name,v){ this.vol[name]=clamp(+v,0,1); if(this.buses[name]) this.buses[name].gain.value=this.vol[name];
+    try{ localStorage.setItem('vb_vol', JSON.stringify(this.vol)); }catch(e){} },
+  async boot(){                                          // тихо: манифест опционален
+    try{ const v=JSON.parse(localStorage.getItem('vb_vol')||'null'); if(v) Object.assign(this.vol,v); }catch(e){}
+    try{
+      const r=await fetch('audio/manifest.json',{cache:'no-cache'});
+      if(r.ok){ this.manifest=await r.json(); logE('АУДИО: манифест — музыки '+Object.keys(this.manifest.music||{}).length+', звуков '+Object.keys(this.manifest.sfx||{}).length); }
+    }catch(e){}
+  },
+  url(kind,name){ const m=this.manifest&&this.manifest[kind]; return m&&m[name] ? 'audio/'+m[name] : null; },
+  async load(u){                                         // fetch+decode с кешем
+    if(this.cache[u]) return this.cache[u];
+    const res=await fetch(u); if(!res.ok) throw new Error(u+' '+res.status);
+    const buf=await AC.decodeAudioData(await res.arrayBuffer());
+    return (this.cache[u]=buf);
+  },
+  async sfx(name,opt={}){                                // короткий звук; с x,z — позиционный в мире
+    try{
+      if(!AC||!this.manifest) return; const u=this.url('sfx',name); if(!u) return;
+      const b=await this.load(u); const src=AC.createBufferSource(); src.buffer=b;
+      if(opt.rate) src.playbackRate.value=opt.rate;
+      const g=AC.createGain(); g.gain.value=opt.vol??1;
+      let head=src; 
+      if(opt.x!=null){ const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=2;
+        p.positionX.value=opt.x; p.positionY.value=opt.y??1; p.positionZ.value=opt.z??0; src.connect(p); head=p; }
+      head.connect(g); g.connect(this.bus('sfx')); src.start();
+    }catch(e){}
+  },
+  async music(name,{fade=1.6}={}){                       // фоновый трек с кроссфейдом, петля
+    try{
+      if(!AC||!this.manifest) return; if(this.curName===name) return;
+      const u=this.url('music',name); if(!u) return;
+      const b=await this.load(u);
+      this.buildRitual();                                 // граф Ритма собирается при первом треке
+      const src=AC.createBufferSource(); src.buffer=b; src.loop=true;
+      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('music')); src.start();
+      const t=AC.currentTime;
+      g.gain.linearRampToValueAtTime(1, t+fade);
+      if(this.cur){ const old=this.cur; old.g.gain.linearRampToValueAtTime(0, t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}}, fade*1000+80); }
+      this.cur={src,g}; this.curName=name; logE('АУДИО: музыка → '+name);
+    }catch(e){}
+  },
+  async ambient(name,{fade=2}={}){                       // атмосфера комнаты (петля, один слот)
+    try{
+      if(!AC||!this.manifest) return; if(this.ambName===name) return;
+      const u=this.url('ambient',name); if(!u) return;
+      const b=await this.load(u);
+      const src=AC.createBufferSource(); src.buffer=b; src.loop=true;
+      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('ambient')); src.start();
+      const t=AC.currentTime; g.gain.linearRampToValueAtTime(1,t+fade);
+      if(this.amb){ const old=this.amb; old.g.gain.linearRampToValueAtTime(0,t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); }
+      this.amb={src,g}; this.ambName=name;
+    }catch(e){}
+  },
+  /* ═══ «РИТМ» — три параллельные шины поверх музыки (ТЗ: единый трек как орган чувств) ═══
+     music-шина ветвится: Main (EQ по Y + эхо/шум по X) ‖ Entity (панер + метаморфоза по типу
+     ближайшей сущности) ‖ Obstacle (эхолокация стены с материалом) → общий ЛИМИТЕР → master.
+     Все узлы создаются ОДИН раз; шаги меняют лишь параметры (без фазового шума и пересборки). */
+  ritual:null,
+  buildRitual(){
+    if(this.ritual || !AC) return this.ritual;
+    const mus=this.bus('music'); try{ mus.disconnect(); }catch(e){}
+    const R={};
+    R.limiter=AC.createDynamicsCompressor();
+    R.limiter.threshold.value=-6; R.limiter.knee.value=4; R.limiter.ratio.value=12;
+    R.limiter.attack.value=0.004; R.limiter.release.value=0.18;
+    R.limiter.connect(master||AC.destination);
+    // ── MAIN: HP+LP последовательно (плавный «свет/вязкость» по Y без переключения type) ──
+    R.hp=AC.createBiquadFilter(); R.hp.type='highpass'; R.hp.frequency.value=30;
+    R.lp=AC.createBiquadFilter(); R.lp.type='lowpass';  R.lp.frequency.value=18000;
+    R.mainG=AC.createGain(); R.mainG.gain.value=1;
+    mus.connect(R.hp); R.hp.connect(R.lp); R.lp.connect(R.mainG); R.mainG.connect(R.limiter);
+    // X→0 (Порядок): структуроване відлуння — короткий loop-delay
+    R.echo=AC.createDelay(1); R.echo.delayTime.value=0.16;
+    R.echoFb=AC.createGain(); R.echoFb.gain.value=0.34;
+    R.echoG=AC.createGain(); R.echoG.gain.value=0;
+    R.lp.connect(R.echo); R.echo.connect(R.echoFb); R.echoFb.connect(R.echo);
+    R.echo.connect(R.echoG); R.echoG.connect(R.limiter);
+    // X→12 (Хаос): сатурація
+    R.shaper=AC.createWaveShaper();
+    { const N=256, c=new Float32Array(N); for(let i=0;i<N;i++){ const x=i/(N-1)*2-1; c[i]=Math.tanh(2.6*x); } R.shaper.curve=c; }
+    R.distG=AC.createGain(); R.distG.gain.value=0;
+    R.lp.connect(R.shaper); R.shaper.connect(R.distG); R.distG.connect(R.limiter);
+    // ── ENTITY: три постійні гілки-метаморфози, вмикається одна (one-hot) ──
+    R.entPan=AC.createPanner(); R.entPan.panningModel='HRTF'; R.entPan.distanceModel='inverse';
+    R.entPan.refDistance=1.6; R.entPan.rolloffFactor=1.1;
+    R.entG=AC.createGain(); R.entG.gain.value=0;
+    R.entPan.connect(R.entG); R.entG.connect(R.limiter);
+    //   злі: tremolo (LFO по амплітуді — «заїкається»)
+    R.tremG=AC.createGain(); R.tremG.gain.value=0;
+    R.tremAmp=AC.createGain(); R.tremAmp.gain.value=0.55;
+    R.tremLFO=AC.createOscillator(); R.tremLFO.frequency.value=6.5;
+    R.tremDepth=AC.createGain(); R.tremDepth.gain.value=0.45;
+    R.tremLFO.connect(R.tremDepth); R.tremDepth.connect(R.tremAmp.gain); R.tremLFO.start();
+    mus.connect(R.tremG); R.tremG.connect(R.tremAmp); R.tremAmp.connect(R.entPan);
+    //   добрі: chorus (модульована коротка затримка — «мерехтіння»)
+    R.chorG=AC.createGain(); R.chorG.gain.value=0;
+    R.chor=AC.createDelay(0.06); R.chor.delayTime.value=0.014;
+    R.chorLFO=AC.createOscillator(); R.chorLFO.frequency.value=0.6;
+    R.chorDepth=AC.createGain(); R.chorDepth.gain.value=0.004;
+    R.chorLFO.connect(R.chorDepth); R.chorDepth.connect(R.chor.delayTime); R.chorLFO.start();
+    mus.connect(R.chorG); R.chorG.connect(R.chor); R.chor.connect(R.entPan);
+    //   гравці-Душі: формантний bandpass («голос крізь мелодію»)
+    R.voxG=AC.createGain(); R.voxG.gain.value=0;
+    R.vox=AC.createBiquadFilter(); R.vox.type='bandpass'; R.vox.frequency.value=740; R.vox.Q.value=8.5;
+    mus.connect(R.voxG); R.voxG.connect(R.vox); R.vox.connect(R.entPan);
+    // ── OBSTACLE: ехолокація — відбита копія Ритму від стіни попереду ──
+    R.obDelay=AC.createDelay(0.5); R.obDelay.delayTime.value=0.05;
+    R.obEQ=AC.createBiquadFilter(); R.obEQ.type='lowpass'; R.obEQ.frequency.value=900; R.obEQ.Q.value=1;
+    R.obPan=AC.createPanner(); R.obPan.panningModel='HRTF'; R.obPan.distanceModel='inverse';
+    R.obPan.refDistance=1.4; R.obPan.rolloffFactor=1.2;
+    R.obG=AC.createGain(); R.obG.gain.value=0;
+    mus.connect(R.obDelay); R.obDelay.connect(R.obEQ); R.obEQ.connect(R.obPan);
+    R.obPan.connect(R.obG); R.obG.connect(R.limiter);
+    this.ritual=R; logE('РИТМ: аудио-граф собран (Main/Entity/Obstacle → лимитер)');
+    return R;
+  },
+  _entT:0,
+  gridTick(dt){                                          // вызывается каждый кадр из setListener
+    const R=this.ritual; if(!R||!AC||!this.curName) return;
+    const t=AC.currentTime, ST=(pr,v,tc)=>pr.setTargetAtTime(v,t,tc??0.12);
+    if(mode==='fighter'||mode==='creator'){
+      // MAIN · ось Y: Сходження → світлий верх; Спуск → глуха вязкість
+      const ny=clamp(player.gy/12,0,1);
+      ST(R.hp.frequency, ny<0.5 ? lerp(700,30,ny*2) : 30, 0.18);
+      ST(R.lp.frequency, ny>0.5 ? lerp(18000,520,(ny-0.5)*2) : 18000, 0.18);
+      // MAIN · ось X: Відлуння ←→ Шум
+      const nx=clamp(player.gx/12,0,1);
+      ST(R.echoG.gain, Math.max(0,(0.5-nx)*2)*0.5);
+      ST(R.distG.gain, Math.max(0,(nx-0.5)*2)*0.42);
+    }
+    // ENTITY: одна найближча сутність у радіусі 5 (пошук ~7 раз/с)
+    this._entT-=dt;
+    if(this._entT<=0){
+      this._entT=0.15;
+      let best=null, bd=5.01, bkind='evil';
+      if(mode==='fighter' && !player.dead){
+        for(const ph of phantoms){ if(ph.dead) continue;
+          const d=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy);
+          if(d<bd){ bd=d; best=ph; bkind='evil'; } }
+        for(const key in NET.rphantoms){ const r=NET.rphantoms[key], sv=r.latest||{};
+          if(sv.dead||r.hidden) continue;
+          const d=Math.abs(r.av.gx-player.gx)+Math.abs(r.av.gy-player.gy);
+          if(d<bd){ bd=d; best=r.av; bkind=(sv.side==='ally')?'good':'evil'; } }
+        for(const id in NET.remotes){ const r=NET.remotes[id];
+          if(!r || r.spec || (r.hp??100)<=0) continue;
+          const d=Math.abs(r.gx-player.gx)+Math.abs(r.gy-player.gy);
+          if(d<bd){ bd=d; best=r; bkind='soul'; } }
+      }
+      if(best){
+        R.entPan.positionX.value=worldX(best.gx); R.entPan.positionY.value=1.2; R.entPan.positionZ.value=worldZ(best.gy);
+        ST(R.entG.gain, clamp(1-bd/6,0,1)*0.9, 0.15);
+        ST(R.tremG.gain, bkind==='evil'?1:0, 0.15);
+        ST(R.chorG.gain, bkind==='good'?1:0, 0.15);
+        ST(R.voxG.gain,  bkind==='soul'?1:0, 0.15);
+      } else ST(R.entG.gain, 0, 0.25);
+      // OBSTACLE: промінь погляду до 6 клітин — перша стіна/межа відбиває Ритм
+      if(mode==='fighter'||mode==='creator'){
+        const [dx,dz]=dirXZ(sensor.yawFused);
+        let hit=null, D=6;
+        for(let i=1;i<=6;i++){
+          const cx=Math.round(player.gx+dx*i), cy=Math.round(player.gy+dz*i);
+          if(cx<0||cx>12||cy<0||cy>12){ hit={gx:clamp(cx,0,12),gy:clamp(cy,0,12),mat:'stone'}; D=i; break; }
+          const o=obstacleAt(cx,cy);
+          if(o && o.solid!==false && !o.pass){ 
+            const mt=o.mtype||'wall';
+            hit={gx:cx,gy:cy, mat: mt==='fragile'?'glass' : (mt==='Fe'?'metal':'stone')}; D=i; break; }
+        }
+        if(hit){
+          R.obPan.positionX.value=worldX(hit.gx); R.obPan.positionY.value=1.0; R.obPan.positionZ.value=worldZ(hit.gy);
+          ST(R.obDelay.delayTime, clamp(0.012*D,0.012,0.09), 0.2);
+          ST(R.obG.gain, clamp(1-D/7,0,1)*0.55, 0.2);
+          if(hit.mat==='glass'){ R.obEQ.type='highpass'; ST(R.obEQ.frequency,1400,0.2); ST(R.obEQ.Q,7,0.2); }
+          else if(hit.mat==='metal'){ R.obEQ.type='bandpass'; ST(R.obEQ.frequency,1900,0.2); ST(R.obEQ.Q,12,0.2); }
+          else { R.obEQ.type='lowpass'; ST(R.obEQ.frequency, lerp(1200,320,clamp(1-D/6,0,1)),0.2); ST(R.obEQ.Q,1,0.2); }
+        } else ST(R.obG.gain, 0, 0.3);
+      }
+    }
+  },
+  stopMusic(fade=1){ if(this.cur&&AC){ const t=AC.currentTime; this.cur.g.gain.linearRampToValueAtTime(0,t+fade);
+    const old=this.cur; setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); this.cur=null; this.curName=null; } },
+};
+AUDIO.boot();
 function blip(freq, dur, type='square', vol=0.12){
   if(!AC) return;
   const o=AC.createOscillator(), g=AC.createGain();
@@ -3251,6 +3449,7 @@ function applyMode(){
   { const x=$('crosshair'); if(x) x.style.display=creator?'block':'none'; }
   ghost.visible=false;   // призрак включит первый же кадр творца
   if(creator) updatePaletteLabel();
+  AUDIO.music(creator?'creator':(fighter?'combat':'watch'));   // фоновая тема режима (если есть в манифесте)
   logE('режим: '+mode);
 }
 // Спосіб перегляду ЗА СОБОЮ (не плутати з режимами спостерігача): зум + тип огляду
@@ -3296,7 +3495,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-11a · СУЩНОСТИ-УЯЗВИМЫ · кнопки-убрать · ВЗАИМНЫЙ-ТИСК-в-клинче(бот+сеть)';
+const BUILD_TAG='2026-07-12a · РИТМ:3-шины(EQ-по-Y·эхо/шум-по-X·метаморфозы-сущностей·эхолокация-стен)→лимитер';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3376,6 +3575,10 @@ $('mView').onclick=()=>{ let vi=VIEWS.findIndex(v=>v[0]===CAM.view); vi=(vi+1)%V
 { const vi=VIEWS.findIndex(v=>v[0]===CAM.view); if(vi>=0) $('mView').textContent='ВЗГЛЯД: '+VIEWS[vi][1]; }
 if(CAM._hue!=null){ player.baseHue=CAM._hue; player.hue=CAM._hue; $('mHue').value=CAM._hue; }
 $('mHue').oninput=()=>{ const v=+$('mHue').value; player.baseHue=v; player.hue=v; try{localStorage.setItem('vb_hue',v);}catch(e){} };
+$('mVolMus').value=AUDIO.vol.music; $('mVolMusV').textContent=Math.round(AUDIO.vol.music*100)+'%';
+$('mVolMus').oninput=()=>{ AUDIO.setVol('music',$('mVolMus').value); $('mVolMusV').textContent=Math.round(AUDIO.vol.music*100)+'%'; };
+$('mVolSfx').value=AUDIO.vol.sfx; $('mVolSfxV').textContent=Math.round(AUDIO.vol.sfx*100)+'%';
+$('mVolSfx').oninput=()=>{ AUDIO.setVol('sfx',$('mVolSfx').value); AUDIO.setVol('ambient',$('mVolSfx').value*0.6); $('mVolSfxV').textContent=Math.round(AUDIO.vol.sfx*100)+'%'; };
 $('sageSend').onclick=()=>{
   const el=$('sageIn'); const q=(el.value||'').trim(); if(!q) return;
   if(NET.askSage(q)){ logE('Я → МУДРЕЦУ: '+q); el.value=''; blip(640,0.05,'sine',0.08); }
