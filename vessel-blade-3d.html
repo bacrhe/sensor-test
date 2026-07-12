@@ -78,6 +78,11 @@ h1 span{color:#1e3a5f;font-size:10px}
 #lorePanel #loreStatus{color:#7cc8ff;font-size:12px;min-height:16px}
 .eLabel{position:fixed;z-index:6;pointer-events:none;transform:translate(-50%,-100%);
   font:inherit;font-size:11px;letter-spacing:.06em;text-shadow:0 0 6px #000,0 0 2px #000;white-space:nowrap}
+#pressMeter{position:fixed;left:12%;right:12%;top:70px;height:16px;z-index:22;display:none;
+  background:rgba(8,18,32,.75);border:1px solid #35507a;border-radius:9px;overflow:hidden}
+#pressFill{position:absolute;top:0;bottom:0;left:50%;width:0;background:#4ade80;transition:width .1s,left .1s,background .2s}
+#pressMid{position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:#cfe3ff;opacity:.8}
+#pressLbl{position:absolute;left:0;right:0;top:-16px;text-align:center;font-size:10px;color:#7cc8ff;letter-spacing:.2em}
 #crosshair{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;z-index:20;display:none;pointer-events:none;
   border:2px solid rgba(249,115,22,.9);border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,.6)}
 #crosshair::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;background:#f97316;border-radius:50%}
@@ -222,6 +227,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <pre id="logbody"></pre>
 </div>
 <div id="banner"></div>
+<div id="pressMeter"><div id="pressFill"></div><div id="pressMid"></div><div id="pressLbl">ТИСК</div></div>
 <div id="flash"></div>
 <div id="intro">
   <div class="big">ТЫ — СОЗНАНИЕ В МАТРИЦЕ 13×13</div>
@@ -569,6 +575,7 @@ const AUDIO={
       g.gain.linearRampToValueAtTime(1, t+fade);
       if(this.cur){ const old=this.cur; old.g.gain.linearRampToValueAtTime(0, t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}}, fade*1000+80); }
       this.cur={src,g}; this.curName=name; logE('АУДИО: музыка → '+name);
+      if(ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, 0.8);   // синтез-дрон уступает живому треку
     }catch(e){}
   },
   async ambient(name,{fade=2}={}){                       // атмосфера комнаты (петля, один слот)
@@ -581,6 +588,7 @@ const AUDIO={
       const t=AC.currentTime; g.gain.linearRampToValueAtTime(1,t+fade);
       if(this.amb){ const old=this.amb; old.g.gain.linearRampToValueAtTime(0,t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); }
       this.amb={src,g}; this.ambName=name;
+      if(ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, 0.8);
     }catch(e){}
   },
   /* ═══ «РИТМ» — три параллельные шины поверх музыки (ТЗ: единый трек как орган чувств) ═══
@@ -709,7 +717,8 @@ const AUDIO={
     }
   },
   stopMusic(fade=1){ if(this.cur&&AC){ const t=AC.currentTime; this.cur.g.gain.linearRampToValueAtTime(0,t+fade);
-    const old=this.cur; setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); this.cur=null; this.curName=null; } },
+    const old=this.cur; setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); this.cur=null; this.curName=null;
+    if(!this.ambName && ambGain) ambGain.gain.setTargetAtTime(0.05, AC.currentTime, 1); } },
 };
 AUDIO.boot();
 function blip(freq, dur, type='square', vol=0.12){
@@ -1095,7 +1104,7 @@ function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.g
 function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
-  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a');
+  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
     if(Math.random()<0.4){                      // из разбитого — иногда полезное
       const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
       spawnPickup(o.gx, o.gy, pool[Math.floor(Math.random()*pool.length)]);
@@ -1257,7 +1266,7 @@ const camLook = new THREE.Vector3();   // сглаженная точка взг
 
 function updateStanceAndCamera(dt){
   if(mode==='creator'){ setCreatorCamera(); return; }   // творец: камера = задняя камера смартфона
-  if(clinch.active){ player.mesh.visible=false; setClinchCamera(); return; }  // клинч — 1-е лицо, тело полностью скрыто
+  if(clinch.active){ player.mesh.visible=false; updatePressMeter(); setClinchCamera(); return; }  // клинч — 1-е лицо + метр тиску
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
@@ -1381,7 +1390,6 @@ const clinch = {
   // ровно −X) → арбитр не нужен. Урон от продавливания каждый применяет СЕБЕ сам.
   myImp:0, foeImp:0, foeBase:null, foeT:0, pressX:0, pressDmgT:0, pressPubT:0, pvpPair:null,
   lockPitch:0, lockLen:1, broke:false, participants:[],   // замороженные наклон/длина + участники клинча (Часть 2)
-  push:0, myPress:0, pairKey:null, pressBn:0,              // ВЗАИМНЫЙ ТИСК: −1 (продавили меня) … +1 (продавил я)
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
 let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
@@ -1422,8 +1430,6 @@ function startClinch(foe){
   clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
   addExhaustion(player, 18);   // вход в клинч — энергозатратно (Часть 4.2)
   clinch.participants = foe ? [player, foe] : [player];   // Часть 2: участники клинча
-  clinch.push=0; clinch.myPress=0; clinch.pressBn=0;
-  clinch.pairKey = (foe && foe.remote && NET.myId) ? [NET.myId, foe.id].sort().join('~') : null;   // общий канал пары
   clinch.lockYaw = sensor.yawFused;
   const tip = bladeContestCell(player);
   clinch.lockX = worldX(clamp(tip.x,0,12));
@@ -1499,23 +1505,6 @@ function endClinch(reason){
   }else if(reason==='net'){
     showBanner('◌ СВЯЗЬ ПОТЕРЯНА — КЛИНЧ РАСПАЛСЯ','#94a3b8');   // без штрафа
     blip(220,0.15,'sine',0.1);
-  }else if(reason==='pressWin'){
-    showBanner('⚔ ПРОДАВИЛ! КЛИНОК СОПЕРНИКА СБИТ','#4ade80'); doFlash('#4ade80');
-    blip(880,0.12,'square',0.2); buzz(60);
-    if(clinch.foe && clinch.foe.remote){
-      // сопернику прилетает удар нашим же каналом strikes — его клиент применит урон
-      if(NET.online&&NET.db) set(ref(NET.db,`blade/${NET.room}/strikes/${clinch.foe.id}`),
-        {t:Date.now(), dmg:22, from:'клинч-тиск'}).catch(()=>{});
-    } else if(clinch.foe){
-      damageTier(clinch.foe,1,26); clinch.foe.stamina=clamp((clinch.foe.stamina??60)-30,0,100);
-    }
-    logE('КЛИНЧ: продавил соперника (push +1)');
-  }else if(reason==='pressLose'){
-    showBanner('✖ ТЕБЯ ПРОДАВИЛИ — КЛИНОК ВЫБИТ','#ef4444'); doFlash('#ef4444');
-    player.disarmed=true; player.disarmT=0; dropBlade(player);
-    damageTier(player,1,18);
-    blip(140,0.3,'sawtooth',0.2); buzz([0,140]);
-    logE('КЛИНЧ: меня продавили (push −1)');
   }else if(reason==='shattered'){
     showBanner('✷ КЛИНЧ РАЗБИТ ТРЕТЬЕЙ СИЛОЙ','#f59e0b');   // третий боец пробил зацеп для всех
     doFlash('#f59e0b');
@@ -1523,8 +1512,7 @@ function endClinch(reason){
     blip(200,0.2,'sawtooth',0.16); buzz([0,80]);
   }
   clinch.participants = [];
-  if(clinch.pairKey){ NET.clearClinchPair(clinch.pairKey); clinch.pairKey=null; }
-  clinch.push=0; clinch.myPress=0;
+  { const pm=$('pressMeter'); if(pm) pm.style.display='none'; }
 }
 
 function updateClinch(dt){
@@ -1649,30 +1637,6 @@ function updateClinch(dt){
     const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);
     player.stamina = clamp(player.stamina - dt*(12+26*n), 0, 100);
     addExhaustion(player, dt*(18+38*n));   // удержание рассинхрона накапливает усталость (Часть 4.2)
-  }
-  // ── ВЗАИМНЫЙ ТИСК: обе стороны давят на скрещённые клинки; сильнее тот, кто РОВНЕЕ держит и СВЕЖЕЕ ──
-  {
-    const myPress = clamp((25-clinch.delta)/25,0,1) * (0.35+0.65*player.stamina/100);
-    clinch.myPress = myPress;
-    let foePress = 0;
-    if(clinch.foe && clinch.foe.remote){
-      const pk=clinch.pairKey, fid=clinch.foe.id;
-      const rec = pk && NET.clinches && NET.clinches[pk] && NET.clinches[pk][fid];
-      foePress = (rec && (rec.t||0) > Date.now()-2000) ? clamp(+rec.p||0,0,1) : 0;
-    } else if(clinch.foe){
-      const st=(clinch.foe.stamina??60);                    // бот давит от своей выносливости, с «дыханием»
-      foePress = (0.28+0.5*st/100) * (0.68+0.32*Math.sin(clinch.t*2.3));
-    }
-    clinch.push = clamp(clinch.push + (myPress-foePress)*dt*0.4, -1.05, 1.05);
-    player.stamina = clamp(player.stamina - dt*8*myPress, 0, 100);   // давить — выматывает
-    addExhaustion(player, dt*10*myPress);
-    if(Math.abs(clinch.push)>0.5 && clinch.pressBn!==Math.sign(clinch.push)){
-      clinch.pressBn=Math.sign(clinch.push);
-      showBanner(clinch.push>0?'⚔ ТЫ ПРОДАВЛИВАЕШЬ!':'⚠ ТЕБЯ ПРОДАВЛИВАЮТ!', clinch.push>0?'#4ade80':'#ef4444');
-      buzz(clinch.push>0?30:[0,60]);
-    }
-    if(clinch.push>=1){ endClinch('pressWin'); return; }
-    if(clinch.push<=-1){ endClinch('pressLose'); return; }
   }
   // ПАРИРОВАНИЕ (победа в клинче): держишь клинок в точке (Δ<10) — продавливаешь.
   // После разрыва зачёт быстрый (контра); без разрыва (просто не дал себя сбить) — чуть дольше.
@@ -1866,13 +1830,23 @@ function setAvatarAlpha(av, a){
   for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
 }
 // камера клинча — плавный вид от 1-го лица на скрещение клинков
+function updatePressMeter(){                              // тиск НАГЛЯДНО: заливка от центра к победе/поражению
+  const pm=$('pressMeter'); if(!pm) return;
+  pm.style.display='block';
+  const X=clinch.pressX||0, f=$('pressFill');
+  const w=Math.abs(X)*50;
+  f.style.width=w+'%';
+  f.style.left=(X>=0?50:50-w)+'%';
+  f.style.background = X>=0 ? (X>0.55?'#22c55e':'#86efac') : (X<-0.55?'#ef4444':'#f87171');
+  $('pressLbl').textContent = X>0.55?'ПРОДАВЛИВАЕШЬ!':(X<-0.55?'ТЕБЯ ПРОДАВЛИВАЮТ!':'ТИСК');
+}
 function setClinchCamera(){
   const [dx,dz]=dirXZ(clinch.lockYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // ВИД ОТ 1-ГО ЛИЦА: камера на уровне глаз, смотрит почти горизонтально на скрещение клинков.
   // Тело игрока в клинче полностью скрыто (см. updateStanceAndCamera) → голова не мешает.
   camPos.set(px - dx*0.3, TIER_H*1.55, pz - dz*0.3);
-  const _po=(clinch.push||0)*0.55;                        // ТИСК видно: контакт съезжает к проигрывающему
+  const _po=-(clinch.pressX||0)*0.55;                     // ТИСК видно: контакт съезжает к проигрывающему
   camTarget.set(clinch.lockX+dx*_po, clinch.lockY + TIER_H*0.35, clinch.lockZ+dz*_po);
   camera.up.set(0,1,0);
 }
@@ -2476,9 +2450,27 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 // ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
-function snapshotRoom(){ roomEdits.set(curRoomKey(), {
+function snapshotRoom(){ NET.roomDirty=true; roomEdits.set(curRoomKey(), {
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
+// ── ОБЩИЙ МИР: снимки комнат синхронизируются через Firebase (blade/{room}/roomEdits/{key}) ──
+function rebuildFromSnapshot(v){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  clearMicro();
+  const taken=new Set();
+  for(const b of Object.values(v.blocks||{})) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
+  for(const m of Object.values(v.micro||{})) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
+}
+function applyRemoteRoomIfNewer(key){
+  const v=NET.roomRemote && NET.roomRemote[key];
+  if(!v || v.by===NET.myId) return false;
+  if((NET._reApplied[key]||0) >= (v.t||0)) return false;
+  NET._reApplied[key]=v.t||0;
+  rebuildFromSnapshot(v);
+  roomEdits.set(key, {blocks:v.blocks||[], micro:v.micro||[]});   // локальный кеш = общий
+  logE('МИР: комната синхронизирована от '+String(v.by||'?').slice(0,4));
+  return true;
+}
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
@@ -2499,7 +2491,8 @@ function applyAdvRoom(rx,ry){
   // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
   spawnObstaclesSeededSafe(rx,ry,home);
   clearMicro();                              // микроблоки прошлой комнаты не тащим
-  restoreRoomEdits(rx,ry);   // вернуть сохранённые постройки/скан этой комнаты (если были)
+  restoreRoomEdits(rx,ry);
+  applyRemoteRoomIfNewer(rx+','+ry);         // общий мир: правки других игроков поверх   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = composeRoomEnemies(rx,ry);
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
   const bossPh=phantoms.find(p=>p.kind==='boss');
@@ -3495,7 +3488,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-12a · РИТМ:3-шины(EQ-по-Y·эхо/шум-по-X·метаморфозы-сущностей·эхолокация-стен)→лимитер';
+const BUILD_TAG='2026-07-12b · ЕДИНЫЙ-тиск(твоя-pressX+БОЛЬШОЙ-метр) · дрон→музыка · ОБЩИЙ-МИР(синк-комнат)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3716,8 +3709,6 @@ const NET = {
           showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
         }catch(e){}
       });
-      // КЛИНЧ-ТИСК: давление соперников (blade/{room}/clinches)
-      onValue(ref(this.db,`blade/${this.room}/clinches`), snap=>{ this.clinches=snap.val()||{}; });
       // МОРФ: сервер диктует форму игрока (blade/{room}/morph/{myId})
       onValue(ref(this.db,`blade/${this.room}/morph/${this.myId}`), snap=>{
         const v=snap.val(); if(!v || !v.t || v.t<=(this._mrphT||0)) return; this._mrphT=v.t;
@@ -3730,6 +3721,11 @@ const NET = {
         damageTier(player, 1, clamp(+(v.dmg||8),1,40));
         showBanner('☄ '+String(v.from||'СУЩНОСТЬ')+' РАНИТ ТЕБЯ','#ef4444'); doFlash('#ef4444'); buzz(70);
         logE((v.from||'сущность')+' ранит → HP '+Math.round(player.hp));
+      });
+      // ОБЩИЙ МИР: правки комнат других игроков
+      onValue(ref(this.db,`blade/${this.room}/roomEdits`), snap=>{
+        this.roomRemote=snap.val()||{};
+        try{ applyRemoteRoomIfNewer(curRoomKey()); }catch(e){}
       });
       // ВЕЛИКИЙ МУДРЕЦ: ответы сервера — ненавязчиво на экран (баннер) и в лог
       onValue(ref(this.db,`blade/${this.room}/sage_out`), snap=>{
@@ -3768,6 +3764,7 @@ const NET = {
     push(ref(this.db,`blade/${this.room}/sage_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
     return true;
   },
+  roomDirty:false, roomRemote:{}, _reApplied:{}, _rePub:0,
   submitLore(text){
     if(!this.online||!this.db) return false;
     push(ref(this.db,`blade/${this.room}/universe_lore_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
@@ -3834,12 +3831,6 @@ const NET = {
     if(all) set(ref(this.db,`blade/${this.room}/phantoms/algocrat`), null).catch(()=>{});
     return true;
   },
-  clinchPub(){                                               // мой ТИСК в клинче — сопернику
-    if(!this.online||!this.db||!clinch.active||!clinch.pairKey) return;
-    update(ref(this.db,`blade/${this.room}/clinches/${clinch.pairKey}/${this.myId}`),
-      {p:+(clinch.myPress||0).toFixed(2), t:Date.now()}).catch(()=>{});
-  },
-  clearClinchPair(pk){ if(this.online&&this.db&&pk) set(ref(this.db,`blade/${this.room}/clinches/${pk}`), null).catch(()=>{}); },
   sendPhantomHit(owner, i, tier, dmg){
     if(!this.online||!this.db) return;
     push(ref(this.db,`blade/${this.room}/phantomHits/${owner}`), {from:this.myId, i, tier, dmg, t:Date.now()}).catch(()=>{});
@@ -3850,7 +3841,12 @@ const NET = {
     if(this.sendT>0) return;
     this.sendT=0.08;                                     // ~12 Гц
     if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
-    this.clinchPub();
+    if(this.roomDirty && Date.now()-(this._rePub||0)>900){          // общий мир: публикуем снимок комнаты
+      this.roomDirty=false; this._rePub=Date.now();
+      const key=curRoomKey(), ed=roomEdits.get(key);
+      if(ed){ const t=Date.now(); this._reApplied[key]=t;
+        set(ref(this.db,`blade/${this.room}/roomEdits/${key}`), {t, by:this.myId, blocks:ed.blocks||[], micro:ed.micro||[]}).catch(()=>{}); }
+    }
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
       const obj={};
