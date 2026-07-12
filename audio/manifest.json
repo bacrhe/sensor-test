@@ -1,0 +1,21 @@
+{
+  "music": {
+    "combat":  "music/combat.m4a",
+    "creator": "music/creator.m4a",
+    "watch":   "music/watch.m4a"
+  },
+  "sfx": {
+    "hit":        "sfx/hit.m4a",
+    "clash":      "sfx/clash.m4a",
+    "step":       "sfx/step.m4a",
+    "glass":      "sfx/glass.m4a",
+    "boom":       "sfx/boom.m4a",
+    "forge":      "sfx/forge.m4a",
+    "press_win":  "sfx/press_win.m4a",
+    "press_lose": "sfx/press_lose.m4a"
+  },
+  "ambient": {
+    "hall": "ambient/hall.m4a",
+    "cave": "ambient/cave.m4a"
+  }
+}
