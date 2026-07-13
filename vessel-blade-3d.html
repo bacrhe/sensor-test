@@ -104,6 +104,11 @@ h1 span{color:#1e3a5f;font-size:10px}
       <button class="mbtn" data-mode="action">🎬 ЭКШН</button>
       <button class="mbtn" data-mode="map">🗺 КАРТА</button>
     </div>
+    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">НАЧАЛО ИГРЫ</label>
+    <div id="tutSel" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="mbtn on" data-tut="1" style="flex:1">📚 ТУТОРІАЛ</button>
+      <button class="mbtn" data-tut="0" style="flex:1">⚔ БЕЗ ТУТОРІАЛУ</button>
+    </div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КОМНАТА (общий бой у кого одинаковая)</label>
     <input id="roomInput" value="HALL" maxlength="12" autocomplete="off"
       style="width:100%;padding:11px;margin-bottom:10px;background:#01101f;border:1px solid #1e3a5f;
@@ -1858,128 +1863,137 @@ $('btnReq').addEventListener('click', async ()=>{
     $('pauseBtn').style.display='block';
     started=true; last=0;
     applyMode();
+    if(TUT.enabled){ TUT.start(); }   // запуск туторіалу, якщо обрано
   }catch(err){
     $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
     $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
   }
 });
 
-/* ════════════════════ ТУТОРІАЛ + РЕЖИМ ПРИГОДИ ════════════════════ */
-const GameProgress = {
-  tutorialStage: 0,
-  tutorialComplete: false,
-  selectedDifficulty: 1,
-  battlePhantomKilled: 0,
+/* ════════════════════ ВЫБОР: ТУТОРИАЛ / БЕЗ ═══════════════════ */
+// Переключатель на стартовом экране (по умолчанию туторіал включён)
+const TUT = { enabled:true, stage:0, killGoal:0, active:false };
+document.querySelectorAll('#tutSel .mbtn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('#tutSel .mbtn').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    TUT.enabled = b.dataset.tut === '1';
+  });
+});
+
+/* ════════════════════ СИСТЕМА ТУТОРИАЛА ═══════════════════════ */
+// Этапы: 1 камера, 2 движение, 3 блок, 4 объекты, 5..9 бои (1,2,8,3,4), 10 сложность
+TUT.stageData = {
+  1:{t:"📹 КАЛІБРУВАННЯ КАМЕРИ", d:"Тримайте телефон вертикально (книжна орієнтація). Знайдіть зручне положення, щоб бачити свій клинок.\n\nНатисніть ДАЛІ коли готові.", a:"ДАЛІ", act:'info'},
+  2:{t:"👣 МЕХАНІКА РУХУ", d:"Свайп по екрану = крок по сітці 13×13.\n\n▲ вперед  ▼ назад  ◀ вліво  ▶ вправо\n\nСпробуйте зробити кілька кроків, потім натисніть ДАЛІ.", a:"ДАЛІ", act:'info'},
+  3:{t:"⚔️ БЛОКУВАННЯ ТИСКОМ", d:"Поверніть телефон в альбомну орієнтацію (|γ|>45°) — це Режим Маяка 🔺.\n\nТам ви накопичуєте тиск замість удару — це захист.\n\nСпробуйте повернути, потім ДАЛІ.", a:"ДАЛІ", act:'info'},
+  4:{t:"🧱 ЗНИЩЕННЯ ОБ'ЄКТІВ", d:"Поверніться в книжну (Режим Молнії ⚡) та вдарте по нерухомих кристалах поруч.\n\nВони неживі й не б'ються у відповідь.", a:"ДАЛІ", act:'info'},
+  5:{t:"⚡ БІЙ 1 НА 1", d:"Один супротивник. Відбивайте його удари та розвоплотіть його.\n\nПереможіть 1 фантома.", a:"В БІЙ", act:'battle', n:1},
+  6:{t:"⚡ БІЙ 1 НА 2", d:"Тепер двоє. Складніше, але керування те саме.", a:"В БІЙ", act:'battle', n:2},
+  7:{t:"⚡ ВИПРОБУВАННЯ — 1 НА 8", d:"Восьмеро одразу! Найважче. Використайте все, що вивчили.\n\nЯкщо не здолаєте — не страшно, підберемо складність.", a:"В БІЙ", act:'battle', n:8},
+  8:{t:"⚡ БІЙ 1 НА 3", d:"Троє після великої хвилі. Легше за вісьмох.", a:"В БІЙ", act:'battle', n:3},
+  9:{t:"⚡ ФІНАЛ — 1 НА 4", d:"Четверо. Якщо пережили вісьмох — впораєтесь.", a:"В БІЙ", act:'battle', n:4},
 };
 
-function initTutorial() {
-  GameProgress.tutorialStage = 1;
-  GameProgress.tutorialComplete = false;
-  showTutorialStage(1);
-}
+TUT.overlay = null;
+TUT.showCard = function(stage){
+  const s = TUT.stageData[stage];
+  if(!s){ TUT.finish(); return; }
+  TUT.clearCard();
+  const o = document.createElement('div');
+  o.id='tutCard';
+  o.style.cssText='position:fixed;inset:0;background:rgba(1,6,15,.9);z-index:30;display:flex;align-items:center;justify-content:center;padding:24px;';
+  o.innerHTML =
+    '<div style="max-width:360px;text-align:center;color:#60a5fa;font-family:inherit">'+
+    '<h2 style="font-size:17px;margin:0 0 14px;letter-spacing:.08em">'+s.t+'</h2>'+
+    '<p style="color:#8ab0d8;font-size:12px;line-height:1.8;margin:0 0 20px;white-space:pre-line">'+s.d+'</p>'+
+    '<button id="tutNext" style="width:100%;padding:13px;background:#0c2a1f;color:#22c55e;border:1px solid #16a34a;border-radius:6px;font:inherit;font-size:13px;cursor:pointer;letter-spacing:.08em">▶ '+s.a+'</button>'+
+    '<button id="tutSkip" style="width:100%;padding:9px;margin-top:8px;background:transparent;color:#3a6a9f;border:none;font:inherit;font-size:10px;cursor:pointer">пропустити туторіал →</button>'+
+    '<div style="color:#1e3a5f;font-size:9px;margin-top:12px">етап '+stage+' / 9</div>'+
+    '</div>';
+  document.body.appendChild(o);
+  TUT.overlay = o;
+  document.getElementById('tutNext').addEventListener('click', ()=>TUT.advance(stage));
+  document.getElementById('tutSkip').addEventListener('click', ()=>{ TUT.clearCard(); TUT.chooseDifficulty(); });
+};
 
-function showTutorialStage(stage) {
-  const stages = {
-    1: { title: "📹 КАЛІБРУВАННЯ КАМЕРИ", desc: "Налаштуйте камеру.\n\nНатисніть ПРОДОВЖИТИ коли готові.", action: "ДАЛІ" },
-    2: { title: "👣 МЕХАНІКА РУХУ", desc: "Свайпи = кроки по сітці\n▲▼◀▶", action: "ДАЛІ" },
-    3: { title: "⚔️ БЛОКУВАННЯ", desc: "Альбомна орієнтація = Маяк 🔺\n(накопичення тиску)", action: "ДАЛІ" },
-    4: { title: "🧱 ЗНИЩЕННЯ", desc: "Розбийте 2 кристали", action: "ДАЛІ" },
-    5: { title: "⚡ ПЕРША БОРОТЬБА", desc: "1 супротивник чекає\n\nПопрощайте врага!", action: "БОРОТИСЯ" },
-  };
-  
-  const s = stages[stage];
-  if (!s) { showDifficultySelection(); return; }
-  
-  let ex = document.getElementById('tutorialModal');
+TUT.clearCard = function(){
+  const ex = document.getElementById('tutCard');
   if(ex) ex.remove();
-  
-  const m = document.createElement('div');
-  m.id = 'tutorialModal';
-  m.style.cssText = `position:fixed;inset:0;background:rgba(1,6,15,0.92);z-index:25;display:flex;align-items:center;justify-content:center;padding:24px;`;
-  m.innerHTML = `
-    <div style="max-width:360px;text-align:center;color:#60a5fa;">
-      <h2 style="font-size:18px;margin-bottom:14px;letter-spacing:0.1em;">${s.title}</h2>
-      <p style="color:#8ab0d8;font-size:12px;line-height:1.8;margin-bottom:20px;white-space:pre-line;">${s.desc}</p>
-      <button style="width:100%;padding:12px;background:#0c2a1f;color:#22c55e;border:1px solid #16a34a;border-radius:6px;font:inherit;cursor:pointer;letter-spacing:0.1em;" onclick="advanceTutorial()">▶ ${s.action}</button>
-      <div style="color:#1e3a5f;font-size:9px;margin-top:12px;">Етап ${GameProgress.tutorialStage}/5</div>
-    </div>
-  `;
-  document.body.appendChild(m);
-}
+  TUT.overlay = null;
+};
 
-function advanceTutorial() {
-  GameProgress.tutorialStage++;
-  if(GameProgress.tutorialStage <= 5) {
-    showTutorialStage(GameProgress.tutorialStage);
+TUT.start = function(){
+  TUT.active = true;
+  TUT.stage = 1;
+  logE('ТУТОРІАЛ: старт');
+  TUT.showCard(1);
+};
+
+TUT.advance = function(fromStage){
+  const s = TUT.stageData[fromStage];
+  TUT.clearCard();
+  if(s && s.act === 'battle'){
+    // запустить бой: заспавнить N фантомов и следить за победой
+    TUT.killGoal = s.n;
+    TUT.startKills = (player.score||0);
+    spawnPhantoms(s.n);
+    showBanner('⚔ '+s.t.replace('⚡ ','')+' — '+s.n+' фантом(ів)','#f59e0b');
+    TUT.watchBattle(fromStage);
   } else {
-    GameProgress.tutorialComplete = true;
-    showDifficultySelection();
+    // информационный этап — просто следующий
+    TUT.showCard(fromStage+1);
   }
-}
+};
 
-function showDifficultySelection() {
-  let ex = document.getElementById('difficultyModal');
-  if(ex) ex.remove();
-  
-  const m = document.createElement('div');
-  m.id = 'difficultyModal';
-  m.style.cssText = `position:fixed;inset:0;background:rgba(1,6,15,0.96);z-index:26;display:flex;align-items:center;justify-content:center;padding:24px;`;
-  m.innerHTML = `
-    <div style="max-width:380px;text-align:center;">
-      <h2 style="color:#60a5fa;font-size:18px;margin-bottom:20px;letter-spacing:0.1em;">🎯 ВИБІР СКЛАДНОСТІ</h2>
-      <button style="width:100%;padding:14px;margin-bottom:8px;background:#0a2e1f;color:#22c55e;border:2px solid #16a34a;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(0)">🟢 ЛЕГКО</button>
-      <button style="width:100%;padding:14px;margin-bottom:8px;background:#1a2e3f;color:#60a5fa;border:2px solid #3b82f6;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(1)">🟡 НОРМАЛЬНО</button>
-      <button style="width:100%;padding:14px;background:#3f1a1f;color:#ef4444;border:2px solid #dc2626;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(2)">🔴 ВАЖКО</button>
-    </div>
-  `;
-  document.body.appendChild(m);
-}
+TUT.watchBattle = function(stage){
+  if(!TUT.active) return;
+  const killed = (player.score||0) - TUT.startKills;
+  // победа: набрали нужное число развоплощений
+  if(killed >= TUT.killGoal){
+    showBanner('✓ ЕТАП ПРОЙДЕНО','#22c55e');
+    setTimeout(()=>{ if(TUT.active) TUT.showCard(stage+1); }, 1200);
+    return;
+  }
+  // игрок погиб — предлагаем сложность и заканчиваем туторіал
+  if(player.dead){
+    setTimeout(()=>{ if(TUT.active){ showBanner('△ Спробуємо іншу складність','#93c5fd'); TUT.chooseDifficulty(); } }, 1500);
+    return;
+  }
+  requestAnimationFrame(()=>TUT.watchBattle(stage));
+};
 
-function selectDiff(d) {
-  GameProgress.selectedDifficulty = d;
-  botDiff = d;
-  let m = document.getElementById('difficultyModal');
-  if(m) m.remove();
-  logE('Складність: '+(d===0?'ЛЕГКО':d===1?'НОРМАЛЬНО':'ВАЖКО'));
-}
+TUT.chooseDifficulty = function(){
+  TUT.clearCard();
+  const o = document.createElement('div');
+  o.id='tutCard';
+  o.style.cssText='position:fixed;inset:0;background:rgba(1,6,15,.95);z-index:31;display:flex;align-items:center;justify-content:center;padding:24px;';
+  o.innerHTML =
+    '<div style="max-width:360px;text-align:center">'+
+    '<h2 style="color:#60a5fa;font-size:17px;margin:0 0 18px;letter-spacing:.08em">🎯 ВИБЕРІТЬ СКЛАДНІСТЬ</h2>'+
+    '<button class="tutDiff" data-d="0" style="width:100%;padding:13px;margin-bottom:8px;background:#0a2e1f;color:#22c55e;border:2px solid #16a34a;border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer">🟢 ЛЕГКО</button>'+
+    '<button class="tutDiff" data-d="1" style="width:100%;padding:13px;margin-bottom:8px;background:#1a2e3f;color:#60a5fa;border:2px solid #3b82f6;border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer">🟡 НОРМАЛЬНО</button>'+
+    '<button class="tutDiff" data-d="2" style="width:100%;padding:13px;background:#3f1a1f;color:#ef4444;border:2px solid #dc2626;border-radius:6px;font:inherit;font-size:13px;font-weight:bold;cursor:pointer">🔴 ВАЖКО</button>'+
+    '</div>';
+  document.body.appendChild(o);
+  o.querySelectorAll('.tutDiff').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      botDiff = parseInt(b.dataset.d);
+      logE('Складність: '+DIFF[botDiff].name);
+      TUT.finish();
+    });
+  });
+};
 
-// Додаємо кнопки вибору мода на стартовий екран
-(function(){
-  setTimeout(() => {
-    const diag = document.getElementById('diag');
-    if(diag && !document.getElementById('modeChoiceCard')) {
-      const card = document.createElement('div');
-      card.id = 'modeChoiceCard';
-      card.className = 'card';
-      card.style.marginBottom = '10px';
-      card.innerHTML = `
-        <div class="lbl">ВИБІР РЕЖИМУ</div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          <button id="btnTutorialStart" class="btn" style="background:#0c2a1f;border-color:#16a34a;color:#22c55e;">📚 ТУТОРІАЛ</button>
-          <button id="btnSkipTutorial" class="btn" style="background:#1a2030;border-color:#3b82f6;color:#60a5fa;">⚔ БЕЗ ТУТОРІАЛУ</button>
-        </div>
-      `;
-      diag.parentNode.insertBefore(card, diag);
-      
-      document.getElementById('btnTutorialStart').addEventListener('click', e => {
-        e.preventDefault();
-        document.getElementById('modeChoiceCard').style.display = 'none';
-        initTutorial();
-      });
-      
-      document.getElementById('btnSkipTutorial').addEventListener('click', e => {
-        e.preventDefault();
-        document.getElementById('modeChoiceCard').style.display = 'none';
-        GameProgress.tutorialComplete = true;
-      });
-    }
-  }, 300);
-})();
-
-window.GameProgress = GameProgress;
-window.initTutorial = initTutorial;
-window.selectDiff = selectDiff;
-window.advanceTutorial = advanceTutorial;
+TUT.finish = function(){
+  TUT.active = false;
+  TUT.clearCard();
+  // возвращаем обычный бой с выбранной сложностью
+  phantomCount = 1;
+  spawnPhantoms(phantomCount);
+  showBanner('▷ ГРА ПОЧАЛАСЯ — '+DIFF[botDiff].name,'#22c55e');
+  logE('ТУТОРІАЛ завершено, гра почалася');
+};
 </script>
 </body>
 </html>
