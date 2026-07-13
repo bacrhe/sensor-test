@@ -96,8 +96,9 @@ h1 span{color:#1e3a5f;font-size:10px}
 .mbtn.on{background:#0c2a3f;color:#60a5fa;border-color:#3b82f6}
 /* ── BANNER (события: клинч / разоружение / парирование) ── */
 #banner{position:fixed;top:0;left:0;right:0;z-index:20;text-align:center;
-  padding:10px;font-size:13px;font-weight:bold;letter-spacing:.18em;
-  opacity:0;transition:opacity .2s;pointer-events:none;text-shadow:0 0 12px currentColor}
+  padding:12px 14px;font-size:14px;font-weight:bold;letter-spacing:.14em;
+  background:linear-gradient(rgba(1,6,15,.94),rgba(1,6,15,.55));
+  opacity:0;transition:opacity .2s;pointer-events:none;text-shadow:0 0 10px currentColor, 0 1px 2px #000}
 #flash{position:fixed;inset:0;z-index:15;pointer-events:none;opacity:0;
   background:radial-gradient(circle,rgba(255,255,255,.0),rgba(255,40,40,.0))}
 #intro{position:fixed;inset:0;z-index:18;display:flex;align-items:center;justify-content:center;
@@ -118,35 +119,35 @@ h1 span{color:#1e3a5f;font-size:10px}
 
 <!-- GATE -->
 <div id="gate">
-  <div class="sub">МАТРИЦА 13×13 · BLIND FIGHT</div>
-  <h1>СЛЕПОК СОЗНАНИЯ <span>VOXEL BLADE ENGINE</span></h1>
+  <div class="sub">МАТРИЦЯ 13×13 · BLIND FIGHT</div>
+  <h1>ЗЛІПОК СВІДОМОСТІ <span>VOXEL BLADE ENGINE</span></h1>
   <div class="divider"></div>
   <div class="card">
-    <div class="lbl">ДИАГНОСТИКА</div>
+    <div class="lbl">ДІАГНОСТИКА</div>
     <div id="diag"></div>
   </div>
   <div class="card">
-    <p>Телефон — это <b>рукоять светового клинка</b>. Гироскоп ведёт лезвие,
-       компас держит Север, поворот корпуса (<b>γ</b>) меняет стойку.</p>
-    <p style="color:#2a4a6f">Альбомная (|γ|&gt;45°) — <b>Ножны/Маяк</b>: накопление давления, вид от 1-го лица.<br>
-       Книжная (|γ|&lt;45°) — <b>Атака/Молния</b>: выброс клинка, вид от 3-го лица.<br>
-       Свайп по экрану — шаг по сетке 13×13.</p>
+    <p>Телефон — це <b>руків’я світлового клинка</b>. Гіроскоп веде лезо,
+       компас тримає Північ, поворот корпуса (<b>γ</b>) змінює стійку.</p>
+    <p style="color:#2a4a6f">Боком, як фотоапарат (|γ|&gt;45°) — <b>Піхви/Маяк</b>: накопичення тиску, вид від 1-ї особи.<br>
+       Вертикально (|γ|&lt;45°) — <b>Атака/Блискавка</b>: виброс клинка, вид від 3-ї особи.<br>
+       Свайп по екрану — крок по сітці 13×13.</p>
     <div id="errMsg"></div>
     <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">РЕЖИМ</label>
     <div id="modeSel" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="mbtn on" data-mode="fighter">⚔ БОЕЦ</button>
-      <button class="mbtn" data-mode="spectator">👁 СВЕРХУ</button>
-      <button class="mbtn" data-mode="follow">🎥 СЛЕЖКА</button>
-      <button class="mbtn" data-mode="action">🎬 ЭКШН</button>
-      <button class="mbtn" data-mode="map">🗺 КАРТА</button>
+      <button class="mbtn on" data-mode="fighter">⚔ БОЄЦЬ</button>
+      <button class="mbtn" data-mode="spectator">👁 ЗГОРИ</button>
+      <button class="mbtn" data-mode="follow">🎥 СТЕЖЕННЯ</button>
+      <button class="mbtn" data-mode="action">🎬 ЕКШН</button>
+      <button class="mbtn" data-mode="map">🗺 МАПА</button>
     </div>
-    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КОМНАТА (общий бой у кого одинаковая)</label>
+    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">КІМНАТА (спільний бій у кого однакова)</label>
     <input id="roomInput" value="HALL" maxlength="12" autocomplete="off"
       style="width:100%;padding:11px;margin-bottom:10px;background:#01101f;border:1px solid #1e3a5f;
       border-radius:6px;color:#60a5fa;font:inherit;font-size:14px;letter-spacing:.15em;text-align:center;text-transform:uppercase">
-    <button class="btn" id="btnReq">▷ ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ</button>
-    <div class="note">Chrome/Android — сразу после клика. iOS Safari — появится диалог разрешения.
-      Нужен HTTPS (GitHub Pages подходит) и физический телефон с гироскопом.</div>
+    <button class="btn" id="btnReq">▷ ЗАПРОСИТИ СЕНСОРИ ТА УВІЙТИ</button>
+    <div class="note">Chrome/Android — одразу після кліку. iOS Safari — з’явиться діалог дозволу.
+      Потрібен HTTPS (GitHub Pages підходить) і фізичний телефон з гіроскопом.</div>
   </div>
 </div>
 
@@ -157,7 +158,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 <button id="followBtn">◎ ИГРОК ▷</button>
 <div id="crosshair"></div>
 <div id="forgePanel">
-  <div class="lp-title">⚒ КУЗНЯ СУЩНОСТЕЙ</div>
+  <div class="lp-title">⚒ КУЗНЯ СУТНОСТЕЙ</div>
   <input id="fgName" placeholder="имя сущности…" maxlength="20"/>
   <div class="lp-row"><button id="fgKind">ВИД: БОЕЦ</button><button id="fgLoco">ХОД: ХОДЬБА</button><button id="fgSide">⚔ ВРАГ</button></div>
   <canvas id="fgCanvas" width="170" height="170"></canvas>
@@ -174,7 +175,7 @@ h1 span{color:#1e3a5f;font-size:10px}
 </div>
 <div id="lorePanel">
   <div class="lp-title">🜁 ЛОР ВСЕЛЕННОЙ → АЛГО-КРАТ</div>
-  <textarea id="loreText" placeholder="Вставь описание вымышленной вселенной: фракции, герои, злодеи. Алго-крат разложит их по сетке 13×13 (Сходження/Спуск × Відлуння/Шум) и оживит комнату."></textarea>
+  <textarea id="loreText" placeholder="Встав опис вигаданого всесвіту: фракції, герої, лиходії. Алго-крат разложит их по сетке 13×13 (Сходження/Спуск × Відлуння/Шум) и оживит комнату."></textarea>
   <div class="lp-row">
     <button id="loreSubmit">⤴ ОТПРАВИТЬ ВСЕЛЕННУЮ</button>
     <button id="loreClose">✕ ЗАКРЫТЬ</button>
@@ -187,34 +188,34 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="cTint">🎨 <span id="cTintName">АВТО</span></button>
   <button id="cAlpha">◐ <span id="cAlphaName">100%</span></button>
   <button id="cGrid">⊞ <span id="cGridName">МАКРО</span></button>
-  <button id="cPrefCopy">▣ КОПИЯ</button>
+  <button id="cPrefCopy">▣ КОПІЯ</button>
   <button id="cPlace">✚ БЛОК</button>
-  <button id="cRemove">✖ УБРАТЬ</button>
+  <button id="cRemove">✖ ПРИБРАТИ</button>
 </div>
 <div id="menu">
   <div class="mt">ПАУЗА</div>
   <div class="msub" id="mInfo">—</div>
-  <button id="mResume">▶ ПРОДОЛЖИТЬ</button>
-  <button id="mMode">◎ РЕЖИМ: БОЕЦ</button>
-  <button id="mPhan">☠ ФАНТОМОВ: 1</button>
-  <button id="mDiff">🎯 СЛОЖНОСТЬ: НОРМА</button>
-  <button id="mFF">⚔ УРОН ИГРОКАМ: ВКЛ</button>
-  <button id="mEq">⚖ РАВНОВЕСИЕ: ВКЛ</button>
-  <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВЫКЛ</button>
-  <button id="mInvert">↕ ИНВЕРСИЯ НАКЛОНА: ВЫКЛ</button>
-  <button id="mCopy">⧉ КОПИРОВАТЬ ЛОГ</button>
-  <button id="mCache">♻ СБРОС КЕША + ПЕРЕЗАГРУЗКА</button>
-  <button id="mScan">🏠 СКАН 46м² (элементы)</button>
-  <button id="mCreate">🔨 СОЗДАТЕЛЬ (строить)</button>
-  <button id="mLore">🜁 ВСЕЛЕННАЯ (лор → Алго-крат)</button>
-  <button id="mForge">⚒ КУЗНЯ СУЩНОСТЕЙ</button>
+  <button id="mResume">▶ ПРОДОВЖИТИ</button>
+  <button id="mMode">◎ РЕЖИМ: БОЄЦЬ</button>
+  <button id="mPhan">☠ ФАНТОМІВ: 1</button>
+  <button id="mDiff">🎯 СКЛАДНІСТЬ: НОРМА</button>
+  <button id="mFF">⚔ ШКОДА ГРАВЦЯМ: УВІМК</button>
+  <button id="mEq">⚖ РІВНОВАГА: УВІМК</button>
+  <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВИМК</button>
+  <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
+  <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
+  <button id="mCache">♻ СКИД КЕШУ + ПЕРЕЗАВАНТАЖЕННЯ</button>
+  <button id="mScan">🏠 СКАН 46м² (елементи)</button>
+  <button id="mCreate">🔨 ТВОРЕЦЬ (будувати)</button>
+  <button id="mLore">🜁 ВСЕСВІТ (лор → Алго-крат)</button>
+  <button id="mForge">⚒ КУЗНЯ СУТНОСТЕЙ</button>
   <div class="mrow">📷 <input type="range" id="mZoom" min="0.5" max="2.4" step="0.1"><span id="mZoomV">1.0</span>
-    <button id="mView">ВЗГЛЯД: АВТО</button></div>
+    <button id="mView">ПОГЛЯД: АВТО</button></div>
   <div class="mrow">🎨 ТЕЛО <input type="range" id="mHue" min="0" max="1" step="0.01"></div>
   <div class="mrow">🎵 <input type="range" id="mVolMus" min="0" max="1" step="0.05"><span id="mVolMusV"></span></div>
   <div class="mrow">🔊 <input type="range" id="mVolSfx" min="0" max="1" step="0.05"><span id="mVolSfxV"></span></div>
-  <button id="mNew">↺ НОВАЯ ИГРА</button>
-  <button id="mMenu">⌂ В ГЛАВНОЕ МЕНЮ</button>
+  <button id="mNew">↺ НОВА ГРА</button>
+  <button id="mMenu">⌂ У ГОЛОВНЕ МЕНЮ</button>
 </div>
 <div id="logPanel">
   <div id="logbar">
@@ -299,7 +300,7 @@ const hasMot = typeof DeviceMotionEvent !== 'undefined';
 const needsPerm = hasOri && typeof DeviceOrientationEvent.requestPermission === 'function';
 const isSecure = location.protocol==='https:'||location.hostname==='localhost'||location.protocol==='file:';
 [
-  ['Контекст', isSecure?'HTTPS ✓':'НЕ защищён ⚠', isSecure?'ok':'err'],
+  ['Контекст', isSecure?'HTTPS ✓':'НЕ захищено ⚠', isSecure?'ok':'err'],
   ['Гироскоп/ориентация', hasOri?'есть ✓':'нет ✗', hasOri?'ok':'err'],
   ['Акселерометр', hasMot?'есть ✓':'нет ✗', hasMot?'ok':'err'],
   ['Разрешение', needsPerm?'спросит (iOS)':'авто (Android)', 'ok'],
@@ -1054,7 +1055,7 @@ function spawnPhantoms(n, kinds){
   phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
   phantoms = [];
   for(let i=0;i<n;i++) phantoms.push(makePhantom(i, kinds&&kinds[i]));
-  logE('врагов: '+n+(kinds&&kinds.length?' ['+kinds.join(',')+']':''));
+  logE('ворогів: '+n+(kinds&&kinds.length?' ['+kinds.join(',')+']':''));
 }
 // клетка принадлежит фантому с учётом СЛЕДА (босс 2×2/3×3)
 function phantomAtCell(cx,cy){
@@ -1098,13 +1099,13 @@ function spawnObstacles(rng, count){
     grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
     obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:grp,mat});
   }
-  logE('препятствия: '+obstacles.filter(o=>o.solid).length+' прочных + '+obstacles.filter(o=>!o.solid).length+' разрушаемых');
+  logE('перешкоди: '+obstacles.filter(o=>o.solid).length+' міцних + '+obstacles.filter(o=>!o.solid).length+' руйнівних');
 }
 function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.gy===gy); }
 function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
-  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
+  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('перешкоду зруйновано'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
     try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
     try{ resFromObstacle(o); }catch(e){}   // видобуток: дерево/камінь/залізо/кристал
     if(Math.random()<0.4){                      // из разбитого — иногда полезное
@@ -1295,8 +1296,10 @@ function updateStanceAndCamera(dt){
   player.parts.head.visible = !hideHead; player.parts.visor.visible = !hideHead;
   const prevStance = stance;
   stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
-  if(prevStance!==stance) logE('СТОЙКА → '+(beacon?'МАЯК (1-е лицо)':'МОЛНИЯ'));
-  player.hitActive = !player.disarmed && !player.dead;   // клинок жив всегда
+  if(prevStance!==stance) logE('СТІЙКА → '+(beacon?'МАЯК (1-ша особа)':'БЛИСКАВКА'));
+  if(player.jamT>0) player.jamT-=dt;
+  if(player.jamCd>0) player.jamCd-=dt;
+  player.hitActive = !player.disarmed && !player.dead && !(player.jamT>0);   // клинок живий, крім заклину
 
   // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах).
   // Выброс засчитывается ТОЛЬКО если заряд держали ≥0.25с (charge>1.25) — короткое
@@ -1362,16 +1365,16 @@ function updateStanceAndCamera(dt){
       player.stamina=clamp(player.stamina-dt*16,0,100);
       addExhaustion(player, dt*20);
       if(!player.jamWarned){ player.jamWarned=true;
-        showBanner('⚠ КЛИНОК ЗАКЛИНИЛО В СТЕНЕ — ОТВЕДИ!','#f59e0b');
+        showBanner('⚠ КЛИНОК ЗАКЛИНИЛО В СТІНІ — ВІДВЕДИ!','#f59e0b');
         blip(160,0.2,'sawtooth',0.16); buzz([0,70]); }
       if(Math.random()<dt*5){ const [jx,jy]=[jammed.gx,jammed.gy];
         emitSparks(worldX(jx), TIER_H*1.1, worldZ(jy), '#f59e0b', 4, 1.8); }
       if(player.jamT>2.5 || player.stamina<=0){
         player.disarmed=true; player.disarmT=0; player.jamT=0; player.jamWarned=false;
         dropBlade(player);
-        showBanner('✕ ОРУЖИЕ ВЫРВАЛО ИЗ РУК','#ef4444'); doFlash('#ef4444');
+        showBanner('✕ ЗБРОЮ ВИРВАЛО З РУК','#ef4444'); doFlash('#ef4444');
         blip(70,0.5,'sawtooth',0.24); buzz([0,200]);
-        logE('заклин: оружие вырвано стеной');
+        logE('заклин: зброю вирвано стіною');
       }
     }else{ player.jamT=0; player.jamWarned=false; }
   }
@@ -1401,7 +1404,7 @@ const clinch = {
 };
 let friendlyFire = true;        // наносить/получать урон между игроками
 let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
-const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СЛОЖНО'}];
+const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СКЛАДНО'}];
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
 const CLINCH_RETURN_T = 6.0;    // без клинка столько секунд → телекинез возвращает меч в руку
@@ -1443,8 +1446,8 @@ function startClinch(foe){
   clinch.lockX = worldX(clamp(tip.x,0,12));
   clinch.lockY = TIER_H*1.2;
   clinch.lockZ = worldZ(clamp(tip.y,0,12));
-  showBanner('⚡ КЛИНЧ — ВЕРНИ ТЕЛЕФОН В ТОЧКУ МЕЧА','#a78bfa');
-  logE('КЛИНЧ старт, lockYaw='+Math.round(clinch.lockYaw));
+  showBanner('⚡ КЛІНЧ — ПОВЕРНИ ТЕЛЕФОН У ТОЧКУ МЕЧА','#a78bfa');
+  logE('КЛІНЧ старт, lockYaw='+Math.round(clinch.lockYaw));
   doFlash('#a78bfa');
   emitSparks(clinch.lockX, clinch.lockY, clinch.lockZ, '#c4a8ff', 22, 4.2);
   // звонкий «лязг» столкновения клинков (две ноты)
@@ -1462,7 +1465,7 @@ function startClinch(foe){
   player.strikeT = 0; player.mesh.visible = false;   // тело игрока скрыто (1-е лицо): видны только клинок-ориентир и астрал
 }
 function endClinch(reason){
-  logE('КЛИНЧ конец: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
+  logE('КЛІНЧ кінець: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
   clinch.active=false; clinch.delta=0;
   clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
   if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
@@ -1472,7 +1475,7 @@ function endClinch(reason){
   setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
   player.mesh.visible=true;   // вернуть тело игрока в кадр после клинча
   if(reason==='parry'){
-    showBanner('✦ ПАРИРОВАНИЕ — ВСПЫШКА','#22d3ee');
+    showBanner('✦ ПАРИРУВАННЯ — СПАЛАХ','#22d3ee');
     doFlash('#22d3ee');
     // короткое окно идеальной контратаки: бонусный урон соупернику в клинче
     if(clinch.foe){
@@ -1482,39 +1485,39 @@ function endClinch(reason){
     blip(880,0.18,'sine',0.2);
     buzz([0,40,40,40]);
   }else if(reason==='retreat'){
-    showBanner('↩ РАЗРЫВ — ОТСТУП','#93c5fd');       // ушёл из клинча шагом назад
+    showBanner('↩ РОЗРИВ — ВІДСТУП','#93c5fd');       // ушёл из клинча шагом назад
     blip(300,0.12,'sine',0.12);
     player.stamina=clamp(player.stamina-10,0,100);
   }else if(reason==='disarm'){
     player.disarmed=true; player.stamina=0; player.disarmT=0;
     dropBlade(player);
-    showBanner('✖ РАЗОРУЖЕНИЕ — ШАГНИ К МЕЧУ','#ef4444');
+    showBanner('✖ РОЗЗБРОЄННЯ — КРОКНИ ДО МЕЧА','#ef4444');
     blip(50,0.6,'sawtooth',0.22);
     buzz([0,200]);
   }else if(reason==='pressed'){
     // тебя ПРОДАВИЛИ: клинок отброшен — это разоружение, заработанное противником
     player.disarmed=true; player.stamina=0; player.disarmT=0;
     dropBlade(player);
-    showBanner('⇣ ПРОДАВЛЕН — КЛИНОК ОТБРОШЕН','#ef4444');
+    showBanner('⇣ ПРОДАВЛЕНО — КЛИНОК ВІДКИНУТО','#ef4444');
     doFlash('#ef4444');
     blip(60,0.7,'sawtooth',0.24);
     buzz([0,260]);
   }else if(reason==='presswin'){
-    showBanner('⇡ ПРОДАВИЛ КЛИНОК ПРОТИВНИКА','#4ade80');
+    showBanner('⇡ ПРОДАВИВ КЛИНОК СУПРОТИВНИКА','#4ade80');
     doFlash('#4ade80');
     blip(660,0.22,'sine',0.2); blip(990,0.16,'sine',0.16);
     buzz([0,40,30,90]);
   }else if(reason==='spinout'){
-    showBanner('🌀 РАСКРУТИЛСЯ — ВЫРВАЛСЯ ИЗ СВЯЗКИ','#fbbf24');
+    showBanner('🌀 РОЗКРУТИВСЯ — ВИРВАВСЯ ЗІ ЗВ’ЯЗКИ','#fbbf24');
     blip(500,0.1,'sine',0.16); blip(760,0.1,'sine',0.14); buzz([0,40,20,40]);
   }else if(reason==='slipout'){
-    showBanner('〰 ВЫСКОЛЬЗНУЛ','#22d3ee');   // хлыст: без штрафа выносливости
+    showBanner('〰 ВИСЛИЗНУВ','#22d3ee');   // хлыст: без штрафа выносливости
     blip(900,0.08,'sine',0.12);
   }else if(reason==='net'){
-    showBanner('◌ СВЯЗЬ ПОТЕРЯНА — КЛИНЧ РАСПАЛСЯ','#94a3b8');   // без штрафа
+    showBanner('◌ ЗВ’ЯЗОК ВТРАЧЕНО — КЛІНЧ РОЗПАВСЯ','#94a3b8');   // без штрафа
     blip(220,0.15,'sine',0.1);
   }else if(reason==='shattered'){
-    showBanner('✷ КЛИНЧ РАЗБИТ ТРЕТЬЕЙ СИЛОЙ','#f59e0b');   // третий боец пробил зацеп для всех
+    showBanner('✷ КЛІНЧ РОЗБИТО ТРЕТЬОЮ СИЛОЮ','#f59e0b');   // третий боец пробил зацеп для всех
     doFlash('#f59e0b');
     player.stamina=clamp(player.stamina-8,0,100);
     blip(200,0.2,'sawtooth',0.16); buzz([0,80]);
@@ -1629,7 +1632,7 @@ function updateClinch(dt){
           f.disarmed=true; f.disarmT=0;
           spawnDrop(f.gx, f.gy, f.wpn||'sword');
           setTimeout(()=>{ if(!f.dead) f.disarmed=false; }, 6000);   // боту куют новое через 6с
-          logE((f.boss?'БОСС':'фантом')+' обезоружен продавливанием');
+          logE((f.boss?'БОС':'фантом')+' роззброєно продавлюванням');
         }
       }
       // финальный толчок: без него противник мог застрять на X≈−0.97 (лаг публикаций)
@@ -1687,7 +1690,7 @@ function spawnDrop(gx,gy,wpn){
   const mesh=dropModel(wpn);
   mesh.position.set(worldX(c.gx), -0.3, worldZ(c.gy)); scene.add(mesh);
   DROPS.push({gx:c.gx, gy:c.gy, wpn, mesh});
-  logE('оружие на полу: '+(WEAPONS[wpn]?WEAPONS[wpn].label:wpn)+' ('+c.gx+','+c.gy+')');
+  logE('зброя на підлозі: '+(WEAPONS[wpn]?WEAPONS[wpn].label:wpn)+' ('+c.gx+','+c.gy+')');
 }
 function removeDrop(d){
   const i=DROPS.indexOf(d); if(i>=0) DROPS.splice(i,1);
@@ -1771,9 +1774,9 @@ function updateDropPickup(dt){
       buildWeaponFX(playerWpn==='bossaxe'?'axe':playerWpn);
       player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55,bossaxe:0.02}[playerWpn]??0.5;
       removeDrop(d);
-      showBanner('✥ ПОДОБРАНО: '+(WEAPONS[playerWpn]?WEAPONS[playerWpn].label:playerWpn),'#4ade80');
+      showBanner('✥ ПІДІБРАНО: '+(WEAPONS[playerWpn]?WEAPONS[playerWpn].label:playerWpn),'#4ade80');
       blip(700,0.12,'sine',0.16); buzz([0,40]);
-      logE('подобрано оружие: '+playerWpn);
+      logE('підібрано зброю: '+playerWpn);
       return;
     }
   }
@@ -1800,7 +1803,7 @@ function dropBlade(av){
   droppedBlade.userData={gx:c.gx, gy:c.gy};
   droppedBlade.position.set(worldX(c.gx), -0.3, worldZ(c.gy));
   scene.add(droppedBlade);
-  logE('меч упал в ('+c.gx+','+c.gy+')');
+  logE('меч упав у ('+c.gx+','+c.gy+')');
 }
 function tryPickupBlade(){
   if(!droppedBlade || !player.disarmed) return;
@@ -1809,7 +1812,7 @@ function tryPickupBlade(){
   if(dx<=1 && dy<=1){                        // рядом (или на клетке) — поднимаем
     player.disarmed=false; player.stamina=40; player.swordLen=1; player.disarmT=0;
     scene.remove(droppedBlade); droppedBlade=null;
-    showBanner('↺ КЛИНОК ВОЗВРАЩЁН','#22c55e'); blip(660,0.15,'sine',0.18); logE('меч поднят');
+    showBanner('↺ КЛИНОК ПОВЕРНУТО','#22c55e'); blip(660,0.15,'sine',0.18); logE('меч піднято');
   }
 }
 // ТЕЛЕКИНЕЗ: без клинка слишком долго → аватар жестом призывает меч обратно в руку
@@ -1822,7 +1825,7 @@ function returnBlade(){
     scene.remove(droppedBlade); droppedBlade=null;
   }
   emitSparks(worldX(player.gx),TIER_H*1.2,worldZ(player.gy),'#7cf3ff',16,3.2);
-  showBanner('✋ ТЕЛЕКИНЕЗ — КЛИНОК ВЕРНУЛСЯ','#7cf3ff');
+  showBanner('✋ ТЕЛЕКІНЕЗ — КЛИНОК ПОВЕРНУВСЯ','#7cf3ff');
   blip(500,0.2,'sine',0.18); buzz([0,30,20,60]); logE('меч возвращён телекинезом');
 }
 
@@ -1869,8 +1872,8 @@ const slime=(function(){
 function applyMorph(form,dur){
   MORPH.form=(form==='slime')?'slime':'human';
   MORPH.until=(MORPH.form!=='human'&&dur)?Date.now()+dur*1000:0;
-  if(MORPH.form==='slime'){ showBanner('🜏 ТЫ ПРЕВРАЩЁН В СЛИЗЬ','#6ee7a8'); doFlash('#6ee7a8'); buzz([0,120]); logE('МОРФ: слизь'+(dur?(' на '+dur+'с'):'')); }
-  else { slime.visible=false; player.mesh.visible=(mode==='fighter'); showBanner('☉ ТЫ СНОВА СОБОЙ','#7cc8ff'); logE('МОРФ: человек'); }
+  if(MORPH.form==='slime'){ showBanner('🜏 ТЕБЕ ПЕРЕТВОРЕНО НА СЛИЗ','#6ee7a8'); doFlash('#6ee7a8'); buzz([0,120]); logE('МОРФ: слизь'+(dur?(' на '+dur+'с'):'')); }
+  else { slime.visible=false; player.mesh.visible=(mode==='fighter'); showBanner('☉ ТИ ЗНОВУ СОБОЮ','#7cc8ff'); logE('МОРФ: человек'); }
 }
 function updateMorphVisual(now){
   if(MORPH.form==='human') return;
@@ -1934,7 +1937,7 @@ function damageTier(av, tier, amount){
     // (лог: 20+ укусов повзуна за 22с → ВЫН 92→65, HP нетронут — рой был безобиден).
     if(av.stamina<=15){
       av.hp = clamp(av.hp - Math.round(amount*0.7), 0, 100);
-      if(av===player) logE('ПРОГРЫЗ до крови → HP '+Math.round(av.hp));
+      if(av===player) logE('ПРОГРИЗ до крові → HP '+Math.round(av.hp));
     }
     av.stamina = clamp(av.stamina - amount, 0, 100);
   }else{
@@ -1986,6 +1989,18 @@ function resolveBurn(dt){
     if(o){                                     // клинок упёрся в препятствие
       if(o.solid){                             // прочное — луч заблокирован (лязг)
         if(burnCd<=0){ blip(200,0.06,'square',0.12); doFlash('#6b7d94'); burnCd=0.2; }
+        // ЗАКЛИН (07-13): ціна досяжності. Довгий (>2 кліт.) або розкручений клинок,
+        // що шкрябає стіну, ПРИКУШУЄТЬСЯ: −6 сил, зброя офлайн 0.45с, довжина скидається.
+        player.jamCd=(player.jamCd||0);
+        const extended = player.strikeT>0 || player.swordLen>2 || (player.spinBonus||1)>1.15
+          || ((player.mods.reach||0)>=2 && player.swordLen>1.2);
+        if(extended && player.jamCd<=0){
+          player.jamCd=0.9; player.jamT=0.45; player.swordLen=1;
+          player.stamina=Math.max(0,player.stamina-6);
+          showBanner('⚠ ЗАКЛИН — зброю прикусило стіною (−сили)','#fbbf24');
+          buzz([0,60]); blip(140,0.12,'square',0.16);
+          logE('заклин: стіна прикусила зброю, сили '+Math.round(player.stamina));
+        }
       }else if(burnCd<=0){                      // разрушаемое — прожигаем
         damageObstacle(o,16); burnCd=0.3; buzz(35);
         emitSparks(worldX(cx), TIER_H, worldZ(cy), '#ffb454', 14, 3.2);
@@ -2016,8 +2031,8 @@ function resolveBurn(dt){
         const [fdx,fdy]=DIRV[ph.dirIdx];
         const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
         if(fdx*rx2+fdy*ry2 < -0.3){   // игрок в заднем секторе — СЛАБОЕ МЕСТО
-          dmg*=3; showBanner('✧ СЛАБОЕ МЕСТО — СПИНА БОССА ×3','#4ade80');
-          logE('удар в слабое место босса ×3');
+          dmg*=3; showBanner('✧ СЛАБКЕ МІСЦЕ — СПИНА БОСА ×3','#4ade80');
+          logE('удар у слабке місце боса ×3');
         }
       }
       damageTier(ph, tier, dmg); burnCd = 0.3; ph.hitGlow = 0.3;
@@ -2045,14 +2060,14 @@ function resolveBurn(dt){
    w=вес (расход сил), maxLen=предел длины (меч=6 — прежнее поведение),
    arc=боковые клетки у гарды, sweep=кольцо вокруг бойца, dmg=множитель урона */
 const WEAPONS={
-  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  rel:'line',  desc:'баланс линии'},
-  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, rel:'line',  desc:'длинная линия вперёд'},
-  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  rel:'arc',   desc:'мах веером со стороны наклона'},
-  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, rel:'spin',  desc:'кольцо; выброс = раскрутка'},
-  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  rel:'spin',  desc:'выброс = раскрутка'},
-  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, rel:'crack', desc:'щелчок: длинный, слабый'},
-  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, rel:'arc', desc:'оружие босса'},
-  blaster: {label:'БЛАСТЕР ⌖',  w:4, maxLen:1, arc:0, sweep:false, dmg:1.0,  rel:'shot',  desc:'медленный снаряд; заряд = скорость и урон'},
+  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  rel:'line',  desc:'баланс лінії'},
+  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, rel:'line',  desc:'довга лінія вперед'},
+  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  rel:'arc',   desc:'мах віялом зі сторони нахилу'},
+  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, rel:'spin',  desc:'кільце; виброс = розкрутка'},
+  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  rel:'spin',  desc:'виброс = розкрутка'},
+  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, rel:'crack', desc:'клац: довгий, слабкий'},
+  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, rel:'arc', desc:'зброя боса'},
+  blaster: {label:'БЛАСТЕР ⌖',  w:4, maxLen:1, arc:0, sweep:false, dmg:1.0,  rel:'shot',  desc:'повільний снаряд; заряд = швидкість і шкода'},
 };
 let playerWpn='sword';
 /* НЕПЕРЕРВНИЙ ПРОМІНЬ (фікс 07-13): раніше лінія йшла лише по DIRV[dirIdx] — 8 снап-
@@ -2413,7 +2428,7 @@ function updateShots(dt){
         const tox=(o&&!o.dead?o.gx:cx)-sh.x, toy=(o&&!o.dead?o.gy:cy)-sh.y, L2=Math.hypot(tox,toy)||1;
         sh.vx=tox/L2*3.4; sh.vy=toy/L2*3.4;
         try{ sh.mesh.material.color.setHex(0x66e0ff); }catch(e){}
-        showBanner('↩ СНАРЯД ОТБИТ','#22d3ee'); blip(880,0.1,'sine',0.15); buzz([0,30]);
+        showBanner('↩ СНАРЯД ВІДБИТО','#22d3ee'); blip(880,0.1,'sine',0.15); buzz([0,30]);
         logE('снаряд відбито мечем');
       }else if(!player.dead && player.gx===cx && player.gy===cy){
         damageTier(player, 1, 12); doFlash('#f97316'); buzz([0,50]);
@@ -2514,10 +2529,11 @@ function applyAdvRoom(rx,ry){
   paintFloor(rx,ry);
   const st=roomStyle(rx,ry), home=advHome();
   try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
-  // содержимое комнаты детерминировано сидом → у всех клиентов одна геометрия
-  spawnObstaclesSeededSafe(rx,ry,home);
   clearMicro();                              // микроблоки прошлой комнаты не тащим
-  restoreRoomEdits(rx,ry);
+  // ПЕРСИСТ (фікс 07-13): ЗНІМОК ГОЛОВНІШИЙ ЗА СІД. Раніше сід-генерація бігла першою
+  // щоразу, а знімок лише накривав її зверху — кімнати «регенерували». Тепер:
+  // є знімок → відновлюємо ТІЛЬКИ його; нема → генеруємо і одразу знімаємо (advRoomExtras).
+  if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
   applyRemoteRoomIfNewer(rx+','+ry);         // общий мир: правки других игроков поверх   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = composeRoomEnemies(rx,ry);
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
@@ -2529,17 +2545,17 @@ function applyAdvRoom(rx,ry){
   if(home){
     player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
     buildRacks();
-    showBanner('◌ ДОМ — стійки зброї (стань 1.2с) · 🔥 КУЗНЯ на смарагдовій плиті','#60a5fa');
-    logE('ДОМ: стойки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10)');
+    showBanner('◌ ДІМ — стійки зброї (стань 1.2с) · 🔥 КУЗНЯ на смарагдовій плиті','#60a5fa');
+    logE('ДІМ: стійки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10) · кузня(4,6)');
   }else if(chessWhite(rx,ry)){
     showBanner('⬜ '+st.name+' · безпечний коридор','#e2e8f0');
     try{ const c=new THREE.Color(st.bg).lerp(new THREE.Color(0xdde6f0),0.16);   // білі — світліший фон
       scene.background=c; if(scene.fog&&scene.fog.color) scene.fog.color.copy(c); }catch(e){}
   }else{
-    showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОСС':''), st.accent);
+    showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
   }
   try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
-  logE('КОМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вес '+st.weight.toFixed(2)+(boss?' БОСС':''));
+  logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
 }
 function chessWhite(rx,ry){ return ((rx+ry)%2)===0; }   // ⬜ ШАХІВНИЦЯ: парна сума = біла (безпечна), (6,6)=дім=біла
 function composeRoomEnemies(rx,ry){
@@ -2711,10 +2727,10 @@ function buildRoomStructures(rng, weight, tintHex){
     o.alive=false; scene.remove(o.mesh);
     obstacles.splice(obstacles.indexOf(o),1);
   }
-  logE('лабиринт: стен '+obstacles.filter(o=>o.solid&&!o.pass).length
-    +' лазов '+obstacles.filter(o=>o.pass==='crawl').length
-    +' хрупких '+obstacles.filter(o=>!o.solid).length
-    +(houses?(' домиков '+houses):'')+(guard?(' пробито:'+guard):''));
+  logE('лабіринт: стін '+obstacles.filter(o=>o.solid&&!o.pass).length
+    +' лазів '+obstacles.filter(o=>o.pass==='crawl').length
+    +' крихких '+obstacles.filter(o=>!o.solid).length
+    +(houses?(' будиночків '+houses):'')+(guard?(' пробито:'+guard):''));
 }
 function spawnObstaclesSeededSafe(rx,ry,home){
   const rng=mulberry32(rx*131+ry*17+7);
@@ -2740,19 +2756,19 @@ function updateAdventure(dt){
     if(edgeOf(r.gx,r.gy)!==myE){ all=false; break; }
   }
   if(!all){
-    if(ADV.edgeDir) showBanner('переход отменён — сбор распался','#64748b');
+    if(ADV.edgeDir) showBanner('перехід скасовано — збір розпався','#64748b');
     ADV.edgeT=0; ADV.edgeDir=null; return;
   }
   const step={N:[0,-1],S:[0,1],W:[-1,0],E:[1,0]}[myE];
   const nrx=ADV.rx+step[0], nry=ADV.ry+step[1];
   if(nrx<0||nrx>12||nry<0||nry>12){                        // край метамира
-    if(ADV.edgeDir!==myE){ ADV.edgeDir=myE; showBanner('∅ дальше метамира нет','#64748b'); }
+    if(ADV.edgeDir!==myE){ ADV.edgeDir=myE; showBanner('∅ далі метасвіту немає','#cbd5e1'); }
     ADV.edgeT=0; return;
   }
   if(ADV.edgeDir!==myE){                                    // ПОДСКАЗКА: что впереди + право отступить
     ADV.edgeDir=myE; ADV.edgeT=0;
     const st=roomStyle(nrx,nry), wht=chessWhite(nrx,nry);
-    showBanner('⏳ ВПЕРЕДИ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стой 3с или отойди',
+    showBanner('⏳ ПОПЕРЕДУ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стій 3с або відійди',
       wht?'#e2e8f0':st.accent);
     blip(440,0.12,'sine',0.12);
   }
@@ -2830,7 +2846,7 @@ function resolveClinch(){
   for(const ph of phantoms){
     if(ph.disarmed || ph.dead || !ph.hitActive) continue;
     const ec=new Set(bladeCells(ph));
-    if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки сошлись'); return; }
+    if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки зійшлись'); return; }
   }
   // с реальными игроками (PvP-фехтование)
   if(friendlyFire) for(const id in NET.remotes){
@@ -2855,8 +2871,8 @@ function equalizerRebirth(){
   clearClinch(); if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
   const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
-  showBanner('⚖ РАВНОВЕСИЕ: ОБА РОЖДЕНЫ ЗАНОВО','#eab308');
-  logE('РАВНОВЕСИЕ: убийца рождается заново, как убитый');
+  showBanner('⚖ РІВНОВАГА: ОБИДВА НАРОДЖЕНІ ЗАНОВО','#eab308');
+  logE('РІВНОВАГА: вбивця народжується заново, як убитий');
   doFlash('#eab308');
   blip(392,0.28,'sine',0.16); blip(523,0.28,'sine',0.16);
   buzz([0,30,30,30,30,90]);
@@ -2878,15 +2894,15 @@ function handleDeath(av, dt){
     if(av!==player){
       rollMobLoot(av);                          // 50% его оружие / 50% апгрейд
       player.score=(player.score||0)+1;
-      logE('ФАНТОМ убит, счёт '+player.score);
-      showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
+      logE('ФАНТОМ убито, рахунок '+player.score);
+      showBanner('◌ ФАНТОМ РОЗВТІЛЕНО  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
       try{ if(window.TUT && TUT.active) TUT.onKill(av); }catch(e){}
       if(equalizerOn) equalizerRebirth();   // правило равновесия: убил — сам рождён заново (тумблер в меню)
     }else{
-      logE('ИГРОК погиб');
+      logE('ГРАВЕЦЬ загинув');
       try{ if(window.TUT && TUT.active) TUT.onDeath(); }catch(e){}
-      showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
+      showBanner('▼ СВІДОМІСТЬ ЗГАСЛА','#ef4444'); doFlash('#ef4444');
       blip(80,0.6,'sawtooth',0.25);
       buzz([0,80,60,160]);
       // PvP-эхо равновесия: если добил живой игрок — его клиент тоже переродится.
@@ -2919,7 +2935,7 @@ function respawn(av){
       for(const id in NET.remotes){ const r=NET.remotes[id];
         if(!r.spec && remoteFresh(r) && (r.hp??100)>0){ allies=true; break; } }
       if(!allies){ applyAdvRoom(6,6); NET.advPub();
-        showBanner('▼ СОЗНАНИЕ ВЕРНУЛОСЬ ДОМОЙ','#94a3b8'); }
+        showBanner('▼ СВІДОМІСТЬ ПОВЕРНУЛАСЬ ДОДОМУ','#cbd5e1'); }
     }
   }
 }
@@ -3041,7 +3057,7 @@ function updatePhantoms(dt){
       const bcx=ph.gx+((ph.size||1)-1)*0.5, bcy=ph.gy+((ph.size||1)-1)*0.5;
       if(ph.sweepT<=1 && !ph.sweepWarned){
         ph.sweepWarned=true;
-        showBanner('⚠ БОСС РАСКРУЧИВАЕТ ЗАМАХ — ОТОЙДИ НА 3+','#f59e0b');
+        showBanner('⚠ БОС РОЗКРУЧУЄ ЗАМАХ — ВІДІЙДИ НА 3+','#f59e0b');
         emitSparks(worldX(bcx), TIER_H*1.4, worldZ(bcy), '#f59e0b', 30, 5.5);
         blip(140,0.7,'sawtooth',0.2); buzz([0,120]);
       }
@@ -3052,8 +3068,8 @@ function updatePhantoms(dt){
         blip(70,0.5,'sawtooth',0.26);
         if(tgt.local && inR && !player.dead){
           damageTier(player, 1, 24); doFlash('#ef4444'); buzz([0,90,50,90]);
-          logE('КРУГОВОЙ ЗАМАХ босса задел → HP '+Math.round(player.hp));
-        }else logE('круговой замах босса — уклонение');
+          logE('КРУГОВИЙ ЗАМАХ боса зачепив → HP '+Math.round(player.hp));
+        }else logE('круговий замах боса — ухилення');
       }
     }
     const ddx = Math.sign(tgt.gx - ph.gx);
@@ -3130,7 +3146,7 @@ function updatePhantoms(dt){
         ph.stamina = clamp((ph.stamina??100) - 22, 0, 100); addExhaustion(ph, 30);
         player.stamina = clamp(player.stamina - 6, 0, 100); addExhaustion(player, 10);
         doFlash('#a78bfa'); buzz(60);
-        logE('клинч СДЕРЖАЛ фантома (вын '+Math.round(ph.stamina??100)+'≤'+Math.round(holders)+')');
+        logE('клінч СТРИМАВ фантома (витр '+Math.round(ph.stamina??100)+'≤'+Math.round(holders)+')');
       }
     }
     // НЕПРЕРЫВНЫЙ урон при накрытии цели клинком (как burn у игрока), с кулдауном
@@ -3139,7 +3155,7 @@ function updatePhantoms(dt){
       if(tgt.local && !player.dead){   // ВСЕГДА уязвим: потеря оружия ≠ неуязвимость (щит !disarmed убран)
         damageTier(player, ph.tier, D.dmg); ai.burnCd=D.cd; doFlash('#ef4444'); buzz(50);
         emitSparks(worldX(player.gx), TIER_H*(0.6+ph.tier*0.7), worldZ(player.gy), '#ff5a5a', 14, 3.2);
-        logE('фантом режет игрока ярус '+ph.tier+' → HP '+Math.round(player.hp));
+        logE('фантом ріже гравця ярус '+ph.tier+' → HP '+Math.round(player.hp));
       }else if(!tgt.local){
         NET.sendHit(tgt.id, ph.tier, D.dmg, 'phantom'); ai.burnCd=D.cd;
       }
@@ -3165,14 +3181,14 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
   const occ = isCellOccupied(nx,ny,player);
   if(occ){
     blip(120,0.07,'square',0.12);
-    if(occ.kind==='obstacle' || occ.kind==='edge'){ logE('стена: ('+nx+','+ny+')'); }
+    if(occ.kind==='obstacle' || occ.kind==='edge'){ logE('стіна: ('+nx+','+ny+')'); }
     else {
       // Часть 4.1: врезались в чужое тело — ОБОЮДНЫЙ толчок, выносливость минус обоим
       addExhaustion(player, 10);
       player.stamina = clamp(player.stamina - PUSH_COST, 0, 100);
       if(occ.av && occ.av!==player){ occ.av.stamina = clamp((occ.av.stamina??100) - PUSH_COST, 0, 100); addExhaustion(occ.av,10); }
-      if(player.stamina<=0 && !player.disarmed){ player.disarmed=true; player.stamina=0; player.disarmT=0; dropBlade(player); logE('толчок выбил ваш клинок'); }
-      buzz([0,50]); logE('толчок в ('+nx+','+ny+') −'+PUSH_COST+' вынослив.');
+      if(player.stamina<=0 && !player.disarmed){ player.disarmed=true; player.stamina=0; player.disarmT=0; dropBlade(player); logE('поштовх вибив твій клинок'); }
+      buzz([0,50]); logE('поштовх у ('+nx+','+ny+') −'+PUSH_COST+' вынослив.');
     }
     return;                                                     // в занятую клетку не шагаем
   }
@@ -3225,7 +3241,7 @@ function copyLog(btn){
     ta.select(); try{document.execCommand('copy');}catch(_){} ta.remove(); btn.textContent='✓ СКОПИРОВАНО'; }
   setTimeout(()=>btn.textContent='⧉ КОПИРОВАТЬ ЛОГ',1400);
 }
-function openMenu(){ paused=true; $('mInfo').textContent=`комната ${NET.room} · счёт ${player.score||0}`; $('menu').style.display='flex'; logE('ПАУЗА'); }
+function openMenu(){ paused=true; $('mInfo').textContent=`кімната ${NET.room} · рахунок ${player.score||0}`; $('menu').style.display='flex'; logE('ПАУЗА'); }
 function closeMenu(){ paused=false; last=0; $('menu').style.display='none'; }
 function newGame(){
   player.hp=100; player.stamina=100; player.swordLen=1; player.charge=1; player.dead=false; player.disarmed=false;
@@ -3304,7 +3320,7 @@ const MAX_MICRO=500;
 const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
 function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
 function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
-  if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ ПРЕДЕЛ МИКРОБЛОКОВ ('+MAX_MICRO+')','#ef4444'); return null; }
+  if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ МЕЖА МІКРОБЛОКІВ ('+MAX_MICRO+')','#ef4444'); return null; }
   const m=CELL/n;
   if(y0==null) y0=sy*m;
   if(hgt==null) hgt=(shape==='slab')?m*0.3:m;
@@ -3381,7 +3397,7 @@ function updateGhost(){
 const PREFAB={blocks:[]};
 function microExists(gx,gy,n,sx,sz,y0){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sz===sz&&Math.abs((m.y0??0)-(y0??0))<(CELL/n)*0.4); }
 function stampPrefab(){
-  if(!PREFAB.blocks.length){ blip(120,0.06,'square',0.08); showBanner('▣ ПРЕФАБ ПУСТ — сначала ▣ КОПИЯ','#ef4444'); return; }
+  if(!PREFAB.blocks.length){ blip(120,0.06,'square',0.08); showBanner('▣ ПРЕФАБ ПОРОЖНІЙ — спершу ▣ КОПІЯ','#ef4444'); return; }
   const P=aimedPoint();
   if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
   let placed=0;
@@ -3526,33 +3542,33 @@ let followTarget=null;
 function fighterIds(){ return Object.keys(NET.remotes).filter(id=>!NET.remotes[id].spec); }
 function cycleFollow(){
   const ids=fighterIds();
-  if(!ids.length){ followTarget=null; showBanner('нет игроков для слежки','#3a6a9f'); return; }
+  if(!ids.length){ followTarget=null; showBanner('немає гравців для стеження','#3a6a9f'); return; }
   const i=ids.indexOf(followTarget);
   followTarget = ids[(i+1)%ids.length];
-  showBanner('◎ слежу за '+followTarget.slice(0,4),'#a5f3fc');
+  showBanner('◎ стежу за '+followTarget.slice(0,4),'#a5f3fc');
 }
 $('followBtn').onclick=cycleFollow;
 $('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
-  $('mPhan').textContent='☠ ФАНТОМОВ: '+phantomCount; };
+  $('mPhan').textContent='☠ ФАНТОМІВ: '+phantomCount; };
 $('mDiff').onclick=()=>{ botDiff=(botDiff+1)%3;
-  $('mDiff').textContent='🎯 СЛОЖНОСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
+  $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
 let equalizerOn=true;
 $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
-  $('mEq').textContent='⚖ РАВНОВЕСИЕ: '+(equalizerOn?'ВКЛ':'ВЫКЛ');
-  logE('правило равновесия: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
+  $('mEq').textContent='⚖ РІВНОВАГА: '+(equalizerOn?'УВІМК':'ВИМК');
+  logE('правило рівноваги: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
-  $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'ВКЛ':'ВЫКЛ');
+  $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
   if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
   else { clearRacks(); clearShots(); try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
   logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
-  $('mFF').textContent='⚔ УРОН ИГРОКАМ: '+(friendlyFire?'ВКЛ':'ВЫКЛ'); logE('friendlyFire='+friendlyFire); };
+  $('mFF').textContent='⚔ ШКОДА ГРАВЦЯМ: '+(friendlyFire?'УВІМК':'ВИМК'); logE('friendlyFire='+friendlyFire); };
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
-  $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
+  $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-13b · ФІКС-влучання(неперервний-промінь) · плавний-крок · РЕСУРСИ+КУЗНЯ(крафт) · ціп-тимчасовий · природа-⬜';
+const BUILD_TAG='2026-07-13c · ПЕРСИСТ-кімнат(знімок>сід) · ЗАКЛИН-стін · туторіал-МАЯК-наочно · мінімапа · банери-читабельні · UA';
 $('mCache').onclick=async()=>{
-  showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
+  showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
     if('caches' in window){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); }
     if('serviceWorker' in navigator){ const rs=await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r=>r.unregister())); }
@@ -3610,8 +3626,8 @@ $('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
 $('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
 $('fgLoco').onclick=()=>{ FG.l=(FG.l+1)%FG.locos.length; $('fgLoco').textContent='ХОД: '+FG.locos[FG.l][1]; };
 $('fgSide').onclick=()=>{ FG.ally=!FG.ally; $('fgSide').textContent=FG.ally?'⚑ СОЮЗНИК':'⚔ ВРАГ'; };
-$('fgPurgeMine').onclick=()=>{ if(NET.purgeEntities(false)){ $('fgStatus').textContent='Кованые убраны.'; blip(300,0.06,'sine',0.08); } };
-$('fgPurgeAll').onclick=()=>{ if(NET.purgeEntities(true)){ $('fgStatus').textContent='ВСЕ сущности сервера убраны.'; blip(260,0.08,'sine',0.09); } };
+$('fgPurgeMine').onclick=()=>{ if(NET.purgeEntities(false)){ $('fgStatus').textContent='Кованих прибрано.'; blip(300,0.06,'sine',0.08); } };
+$('fgPurgeAll').onclick=()=>{ if(NET.purgeEntities(true)){ $('fgStatus').textContent='ВСІ сутності сервера прибрано.'; blip(260,0.08,'sine',0.09); } };
 $('fgMake').onclick=()=>{
   const nm=($('fgName').value||'').trim()||'Творение';
   const c=freeSpawnCell(clamp(player.gx+2,0,12), player.gy, null);
@@ -3619,15 +3635,15 @@ $('fgMake').onclick=()=>{
     k:FG.kinds[FG.k][0], sz:Math.round(fgv('fgSz')), hov:FG.locos[FG.l][0]==='fly'?1:0,
     mw:fgv('fgW'), mh:fgv('fgH'), md:fgv('fgD'), loco:FG.locos[FG.l][0], spd:fgv('fgSpd'), dg:Math.round(fgv('fgDmg')),
     side:FG.ally?'ally':'enemy', nm:nm.slice(0,20), t:Date.now() });
-  $('fgStatus').textContent = ok ? nm+' сотворён — сервер вдохнёт жизнь…' : 'Нет связи с БД';
+  $('fgStatus').textContent = ok ? nm+' створено — сервер вдихне життя…' : 'Нет связи с БД';
   if(ok){ blip(720,0.07,'sine',0.1); setTimeout(()=>{ $('forgePanel').style.display='none'; $('fgStatus').textContent=''; },900); }
 };
 // обработчики камеры/оттенка (после создания player — применяем сохранённое)
 $('mZoom').value=CAM.zoom; $('mZoomV').textContent=CAM.zoom.toFixed(1);
 $('mZoom').oninput=()=>{ CAM.zoom=clamp(+$('mZoom').value,0.5,2.4); $('mZoomV').textContent=CAM.zoom.toFixed(1); camSave(); };
 const VIEWS=[['auto','АВТО'],['third','3-Е ЛИЦО'],['top','СВЕРХУ'],['fp','1-Е ЛИЦО']];
-$('mView').onclick=()=>{ let vi=VIEWS.findIndex(v=>v[0]===CAM.view); vi=(vi+1)%VIEWS.length; CAM.view=VIEWS[vi][0]; $('mView').textContent='ВЗГЛЯД: '+VIEWS[vi][1]; camSave(); };
-{ const vi=VIEWS.findIndex(v=>v[0]===CAM.view); if(vi>=0) $('mView').textContent='ВЗГЛЯД: '+VIEWS[vi][1]; }
+$('mView').onclick=()=>{ let vi=VIEWS.findIndex(v=>v[0]===CAM.view); vi=(vi+1)%VIEWS.length; CAM.view=VIEWS[vi][0]; $('mView').textContent='ПОГЛЯД: '+VIEWS[vi][1]; camSave(); };
+{ const vi=VIEWS.findIndex(v=>v[0]===CAM.view); if(vi>=0) $('mView').textContent='ПОГЛЯД: '+VIEWS[vi][1]; }
 if(CAM._hue!=null){ player.baseHue=CAM._hue; player.hue=CAM._hue; $('mHue').value=CAM._hue; }
 $('mHue').oninput=()=>{ const v=+$('mHue').value; player.baseHue=v; player.hue=v; try{localStorage.setItem('vb_hue',v);}catch(e){} };
 $('mVolMus').value=AUDIO.vol.music; $('mVolMusV').textContent=Math.round(AUDIO.vol.music*100)+'%';
@@ -3644,7 +3660,7 @@ $('loreSubmit').onclick=()=>{
   const txt=($('loreText').value||'').trim();
   if(!txt){ $('loreStatus').textContent='Пусто — вставь текст лора.'; return; }
   const ok=NET.submitLore(txt);
-  $('loreStatus').textContent = ok ? 'Отправлено. Алго-крат размышляет…' : 'Нет связи с БД (оффлайн?)';
+  $('loreStatus').textContent = ok ? 'Надіслано. Алго-крат розмірковує…' : 'Нет связи с БД (оффлайн?)';
   if(ok){ blip(700,0.06,'sine',0.1); setTimeout(()=>{ $('lorePanel').style.display='none'; $('loreStatus').textContent=''; },900); }
 };
 $('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); creatorTouch(); blip(500,0.04,'sine',0.06); };
@@ -3656,10 +3672,10 @@ $('cGrid').onclick=()=>{ MICRO.gi=(MICRO.gi+1)%SUBGRIDS.length; const n=SUBGRIDS
 $('cPrefCopy').onclick=()=>{                                   // запомнить кубики прицельной клетки как кисть
   const P=aimedPoint();
   const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
-  if(!grp.length){ blip(120,0.06,'square',0.08); showBanner('▣ В КЛЕТКЕ НЕТ МИКРОБЛОКОВ','#ef4444'); return; }
+  if(!grp.length){ blip(120,0.06,'square',0.08); showBanner('▣ У КЛІТИНЦІ НЕМАЄ МІКРОБЛОКІВ','#ef4444'); return; }
   PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt}));
   creatorTouch(); blip(760,0.06,'sine',0.1);
-  showBanner('▣ ПРЕФАБ СОХРАНЁН: '+PREFAB.blocks.length+' кубиков','#7cc8ff');
+  showBanner('▣ ПРЕФАБ ЗБЕРЕЖЕНО: '+PREFAB.blocks.length+' кубиків','#7cc8ff');
   logE('префаб сохранён: '+PREFAB.blocks.length+' из ('+P.gx+','+P.gy+')');
 };
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
@@ -3768,7 +3784,7 @@ const NET = {
             addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
                         (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0, (b.alpha??null), (b.baseY||0));
           snapshotRoom();                                   // постройка сервера переживает переходы
-          showBanner('⛭ АЛГО-КРАТ ПЕРЕСТРОИЛ КОМНАТУ','#f59e0b'); doFlash('#f59e0b');
+          showBanner('⛭ АЛГО-КРАТ ПЕРЕБУДУВАВ КІМНАТУ','#f59e0b'); doFlash('#f59e0b');
         }catch(e){}
       });
       // МОРФ: сервер диктует форму игрока (blade/{room}/morph/{myId})
@@ -3781,7 +3797,7 @@ const NET = {
         const v=snap.val(); if(!v || !v.t || v.t<=(this._strkT||0)) return; this._strkT=v.t;
         if(mode!=='fighter' || player.dead) return;
         damageTier(player, 1, clamp(+(v.dmg||8),1,40));
-        showBanner('☄ '+String(v.from||'СУЩНОСТЬ')+' РАНИТ ТЕБЯ','#ef4444'); doFlash('#ef4444'); buzz(70);
+        showBanner('☄ '+String(v.from||'СУТНІСТЬ')+' РАНИТЬ ТЕБЕ','#ef4444'); doFlash('#ef4444'); buzz(70);
         logE((v.from||'сущность')+' ранит → HP '+Math.round(player.hp));
       });
       // ОБЩИЙ МИР: правки комнат других игроков
@@ -4256,7 +4272,7 @@ function frame(now){
     sampleT = 2.0;
     if(mode==='fighter'){
       const ph = phantoms.filter(p=>!p.dead).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
-      const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомов нет';
+      const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомів немає';
       logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
            `dir${DSYM[player.dirIdx]} ярус${player.tier} стойка:${stance===STANCE.BEACON?'маяк':'молн'} pitch${sensor.pitch.toFixed(2)}`);
     }else if(mode!=='creator') logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
@@ -4268,15 +4284,15 @@ function frame(now){
   setListener(camera);
 
   // HUD (минимальный — основное состояние видно по цвету тел)
-  const st = stance===STANCE.BEACON?'МАЯК ▲ заряд '+player.charge.toFixed(1):'МОЛНИЯ ⚡';
+  const st = stance===STANCE.BEACON?'МАЯК ▲ заряд '+player.charge.toFixed(1):'БЛИСКАВКА ⚡';
   $('stance').textContent = st;
   $('stance').style.color = stance===STANCE.BEACON?'#fbbf24':'#60a5fa';
   $('hudInfo').textContent = `dir ${DSYM[player.dirIdx]} · ярус ${player.tier} · vit ${Math.round(player.stamina)}`;
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
-    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  ровно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомов ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  игроков:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вибро:${HAPTICS?'есть':'НЕТ(iOS?)'}`;
+    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
+    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}`;
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
@@ -4294,12 +4310,12 @@ requestAnimationFrame(frame);
 
 /* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
 $('btnReq').addEventListener('click', async ()=>{
-  $('btnReq').textContent='⏳ запрос...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
+  $('btnReq').textContent='⏳ запит...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
   try{
     if(needsPerm){
-      if(await DeviceOrientationEvent.requestPermission()!=='granted') throw new Error('Ориентация: отказано');
+      if(await DeviceOrientationEvent.requestPermission()!=='granted') throw new Error('Орієнтація: відмовлено');
       if(typeof DeviceMotionEvent.requestPermission==='function')
-        if(await DeviceMotionEvent.requestPermission()!=='granted') throw new Error('Движение: отказано');
+        if(await DeviceMotionEvent.requestPermission()!=='granted') throw new Error('Рух: відмовлено');
     }
     bindSensors();
     initAudio();
@@ -4308,7 +4324,7 @@ $('btnReq').addEventListener('click', async ()=>{
     NET.room = rm || 'HALL';           // комната из меню (а не из URL)
     NET.start();                       // живое подключение к vessel-mir-13
     buzz([0,120,60,120]);              // тест вибрации при входе
-    logE('СТАРТ. HAPTICS='+HAPTICS+' компас='+(haveAbsOrient?'АБС':(sensor.haveCompass?'отн(дрейфует!)':'НЕТ'))+' room='+NET.room);
+    logE('СТАРТ. HAPTICS='+HAPTICS+' компас='+(haveAbsOrient?'АБС':(sensor.haveCompass?'відн(дрейфує!)':'НЕМАЄ'))+' room='+NET.room);
     logE('BUILD '+BUILD_TAG);
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
@@ -4319,7 +4335,7 @@ $('btnReq').addEventListener('click', async ()=>{
     try{ if(window.TUT && TUT.requested) TUT.begin(); }catch(e){ console.warn('TUT',e); }
   }catch(err){
     $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
-    $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
+    $('btnReq').textContent='▷ СПРОБУВАТИ ЗНОВУ'; $('btnReq').disabled=false;
   }
 });
 
@@ -4330,9 +4346,9 @@ $('btnReq').addEventListener('click', async ()=>{
 
 // ── UI: панель-підказка (верх екрана) + модальне вікно ──
 const tutHintEl=document.createElement('div');
-tutHintEl.style.cssText='position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:88;'+
-  'display:none;max-width:92vw;padding:8px 14px;background:rgba(2,12,26,.88);border:1px solid #2563eb;'+
-  'border-radius:8px;color:#93c5fd;font:inherit;font-size:12px;letter-spacing:.06em;text-align:center;pointer-events:none';
+tutHintEl.style.cssText='position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:88;'+
+  'display:none;max-width:92vw;padding:10px 16px;background:rgba(1,8,18,.96);border:1px solid #3b82f6;'+
+  'border-radius:10px;color:#bfdbfe;font:inherit;font-size:13px;letter-spacing:.06em;text-align:center;pointer-events:none;box-shadow:0 2px 14px rgba(0,0,0,.6)';
 document.body.appendChild(tutHintEl);
 const tutModalEl=document.createElement('div');
 tutModalEl.style.cssText='position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;'+
@@ -4395,13 +4411,14 @@ window.TUT={
         '<b>Завдання: розбий обидва кристали.</b>',
         [{t:'ДО БОЮ ▷',f:()=>tutHint('⚡ Підійди і махай телефоном · кристалів: 0 / 2')}]);
     }
-    if(n===3){ this.beaconT=0;
-      tutModal('🔺 КРОК 3/7 · ЗАХИСТ (МАЯК)','Тепер захист. Візьми телефон обома руками і <b>поверни його боком — наче фотографуєш краєвид</b> 📷.<br><br>'+
-        'Камера плавно «увійде в очі» героя — це стійка <b>МАЯК</b>, вид від першої особи: можна роздивитися все навколо. '+
-        'Меч переходить у ту руку, в який бік ти нахилив телефон.<br><br>'+
-        'У МАЯКУ накопичується <b>ТИСК</b> — він захищає і продавлює ворога у клінчі. Поверни телефон назад вертикально — знову атака.<br><br>'+
-        '<b>Завдання: протримайся «у фотоапараті» 2 секунди</b> (сумарно).',
-        [{t:'ПРОБУЮ ▷',f:()=>tutHint('🔺 Телефон боком, як фотоапарат 📷 · МАЯК: 0.0 / 2.0 с')}]);
+    if(n===3){ this.sub=0;
+      tutModal('📷 КРОК 3/7 · ЩИТ І ЗАРЯД (МАЯК)','Зараз спробуємо на власні руки, по одному кроку:<br><br>'+
+        '<b>1.</b> Поверни телефон <b>боком, як фотоапарат</b> 📷 — камера стане очима героя.<br>'+
+        '<b>2.</b> Тримай так — угорі побачиш, як росте число <b>ЗАРЯД</b>. Поки тримаєш — це твій <b>щит</b>: '+
+        'у зчепленні клинків (клінчі) цей тиск продавлює ворога.<br>'+
+        '<b>3.</b> Коли я скажу — <b>різко поверни телефон назад вертикально</b>: накопичена сила сама вирветься ударом!<br><br>'+
+        'Нічого не треба вгадувати — я підказуватиму вгорі на кожному кроці.',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('📷 Поверни телефон БОКОМ, як фотоапарат — і тримай')}]);
     }
     if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
       'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
@@ -4469,7 +4486,7 @@ window.TUT={
     const w=this.wavesCleared;
     let rec = w>=5?2 : (w>=3?1:0);
     if(this.deaths>=3) rec=0;
-    const NAMES=['🟢 ЛЕГКО','🟡 НОРМА','🔴 СЛОЖНО'];
+    const NAMES=['🟢 ЛЕГКО','🟡 НОРМА','🔴 СКЛАДНО'];
     tutModal('🏁 ВИПРОБУВАННЯ ЗАВЕРШЕНО',
       'Хвиль зачищено: <b>'+w+'</b> · загибелей за навчання: <b>'+this.deaths+'</b><br><br>'+
       'Рекомендована складність: <b>'+NAMES[rec]+'</b><br><br>Обери свою (потім можна змінити в меню ⏸):',
@@ -4480,7 +4497,7 @@ window.TUT={
   finish(diff){ this.active=false; this.stage=0;
     if(this.eqSave!==undefined){ equalizerOn=this.eqSave; this.eqSave=undefined; }   // повернути рівновагу
     botDiff=diff; window.ADV_DIFF=diff;
-    try{ $('mDiff').textContent='🎯 СЛОЖНОСТЬ: '+DIFF[botDiff].name; }catch(e){}
+    try{ $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; }catch(e){}
     try{ localStorage.setItem('vb3d_tut_done','1'); }catch(e){}
     logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths);
     tutModal('🎓 НАВЧАННЯ ЗАВЕРШЕНО','Ти готовий. Куди далі?<br><br>'+
@@ -4517,13 +4534,48 @@ setInterval(()=>{
         tutHint('👣 Свайпай по екрану · кроків: '+T.steps+' / 6');
         if(T.steps>=6){ tutHint(null); buzz([0,60,40,120]); T.stage=-1; setTimeout(()=>T.goStage(2),700); } } }
     else if(T.stage===3){
-      if(player.beaconLatch && !player.dead){
-        T.beaconT+=0.16;
-        tutHint('🔺 МАЯК: '+Math.min(T.beaconT,2).toFixed(1)+' / 2.0 с');
-        if(T.beaconT>=2){ tutHint(null); buzz([0,60,40,120]); T.stage=-1; setTimeout(()=>T.goStage(4),700); } } }
+      if(T.sub===0){                                             // фаза 1: тримай боком, заряджай
+        if(player.beaconLatch && !player.dead){
+          tutHint('📷 Так! Тримай боком · ЗАРЯД: ×'+player.charge.toFixed(1)+' (дотягни до ×2.2) — зараз ти під щитом');
+          if(player.charge>=2.2){ T.sub=1; buzz([0,50]);
+            tutHint('⚡ ГОТОВО! Тепер РІЗКО поверни телефон назад ВЕРТИКАЛЬНО!'); }
+        } else tutHint('📷 Поверни телефон БОКОМ, як фотоапарат (горизонтально) — і тримай');
+      } else if(T.sub===1){                                      // фаза 2: різкий поворот назад = удар
+        if(!player.beaconLatch){
+          if(player.strikeT>0 || player.swordLen>1.15){          // виброс стався
+            T.stage=-1; tutHint(null); buzz([0,60,40,120]);
+            setTimeout(()=>tutModal('✨ БАЧИВ СПАЛАХ КЛИНКА?','Це був <b>заряджений удар</b>: '+
+              'потримав боком → накопичив силу → повернув вертикально → сила вирвалась сама.<br><br>'+
+              'Запам\'ятай просте правило:<br>📷 <b>боком</b> = щит і заряд<br>📱 <b>вертикально</b> = бій і удари<br><br>'+
+              'У бою: тиснуть — повернись боком і перечекай; повертаєшся — б\'єш сильніше.',
+              [{t:'ЗРОЗУМІЛО, ДАЛІ ▷',f:()=>TUT.goStage(4)}]),500);
+          } else { T.sub=0; }                                    // повернувся без заряду — м'яко заново
+        } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
+      } }
   }
   tickTrader(0.16);
 },160);
+
+/* ── МІНІМАПА мета-світу 13×13: де я у глобальному світі ── */
+const MM={seen:new Set(['6,6'])};
+const mmC=document.createElement('canvas'); mmC.width=93; mmC.height=93;
+mmC.style.cssText='position:fixed;top:64px;right:10px;z-index:22;display:none;width:93px;height:93px;'+
+  'background:#020a14;border:1px solid #1e3a5f;border-radius:6px;pointer-events:none;opacity:.92';
+document.body.appendChild(mmC);
+function miniMapDraw(){
+  if(!ADV.on || mode==='creator'){ mmC.style.display='none'; return; }
+  mmC.style.display='block';
+  const g=mmC.getContext('2d'); g.clearRect(0,0,93,93);
+  for(let rx=0;rx<13;rx++) for(let ry=0;ry<13;ry++){
+    const wht=chessWhite(rx,ry), seen=MM.seen.has(rx+','+ry), ring=Math.min(rx,ry,12-rx,12-ry);
+    g.fillStyle = seen ? (wht?'#93a9c9':'#25436b') : (wht?'#2b3a4e':'#0c1725');
+    g.fillRect(1+rx*7, 1+ry*7, 6, 6);
+    if(!wht && ring<=1){ g.fillStyle=seen?'#b03040':'#3a1620'; g.fillRect(1+rx*7+2, 1+ry*7+2, 2, 2); }  // край: боси
+  }
+  g.fillStyle='#38bdf8'; g.fillRect(1+6*7+2, 1+6*7+2, 2, 2);          // дім
+  g.strokeStyle='#fbbf24'; g.lineWidth=1.5;
+  g.strokeRect(0.5+ADV.rx*7, 0.5+ADV.ry*7, 7, 7);                     // я
+}
 
 /* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
 const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
@@ -4542,25 +4594,38 @@ function plantRock(gx,gy,rng){
   addObstacle(gx,gy,'Si',new Set(),tint,0.6+rng()*0.5,rng()<0.4?'slab':'cube');
 }
 function advRoomExtras(rx,ry,st){
+  MM.seen.add(rx+','+ry); miniMapDraw();   // мінімапа: кімнату відвідано
   clearTrader();
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
   // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
   if(!roomEdits.has(rx+','+ry)){
-    const groves=2+Math.floor(rng()*2)+(st.weight>0.5?1:0);       // 2..4 групи, глибше — більше
+    // ГАРАНТОВАНЕ розміщення: шукаємо вільну клітинку до 14 спроб (раніше колізія = пропуск,
+    // і в тісних кімнатах природа «не з'являлась»). Глибше від дому — БІЛЬШЕ і густіше.
+    const freeCell=()=>{ for(let t=0;t<14;t++){ const gx=1+Math.floor(rng()*11), gy=1+Math.floor(rng()*11);
+      if(!obstacleAt(gx,gy) && !(gx===6&&gy===6)) return [gx,gy]; } return null; };
+    const groves=3+Math.round(st.weight*5);                        // 3..8 груп: глибина = багатство
+    let placed=0;
     for(let gvi=0; gvi<groves; gvi++){
-      const cx=2+Math.floor(rng()*9), cy=2+Math.floor(rng()*9);
+      const c0=freeCell(); if(!c0) break;
       const kind=rng();
-      for(let b=0;b<1+Math.floor(rng()*3);b++){                   // 1..3 блоки купкою
-        const gx=clamp(cx+Math.floor(rng()*3)-1,1,11), gy=clamp(cy+Math.floor(rng()*3)-1,1,11);
-        if(obstacleAt(gx,gy)||(gx===6&&gy===6)) continue;
+      const blocks=2+Math.floor(rng()*3);                          // 2..4 блоки купкою
+      for(let b=0;b<blocks;b++){
+        let gx=clamp(c0[0]+Math.floor(rng()*3)-1,1,11), gy=clamp(c0[1]+Math.floor(rng()*3)-1,1,11);
+        if(obstacleAt(gx,gy)||(gx===6&&gy===6)){ const c=freeCell(); if(!c) continue; gx=c[0]; gy=c[1]; }
         if(kind<0.4)      plantTree(gx,gy,rng);                                            // 🪵 гай
         else if(kind<0.7) plantRock(gx,gy,rng);                                            // 🪨 скелі
         else if(kind<0.88)addObstacle(gx,gy,'Fe',new Set(),null,0.7+rng()*0.4,'cube');     // ⛓ руда
         else              addObstacle(gx,gy,'fragile',new Set(),null,0.9+rng()*0.5,'post');// ◆ кристали
+        placed++;
       }
     }
-    logE('⬜ природа: гаї/скелі/руда/кристали — рубай і збирай ресурси');
+    if(st.weight>0.45){                                            // ГЛИБОКІ ⬜: густіше, димка, завали
+      for(let i=0;i<2+Math.round(st.weight*2);i++){ const c=freeCell(); if(c) addObstacle(c[0],c[1],'rubble',new Set()); }
+      for(let i=0;i<2;i++){ const c=freeCell(); if(c) addObstacle(c[0],c[1],'gas',new Set(),0x67f0c0); }
+    }
+    logE('⬜ природа: '+placed+' блоків (гаї/скелі/руда/кристали) — рубай і збирай');
+    snapshotRoom();   // ЗАМОРОЗИТИ кімнату: видобуте НЕ відростає (персист + Firebase)
   }
   const n=1+(st.weight>0.35?1:0)+(st.weight>0.7?1:0);             // глибше — щедріше
   for(let i=0;i<n;i++){
@@ -4569,7 +4634,7 @@ function advRoomExtras(rx,ry,st){
     if(obstacleAt(gx,gy)) continue;
     spawnPickup(gx,gy,pool[Math.floor(rng()*pool.length)]);
   }
-  if(rng()<0.45){                                                 // ~кожен другий коридор — торговець
+  if(rng()<0.3+st.weight*0.5){                                    // глибше — частіше торговець
     let gx,gy,tries=0;
     do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
     const geo=new THREE.BoxGeometry(0.9,0.12,0.9);
@@ -4617,12 +4682,12 @@ setTimeout(()=>{
       TUT.requested=true;
       $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase();   // приватна кімната
       bT.style.opacity='1'; bD.style.opacity='0.45';
-      showGateNote('Обрано навчання. Тепер натисни «ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ» ↓');
+      showGateNote('Обрано навчання. Тепер натисни «ЗАПРОСИТИ СЕНСОРИ ТА УВІЙТИ» ↓');
     });
     const bD=mk('⚔ ГРАТИ ОДРАЗУ — я вмію','#60a5fa',()=>{
       TUT.requested=false; bD.style.opacity='1'; bT.style.opacity='0.45';
       if(/^TUT/.test($('roomInput').value)) $('roomInput').value='HALL';
-      showGateNote('Звичайний старт. Тисни «ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ» ↓');
+      showGateNote('Звичайний старт. Тисни «ЗАПРОСИТИ СЕНСОРИ ТА УВІЙТИ» ↓');
     });
     if(!done){ bD.style.opacity='0.45'; TUT.requested=true;                 // новим — навчання за замовчуванням
       $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase(); }
@@ -4728,7 +4793,7 @@ setInterval(()=>{
     if(FLAIL.t<=10 && FLAIL.t>9.84) showBanner('🌀 ціп розряджається: 10с','#a78bfa');
     if(FLAIL.t<=0){ FLAIL.t=0; equipWpn('sword'); showBanner('🌀 ЦІП РОЗРЯДИВСЯ — знову меч','#94a3b8'); }
   } else FLAIL.t=0;
-  resHUD();
+  resHUD(); miniMapDraw();
 },160);
 </script>
 </body>
