@@ -1104,6 +1104,8 @@ function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.g
 function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
+  if(isFinite(o.hp) && o.hp0){ const k=clamp(0.5+0.5*o.hp/o.hp0,0.5,1); o.mesh.scale.set(k,k,k); }   // блок худеет — выжигается
+  chipDebris(worldX(o.gx), 0.7, worldZ(o.gy), o.mat.color.getHex(), 2);
   if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
     if(Math.random()<0.4){                      // из разбитого — иногда полезное
       const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
@@ -1916,9 +1918,63 @@ function renderClinchGuideAndAstral(){
 }
 
 /* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
+const DEBRIS=[];
+function chipDebris(x,y,z,color,n){                       // крихти від прожигу блоків
+  for(let i=0;i<(n||2);i++){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.95}));
+    m.frustumCulled=false; m.position.set(x,y,z); scene.add(m);
+    DEBRIS.push({mesh:m, vx:(Math.random()-0.5)*3, vy:2+Math.random()*2, vz:(Math.random()-0.5)*3,
+      rx:(Math.random()-0.5)*6, rz:(Math.random()-0.5)*6, life:1.5});
+  }
+}
+const _sp=new THREE.Vector3(), _sq=new THREE.Quaternion(), _ss=new THREE.Vector3();
+function severPart(av, names, dx, dz){                    // отсечь части: скрыть на теле + физ-обломок
+  let cut=false;
+  for(const nm of names){
+    const p=av.parts && av.parts[nm];
+    if(!p || !p.visible) continue;
+    p.getWorldPosition(_sp); p.getWorldQuaternion(_sq); p.getWorldScale(_ss);
+    const m=new THREE.Mesh(p.geometry, p.material.clone());
+    m.material.transparent=true; m.frustumCulled=false;
+    m.position.copy(_sp); m.quaternion.copy(_sq); m.scale.copy(_ss);
+    scene.add(m); p.visible=false; cut=true;
+    DEBRIS.push({mesh:m, vx:dx*2.6+(Math.random()-0.5)*1.5, vy:2.6+Math.random()*1.5, vz:dz*2.6+(Math.random()-0.5)*1.5,
+      rx:(Math.random()-0.5)*7, rz:(Math.random()-0.5)*7, life:2.4});
+  }
+  return cut;
+}
+const SEVER_SETS={legL:['legL','footL'], legR:['legR','footR'], armL:['armLU','armLF'], armR:['armRU','armRF']};
+function restoreParts(av){ if(!av.parts) return; for(const k in SEVER_SETS) for(const nm of SEVER_SETS[k]){ const p=av.parts[nm]; if(p) p.visible=true; } av.sever=0; }
+function updateDebris(dt){
+  for(let i=DEBRIS.length-1;i>=0;i--){ const d=DEBRIS[i];
+    d.vy-=9*dt; d.mesh.position.x+=d.vx*dt; d.mesh.position.y+=d.vy*dt; d.mesh.position.z+=d.vz*dt;
+    d.mesh.rotation.x+=d.rx*dt; d.mesh.rotation.z+=d.rz*dt;
+    if(d.mesh.position.y<-0.34 && d.vy<0){ d.mesh.position.y=-0.34; d.vy*=-0.35; d.vx*=0.7; d.vz*=0.7; }
+    d.life-=dt; if(d.life<0.7) d.mesh.material.opacity=Math.max(0,d.life/0.7);
+    if(d.life<=0){ scene.remove(d.mesh); DEBRIS.splice(i,1); }
+  }
+}
 function damageTier(av, tier, amount){
   if(av.dead) return;
   if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
+  // ШМАТУВАННЯ «световым мечом»: сильный удар (≥12) может отсечь конечность яруса
+  if(amount>=12 && av.parts && Math.random()<0.4){
+    let ddx=0,ddz=0;
+    if(av!==player){ ddx=Math.sign(worldX(av.gx)-worldX(player.gx))||0; ddz=Math.sign(worldZ(av.gy)-worldZ(player.gy))||0; }
+    else { ddx=(Math.random()-0.5)*2; ddz=(Math.random()-0.5)*2; }
+    const R=Math.random()<0.5;
+    if(tier===1){ if(severPart(av, SEVER_SETS[R?'legL':'legR'], ddx, ddz)){
+      av.sever=(av.sever||0)|(R?1:2); buzz(35); logE((av===player?'тебе':'врагу')+' ОТСЕКЛО ногу'); } }
+    else if(tier===2){ const arm=R?'armL':'armR';
+      if(severPart(av, SEVER_SETS[arm], ddx, ddz)){
+        av.sever=(av.sever||0)|(R?4:8); buzz(45);
+        logE((av===player?'тебе':'врагу')+' ОТСЕКЛО руку');
+        if(arm==='armR'){                                  // рука с клинком → оружие выпадает
+          if(av===player && !player.disarmed){ player.disarmed=true; player.disarmT=0; dropBlade(player); showBanner('✂ РУКА С КЛИНКОМ ОТСЕЧЕНА','#ef4444'); }
+          else if(!av.remote && !av.disarmed && !av.noBlade){ av.disarmed=true; av.disarmT=0; setTimeout(()=>{ if(!av.dead) av.disarmed=false; }, 6000); }
+        }
+      } }
+  }
   if(tier===0){
     // ноги → теряется мобильность (Ритм/Выносливость).
     // ПРОГРЫЗ ДО КРОВИ: когда выносливость уже добита (≤15), защита ног кончилась —
@@ -2068,15 +2124,22 @@ function weaponCells(gx,gy,dirIdx,len,wpn,striking,extraL){
   const [dx,dy]=DIRV[dirIdx];
   // КОНТАКТ: клинок НЕ проходит сквозь мир. Линия идёт до ПЕРВОЙ занятой клетки
   // (стена, кристалл, тело) ВКЛЮЧИТЕЛЬНО — там контакт (урон/клинч/заклин), дальше пусто.
+  const lineC=[];
   for(let i=1;i<=L;i++){
     const cx=gx+dx*i, cy=gy+dy*i;
-    out.push(cx+','+cy);
+    out.push(cx+','+cy); lineC.push([cx,cy,i]);
     if(cx<0||cx>12||cy<0||cy>12) break;
     if(obstacleAt(cx,cy)) break;                                     // упёрся в препятствие
     if(typeof phantomAtCell==='function' && phantomAtCell(cx,cy)) break;   // воткнулся в тело
     if(typeof remoteFighterAt==='function' && remoteFighterAt(cx,cy)) break;
     if(mode==='fighter' && !player.dead && player.gx===cx && player.gy===cy) break;
   }
+  // КОНУС: с шага 2 линия получает перпендикулярных соседей — закрыта «дыра коня» (клетка 2+1),
+  // куда раньше не добивала ни прямая, ни диагональ. Симметрично: и ты достаёшь, и тебя достают.
+  { const pv=DIRV[(dirIdx+2)%8];
+    for(const [cx,cy,ii] of lineC){ if(ii<2) continue;
+      out.push((cx+pv[0])+','+(cy+pv[1]));
+      out.push((cx-pv[0])+','+(cy-pv[1])); } }
   for(let a=1;a<=W.arc;a++){
     const dl=DIRV[(dirIdx+a)%8], dr=DIRV[(dirIdx+8-a)%8];
     out.push((gx+dl[0])+','+(gy+dl[1]));
@@ -2573,7 +2636,8 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }   // прозрачность от творца
   grp.position.set(worldX(gx), (baseY||0)+h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
   obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,baseY:baseY||0,h,
-    hp: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40), alive:true, mesh:grp, mat});
+    hp: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40),
+    hp0: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
   // ПРОХОДИМОСТЬ: от центра до середин всех 4 кромок (лаз для игрока — стена)
@@ -2848,7 +2912,7 @@ function respawn(av){
   av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
   av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
   if(av!==player){
-    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5; av.ai.lastDist=null; av.ai.noProg=0;
+    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5; restoreParts(av); av.ai.lastDist=null; av.ai.noProg=0;
     const c=freeSpawnCell(player.gx<=6?12:0, player.gy<=6?12:0, av); av.gx=c[0]; av.gy=c[1];   // подальше от игрока, в свободную клетку
   }else{
     const c=freeSpawnCell(CX,CY,player); av.gx=c[0]; av.gy=c[1];
@@ -3488,7 +3552,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-12b · ЕДИНЫЙ-тиск(твоя-pressX+БОЛЬШОЙ-метр) · дрон→музыка · ОБЩИЙ-МИР(синк-комнат)';
+const BUILD_TAG='2026-07-13a · КОНУС(дыра-коня-закрыта) · ШМАТУВАННЯ(конечности/обломки/рука=разоружение) · блоки-худеют';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -3646,7 +3710,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100, sv:player.sever||0,
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
       spec:false, t:Date.now() }; },
   async start(){
@@ -3748,7 +3812,8 @@ const NET = {
            && Number.isInteger(v.rx) && Number.isInteger(v.ry)
            && v.rx>=0 && v.rx<=12 && v.ry>=0 && v.ry<=12){
           applyAdvRoom(v.rx, v.ry);
-          const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
+          restoreParts(player);
+    const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
         }
       });
       this.online=true;
@@ -3918,6 +3983,10 @@ function renderRemotes(now, dt){
     av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
     av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
     if(p.hue!=null) av.baseHue=+p.hue;                       // чужая раскраска тела
+    { const svm=p.sv||0;                                      // отсечённые части видны всем
+      if(av._sv!==svm){ av._sv=svm;
+        for(const [bit,key] of [[1,'legL'],[2,'legR'],[4,'armL'],[8,'armR']])
+          for(const nm of SEVER_SETS[key]){ const q=av.parts[nm]; if(q) q.visible=!(svm&bit); } } }
     if(p.mf){ av.mesh.scale.set(0.8,0.35,0.8); av.swordLen=0.2; av.strikeT=0; }   // чужой слайм: плоское тельце, без клинка
     else av.mesh.scale.set(1,1,1);
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
@@ -4184,6 +4253,7 @@ function frame(now){
   updateAdventure(dt);                 // сбор на кромке → переход между комнатами
   updateRacks(dt);                     // стойки оружия в ДОМЕ
   updateShots(dt);                     // снаряды стрельцов (и отбитые)
+  updateDebris(dt);                    // летящие обломки/конечности
   updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
   updateDropPickup(dt);                // подбор чужого оружия (выдержка 0.6с, кулдаун)
   updatePickupCollect();               // сбор апгрейдов
