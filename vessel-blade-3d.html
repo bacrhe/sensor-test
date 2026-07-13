@@ -1106,6 +1106,7 @@ function damageObstacle(o,amount){
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
   if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
     try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
+    try{ resFromObstacle(o); }catch(e){}   // видобуток: дерево/камінь/залізо/кристал
     if(Math.random()<0.4){                      // из разбитого — иногда полезное
       const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
       spawnPickup(o.gx, o.gy, pool[Math.floor(Math.random()*pool.length)]);
@@ -1130,7 +1131,7 @@ const STRIKE_DUR = 0.32;               // длительность видимо�
 function handInfo(av){
   const [dx,dz] = dirXZ(av.visYaw);
   const rx = -dz, rz = dx;                        // «вправо» от направления
-  const px=worldX(av.gx), pz=worldZ(av.gy);
+  const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);   // якір руки = візуальне тіло (плавний крок)
   const cr = av.crouch||0;
   const pitch = av.pitch||0;
   const guard = clamp((av.roll||0)/70, -1, 1);    // стойка: лёгкий наклон гарды вбок
@@ -1175,7 +1176,13 @@ function updateAvatarMesh(av, t){
   const col=(m,l,s)=>m.material.color.setHSL(hue, s??0.75, clamp(l,0.06,0.6));
   // ── позиция + поворот всей фигуры по направлению взгляда ──
   const _fo=((av.size||1)-1)*0.5;
-  g.position.set(worldX(av.gx+_fo), av.hover||0, worldZ(av.gy+_fo));
+  // ПЛАВНИЙ КРОК (07-13): логіка — миттєво по клітинах, ВІЗУАЛ ковзає (~0.15с) з підскоком.
+  // Телепорти (респавн/перехід кімнати, >2.5 кл.) не «їдуть» через мапу — снап.
+  if(av.vgx==null || Math.abs(av.vgx-av.gx)>2.5 || Math.abs(av.vgy-av.gy)>2.5){ av.vgx=av.gx; av.vgy=av.gy; }
+  av.vgx += (av.gx-av.vgx)*0.26; av.vgy += (av.gy-av.vgy)*0.26;
+  const _trans=Math.min(Math.abs(av.gx-av.vgx)+Math.abs(av.gy-av.vgy),1);
+  const _hop=Math.sin(_trans*Math.PI)*0.14;   // маленький підскок під час кроку
+  g.position.set(worldX(av.vgx+_fo), (av.hover||0)+_hop, worldZ(av.vgy+_fo));
   g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
   // КАСТОМНАЯ МОДЕЛЬ зверя (повзун/літун/стрілець/босс): своя анимация, мимо гуманоида
   if(av.kmodel){ if(av.kanim) av.kanim(av, t); return; }
@@ -1275,7 +1282,7 @@ function updateStanceAndCamera(dt){
     : CAM.view==='fp' ? 1
     : (CAM.view==='third'||CAM.view==='top') ? 0
     : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // АВТО: наклон в альбомную = 1-е лицо
-  player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
+  player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*3.2,0,1));   // повільніше (~0.3с) — перехід читається, не смикає
   const fp = player.fpSmooth;
   // ГИСТЕРЕЗИС стойки: вход в МАЯК при fp>0.58, выход при fp<0.42.
   // Один порог (0.5) в обе стороны давал десятки ложных переключений от дрожи руки у границы 55°
@@ -1872,7 +1879,7 @@ function updateMorphVisual(now){
   slime.visible=(mode==='fighter');
   const sq=1+Math.sin(now*0.006)*0.12;                       // дыхание-сквиш
   slime.scale.set(sq,2-sq,sq);
-  slime.position.set(worldX(player.gx), 0.21*(2-sq)-0.24, worldZ(player.gy));
+  slime.position.set(worldX(player.vgx??player.gx), 0.21*(2-sq)-0.24, worldZ(player.vgy??player.gy));
 }
 const astral = (function(){
   const mk=(w,h,d,op)=>new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
@@ -2048,40 +2055,46 @@ const WEAPONS={
   blaster: {label:'БЛАСТЕР ⌖',  w:4, maxLen:1, arc:0, sweep:false, dmg:1.0,  rel:'shot',  desc:'медленный снаряд; заряд = скорость и урон'},
 };
 let playerWpn='sword';
-function weaponCells(gx,gy,dirIdx,len,wpn,striking,extraL){
-  const W=WEAPONS[wpn]||WEAPONS.sword, out=[];
-  // МАХ (rel:'arc' во время strikeT): веер из 5 направлений на 2 клетки — сектор дуги
+/* НЕПЕРЕРВНИЙ ПРОМІНЬ (фікс 07-13): раніше лінія йшла лише по DIRV[dirIdx] — 8 снап-
+   напрямків, тому клітинки «ходом коня» (2,1) були НЕДОСЯЖНІ ні для урону, ні для
+   прожигу, хоч візуальний клинок (dirXZ(visYaw)) на них показував. Тепер фізика =
+   візуалу: маршируємо дрібним кроком уздовж реального азимута, збираючи клітинки
+   до першої зайнятої (контакт) включно. */
+function contRayCells(gx,gy,yawDeg,L,out,seen){
+  const v=dirXZ(yawDeg);
+  for(let t=0.5; t<=L+0.45; t+=0.3){
+    const cx=Math.round(gx+v[0]*t), cy=Math.round(gy+v[1]*t);
+    if(cx===gx && cy===gy) continue;
+    const k=cx+','+cy;
+    if(!seen.has(k)){ seen.add(k); out.push(k); }
+    if(cx<0||cx>12||cy<0||cy>12) return;                                 // за межами
+    if(obstacleAt(cx,cy)) return;                                        // упёрся в препятствие
+    if(typeof phantomAtCell==='function' && phantomAtCell(cx,cy)) return;// воткнулся в тело
+    if(typeof remoteFighterAt==='function' && remoteFighterAt(cx,cy)) return;
+    if(mode==='fighter' && !player.dead && player.gx===cx && player.gy===cy) return;
+  }
+}
+function weaponCells(gx,gy,dirIdx,len,wpn,striking,extraL,aimYaw){
+  const W=WEAPONS[wpn]||WEAPONS.sword, out=[], seen=new Set();
+  const yaw=(aimYaw!=null)?aimYaw:dirIdx*45;      // без aimYaw — старий 8-снап (боси, fallback)
+  // МАХ (rel:'arc' во время strikeT): веер ±90° из 5 лучей на 2 клетки — сектор дуги
   if(W.rel==='arc' && striking){
-    for(const off of [-2,-1,0,1,2]){
-      const d=DIRV[(dirIdx+off+8)%8];
-      out.push((gx+d[0])+','+(gy+d[1]));
-      out.push((gx+d[0]*2)+','+(gy+d[1]*2));
-    }
+    for(const off of [-90,-45,0,45,90]) contRayCells(gx,gy,yaw+off,2,out,seen);
     return out;
   }
   const L=clamp(Math.round(len*W.maxLen/6)+(extraL||0),1,W.maxLen+2);   // меч 1:1 + лут-досяжність
   if(W.sweep){
-    for(const [ox,oy] of DIRV) out.push((gx+ox)+','+(gy+oy));   // кольцо из 8 клеток
-    const [dx,dy]=DIRV[dirIdx];
-    for(let i=2;i<=L;i++) out.push((gx+dx*i)+','+(gy+dy*i));
+    for(const [ox,oy] of DIRV){ const k=(gx+ox)+','+(gy+oy);            // кольцо из 8 клеток — контакт
+      if(!seen.has(k)){ seen.add(k); out.push(k); } }
+    contRayCells(gx,gy,yaw,L,out,seen);
     return out;
   }
-  const [dx,dy]=DIRV[dirIdx];
-  // КОНТАКТ: клинок НЕ проходит сквозь мир. Линия идёт до ПЕРВОЙ занятой клетки
-  // (стена, кристалл, тело) ВКЛЮЧИТЕЛЬНО — там контакт (урон/клинч/заклин), дальше пусто.
-  for(let i=1;i<=L;i++){
-    const cx=gx+dx*i, cy=gy+dy*i;
-    out.push(cx+','+cy);
-    if(cx<0||cx>12||cy<0||cy>12) break;
-    if(obstacleAt(cx,cy)) break;                                     // упёрся в препятствие
-    if(typeof phantomAtCell==='function' && phantomAtCell(cx,cy)) break;   // воткнулся в тело
-    if(typeof remoteFighterAt==='function' && remoteFighterAt(cx,cy)) break;
-    if(mode==='fighter' && !player.dead && player.gx===cx && player.gy===cy) break;
-  }
+  contRayCells(gx,gy,yaw,L,out,seen);
+  const bi=((Math.round(yaw/45)%8)+8)%8;
   for(let a=1;a<=W.arc;a++){
-    const dl=DIRV[(dirIdx+a)%8], dr=DIRV[(dirIdx+8-a)%8];
-    out.push((gx+dl[0])+','+(gy+dl[1]));
-    out.push((gx+dr[0])+','+(gy+dr[1]));
+    const dl=DIRV[(bi+a)%8], dr=DIRV[(bi+8-a)%8];
+    for(const d of [dl,dr]){ const k=(gx+d[0])+','+(gy+d[1]);
+      if(!seen.has(k)){ seen.add(k); out.push(k); } }
   }
   return out;
 }
@@ -2432,6 +2445,7 @@ function clearRacks(){
 function buildRacks(){
   clearRacks();
   for(const w in RACK_CELLS){
+    if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;   // крафт відкриває стійку; ціп — станція
     const [x,y]=RACK_CELLS[w], col=RACK_COLORS[w];
     const g=new THREE.Group(); g.frustumCulled=false;
     const ped=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),
@@ -2444,6 +2458,17 @@ function buildRacks(){
       new THREE.LineBasicMaterial({color:col, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false}));
     halo.position.y=-0.42; halo.frustumCulled=false; g.add(halo);
     g.position.set(worldX(x),0.4,worldZ(y));
+    scene.add(g); rackMeshes.push(g);
+  }
+  { // 🔥 КУЗНЯ: смарагдова плита (4,6) — стань на 1.2с, розклади ресурси у рецепт
+    const g=new THREE.Group(); g.frustumCulled=false;
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.14,0.92),
+      new THREE.MeshBasicMaterial({color:0x10b981, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false}));
+    plate.frustumCulled=false; g.add(plate);
+    const anvil=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.3,0.26),
+      new THREE.MeshBasicMaterial({color:0x334155}));
+    anvil.position.y=0.28; anvil.frustumCulled=false; g.add(anvil);
+    g.position.set(worldX(CRAFT_CELL[0]), -0.38, worldZ(CRAFT_CELL[1]));
     scene.add(g); rackMeshes.push(g);
   }
 }
@@ -2504,7 +2529,7 @@ function applyAdvRoom(rx,ry){
   if(home){
     player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
     buildRacks();
-    showBanner('◌ ДОМ — светящиеся стойки: встань на клетку на 1.2с','#60a5fa');
+    showBanner('◌ ДОМ — стійки зброї (стань 1.2с) · 🔥 КУЗНЯ на смарагдовій плиті','#60a5fa');
     logE('ДОМ: стойки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10)');
   }else if(chessWhite(rx,ry)){
     showBanner('⬜ '+st.name+' · безпечний коридор','#e2e8f0');
@@ -2741,20 +2766,34 @@ function updateAdventure(dt){
     NET.advPub();                                           // консенсус комнаты для всех
   }
 }
+function equipWpn(w){
+  playerWpn=w; const W=WEAPONS[w];
+  buildWeaponFX(w==='bossaxe'?'axe':w);
+  player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55,bossaxe:0.02}[w]??0.5;
+  showBanner('✥ ВЗЯТО: '+W.label+' — '+W.desc,'#eab308');
+  logE('оружие: '+W.label); blip(700,0.12,'sine',0.15); buzz([0,40]);
+}
 function updateRacks(dt){
   if(!ADV.on || !advHome()) return;
   for(const w in RACK_CELLS){
+    if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;    // закриті стійки не існують
     const [x,y]=RACK_CELLS[w];
     if(player.gx===x && player.gy===y){
+      if(w==='flail'){                                                // 🌀 ЦІП: тимчасовий, за ресурси
+        if(playerWpn==='flail') return;
+        rackT+=dt;
+        if(rackT>=1.2){ rackT=-2;
+          if(RES.iron>=2 && RES.crystal>=2){
+            RES.iron-=2; RES.crystal-=2; saveRes(); resHUD();
+            equipWpn('flail'); FLAIL.t=FLAIL_DUR;
+            showBanner('🌀 ЦІП АКТИВОВАНО на '+FLAIL_DUR+'с  (−2⛓ −2◆)','#a78bfa');
+          }else showBanner('🌀 ЦІП: треба 2⛓ заліза + 2◆ кристала — видобудь у ⬜ кімнатах','#94a3b8');
+        }
+        return;
+      }
       if(playerWpn!==w){
         rackT+=dt;
-        if(rackT>=1.2){
-          playerWpn=w; rackT=0; const W=WEAPONS[w];
-          buildWeaponFX(w);
-          player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55}[w]??0.5;
-          showBanner('✥ ВЗЯТО: '+W.label+' — '+W.desc,'#eab308');
-          logE('оружие: '+W.label); blip(700,0.12,'sine',0.15); buzz([0,40]);
-        }
+        if(rackT>=1.2){ rackT=0; equipWpn(w); }
       }
       return;
     }
@@ -2763,9 +2802,10 @@ function updateRacks(dt){
 }
 
 function bladeCells(av){
-  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0);
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, sensor.yawFused);
   if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
-  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0);
+  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0, av.reachMod||0,
+    av.boss?null:av.aimYaw);   // босс лишається неповоротким (снап + слабке місце ззаду)
 }
 function bladeCells_LEGACY(av){
   const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6), out=[];
@@ -2780,7 +2820,7 @@ function bladeCovers(av,gx,gy){
 }
 function remoteBladeCells(r){
   const p=r.latest||{};
-  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword', false, p.reach||0);   // чужая досяжність учтена
+  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword', false, p.reach||0, p.yaw||0);   // чужая досяжність учтена + точний азимут
 }
 /* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
 function resolveClinch(){
@@ -3025,6 +3065,8 @@ function updatePhantoms(dt){
       ph.turnT=(ph.turnT||0)-dt;
       if(ph.turnT<=0 && bestIdx!==ph.dirIdx){ ph.dirIdx=bestIdx; ph.turnT=1.2; }
     }else ph.dirIdx=bestIdx;
+    // ТОЧНИЙ ПРИЦІЛ (фікс 07-13): неперервний азимут на ціль — б'є і по «коневих» клітинках
+    ph.aimYaw = Math.atan2(tgt.gx-(ph.gx+((ph.size||1)-1)*0.5), -(tgt.gy-(ph.gy+((ph.size||1)-1)*0.5))) * 180/Math.PI;
     // ПРИЦЕЛ ПО ЯРУСУ как игрок: целится в тело цели (для локальной — в её ярус)
     ph.tier = tgt.local ? player.tier : 1;
     ph.pitch = (ph.tier-1)*0.7;
@@ -3508,7 +3550,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-13a · ТУТОРІАЛ(8-кроків+проба+рекомендація) · ШАХІВНИЦЯ(⬜коридори/⬛бої/боси-край) · ТОРГОВЕЦЬ';
+const BUILD_TAG='2026-07-13b · ФІКС-влучання(неперервний-промінь) · плавний-крок · РЕСУРСИ+КУЗНЯ(крафт) · ціп-тимчасовий · природа-⬜';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -4333,8 +4375,9 @@ window.TUT={
     player.hp=100; player.stamina=100;
     logE('ТУТОРІАЛ: старт');
     tutModal('📚 ЛАСКАВО ПРОСИМО','Це навчання для тих, хто <b>ніколи не грав</b> — все по черзі, від простого до складного.<br><br>'+
-      '<b>Крок 1 — камера.</b> Тримай телефон вертикально перед собою, як дзеркало. '+
-      'Повільно повертайся разом із телефоном — світ навколо повертається теж. Телефон = твої очі.<br><br>'+
+      '<b>Крок 1 — камера.</b> Телефон — це твої очі, тримай його перед собою вертикально, '+
+      '<b>наче пульт від телевізора</b>: куди «світить» телефон — туди дивиться герой. '+
+      'Повільно повернися всім тілом разом із телефоном — світ повернеться теж.<br><br>'+
       'Роздивись навколо і повертайся до вікна.',
       [{t:'Я РОЗДИВИВСЯ, ДАЛІ ▷',f:()=>TUT.goStage(1)}]);
   },
@@ -4353,10 +4396,12 @@ window.TUT={
         [{t:'ДО БОЮ ▷',f:()=>tutHint('⚡ Підійди і махай телефоном · кристалів: 0 / 2')}]);
     }
     if(n===3){ this.beaconT=0;
-      tutModal('🔺 КРОК 3/7 · ЗАХИСТ (МАЯК)','Тепер захист. <b>Поверни телефон боком</b> (горизонтально, як для фото).<br><br>'+
-        'Це стійка <b>МАЯК</b>: ти бачиш світ від першої особи і накопичуєш <b>ТИСК</b> — він захищає і продавлює ворога у клінчі.<br><br>'+
-        '<b>Завдання: протримайся у стійці МАЯК 2 секунди</b> (сумарно).',
-        [{t:'ПРОБУЮ ▷',f:()=>tutHint('🔺 Поверни телефон боком · МАЯК: 0.0 / 2.0 с')}]);
+      tutModal('🔺 КРОК 3/7 · ЗАХИСТ (МАЯК)','Тепер захист. Візьми телефон обома руками і <b>поверни його боком — наче фотографуєш краєвид</b> 📷.<br><br>'+
+        'Камера плавно «увійде в очі» героя — це стійка <b>МАЯК</b>, вид від першої особи: можна роздивитися все навколо. '+
+        'Меч переходить у ту руку, в який бік ти нахилив телефон.<br><br>'+
+        'У МАЯКУ накопичується <b>ТИСК</b> — він захищає і продавлює ворога у клінчі. Поверни телефон назад вертикально — знову атака.<br><br>'+
+        '<b>Завдання: протримайся «у фотоапараті» 2 секунди</b> (сумарно).',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('🔺 Телефон боком, як фотоапарат 📷 · МАЯК: 0.0 / 2.0 с')}]);
     }
     if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
       'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
@@ -4440,7 +4485,9 @@ window.TUT={
     logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths);
     tutModal('🎓 НАВЧАННЯ ЗАВЕРШЕНО','Ти готовий. Куди далі?<br><br>'+
       '🚪 <b>ПРИГОДА</b> — мета-світ 13×13 кімнат-шахівниця: ⬜ білі — безпечні коридори '+
-      '(лут, торговці), ⬛ чорні — бої. Чим далі від дому — тим складніше, на краю світу чекають <b>БОСИ</b>.<br><br>'+
+      '(рубай дерева 🪵, скелі 🪨, руду ⛓ і кристали ◆ — це ресурси; лут, торговці), ⬛ чорні — бої. '+
+      'Вдома є 🔥 <b>КУЗНЯ</b>: з ресурсів крафтиться нова зброя (починаєш лише з мечем). '+
+      'Чим далі від дому — тим складніше, на краю світу чекають <b>БОСИ</b>.<br><br>'+
       '⚔ <b>ВІЛЬНИЙ БІЙ</b> — просто арена з фантомами.',
       [{t:'🚪 ПОЧАТИ ПРИГОДУ',c:'#22c55e',f:()=>{ if(!ADV.on) $('mAdv').click(); }},
        {t:'⚔ ВІЛЬНИЙ БІЙ',f:()=>{ phantomCount=1; spawnPhantoms(1); try{$('mPhan').textContent='☠ ФАНТОМОВ: 1';}catch(e){} }}]);
@@ -4481,10 +4528,40 @@ setInterval(()=>{
 /* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
 const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
 function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
+/* ── ПРИРОДА: дерева/скелі/руда/кристали з наявних елементних блоків.
+   Видобуток: розрубай — отримай ресурс (resFromObstacle). Форми post/slab/cube +
+   baseY-стек: крона над стовбуром — світ живіший, ніж голі куби.               */
+function plantTree(gx,gy,rng){
+  const trunkTint=(rng()<0.5)?0x7a4a1f:0x8a5a2b;
+  addObstacle(gx,gy,'C',new Set(),trunkTint,1.15,'post');                       // стовбур
+  const leaf=(rng()<0.5)?0x2f9e44:0x3fae54;
+  addObstacle(gx,gy,'fragile',new Set(),leaf,0.75,'cube',0,0.82,TIER_H*1.85);   // крона (baseY-стек)
+}
+function plantRock(gx,gy,rng){
+  const tint=[0x8d99ae,0x6b7280,0x9aa6b6][Math.floor(rng()*3)];
+  addObstacle(gx,gy,'Si',new Set(),tint,0.6+rng()*0.5,rng()<0.4?'slab':'cube');
+}
 function advRoomExtras(rx,ry,st){
   clearTrader();
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
+  // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
+  if(!roomEdits.has(rx+','+ry)){
+    const groves=2+Math.floor(rng()*2)+(st.weight>0.5?1:0);       // 2..4 групи, глибше — більше
+    for(let gvi=0; gvi<groves; gvi++){
+      const cx=2+Math.floor(rng()*9), cy=2+Math.floor(rng()*9);
+      const kind=rng();
+      for(let b=0;b<1+Math.floor(rng()*3);b++){                   // 1..3 блоки купкою
+        const gx=clamp(cx+Math.floor(rng()*3)-1,1,11), gy=clamp(cy+Math.floor(rng()*3)-1,1,11);
+        if(obstacleAt(gx,gy)||(gx===6&&gy===6)) continue;
+        if(kind<0.4)      plantTree(gx,gy,rng);                                            // 🪵 гай
+        else if(kind<0.7) plantRock(gx,gy,rng);                                            // 🪨 скелі
+        else if(kind<0.88)addObstacle(gx,gy,'Fe',new Set(),null,0.7+rng()*0.4,'cube');     // ⛓ руда
+        else              addObstacle(gx,gy,'fragile',new Set(),null,0.9+rng()*0.5,'post');// ◆ кристали
+      }
+    }
+    logE('⬜ природа: гаї/скелі/руда/кристали — рубай і збирай ресурси');
+  }
   const n=1+(st.weight>0.35?1:0)+(st.weight>0.7?1:0);             // глибше — щедріше
   for(let i=0;i<n;i++){
     const pool = rng()<0.4?['heal']:['up_dmg','up_charge','up_reach'];
@@ -4564,6 +4641,95 @@ setTimeout(()=>{
   }catch(e){ console.warn('gate mode buttons', e); }
 },300);
 
+/* ════════════════════ РЕСУРСИ + КУЗНЯ (2026-07-13) ════════════════════ */
+const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0},
+  JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0}; } })();
+function saveRes(){ try{ localStorage.setItem('vb3d_res', JSON.stringify(RES)); }catch(e){} }
+const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆'};
+const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал'};
+const resHudEl=document.createElement('div');
+resHudEl.style.cssText='position:fixed;right:10px;bottom:46px;z-index:22;display:none;padding:6px 10px;'+
+  'background:rgba(2,12,26,.75);border:1px solid #1e3a5f;border-radius:8px;color:#cbd5e1;'+
+  'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
+document.body.appendChild(resHudEl);
+function resHUD(){
+  const any=RES.wood||RES.stone||RES.iron||RES.crystal;
+  resHudEl.style.display=(any||ADV.on)?'block':'none';
+  resHudEl.textContent='🪵'+RES.wood+'  🪨'+RES.stone+'  ⛓'+RES.iron+'  ◆'+RES.crystal;
+}
+resHUD();
+// материал розбитого блока → ресурс
+const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone'};
+function resFromObstacle(o){
+  const kind=RES_OF[o.mtype]; if(!kind) return;
+  const amt=1+(Math.random()<0.25?1:0);
+  RES[kind]+=amt; saveRes(); resHUD();
+  showBanner('⛏ +'+amt+' '+RES_ICON[kind]+' '+RES_NAME[kind]+'  (разом '+RES[kind]+')','#a7f3d0');
+}
+
+/* ── КУЗНЯ: рецепти. Гравець починає лише з МЕЧЕМ; решту — крафтити.
+   Сокира Титана — тільки дроп з боса. Ціп НЕ крафтиться назавжди:
+   активація на смарагдовій станції за 2⛓+2◆, діє FLAIL_DUR секунд. ── */
+const CRAFT={ unlocked:(()=>{ try{ return Object.assign({sword:true},
+    JSON.parse(localStorage.getItem('vb3d_unlocked')||'{}')); }catch(e){ return {sword:true}; } })(),
+  recipes:{
+    nunchaku:{wood:4},
+    spear:   {wood:3, iron:1},
+    axe:     {wood:2, stone:2},
+    whip:    {wood:2, crystal:2},
+    blaster: {iron:3, crystal:3},
+  }};
+function saveCraft(){ try{ localStorage.setItem('vb3d_unlocked', JSON.stringify(CRAFT.unlocked)); }catch(e){} }
+const CRAFT_CELL=[4,6];
+function recipeStr(r){ return Object.keys(r).map(k=>r[k]+RES_ICON[k]).join(' + '); }
+function canAfford(r){ return Object.keys(r).every(k=>RES[k]>=r[k]); }
+let craftModalCd=0;
+function openCraftModal(){
+  const rows=[];
+  for(const w in CRAFT.recipes){
+    const W=WEAPONS[w], r=CRAFT.recipes[w];
+    if(CRAFT.unlocked[w]){ rows.push({t:'✓ '+W.label+' — вже скрафчено',c:'#334155'}); continue; }
+    const ok=canAfford(r);
+    rows.push({t:(ok?'🔥 ':'🔒 ')+W.label+' — '+recipeStr(r), c:ok?'#22c55e':'#475569', f:ok?()=>{
+      for(const k in r) RES[k]-=r[k];
+      CRAFT.unlocked[w]=true; saveRes(); saveCraft(); resHUD(); buildRacks();
+      showBanner('🔥 СКРАФЧЕНО: '+W.label+' — стійка з`явилась удома','#22c55e');
+      buzz([0,50,40,90]); blip(600,0.15,'sine',0.18);
+      logE('КУЗНЯ: '+W.label);
+    }:null});
+  }
+  rows.push({t:'🌀 ЦІП — не крафтиться: активація на його стійці, 2⛓+2◆ на '+FLAIL_DUR+'с',c:'#a78bfa'});
+  rows.push({t:'ЗАКРИТИ',c:'#64748b'});
+  tutModal('🔥 КУЗНЯ','Маєш: 🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+
+    '<br>Ресурси видобуваються у ⬜ білих кімнатах: рубай <b>дерева</b> (🪵), <b>скелі</b> (🪨), '+
+    '<b>руду</b> (⛓), <b>кристали</b> (◆).', rows);
+}
+
+/* ── ЦІП: тимчасова зброя (занадто потужна для постійної) ── */
+const FLAIL_DUR=90;
+const FLAIL={t:0};
+
+// пульс кузні + таймер ціпа (їдемо на власному таймері — кадр не чіпаємо)
+let craftStandT=0;
+setInterval(()=>{
+  if(craftModalCd>0) craftModalCd-=0.16;
+  // кузня: стоїмо на плиті вдома
+  if(ADV.on && advHome() && mode==='fighter' && !player.dead
+     && player.gx===CRAFT_CELL[0] && player.gy===CRAFT_CELL[1]){
+    craftStandT+=0.16;
+    if(craftStandT>=1.2 && craftModalCd<=0 && tutModalEl.style.display==='none'){
+      craftStandT=0; craftModalCd=2; openCraftModal(); buzz([0,40]);
+    }
+  } else craftStandT=0;
+  // ціп: зворотний відлік
+  if(playerWpn==='flail'){
+    if(FLAIL.t<=0) FLAIL.t=FLAIL_DUR;             // взяв з дропу — теж тимчасовий
+    FLAIL.t-=0.16;
+    if(FLAIL.t<=10 && FLAIL.t>9.84) showBanner('🌀 ціп розряджається: 10с','#a78bfa');
+    if(FLAIL.t<=0){ FLAIL.t=0; equipWpn('sword'); showBanner('🌀 ЦІП РОЗРЯДИВСЯ — знову меч','#94a3b8'); }
+  } else FLAIL.t=0;
+  resHUD();
+},160);
 </script>
 </body>
 </html>
