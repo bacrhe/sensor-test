@@ -1105,6 +1105,7 @@ function damageObstacle(o,amount){
   if(o.solid || !o.alive) return;
   o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
   if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('препятствие разрушено'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
+    try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
     if(Math.random()<0.4){                      // из разбитого — иногда полезное
       const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
       spawnPickup(o.gx, o.gy, pool[Math.floor(Math.random()*pool.length)]);
@@ -2499,27 +2500,43 @@ function applyAdvRoom(rx,ry){
   if(bossPh && st.weight>0.7){ bossPh.size=3; bossPh.hp=520;   // глубокий босс — 3×3
     try{ bossPh.mesh.scale.setScalar(2.8); }catch(e){} }
   const boss=!!bossPh;
-  botDiff = st.weight<0.15?0 : (st.weight<0.5?1:2);
+  botDiff = clamp((st.weight<0.15?0 : (st.weight<0.5?1:2)) + ((window.ADV_DIFF??1)-1), 0, 2);   // авто-вага кімнати ± обрана складність
   if(home){
     player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
     buildRacks();
     showBanner('◌ ДОМ — светящиеся стойки: встань на клетку на 1.2с','#60a5fa');
     logE('ДОМ: стойки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10)');
+  }else if(chessWhite(rx,ry)){
+    showBanner('⬜ '+st.name+' · безпечний коридор','#e2e8f0');
+    try{ const c=new THREE.Color(st.bg).lerp(new THREE.Color(0xdde6f0),0.16);   // білі — світліший фон
+      scene.background=c; if(scene.fog&&scene.fog.color) scene.fog.color.copy(c); }catch(e){}
   }else{
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОСС':''), st.accent);
   }
-  logE('КОМНАТА ('+rx+','+ry+') «'+st.name+'» вес '+st.weight.toFixed(2)+(boss?' БОСС':''));
+  try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
+  logE('КОМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вес '+st.weight.toFixed(2)+(boss?' БОСС':''));
 }
+function chessWhite(rx,ry){ return ((rx+ry)%2)===0; }   // ⬜ ШАХІВНИЦЯ: парна сума = біла (безпечна), (6,6)=дім=біла
 function composeRoomEnemies(rx,ry){
   const st=roomStyle(rx,ry), dist=Math.abs(rx-6)+Math.abs(ry-6);
   if(rx===6&&ry===6) return [];
+  if(chessWhite(rx,ry)) return [];                  // ⬜ біла клітинка — коридор: НУЛЬ ворогів (лут/торговці — advRoomExtras)
+  const AD=(window.ADV_DIFF??1);                    // обрана складність пригоди (0/1/2) масштабує щільність
   const rng=mulberry32(rx*57+ry*901+3);
-  if(dist%4===0){                                   // комната БОССА (каждые 4 шага)
-    const k=['boss'], extra=Math.round(st.weight*2);
+  const ring=Math.min(rx,ry,12-rx,12-ry);
+  if(ring<=1){                                      // ⬛ КРАЙ СВІТУ (два зовнішні кільця): гарантовані БОСИ
+    const nb=clamp(1+(st.weight>0.72?1:0)+(AD>=2&&ring===0?1:0),1,3);   // 1..3 босів (складність+глибина)
+    const k=[]; for(let i=0;i<nb;i++)k.push('boss');
+    const extra=2+Math.round(st.weight*(2+AD));
+    for(let i=0;i<extra;i++){ const r=rng(); k.push(r<0.34?'crawler':r<0.62?'flyer':'gunner'); }
+    return k;
+  }
+  if(dist%4===0){                                   // комната БОССА (каждые 4 шага) — лише на чорних
+    const k=['boss'], extra=Math.round(st.weight*(2+AD));
     for(let i=0;i<extra;i++) k.push(rng()<0.5?'crawler':'flyer');
     return k;
   }
-  const n=clamp(1+Math.round(st.weight*5),1,6), k=[];
+  const n=clamp(1+Math.round(st.weight*(3+AD*2)),1,3+AD*2), k=[];   // легко max4 / норма max6 / складно max8
   for(let i=0;i<n;i++){
     const r=rng();
     if(st.weight<0.12)      k.push(r<0.55?'fighter':'crawler');
@@ -2709,8 +2726,9 @@ function updateAdventure(dt){
   }
   if(ADV.edgeDir!==myE){                                    // ПОДСКАЗКА: что впереди + право отступить
     ADV.edgeDir=myE; ADV.edgeT=0;
-    const st=roomStyle(nrx,nry);
-    showBanner('⏳ ВПЕРЕДИ: '+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стой 3с или отойди', st.accent);
+    const st=roomStyle(nrx,nry), wht=chessWhite(nrx,nry);
+    showBanner('⏳ ВПЕРЕДИ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стой 3с или отойди',
+      wht?'#e2e8f0':st.accent);
     blip(440,0.12,'sine',0.12);
   }
   ADV.edgeT+=dt;
@@ -2823,9 +2841,11 @@ function handleDeath(av, dt){
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
+      try{ if(window.TUT && TUT.active) TUT.onKill(av); }catch(e){}
       if(equalizerOn) equalizerRebirth();   // правило равновесия: убил — сам рождён заново (тумблер в меню)
     }else{
       logE('ИГРОК погиб');
+      try{ if(window.TUT && TUT.active) TUT.onDeath(); }catch(e){}
       showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
       blip(80,0.6,'sawtooth',0.25);
       buzz([0,80,60,160]);
@@ -3488,7 +3508,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ИНВЕРСИЯ НАКЛОНА: '+(invertPitch?'ВКЛ':'ВЫКЛ'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-12b · ЕДИНЫЙ-тиск(твоя-pressX+БОЛЬШОЙ-метр) · дрон→музыка · ОБЩИЙ-МИР(синк-комнат)';
+const BUILD_TAG='2026-07-13a · ТУТОРІАЛ(8-кроків+проба+рекомендація) · ШАХІВНИЦЯ(⬜коридори/⬛бої/боси-край) · ТОРГОВЕЦЬ';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кэш очищен — перезагрузка…','#22c55e');
   try{
@@ -4250,14 +4270,300 @@ $('btnReq').addEventListener('click', async ()=>{
     logE('BUILD '+BUILD_TAG);
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
+    if(window.TUT && TUT.requested){ phantomCount=0; }   // туторіал стартує без ворогів
     if(!phantoms.length && phantomCount>0) spawnPhantoms(phantomCount);   // первый спавн — здесь (модуль уже целиком жив, TDZ невозможен)
     started=true; last=0;
     applyMode();
+    try{ if(window.TUT && TUT.requested) TUT.begin(); }catch(e){ console.warn('TUT',e); }
   }catch(err){
     $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
     $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
   }
 });
+
+/* ════════════════════ ТУТОРІАЛ + ПРОГРЕСІЯ (2026-07-13) ═══════════════════
+   Живе НАПРИКІНЦІ модуля — всі функції гри вже ініціалізовані, TDZ неможливий
+   (урок від зламаної інтеграції 07-11). Гачки в тілі гри: btnReq / onKill /
+   onDeath / onSmash / advRoomExtras. Стан — window.TUT.                      */
+
+// ── UI: панель-підказка (верх екрана) + модальне вікно ──
+const tutHintEl=document.createElement('div');
+tutHintEl.style.cssText='position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:88;'+
+  'display:none;max-width:92vw;padding:8px 14px;background:rgba(2,12,26,.88);border:1px solid #2563eb;'+
+  'border-radius:8px;color:#93c5fd;font:inherit;font-size:12px;letter-spacing:.06em;text-align:center;pointer-events:none';
+document.body.appendChild(tutHintEl);
+const tutModalEl=document.createElement('div');
+tutModalEl.style.cssText='position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;'+
+  'background:rgba(1,4,10,.72);padding:16px';
+tutModalEl.innerHTML='<div id="tutCard" style="max-width:420px;width:100%;background:#020c1a;border:1px solid #1e3a5f;'+
+  'border-radius:12px;padding:20px 18px;color:#cbd5e1;font:inherit;font-size:13px;line-height:1.55;'+
+  'letter-spacing:.04em;max-height:82vh;overflow-y:auto"></div>';
+document.body.appendChild(tutModalEl);
+function tutModal(title,html,buttons){         // buttons: [{t:текст, c:колір, f:колбек}]
+  const card=tutModalEl.querySelector('#tutCard');
+  let h='<div style="color:#60a5fa;font-size:16px;letter-spacing:.1em;margin-bottom:12px">'+title+'</div>'+
+        '<div style="margin-bottom:16px">'+html+'</div>';
+  card.innerHTML=h;
+  (buttons||[{t:'ЗРОЗУМІЛО ▷'}]).forEach(b=>{
+    const el=document.createElement('button');
+    el.textContent=b.t;
+    el.style.cssText='display:block;width:100%;margin-top:8px;padding:13px;font:inherit;font-size:14px;'+
+      'letter-spacing:.1em;border-radius:8px;cursor:pointer;background:#0a1a30;'+
+      'border:1px solid '+(b.c||'#2563eb')+';color:'+(b.c||'#60a5fa');
+    el.onclick=()=>{ tutModalEl.style.display='none'; buzz([0,30]); if(b.f)b.f(); };
+    card.appendChild(el);
+  });
+  tutModalEl.style.display='flex';
+}
+function tutHint(txt){ if(txt){ tutHintEl.textContent=txt; tutHintEl.style.display='block'; } else tutHintEl.style.display='none'; }
+
+// ── СТАН ТУТОРІАЛУ ──
+window.TUT={
+  requested:false, active:false, stage:0,
+  steps:0, lastGX:null, lastGY:null,           // крок 1: рух
+  smashed:0,                                    // крок 2: кристали
+  beaconT:0,                                    // крок 3: МАЯК (сек у стійці)
+  kills:0, need:0,                              // кроки 4-6: бої
+  trial:false, wave:0, wavesCleared:0,          // крок 7: випробування
+  deaths:0, t0:0,
+  begin(){ this.requested=false; this.active=true; this.stage=0; this.deaths=0; this.t0=performance.now();
+    this.eqSave=equalizerOn; equalizerOn=false;  // рівновага (телепорт при вбивстві) — пауза на час навчання
+    if(ADV.on) $('mAdv').click();               // туторіал — поза пригодою
+    spawnPhantoms(phantomCount=0); botDiff=0;
+    player.hp=100; player.stamina=100;
+    logE('ТУТОРІАЛ: старт');
+    tutModal('📚 ЛАСКАВО ПРОСИМО','Це навчання для тих, хто <b>ніколи не грав</b> — все по черзі, від простого до складного.<br><br>'+
+      '<b>Крок 1 — камера.</b> Тримай телефон вертикально перед собою, як дзеркало. '+
+      'Повільно повертайся разом із телефоном — світ навколо повертається теж. Телефон = твої очі.<br><br>'+
+      'Роздивись навколо і повертайся до вікна.',
+      [{t:'Я РОЗДИВИВСЯ, ДАЛІ ▷',f:()=>TUT.goStage(1)}]);
+  },
+  goStage(n){ this.stage=n; player.hp=100; player.stamina=100;
+    if(n===1){ this.steps=0; this.lastGX=player.gx; this.lastGY=player.gy;
+      tutModal('👣 КРОК 1/7 · РУХ','Ти стоїш на полі 13×13 клітинок.<br><br>'+
+        '<b>Проведи пальцем по екрану</b> (свайп) вгору / вниз / вліво / вправо — герой зробить крок у той бік.<br><br>'+
+        '<b>Завдання: зроби 6 кроків.</b>',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('👣 Свайпай по екрану · кроків: 0 / 6')}]);
+    }
+    if(n===2){ this.smashed=0; tutSpawnCrystals();
+      tutModal('⚡ КРОК 2/7 · УДАР','Поруч з тобою з\'явились <b>два блакитні кристали</b>.<br><br>'+
+        'Тримай телефон вертикально (це стійка <b>МОЛНІЯ</b> — атака) і <b>махни телефоном</b>, наче б\'єш мечем. '+
+        'Підійди до кристала впритул і вдар кілька разів.<br><br>'+
+        '<b>Завдання: розбий обидва кристали.</b>',
+        [{t:'ДО БОЮ ▷',f:()=>tutHint('⚡ Підійди і махай телефоном · кристалів: 0 / 2')}]);
+    }
+    if(n===3){ this.beaconT=0;
+      tutModal('🔺 КРОК 3/7 · ЗАХИСТ (МАЯК)','Тепер захист. <b>Поверни телефон боком</b> (горизонтально, як для фото).<br><br>'+
+        'Це стійка <b>МАЯК</b>: ти бачиш світ від першої особи і накопичуєш <b>ТИСК</b> — він захищає і продавлює ворога у клінчі.<br><br>'+
+        '<b>Завдання: протримайся у стійці МАЯК 2 секунди</b> (сумарно).',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('🔺 Поверни телефон боком · МАЯК: 0.0 / 2.0 с')}]);
+    }
+    if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
+      'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
+      '• Вертикально + мах = <b>удар</b><br>• Боком = <b>захист і тиск</b><br>• Свайп = ухилитися кроком<br><br>'+
+      'Якщо загинеш — нічого страшного, відродишся і спробуєш ще.<br><br><b>Завдання: перемогти 1 фантома.</b>'); }
+    if(n===5){ this.armBattle(2,['fighter','crawler'],0,'⚔ КРОК 5/7 · ДВОЄ',
+      'Тепер <b>двоє</b>: звичайний фантом і <b>повзун</b> (низький, пролазить під стінами).<br><br>'+
+      'Порада: не стій між ними — відходь убік, щоб билися з тобою по одному.<br><br><b>Завдання: перемогти обох.</b>'); }
+    if(n===6){ this.armBattle(3,['fighter','crawler','flyer'],1,'⚔ КРОК 6/7 · ТРОЄ',
+      'Останній навчальний бій: <b>троє</b>, додався <b>літун</b> — літає над стінами.<br><br>'+
+      'Використовуй МАЯК, коли тиснуть, і кроки, щоб розривати оточення.<br><br><b>Завдання: перемогти трьох.</b>'); }
+    if(n===7){ this.trial=false; this.wave=0; this.wavesCleared=0;
+      tutModal('🔥 КРОК 7/7 · ВИПРОБУВАННЯ','Пробний бій: хвилі ворогів, <b>щохвилі — на одного більше</b> (1, 2, 3, 4, 5...).<br><br>'+
+        'Протримайся скільки зможеш — за результатом гра <b>порекомендує складність</b> саме для тебе. '+
+        'Загибель тут — не поразка, а вимірювання.',
+        [{t:'ПОЧАТИ ВИПРОБУВАННЯ ▷',f:()=>{ TUT.trial=true; TUT.nextWave(); }}]);
+    }
+  },
+  armBattle(n,kinds,diff,title,html){ this.kills=0; this.need=n;
+    tutModal(title,html,[{t:'ДО БОЮ ▷',c:'#22c55e',f:()=>{
+      botDiff=diff; player.hp=100; player.stamina=100;
+      phantomCount=n; spawnPhantoms(n,kinds);
+      tutHint('⚔ Перемож ворогів: 0 / '+n);
+    }}]);
+  },
+  nextWave(){ this.wave++; this.kills=0;
+    const KS=[['fighter'],['fighter','crawler'],['fighter','crawler','flyer'],
+              ['fighter','gunner','crawler','flyer'],['fighter','fighter','gunner','crawler','flyer']];
+    const kinds=KS[Math.min(this.wave,5)-1]; this.need=kinds.length;
+    botDiff=this.wave<=2?0:(this.wave<=4?1:2);
+    player.hp=100; player.stamina=100;
+    phantomCount=kinds.length; spawnPhantoms(kinds.length,kinds);
+    showBanner('🔥 ХВИЛЯ '+this.wave+' — ворогів: '+kinds.length,'#f59e0b');
+    tutHint('🔥 Хвиля '+this.wave+' · вороги: 0 / '+this.need);
+  },
+  onKill(av){ if(!this.active) return;
+    av.respawnT=1e9;                                        // у туторіалі вбиті НЕ відроджуються
+    setTimeout(()=>{ try{ av.mesh.visible=false; }catch(e){} },1200);
+    if(this.stage>=4 && this.stage<=6){ this.kills++;
+      tutHint('⚔ Перемож ворогів: '+this.kills+' / '+this.need);
+      if(this.kills>=this.need){ tutHint(null); buzz([0,60,40,120]);
+        setTimeout(()=>this.stage===6 ? this.goStage(7) : this.goStage(this.stage+1), 900); } }
+    else if(this.stage===7 && this.trial){ this.kills++;
+      tutHint('🔥 Хвиля '+this.wave+' · вороги: '+this.kills+' / '+this.need);
+      if(this.kills>=this.need){ this.wavesCleared=this.wave;
+        if(this.wave>=5){ this.trial=false; this.finishTrial(); }
+        else { showBanner('✔ хвилю '+this.wave+' зачищено','#22c55e');
+          setTimeout(()=>{ if(this.trial) this.nextWave(); },1600); } } }
+  },
+  onDeath(){ if(!this.active) return; this.deaths++;
+    if(this.stage>=4 && this.stage<=6){
+      setTimeout(()=>{ if(!TUT.active) return;
+        tutModal('💫 НЕ ЗДАВАЙСЯ','Це нормально — навіть майстри падали тисячу разів.<br><br>'+
+          'Спробуй тримати дистанцію кроками і частіше йти у <b>МАЯК</b> (телефон боком), коли ворог замахується.',
+          [{t:'ЩЕ РАЗ ▷',c:'#f59e0b',f:()=>TUT.goStage(TUT.stage)}]); },2400); }
+    else if(this.stage===7 && this.trial){ this.trial=false;
+      setTimeout(()=>this.finishTrial(),2400); }
+  },
+  onSmash(){ if(!this.active || this.stage!==2) return; this.smashed++;
+    tutHint('⚡ Кристалів розбито: '+this.smashed+' / 2');
+    if(this.smashed>=2){ tutHint(null); buzz([0,60,40,120]); setTimeout(()=>this.goStage(3),900); }
+  },
+  finishTrial(){ tutHint(null);
+    spawnPhantoms(phantomCount=0);
+    const w=this.wavesCleared;
+    let rec = w>=5?2 : (w>=3?1:0);
+    if(this.deaths>=3) rec=0;
+    const NAMES=['🟢 ЛЕГКО','🟡 НОРМА','🔴 СЛОЖНО'];
+    tutModal('🏁 ВИПРОБУВАННЯ ЗАВЕРШЕНО',
+      'Хвиль зачищено: <b>'+w+'</b> · загибелей за навчання: <b>'+this.deaths+'</b><br><br>'+
+      'Рекомендована складність: <b>'+NAMES[rec]+'</b><br><br>Обери свою (потім можна змінити в меню ⏸):',
+      [0,1,2].map(d=>({ t:NAMES[d]+(d===rec?'  ← РЕКОМЕНДОВАНО':''),
+        c:d===0?'#22c55e':(d===1?'#f59e0b':'#ef4444'),
+        f:()=>TUT.finish(d) })));
+  },
+  finish(diff){ this.active=false; this.stage=0;
+    if(this.eqSave!==undefined){ equalizerOn=this.eqSave; this.eqSave=undefined; }   // повернути рівновагу
+    botDiff=diff; window.ADV_DIFF=diff;
+    try{ $('mDiff').textContent='🎯 СЛОЖНОСТЬ: '+DIFF[botDiff].name; }catch(e){}
+    try{ localStorage.setItem('vb3d_tut_done','1'); }catch(e){}
+    logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths);
+    tutModal('🎓 НАВЧАННЯ ЗАВЕРШЕНО','Ти готовий. Куди далі?<br><br>'+
+      '🚪 <b>ПРИГОДА</b> — мета-світ 13×13 кімнат-шахівниця: ⬜ білі — безпечні коридори '+
+      '(лут, торговці), ⬛ чорні — бої. Чим далі від дому — тим складніше, на краю світу чекають <b>БОСИ</b>.<br><br>'+
+      '⚔ <b>ВІЛЬНИЙ БІЙ</b> — просто арена з фантомами.',
+      [{t:'🚪 ПОЧАТИ ПРИГОДУ',c:'#22c55e',f:()=>{ if(!ADV.on) $('mAdv').click(); }},
+       {t:'⚔ ВІЛЬНИЙ БІЙ',f:()=>{ phantomCount=1; spawnPhantoms(1); try{$('mPhan').textContent='☠ ФАНТОМОВ: 1';}catch(e){} }}]);
+  }
+};
+
+// кристали для кроку 2 — крихкі, поруч із гравцем
+function tutSpawnCrystals(){
+  spawnPhantoms(phantomCount=0);
+  const taken=new Set(); let placed=0;
+  for(const [ox,oy] of [[2,0],[-2,0],[0,2],[0,-2],[2,2],[-2,-2]]){
+    if(placed>=2) break;
+    const gx=clamp(player.gx+ox,1,11), gy=clamp(player.gy+oy,1,11);
+    if(obstacleAt(gx,gy) || (gx===player.gx&&gy===player.gy)) continue;
+    addObstacle(gx,gy,'fragile',taken); placed++;
+  }
+  if(placed<2){ addObstacle(clamp(player.gx+1,1,11),clamp(player.gy+3,1,11),'fragile',taken); }
+}
+
+// ── ПУЛЬС туторіалу (рух/МАЯК) + ТОРГОВЕЦЬ: один спільний таймер ──
+setInterval(()=>{
+  const T=window.TUT;
+  if(T && T.active && started && mode==='fighter'){
+    if(T.stage===1){
+      if(T.lastGX!==player.gx || T.lastGY!==player.gy){
+        T.steps++; T.lastGX=player.gx; T.lastGY=player.gy;
+        tutHint('👣 Свайпай по екрану · кроків: '+T.steps+' / 6');
+        if(T.steps>=6){ tutHint(null); buzz([0,60,40,120]); T.stage=-1; setTimeout(()=>T.goStage(2),700); } } }
+    else if(T.stage===3){
+      if(player.beaconLatch && !player.dead){
+        T.beaconT+=0.16;
+        tutHint('🔺 МАЯК: '+Math.min(T.beaconT,2).toFixed(1)+' / 2.0 с');
+        if(T.beaconT>=2){ tutHint(null); buzz([0,60,40,120]); T.stage=-1; setTimeout(()=>T.goStage(4),700); } } }
+  }
+  tickTrader(0.16);
+},160);
+
+/* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
+const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
+function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
+function advRoomExtras(rx,ry,st){
+  clearTrader();
+  if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
+  const rng=mulberry32(rx*131+ry*17+9);
+  const n=1+(st.weight>0.35?1:0)+(st.weight>0.7?1:0);             // глибше — щедріше
+  for(let i=0;i<n;i++){
+    const pool = rng()<0.4?['heal']:['up_dmg','up_charge','up_reach'];
+    let gx=2+Math.floor(rng()*9), gy=2+Math.floor(rng()*9);
+    if(obstacleAt(gx,gy)) continue;
+    spawnPickup(gx,gy,pool[Math.floor(rng()*pool.length)]);
+  }
+  if(rng()<0.45){                                                 // ~кожен другий коридор — торговець
+    let gx,gy,tries=0;
+    do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
+    const geo=new THREE.BoxGeometry(0.9,0.12,0.9);
+    const mat=new THREE.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
+    const m=new THREE.Mesh(geo,mat); m.frustumCulled=false;
+    m.position.set(worldX(gx),0.06-0.45,worldZ(gy)); scene.add(m);
+    TRADER.mesh=m; TRADER.gx=gx; TRADER.gy=gy; TRADER.standT=0; TRADER.cool=0;
+    showBanner('🛒 ТОРГОВЕЦЬ: стань на золоту плиту · 3 душі → покращення','#fbbf24');
+    logE('торговець у ('+rx+','+ry+') клітинка '+gx+','+gy);
+  }
+}
+function tickTrader(dt){
+  if(!TRADER.mesh || !ADV.on || mode!=='fighter' || player.dead) return;
+  if(TRADER.cool>0){ TRADER.cool-=dt; return; }
+  TRADER.mesh.material.opacity=0.4+0.25*Math.sin(performance.now()*0.004);
+  if(player.gx===TRADER.gx && player.gy===TRADER.gy){
+    TRADER.standT+=dt;
+    if(TRADER.standT>=1.2){
+      TRADER.standT=0; TRADER.cool=3;
+      if((player.score||0)>=3){
+        player.score-=3;
+        const pool=['up_dmg','up_charge','up_reach'];
+        const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+        for(const [dx,dy] of dirs){ const nx=TRADER.gx+dx, ny=TRADER.gy+dy;
+          if(nx>=1&&nx<=11&&ny>=1&&ny<=11&&!obstacleAt(nx,ny)){
+            spawnPickup(nx,ny,pool[Math.floor(Math.random()*pool.length)]); break; } }
+        showBanner('🛒 ОБМІН: −3 душі → покращення поруч','#fbbf24'); buzz([0,40,30,80]);
+        logE('торговець: обмін, лишилось душ '+player.score);
+      } else showBanner('🛒 замало душ: треба 3 (маєш '+(player.score||0)+') — душі за фантомів','#94a3b8');
+    }
+  } else TRADER.standT=0;
+}
+
+// ── СТАРТОВИЙ ЕКРАН: вибір режиму (динамічно, щоб не чіпати розмітку) ──
+setTimeout(()=>{
+  try{
+    const box=document.createElement('div');
+    box.innerHTML='<label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">ЯК ПОЧАТИ</label>';
+    const mk=(txt,col,fn)=>{ const b=document.createElement('button');
+      b.textContent=txt; b.className='btn';
+      b.style.cssText='width:100%;margin-bottom:8px;border-color:'+col+';color:'+col;
+      b.onclick=fn; box.appendChild(b); return b; };
+    const done=(()=>{ try{return localStorage.getItem('vb3d_tut_done')==='1';}catch(e){return false;} })();
+    const bT=mk('📚 НАВЧАННЯ — я новачок'+(done?' (пройдено ✓)':''),'#22c55e',()=>{
+      TUT.requested=true;
+      $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase();   // приватна кімната
+      bT.style.opacity='1'; bD.style.opacity='0.45';
+      showGateNote('Обрано навчання. Тепер натисни «ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ» ↓');
+    });
+    const bD=mk('⚔ ГРАТИ ОДРАЗУ — я вмію','#60a5fa',()=>{
+      TUT.requested=false; bD.style.opacity='1'; bT.style.opacity='0.45';
+      if(/^TUT/.test($('roomInput').value)) $('roomInput').value='HALL';
+      showGateNote('Звичайний старт. Тисни «ЗАПРОСИТЬ СЕНСОРЫ И ВОЙТИ» ↓');
+    });
+    if(!done){ bD.style.opacity='0.45'; TUT.requested=true;                 // новим — навчання за замовчуванням
+      $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase(); }
+    else bT.style.opacity='0.45';
+    function showGateNote(t){ let n=document.getElementById('tutGateNote');
+      if(!n){ n=document.createElement('div'); n.id='tutGateNote';
+        n.style.cssText='color:#93c5fd;font-size:10px;letter-spacing:.08em;margin-bottom:8px'; box.appendChild(n); }
+      n.textContent=t; }
+    const err=$('errMsg');
+    err.parentNode.insertBefore(box, err);
+    // кнопка повтору навчання в меню паузи
+    const mb=document.createElement('button');
+    mb.id='mTut'; mb.textContent='📚 ТУТОРІАЛ (навчання)';
+    $('mNew').parentNode.insertBefore(mb, $('mNew'));
+    mb.onclick=()=>{ closeMenu(); TUT.begin(); };
+  }catch(e){ console.warn('gate mode buttons', e); }
+},300);
+
 </script>
 </body>
 </html>
