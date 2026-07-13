@@ -70,416 +70,6 @@ h1 span{color:#1e3a5f;font-size:10px}
 #intro .big{font-size:15px;color:#60a5fa;letter-spacing:.1em}
 #intro .sm{font-size:10px;color:#4a6a9f;line-height:1.9;max-width:330px}
 </style>
-<script>
-/**
- * PROGRESSION SYSTEM for VESSEL BLADE 3D (embedded version)
- * Tutorial → Adventure Mode with alternating room types
- */
-
-// ════════════════════ GAME PROGRESSION STATE ════════════════════
-const GameProgress = {
-  tutorialStage: 0,
-  tutorialComplete: false,
-  battleStage: 0,
-  battleStageCounts: [1, 2, 8, 3, 4],
-  battlePhantomKilled: 0,
-  selectedDifficulty: 1,
-  adventureMode: false,
-  currentRoom: { x: 6, y: 6 },
-  roomType: 'white',
-  roomEnemiesCleared: false,
-  roomBossEncountered: false,
-  tutorialStartTime: null,
-  adventureStartTime: null,
-  totalRoomsCleared: 0,
-  difficultySelected: false,
-};
-
-function initTutorial() {
-  GameProgress.tutorialStage = 1;
-  GameProgress.battleStageCounts = [1, 2, 8, 3, 4];
-  GameProgress.tutorialStartTime = Date.now();
-  showTutorialStage(1);
-}
-
-function showTutorialStage(stage) {
-  const stages = {
-    1: { title: "📹 КАЛІБРУВАННЯ КАМЕРИ", desc: "Налаштуйте камеру для зручного спостереження за своїми рухами.\n\nОберніть телефон вертикально (книжна орієнтація) та знайдіть найзручнішу позицію. Натисніть ПРОДОВЖИТИ, коли готові.", action: "Натисніть для налаштування гіроскопа..." },
-    2: { title: "👣 МЕХАНІКА РУХУ", desc: "Свайпи по екрану — це шаги на сітці 13×13.\n\n▲ Вверх = вперед | ▼ Вниз = назад | ◀ Влево = вліво | ▶ Вправо = вправо\n\nПрактикуйте рух. Досягніть усіх чотирьох кутків.", action: "Осваиваем свайпы (0/4 углов)" },
-    3: { title: "⚔️ БЛОКУВАННЯ ТИСКОМ", desc: "Поверніть телефон ДО альбомної орієнтації (|γ|>45°) = Режим маяка 🔺\n\nПри альбомній орієнтації ви накопичуєте ТИСК (заряд) замість атаки. Заряд захищає від ударів.", action: "Включите альбомный режим для испытания..." },
-    4: { title: "🧱 ЗНИЩЕННЯ ОБ'ЄКТІВ", desc: "Поверніться у режим атаки (книжна) та розбийте 2 прочні кристали ⬜.\n\nАтакуйте їх кілька разів. Кристали неживі і не атакують.", action: "Розбейте неживі об'єкти (0/2)" },
-    5: { title: "⚡ БОРОТЬБА 1 НА 1", desc: "Один супротивник нападе на вас. Відбивайте атаки, атакуйте та отримуйте досвід.\n\nПобудьте його!", action: "Перемога: убейте 1 фантома" },
-    6: { title: "⚡ БОРОТЬБА 1 НА 2", desc: "Два супротивники! Управління таке ж, але складнішає.", action: "Перемога: убейте 2 фантомов" },
-    7: { title: "⚡ ВИЧЕРПНІ ТАЛАНТИ - 1 НА 8", desc: "Восьмеро йдуть на вас одночасно! Це буде важко. Вживайте всі навички.", action: "Перемога: убейте 8 фантомов" },
-    8: { title: "⚡ БОРОТЬБА 1 НА 3", desc: "Три супротивники після великої атаки. Менше, ніж 8, але все ще складно.", action: "Перемога: убейте 3 фантомов" },
-    9: { title: "⚡ ФІНАЛЬНИЙ ТЕСТ - 1 НА 4", desc: "Чотири супротивники. Якщо пережили 8 — це мають бути просто!", action: "Перемога: убейте 4 фантомов" },
-    10: { title: "🎚️ ВИБІР СКЛАДНОСТІ", desc: "Вибір складності aventure.\n\n🟢 ЛЕГКО: мало ворогів, вони слабші\n🟡 НОРМАЛЬНО: збалансовано\n🔴 ВАЖКО: багато ворогів, сильні боси", action: "Вибірайте складність..." }
-  };
-  
-  const stage_data = stages[stage];
-  if (!stage_data) return;
-  
-  displayTutorialModal(stage_data.title, stage_data.desc, stage_data.action, stage_data);
-}
-
-function displayTutorialModal(title, desc, action, stageData) {
-  const existing = document.getElementById('tutorialModal');
-  if (existing) existing.remove();
-  
-  const modal = document.createElement('div');
-  modal.id = 'tutorialModal';
-  modal.style.cssText = `
-    position: fixed;
-    inset: 0;
-    background: rgba(1,6,15,0.92);
-    z-index: 25;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    padding: 24px;
-    text-align: center;
-  `;
-  
-  const content = document.createElement('div');
-  content.innerHTML = `
-    <div style="max-width: 400px;">
-      <h2 style="color: #60a5fa; font-size: 18px; margin-bottom: 14px; letter-spacing: 0.12em;">
-        ${title}
-      </h2>
-      <p style="color: #8ab0d8; font-size: 12px; line-height: 2; margin-bottom: 20px; white-space: pre-line;">
-        ${desc}
-      </p>
-      <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
-        <button id="tutBtn-continue" style="
-          flex: 1;
-          min-width: 150px;
-          padding: 12px;
-          background: #0c2a1f;
-          color: #22c55e;
-          border: 1px solid #16a34a;
-          border-radius: 6px;
-          font: inherit;
-          cursor: pointer;
-          letter-spacing: 0.1em;
-          font-size: 13px;
-        ">▶ ПРОДОВЖИТИ</button>
-        <button id="tutBtn-skip" style="
-          flex: 1;
-          min-width: 150px;
-          padding: 12px;
-          background: #1a1a2e;
-          color: #60a5fa;
-          border: 1px solid #1e3a5f;
-          border-radius: 6px;
-          font: inherit;
-          cursor: pointer;
-          letter-spacing: 0.1em;
-          font-size: 13px;
-        ">⊘ ПРОПУСТИТЬ</button>
-      </div>
-      <div id="tutorialProgress" style="
-        margin-top: 16px;
-        color: #1e3a5f;
-        font-size: 9px;
-        letter-spacing: 0.1em;
-      ">Етап ${GameProgress.tutorialStage} з 10</div>
-    </div>
-  `;
-  
-  modal.appendChild(content);
-  document.body.appendChild(modal);
-  
-  document.getElementById('tutBtn-continue').addEventListener('click', () => {
-    modal.remove();
-    advanceTutorial();
-  });
-  
-  document.getElementById('tutBtn-skip').addEventListener('click', () => {
-    modal.remove();
-    skipToAdventure();
-  });
-}
-
-function advanceTutorial() {
-  GameProgress.tutorialStage++;
-  
-  if (GameProgress.tutorialStage <= 4) {
-    showTutorialStage(GameProgress.tutorialStage);
-  } else if (GameProgress.tutorialStage === 5) {
-    GameProgress.battleStage = 0;
-    startTutorialBattle();
-  } else if (GameProgress.tutorialStage === 10) {
-    showDifficultySelection();
-  } else if (GameProgress.tutorialStage === 11) {
-    completeTutorial();
-  } else if (GameProgress.tutorialStage <= 9) {
-    GameProgress.battleStage = GameProgress.tutorialStage - 5;
-    startTutorialBattle();
-  }
-}
-
-function startTutorialBattle() {
-  const stageNum = GameProgress.battleStage;
-  const phantomCount = GameProgress.battleStageCounts[stageNum];
-  
-  if (!phantomCount) {
-    advanceTutorial();
-    return;
-  }
-  
-  GameProgress.battlePhantomKilled = 0;
-  
-  if (typeof spawnPhantoms === 'function') {
-    spawnPhantoms(phantomCount);
-  }
-  
-  showTutorialStage(5 + stageNum);
-  monitorTutorialBattle();
-}
-
-function monitorTutorialBattle() {
-  if (typeof phantoms !== 'undefined') {
-    const aliveCount = phantoms.filter(p => !p.dead).length;
-    
-    if (aliveCount === 0 && GameProgress.battlePhantomKilled > 0) {
-      setTimeout(() => { advanceTutorial(); }, 1000);
-    } else if (typeof player !== 'undefined' && player.dead) {
-      setTimeout(() => {
-        GameProgress.tutorialStage = 10;
-        showDifficultySelection();
-      }, 2000);
-    }
-  }
-  
-  if (GameProgress.tutorialStage < 10 && !GameProgress.tutorialComplete) {
-    requestAnimationFrame(monitorTutorialBattle);
-  }
-}
-
-function showDifficultySelection() {
-  const existing = document.getElementById('difficultyModal');
-  if (existing) existing.remove();
-  
-  const modal = document.createElement('div');
-  modal.id = 'difficultyModal';
-  modal.style.cssText = `
-    position: fixed;
-    inset: 0;
-    background: rgba(1,6,15,0.96);
-    z-index: 26;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    padding: 24px;
-  `;
-  
-  const content = document.createElement('div');
-  content.innerHTML = `
-    <div style="max-width: 450px; text-align: center;">
-      <h2 style="color: #60a5fa; font-size: 18px; margin-bottom: 20px; letter-spacing: 0.12em;">
-        🎯 ВИБІР СКЛАДНОСТІ
-      </h2>
-      <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
-        <button class="diff-btn" data-diff="0" style="
-          padding: 16px;
-          background: #0a2e1f;
-          color: #22c55e;
-          border: 2px solid #16a34a;
-          border-radius: 8px;
-          font: inherit;
-          cursor: pointer;
-          font-size: 13px;
-          letter-spacing: 0.1em;
-          text-align: left;
-        ">
-          <div style="font-weight: bold; margin-bottom: 4px;">🟢 ЛЕГКО</div>
-          <div style="font-size: 10px; color: #1e7e34; line-height: 1.6;">
-            Мало ворогів. Повільні атаки. Перфектно для навчання.
-          </div>
-        </button>
-        
-        <button class="diff-btn" data-diff="1" style="
-          padding: 16px;
-          background: #1a2e3f;
-          color: #60a5fa;
-          border: 2px solid #3b82f6;
-          border-radius: 8px;
-          font: inherit;
-          cursor: pointer;
-          font-size: 13px;
-          letter-spacing: 0.1em;
-          text-align: left;
-        ">
-          <div style="font-weight: bold; margin-bottom: 4px;">🟡 НОРМАЛЬНО (РЕКОМЕНДОВАНО)</div>
-          <div style="font-size: 10px; color: #60a5fa; line-height: 1.6;">
-            Збалансована складність. Цікавий для більшості.
-          </div>
-        </button>
-        
-        <button class="diff-btn" data-diff="2" style="
-          padding: 16px;
-          background: #3f1a1f;
-          color: #ef4444;
-          border: 2px solid #dc2626;
-          border-radius: 8px;
-          font: inherit;
-          cursor: pointer;
-          font-size: 13px;
-          letter-spacing: 0.1em;
-          text-align: left;
-        ">
-          <div style="font-weight: bold; margin-bottom: 4px;">🔴 ВАЖКО</div>
-          <div style="font-size: 10px; color: #fca5a5; line-height: 1.6;">
-            Багато ворогів. Сильні боси. Тільки для ветеранів!
-          </div>
-        </button>
-      </div>
-    </div>
-  `;
-  
-  modal.appendChild(content);
-  document.body.appendChild(modal);
-  
-  document.querySelectorAll('.diff-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      GameProgress.selectedDifficulty = parseInt(btn.dataset.diff);
-      GameProgress.difficultySelected = true;
-      modal.remove();
-      completeTutorial();
-    });
-  });
-}
-
-function completeTutorial() {
-  GameProgress.tutorialComplete = true;
-  GameProgress.adventureMode = true;
-  GameProgress.adventureStartTime = Date.now();
-  GameProgress.currentRoom = { x: 6, y: 6 };
-  
-  if (typeof botDiff !== 'undefined') {
-    botDiff = GameProgress.selectedDifficulty;
-  }
-  
-  showAdventureIntro();
-}
-
-function skipToAdventure() {
-  GameProgress.tutorialStage = 10;
-  showDifficultySelection();
-}
-
-function showAdventureIntro() {
-  const existing = document.getElementById('adventureModal');
-  if (existing) existing.remove();
-  
-  const modal = document.createElement('div');
-  modal.id = 'adventureModal';
-  modal.style.cssText = `
-    position: fixed;
-    inset: 0;
-    background: rgba(1,6,15,0.94);
-    z-index: 24;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    padding: 24px;
-    text-align: center;
-  `;
-  
-  const content = document.createElement('div');
-  content.innerHTML = `
-    <div style="max-width: 420px;">
-      <h2 style="color: #60a5fa; font-size: 20px; margin-bottom: 16px; letter-spacing: 0.15em;">
-        🗺️ РЕЖИМ ПРИГОДИ
-      </h2>
-      <p style="color: #8ab0d8; font-size: 11px; line-height: 2; margin-bottom: 20px;">
-        Ви вступили в лабіринт кімнат 13×13. Чергуються <b style="color: #22c55e;">білі (безпечні)</b> та <b style="color: #ef4444;">чорні (небезпечні)</b> кімнати.
-      </p>
-      <div style="
-        background: rgba(34,197,94,0.1);
-        border-left: 3px solid #22c55e;
-        padding: 12px;
-        margin-bottom: 14px;
-        text-align: left;
-        border-radius: 4px;
-      ">
-        <div style="color: #22c55e; font-weight: bold; margin-bottom: 4px;">⬜ БІЛІ КІМНАТИ (Безпечні коридори)</div>
-        <div style="color: #6ee7b7; font-size: 10px; line-height: 1.8;">
-          Немає ворогів. Місця відпочинку та переходу.
-        </div>
-      </div>
-      <div style="
-        background: rgba(239,68,68,0.1);
-        border-left: 3px solid #ef4444;
-        padding: 12px;
-        margin-bottom: 20px;
-        text-align: left;
-        border-radius: 4px;
-      ">
-        <div style="color: #ef4444; font-weight: bold; margin-bottom: 4px;">⬛ ЧОРНІ КІМНАТИ (Небезпечні)</div>
-        <div style="color: #fca5a5; font-size: 10px; line-height: 1.8;">
-          Ворогів. Чим далі від центру (6,6), тим більше ворогів та сильніших. На краях можуть бути БОСИ.
-        </div>
-      </div>
-      <button id="adventureStart" style="
-        width: 100%;
-        padding: 14px;
-        background: #0c2a3f;
-        color: #60a5fa;
-        border: 1px solid #3b82f6;
-        border-radius: 6px;
-        font: inherit;
-        cursor: pointer;
-        font-size: 13px;
-        letter-spacing: 0.1em;
-      ">▶ ПОЧНЕМО ПРИГОДУ!</button>
-    </div>
-  `;
-  
-  modal.appendChild(content);
-  document.body.appendChild(modal);
-  
-  document.getElementById('adventureStart').addEventListener('click', () => {
-    modal.remove();
-    enterAdventureMode(6, 6);
-  });
-}
-
-function enterAdventureMode(x, y) {
-  GameProgress.currentRoom = {
-    x: Math.max(0, Math.min(12, x)),
-    y: Math.max(0, Math.min(12, y))
-  };
-  
-  updateRoomType();
-  
-  // Очистити, ховалась для білих кімнат
-  if (GameProgress.roomType === 'white') {
-    if (typeof phantoms !== 'undefined') {
-      phantoms.forEach(p => {
-        if (typeof scene !== 'undefined' && p.mesh) scene.remove(p.mesh);
-        if (typeof scene !== 'undefined' && p.blade) scene.remove(p.blade);
-      });
-      phantoms.length = 0;
-    }
-  }
-}
-
-function updateRoomType() {
-  const { x, y } = GameProgress.currentRoom;
-  GameProgress.roomType = (x + y) % 2 === 0 ? 'white' : 'black';
-  GameProgress.roomEnemiesCleared = false;
-  GameProgress.roomBossEncountered = false;
-}
-
-window.GameProgress = GameProgress;
-window.initTutorial = initTutorial;
-window.enterAdventureMode = enterAdventureMode;
-</script>
-
 <script type="importmap">
 { "imports": {
   "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -495,27 +85,6 @@ window.enterAdventureMode = enterAdventureMode;
   <div class="sub">МАТРИЦА 13×13 · BLIND FIGHT</div>
   <h1>СЛЕПОК СОЗНАНИЯ <span>VOXEL BLADE ENGINE</span></h1>
   <div class="divider"></div>
-  
-  <!-- РЕЖИМ ВИБОРУ -->
-  <div id="startModeSelect">
-    <div class="card">
-      <div class="lbl">ВИБІР РЕЖИМУ ГЕРИ</div>
-      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
-        <button id="btnTutorial" class="btn" style="
-          background: #0c2a1f;
-          border-color: #16a34a;
-          color: #22c55e;
-        ">📚 ТУТОРІАЛ (Навчання)</button>
-        <button id="btnDirect" class="btn" style="
-          background: #1a2030;
-          border-color: #3b82f6;
-          color: #60a5fa;
-        ">⚔ БІЙКА БЕЗПЕРЕРВНА</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ОСНОВНІ ПАРАМЕТРИ -->
   <div class="card">
     <div class="lbl">ДИАГНОСТИКА</div>
     <div id="diag"></div>
@@ -527,7 +96,7 @@ window.enterAdventureMode = enterAdventureMode;
        Книжная (|γ|&lt;45°) — <b>Атака/Молния</b>: выброс клинка, вид от 3-го лица.<br>
        Свайп по экрану — шаг по сетке 13×13.</p>
     <div id="errMsg"></div>
-    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">РЕЖИМ ПЕРЕГЛЯДУ</label>
+    <label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">РЕЖИМ</label>
     <div id="modeSel" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="mbtn on" data-mode="fighter">⚔ БОЕЦ</button>
       <button class="mbtn" data-mode="spectator">👁 СВЕРХУ</button>
@@ -1051,16 +620,9 @@ function makePhantom(i){
   return ph;
 }
 function spawnPhantoms(n){
-  // Очистити всіх фантомів
-  phantoms.forEach(p=>{ 
-    if(p.mesh) scene.remove(p.mesh); 
-    if(p.blade) scene.remove(p.blade); 
-  });
+  phantoms.forEach(p=>{ scene.remove(p.mesh); scene.remove(p.blade); });
   phantoms = [];
-  
-  // Спавнити нових
-  for(let i=0; i<n; i++) phantoms.push(makePhantom(i));
-  
+  for(let i=0;i<n;i++) phantoms.push(makePhantom(i));
   logE('фантомов: '+n);
 }
 function phantomAtCell(cx,cy){ return phantoms.find(p=>!p.dead && p.gx===cx && p.gy===cy); }
@@ -1640,11 +1202,6 @@ function handleDeath(av, dt){
       logE('ФАНТОМ убит, счёт '+player.score);
       showBanner('◌ ФАНТОМ РАЗВОПЛОЩЁН  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
-      
-      // Трекування убивств для туторіалу
-      if(window.GameProgress && !window.GameProgress.tutorialComplete) {
-        window.GameProgress.battlePhantomKilled++;
-      }
     }else{
       logE('ИГРОК погиб');
       showBanner('▼ СОЗНАНИЕ УГАСЛО','#ef4444'); doFlash('#ef4444');
@@ -2279,96 +1836,150 @@ function frame(now){
 }
 requestAnimationFrame(frame);
 
-/* ════════════════════ КНОПКИ ВХОДА ═══════════════════════════ */
-
-// Обробники вибору режиму
-if ($('btnTutorial')) {
-  $('btnTutorial').addEventListener('click', () => {
-    $('startModeSelect').style.display = 'none';
-    startGameMode('tutorial');
-  });
-}
-
-if ($('btnDirect')) {
-  $('btnDirect').addEventListener('click', () => {
-    $('startModeSelect').style.display = 'none';
-    startGameMode('direct');
-  });
-}
-
-// Основна функція запуску
-async function startGameMode(gameMode) {
-  window.selectedGameMode = gameMode;
-  
-  $('btnReq').textContent = '⏳ запрос...';
-  $('btnReq').disabled = true;
-  $('errMsg').style.display = 'none';
-  
-  try {
-    if (needsPerm) {
-      if (await DeviceOrientationEvent.requestPermission() !== 'granted') 
-        throw new Error('Ориентация: отказано');
-      if (typeof DeviceMotionEvent.requestPermission === 'function')
-        if (await DeviceMotionEvent.requestPermission() !== 'granted') 
-          throw new Error('Движение: отказано');
+/* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
+$('btnReq').addEventListener('click', async ()=>{
+  $('btnReq').textContent='⏳ запрос...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
+  try{
+    if(needsPerm){
+      if(await DeviceOrientationEvent.requestPermission()!=='granted') throw new Error('Ориентация: отказано');
+      if(typeof DeviceMotionEvent.requestPermission==='function')
+        if(await DeviceMotionEvent.requestPermission()!=='granted') throw new Error('Движение: отказано');
     }
-    
     bindSensors();
     initAudio();
-    if (AC && AC.state === 'suspended') await AC.resume();
-    
-    // Вибір кімнати залежить від режиму
-    if (gameMode === 'tutorial') {
-      NET.room = 'TUTORIAL_HALL';
-    } else {
-      const rm = ($('roomInput').value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
-      NET.room = rm || 'HALL';
-    }
-    
-    NET.start();
-    buzz([0, 120, 60, 120]);
-    logE('СТАРТ. режим=' + gameMode + ', HAPTICS=' + HAPTICS + ' compass=' + sensor.haveCompass);
-    logE('BUILD ' + BUILD_TAG);
-    
-    $('gate').style.display = 'none';
-    $('pauseBtn').style.display = 'block';
-    started = true;
-    last = 0;
-    
-    // Запустити туторіал або звичайну гру
-    if (gameMode === 'tutorial') {
-      initTutorial();
-      mode = 'fighter';
-    } else {
-      mode = 'fighter';
-      phantomCount = 1;
-      spawnPhantoms(phantomCount);
-    }
-    
+    if(AC && AC.state==='suspended') await AC.resume();
+    const rm = ($('roomInput').value||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+    NET.room = rm || 'HALL';           // комната из меню (а не из URL)
+    NET.start();                       // живое подключение к vessel-mir-13
+    buzz([0,120,60,120]);              // тест вибрации при входе
+    logE('СТАРТ. HAPTICS='+HAPTICS+' compass='+sensor.haveCompass+' room='+NET.room);
+    logE('BUILD '+BUILD_TAG);
+    $('gate').style.display='none';
+    $('pauseBtn').style.display='block';
+    started=true; last=0;
     applyMode();
-  } catch (err) {
-    $('errMsg').textContent = '⚠ ' + err.message;
-    $('errMsg').style.display = 'block';
-    $('btnReq').textContent = '▷ ПОПРОБОВАТЬ СНОВА';
-    $('btnReq').disabled = false;
-    
-    // Відновити меню вибору
-    $('startModeSelect').style.display = 'block';
+  }catch(err){
+    $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
+    $('btnReq').textContent='▷ ПОПРОБОВАТЬ СНОВА'; $('btnReq').disabled=false;
+  }
+});
+
+/* ════════════════════ ТУТОРІАЛ + РЕЖИМ ПРИГОДИ ════════════════════ */
+const GameProgress = {
+  tutorialStage: 0,
+  tutorialComplete: false,
+  selectedDifficulty: 1,
+  battlePhantomKilled: 0,
+};
+
+function initTutorial() {
+  GameProgress.tutorialStage = 1;
+  GameProgress.tutorialComplete = false;
+  showTutorialStage(1);
+}
+
+function showTutorialStage(stage) {
+  const stages = {
+    1: { title: "📹 КАЛІБРУВАННЯ КАМЕРИ", desc: "Налаштуйте камеру.\n\nНатисніть ПРОДОВЖИТИ коли готові.", action: "ДАЛІ" },
+    2: { title: "👣 МЕХАНІКА РУХУ", desc: "Свайпи = кроки по сітці\n▲▼◀▶", action: "ДАЛІ" },
+    3: { title: "⚔️ БЛОКУВАННЯ", desc: "Альбомна орієнтація = Маяк 🔺\n(накопичення тиску)", action: "ДАЛІ" },
+    4: { title: "🧱 ЗНИЩЕННЯ", desc: "Розбийте 2 кристали", action: "ДАЛІ" },
+    5: { title: "⚡ ПЕРША БОРОТЬБА", desc: "1 супротивник чекає\n\nПопрощайте врага!", action: "БОРОТИСЯ" },
+  };
+  
+  const s = stages[stage];
+  if (!s) { showDifficultySelection(); return; }
+  
+  let ex = document.getElementById('tutorialModal');
+  if(ex) ex.remove();
+  
+  const m = document.createElement('div');
+  m.id = 'tutorialModal';
+  m.style.cssText = `position:fixed;inset:0;background:rgba(1,6,15,0.92);z-index:25;display:flex;align-items:center;justify-content:center;padding:24px;`;
+  m.innerHTML = `
+    <div style="max-width:360px;text-align:center;color:#60a5fa;">
+      <h2 style="font-size:18px;margin-bottom:14px;letter-spacing:0.1em;">${s.title}</h2>
+      <p style="color:#8ab0d8;font-size:12px;line-height:1.8;margin-bottom:20px;white-space:pre-line;">${s.desc}</p>
+      <button style="width:100%;padding:12px;background:#0c2a1f;color:#22c55e;border:1px solid #16a34a;border-radius:6px;font:inherit;cursor:pointer;letter-spacing:0.1em;" onclick="advanceTutorial()">▶ ${s.action}</button>
+      <div style="color:#1e3a5f;font-size:9px;margin-top:12px;">Етап ${GameProgress.tutorialStage}/5</div>
+    </div>
+  `;
+  document.body.appendChild(m);
+}
+
+function advanceTutorial() {
+  GameProgress.tutorialStage++;
+  if(GameProgress.tutorialStage <= 5) {
+    showTutorialStage(GameProgress.tutorialStage);
+  } else {
+    GameProgress.tutorialComplete = true;
+    showDifficultySelection();
   }
 }
 
-// Кнопка входу (запросити сенсори)
-$('btnReq').addEventListener('click', async () => {
-  // Якщо ще не вибрали режим
-  if ($('startModeSelect').style.display !== 'none') {
-    $('errMsg').textContent = '⚠ Виберіть режим гери!';
-    $('errMsg').style.display = 'block';
-    return;
-  }
+function showDifficultySelection() {
+  let ex = document.getElementById('difficultyModal');
+  if(ex) ex.remove();
   
-  // Інакше просто продовжити вхід (это буде змінено на режим)
-  // На практиці, кнопка буде прихована за вибором
-});
+  const m = document.createElement('div');
+  m.id = 'difficultyModal';
+  m.style.cssText = `position:fixed;inset:0;background:rgba(1,6,15,0.96);z-index:26;display:flex;align-items:center;justify-content:center;padding:24px;`;
+  m.innerHTML = `
+    <div style="max-width:380px;text-align:center;">
+      <h2 style="color:#60a5fa;font-size:18px;margin-bottom:20px;letter-spacing:0.1em;">🎯 ВИБІР СКЛАДНОСТІ</h2>
+      <button style="width:100%;padding:14px;margin-bottom:8px;background:#0a2e1f;color:#22c55e;border:2px solid #16a34a;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(0)">🟢 ЛЕГКО</button>
+      <button style="width:100%;padding:14px;margin-bottom:8px;background:#1a2e3f;color:#60a5fa;border:2px solid #3b82f6;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(1)">🟡 НОРМАЛЬНО</button>
+      <button style="width:100%;padding:14px;background:#3f1a1f;color:#ef4444;border:2px solid #dc2626;border-radius:6px;font:inherit;cursor:pointer;font-weight:bold;font-size:13px;" onclick="selectDiff(2)">🔴 ВАЖКО</button>
+    </div>
+  `;
+  document.body.appendChild(m);
+}
+
+function selectDiff(d) {
+  GameProgress.selectedDifficulty = d;
+  botDiff = d;
+  let m = document.getElementById('difficultyModal');
+  if(m) m.remove();
+  logE('Складність: '+(d===0?'ЛЕГКО':d===1?'НОРМАЛЬНО':'ВАЖКО'));
+}
+
+// Додаємо кнопки вибору мода на стартовий екран
+(function(){
+  setTimeout(() => {
+    const diag = document.getElementById('diag');
+    if(diag && !document.getElementById('modeChoiceCard')) {
+      const card = document.createElement('div');
+      card.id = 'modeChoiceCard';
+      card.className = 'card';
+      card.style.marginBottom = '10px';
+      card.innerHTML = `
+        <div class="lbl">ВИБІР РЕЖИМУ</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <button id="btnTutorialStart" class="btn" style="background:#0c2a1f;border-color:#16a34a;color:#22c55e;">📚 ТУТОРІАЛ</button>
+          <button id="btnSkipTutorial" class="btn" style="background:#1a2030;border-color:#3b82f6;color:#60a5fa;">⚔ БЕЗ ТУТОРІАЛУ</button>
+        </div>
+      `;
+      diag.parentNode.insertBefore(card, diag);
+      
+      document.getElementById('btnTutorialStart').addEventListener('click', e => {
+        e.preventDefault();
+        document.getElementById('modeChoiceCard').style.display = 'none';
+        initTutorial();
+      });
+      
+      document.getElementById('btnSkipTutorial').addEventListener('click', e => {
+        e.preventDefault();
+        document.getElementById('modeChoiceCard').style.display = 'none';
+        GameProgress.tutorialComplete = true;
+      });
+    }
+  }, 300);
+})();
+
+window.GameProgress = GameProgress;
+window.initTutorial = initTutorial;
+window.selectDiff = selectDiff;
+window.advanceTutorial = advanceTutorial;
 </script>
 </body>
 </html>
