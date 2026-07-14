@@ -1702,10 +1702,11 @@ function removeDrop(d){
    (гілки развития ПО КАЖДОМУ оружию — следующий пласт; каркас mods уже готов.)      */
 const PICKUPS=[];
 const PICKUP_DEF={
-  up_dmg:   {col:0xef4444, label:'УРОН ×1.15',    apply(){ player.mods.dmg*=1.15; }},
+  up_dmg:   {col:0xef4444, label:'ШКОДА ×1.15',    apply(){ player.mods.dmg*=1.15; }},
   up_charge:{col:0xfbbf24, label:'ЗАРЯД ×1.2',    apply(){ player.mods.charge*=1.2; }},
   up_reach: {col:0x4ade80, label:'ДОСЯЖНІСТЬ +1', apply(){ player.mods.reach+=1; }},
   heal:     {col:0xf9a8d4, label:'+25 HP',        apply(){ player.hp=clamp(player.hp+25,0,100); }},
+  scroll:   {col:0xf5deb3, label:'📜 СУВІЙ РЕЦЕПТА', apply(){ try{ openScrollModal(); }catch(e){} }},
 };
 function spawnPickup(gx,gy,kind){
   const c=freeCellNear(gx,gy), d=PICKUP_DEF[kind];
@@ -1734,7 +1735,7 @@ function updatePickupCollect(){
       const d=PICKUP_DEF[pk.kind]; d.apply();
       showBanner('◆ '+d.label,'#'+d.col.toString(16).padStart(6,'0'));
       blip(880,0.1,'sine',0.16); blip(1180,0.08,'sine',0.12); buzz([0,30]);
-      logE('апгрейд: '+d.label+'  [урон ×'+player.mods.dmg.toFixed(2)
+      logE('апгрейд: '+d.label+'  [шкода ×'+player.mods.dmg.toFixed(2)
         +' заряд ×'+player.mods.charge.toFixed(2)+' +'+player.mods.reach+'дос]');
       removePickup(pk);
       return;
@@ -2021,7 +2022,7 @@ function resolveBurn(dt){
     if(burnCd<=0 && burnVoxelsAt(cx,cy,burnTip(cx,cy))){   // мікровокселі: пропал точки дотику
       burnCd=0.25; buzz(25);
       emitSparks(worldX(cx), TIER_H*0.6, worldZ(cy), '#ffb454', 10, 2.6);
-      logE('срезан микроблок ('+cx+','+cy+')');
+      logE('зрізано мікровоксель ('+cx+','+cy+')');
       continue;
     }
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
@@ -2064,7 +2065,7 @@ function resolveBurn(dt){
         if(owner==='forge'||owner==='algocrat') NET.hitServerEntity(owner, pi, dmg, rp);   // у них нет клиента-владельца — бьём hp напрямую
         else NET.sendPhantomHit(owner, pi, player.tier, dmg);
         burnCd=0.3;
-        doFlash('#22c55e'); buzz(40); logE('ПРОЖИГ общего фантома '+rp.key.slice(0,8)); }
+        doFlash('#22c55e'); buzz(40); logE('ПРОПАЛ спільного фантома '+rp.key.slice(0,8)); }
       continue;
     }
   }
@@ -2570,6 +2571,7 @@ function applyAdvRoom(rx,ry){
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
   }
   try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
+  try{ AUDIO.music(home?'home':(chessWhite(rx,ry)?'white':(boss?'boss':'black'))); }catch(e){}   // тема кімнати з маніфесту
   logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
 }
 function chessWhite(rx,ry){ return ((rx+ry)%2)===0; }   // ⬜ ШАХІВНИЦЯ: парна сума = біла (безпечна), (6,6)=дім=біла
@@ -2606,7 +2608,7 @@ function composeRoomEnemies(rx,ry){
    (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
 const ELEM_GAS=['H','O','Cl','co2'];                 // газоподібні елементи: прохідні, світні
-const ELEM_SOLID=['C','Si','Na','Fe','sand','salt']; // тверді елементи/продукти: блокують, руйнівні
+const ELEM_SOLID=['C','Si','Na','Fe','sand','salt','glass','steel']; // тверді елементи/продукти: блокують, руйнівні
 function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
@@ -2628,7 +2630,7 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, d);
   const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9,
     H:0xdff4ff, C:0x3a3f47, O:0x9ad1ff, Na:0xe8d27a, Si:0x9aa6b6, Cl:0xa6e86a, Fe:0xb87c55,
-    sand:0xe7d8a1, salt:0xf6e7ea, co2:0x8fa1ad};
+    sand:0xe7d8a1, salt:0xf6e7ea, co2:0x8fa1ad, glass:0xbfe8ff, steel:0x93a3b8};
   const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
   let mat;
   if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:type==='gas'?0.26:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -2915,6 +2917,7 @@ function handleDeath(av, dt){
       try{ if(window.TUT && TUT.active) TUT.onKill(av); }catch(e){}
       try{ if(av.kind==='boss' && !CRAFT.unlocked.bossTech){ CRAFT.unlocked.bossTech=true; saveCraft();
         showBanner('🪓 БОСА ПОВАЛЕНО — техніку сокири опановано, крафт у КУЗНІ','#22c55e'); } }catch(e){}
+      try{ QST.progress('hunt', null, 1); }catch(e){}
       if(equalizerOn) equalizerRebirth();   // правило равновесия: убил — сам рождён заново (тумблер в меню)
     }else{
       logE('ГРАВЕЦЬ загинув');
@@ -3048,7 +3051,7 @@ function updatePhantoms(dt){
         if(tgt.local && !player.dead){
           damageTier(player, bt, dmg); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
           if(bt===0) addExhaustion(player, 12);   // укусы утомляют → реген глохнет → дренаж копится
-          logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВЫН ')
+          logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВИТР ')
             + Math.round(bt===0?player.stamina:player.hp));
         }else if(!tgt.local){ NET.sendHit(tgt.id, bt, dmg, 'phantom'); ai.burnCd=0.8; }
       }
@@ -3280,13 +3283,14 @@ document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
 // a+b рядом (+heat: плазма в 4-соседстве) → продукт на месте b; keepA: a — катализатор/среда;
 // both: исчезают оба; out:null — b растворяется; boom: вспышка-взрыв.
 const REACTIONS=[
-  {a:'plasma', b:'liquid', keepA:true,           out:{type:'fragile',tint:0xbfe8ff,alpha:0.35}, log:'плазма+жидкость → СТЕКЛО'},
-  {a:'plasma', b:'sand',   keepA:true,           out:{type:'fragile',tint:0xbfe8ff,alpha:0.35}, log:'плазма+песок → СТЕКЛО'},
-  {a:'Si',     b:'O',      heat:true, both:true, out:{type:'sand'},                             log:'Si+O(нагрев) → ПЕСОК'},
+  {a:'plasma', b:'sand',   keepA:true,           out:{type:'glass',alpha:0.5},                  log:'плазма+пісок(розплав) → СКЛО'},
+  {a:'Fe',     b:'C',      heat:true, both:true, out:{type:'steel'},                            log:'Fe+C(нагрів плазмою) → СТАЛЬ'},
+  {a:'Si',     b:'O',      heat:true, both:true, out:{type:'sand'},                             log:'Si+O(нагрів) → ПІСОК'},
   {a:'Na',     b:'Cl',     both:true,            out:{type:'salt'},                             log:'Na+Cl → СОЛЬ'},
-  {a:'C',      b:'O',      heat:true, both:true, out:{type:'co2'},                              log:'C+O(нагрев) → CO₂'},
-  {a:'H',      b:'O',      heat:true, both:true, out:{type:'liquid',tint:0x59d0ff}, boom:true,  log:'H+O(нагрев) → ВОДА'},
-  {a:'liquid', b:'salt',   keepA:true,           out:null,                                      log:'соль растворилась в жидкости'},
+  {a:'C',      b:'O',      heat:true, both:true, out:{type:'co2'},                              log:'C+O(нагрів) → CO₂'},
+  {a:'H',      b:'O',      heat:true, both:true, out:{type:'liquid',tint:0x59d0ff}, boom:true,  log:'H+O(нагрів) → ВОДА'},
+  {a:'liquid', b:'salt',   keepA:true,           out:null,                                      log:'сіль розчинилась у рідині'},
+  {a:'liquid', b:'steel',  keepA:true,           out:{type:'steel',tint:0x6f8296},              log:'ГАРТУВАННЯ: сталь у воді — міцніє'},
 ];
 function plasmaNear(gx,gy){ for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1],[0,0]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive&&o.mtype==='plasma') return true; } return false; }
 function killBlock(o){ o.alive=false; scene.remove(o.mesh); const k=obstacles.indexOf(o); if(k>=0) obstacles.splice(k,1); }
@@ -3314,7 +3318,7 @@ setInterval(()=>{ try{
         const n=obstacleAt(o.gx+ox,o.gy+oy);
         if(!n || !n.alive || n.mtype!==R.b) continue;
         if(R.heat && !plasmaNear(n.gx,n.gy)) continue;
-        logE('ХИМИЯ: '+R.log+' ('+n.gx+','+n.gy+')');
+        logE('ХІМІЯ: '+R.log+' ('+n.gx+','+n.gy+')');
         if(R.boom){ doFlash('#ffd166'); buzz([0,60]); blip(90,0.3,'sawtooth',0.22); } else doFlash('#bfe8ff');
         if(R.both && !R.keepA) killBlock(o);
         transmute(n, R.out);
@@ -3325,7 +3329,7 @@ setInterval(()=>{ try{
   if(changed) snapshotRoom();
 }catch(e){} }, 700);
 // ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
-const CREATOR_MATS=['base','fragile','liquid','gas','plasma','H','C','O','Na','Si','Cl','Fe'];
+const CREATOR_MATS=['base','fragile','liquid','gas','plasma','H','C','O','Na','Si','Cl','Fe','sand','salt'];
 const CREATOR_SHAPES=['cube','slab','post','panel'];
 const CREATOR_TINTS=[[null,'АВТО'],[0xef4444,'АЛЫЙ'],[0xf59e0b,'ЯНТАРЬ'],[0x22c55e,'ИЗУМРУД'],[0x38bdf8,'НЕБО'],[0x8b5cf6,'АМЕТИСТ'],[0xf472b6,'РОЗА'],[0xf8fafc,'СНЕГ'],[0x111827,'НОЧЬ']];
 const CREATOR_ALPHAS=[[null,'100%'],[0.7,'70%'],[0.45,'45%'],[0.22,'22%']];
@@ -3336,7 +3340,7 @@ const SUBGRIDS=[0,3,5,7,-1];              // 0 = макро-клетка, -1 = �
 const MICRO={gi:0};                        // индекс в SUBGRIDS
 const microBlocks=[];                      // {gx,gy,n,sx,sy,sz,type,tint,alpha,mesh}
 const MAX_MICRO=500;
-const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9};
+const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9, glass:0xbfe8ff, steel:0x93a3b8};
 function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
 function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ МЕЖА МІКРОБЛОКІВ ('+MAX_MICRO+')','#ef4444'); return null; }
@@ -3440,9 +3444,9 @@ function aimedPoint(){
 }
 const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
 let creatorShape=0;
-const MAT_NAMES={base:'БАЗА',fragile:'ХРУПКОЕ',liquid:'ЖИДКОСТЬ',gas:'ГАЗ',plasma:'ПЛАЗМА',
-  H:'ВОДОРОД',C:'УГЛЕРОД',O:'КИСЛОРОД',Na:'НАТРИЙ',Si:'КРЕМНИЙ',Cl:'ХЛОР',Fe:'ЖЕЛЕЗО',
-  sand:'ПЕСОК',salt:'СОЛЬ',co2:'CO₂'};
+const MAT_NAMES={base:'БАЗА',fragile:'КРИХКЕ',liquid:'РІДИНА',gas:'ГАЗ',plasma:'ПЛАЗМА',
+  H:'ВОДЕНЬ',C:'ВУГЛЕЦЬ',O:'КИСЕНЬ',Na:'НАТРІЙ',Si:'КРЕМНІЙ',Cl:'ХЛОР',Fe:'ЗАЛІЗО',
+  sand:'ПІСОК',salt:'СІЛЬ',co2:'CO₂',glass:'СКЛО',steel:'СТАЛЬ'};
 let creatorMat=0;
 // Возвышение взгляда творца: телефон ВЕРТИКАЛЬНО → горизонт; ПЛАШМЯ → взгляд в пол под ноги.
 function creatorElev(){ return clamp((sensor.pitch-0.88)*1.9, -1.5, 0.9); }
@@ -3480,20 +3484,21 @@ function creatorPlace(){
     const hgt=(shp==='slab')?m*0.3:m;
     const rec=addMicro(P.gx,P.gy,n,sx,Math.round(topY/m),sz,CREATOR_MATS[creatorMat],CREATOR_TINTS[creatorTint][0],CREATOR_ALPHAS[creatorAlpha][0],shp==='cube'?null:shp,rotY,topY,hgt);
     if(rec){ snapshotRoom(); blip(680,0.04,'sine',0.08);
-      logE('микро·'+n+' '+SHAPE_NAMES[shp]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+')'); }
+      logE('мікро·'+n+' '+SHAPE_NAMES[shp]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+')'); }
     return;
   }
   const [gx,gy]=aimedCell();
   if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
-  // СТЕК: если в клетке уже есть блоки — новый ложится СВЕРХУ самого высокого
+  // СТЕК: если в клетке уже есть блоки — новый ложится СВЕРХУ самого высокого (07-14: і мікро теж)
   let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
+  for(const b of microBlocks) if(b.gx===gx&&b.gy===gy) baseY=Math.max(baseY,(b.y0||0)+(b.hgt||0));
   if(baseY>TIER_H*3.4){ blip(120,0.07,'square',0.1); return; }   // башня не выше ~4 блоков
   const taken=new Set(obstacles.filter(o=>!(o.gx===gx&&o.gy===gy)).map(o=>o.gx+','+o.gy));
   const shp=CREATOR_SHAPES[creatorShape];
   const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
   addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0],baseY);
   snapshotRoom(); blip(620,0.05,'sine',0.09);
-  logE('поставлен '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
+  logE('поставлено '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
 }
 function creatorRemove(){
   const n=SUBGRIDS[MICRO.gi];
@@ -3585,7 +3590,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-14a · ВОКСЕЛЬ-руйнування(точка-дотику+шматки+подряпини+ерозія-тіл) · сокира-за-боса · кузня-fix · UA-повна';
+const BUILD_TAG='2026-07-14c · РИТУАЛИ+СУВОЇ+КВЕСТИ · СКЛО/СТАЛЬ · ГОЛОС-наставника(TTS) · 🎙ГОЛОС-ПОРУЧ(WebRTC-експ.) · БЛОК-завжди · макро-на-мікро';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -3695,7 +3700,7 @@ $('cPrefCopy').onclick=()=>{                                   // запомни
   PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt}));
   creatorTouch(); blip(760,0.06,'sine',0.1);
   showBanner('▣ ПРЕФАБ ЗБЕРЕЖЕНО: '+PREFAB.blocks.length+' кубиків','#7cc8ff');
-  logE('префаб збережено: '+PREFAB.blocks.length+' из ('+P.gx+','+P.gy+')');
+  logE('префаб збережено: '+PREFAB.blocks.length+' з ('+P.gx+','+P.gy+')');
 };
 $('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
 $('cRemove').onclick=()=>{ creatorTouch(); creatorRemove(); };
@@ -4162,7 +4167,7 @@ function frame(now){
     updateMorphVisual(now);
     updateGhost();      // призрак показывает, куда встанет блок
     creatorIdleT+=dt;   // авто-затухание панели творца через 3с бездействия (обзор чист)
-    { const cui=$('creatorUI'); if(cui) cui.style.opacity = creatorIdleT>3 ? '0.18':'1'; }
+    { const cui=$('creatorUI'); if(cui) cui.style.opacity = creatorIdleT>3 ? '0.55':'1'; }   // читабельно навіть у спокої
   } else if(mode==='fighter'){
     // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
     const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
@@ -4387,9 +4392,21 @@ function tutModal(title,html,buttons){         // buttons: [{t:текст, c:к�
     el.style.cssText='display:block;width:100%;margin-top:8px;padding:13px;font:inherit;font-size:14px;'+
       'letter-spacing:.1em;border-radius:8px;cursor:pointer;background:#0a1a30;'+
       'border:1px solid '+(b.c||'#2563eb')+';color:'+(b.c||'#60a5fa');
-    el.onclick=()=>{ tutModalEl.style.display='none'; buzz([0,30]); if(b.f)b.f(); };
+    el.onclick=()=>{ tutModalEl.style.display='none'; buzz([0,30]); try{speechSynthesis.cancel();}catch(e){} if(b.f)b.f(); };
     card.appendChild(el);
   });
+  // 🔊 НАСТАВНИК: озвучення туторіалу голосом (Web Speech, укр.); кнопка НЕ закриває вікно
+  try{ if(window.TUT && (TUT.active||TUT.requested) && ('speechSynthesis' in window)){
+    const sp=document.createElement('button');
+    const lbl=()=> sp.textContent = TTS.on?'🔊 голос наставника: УВІМК':'🔇 голос наставника: ВИМК';
+    sp.style.cssText='display:block;width:100%;margin-top:10px;padding:8px;font:inherit;font-size:11px;'+
+      'letter-spacing:.08em;border-radius:8px;background:transparent;border:1px dashed #334155;color:#64748b';
+    lbl();
+    sp.onclick=()=>{ TTS.on=!TTS.on; try{localStorage.setItem('vb3d_tts',TTS.on?'1':'0');}catch(e){}
+      lbl(); if(!TTS.on){ try{speechSynthesis.cancel();}catch(e){} } else speakTut(title+'. '+html); };
+    card.appendChild(sp);
+    speakTut(title+'. '+html);
+  } }catch(e){}
   tutModalEl.style.display='flex';
 }
 function tutHint(txt){ if(txt){ tutHintEl.textContent=txt; tutHintEl.style.display='block'; } else tutHintEl.style.display='none'; }
@@ -4573,6 +4590,15 @@ setInterval(()=>{
       } }
   }
   tickTrader(0.16);
+  try{ if(QPLATE.mesh && ADV.on && mode==='fighter' && !player.dead){
+    QPLATE.mesh.material.opacity=0.35+0.25*Math.sin(performance.now()*0.005);
+    if(player.gx===QPLATE.gx && player.gy===QPLATE.gy){
+      QPLATE.standT+=0.16;
+      if(QPLATE.standT>=1.2){ QPLATE.standT=-3;
+        if(QST.a) tutModal('🎯 ЗАВДАННЯ ТРИВАЄ', QST.text(QST.a)+'<br>Поступ: <b>'+QST.a.prog+' / '+QST.a.goal+'</b>', [{t:'ГАРАЗД'}]);
+        else QST.offer(QPLATE.seed); }
+    } else QPLATE.standT=0;
+  } }catch(e){}
 },160);
 
 /* ════ ВОКСЕЛЬНЕ РУЙНУВАННЯ (07-14): блок = частинки, пропал у точці дотику ════
@@ -4626,6 +4652,7 @@ function burnVoxelsAt(gx,gy,tip){
         const kind=RES_OF[reg.mtype];
         if(kind){ const amt=1+(Math.random()<0.35?1:0);
           RES[kind]+=amt; saveRes(); resHUD();
+          try{ QST.progress('mine', kind, amt); }catch(e){}
           showBanner('⛏ ВИДОБУТО ВЩЕНТ: +'+amt+' '+RES_ICON[kind]+' '+RES_NAME[kind]+' (разом '+RES[kind]+')','#a7f3d0'); }
         try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
         logE('блок ('+gx+','+gy+') випалено вщент'); } }
@@ -4679,6 +4706,130 @@ function erodePart(av){
   }catch(e){}
 }
 
+/* ════ РИТУАЛЬНИЙ КРАФТ (07-14): викладай блоки на підлозі — світ сам відповість ════
+   Хімічні ланцюги (двигун REACTIONS): Si+O+плазма → ПІСОК; плазма+пісок → СКЛО;
+   Fe+C+плазма → СТАЛЬ; сталь+вода → гартування. РИТУАЛИ вищого порядку сканують
+   візерунок навколо ПЛАЗМИ у будь-якій з 4 орієнтацій. Рецепти — у сувоях ⬜ кімнат. */
+const RITUALS=[
+  { name:'БЛАСТЕР', done:()=>CRAFT.unlocked.blaster,
+    cells:[[0,-1,'steel'],[0,1,'glass']],   // ▦СТАЛЬ — 🜂ПЛАЗМА — ◇СКЛО у ряд
+    grant(){ CRAFT.unlocked.blaster=true; saveCraft(); try{ if(ADV.on&&advHome())buildRacks(); }catch(e){}
+      showBanner('🜍 РИТУАЛ ЗАВЕРШЕНО: БЛАСТЕР ЗДОБУТО — стійка вдома','#e879f9'); } },
+  { name:'ЖЕРТВА ДУШ', done:()=>false,
+    cells:[[-1,0,'salt'],[1,0,'salt']],     // СІЛЬ — 🜂ПЛАЗМА — СІЛЬ: 3 душі → ◆ кристал
+    grant(){ if((player.score||0)>=3){ player.score-=3; RES.crystal+=1; saveRes(); resHUD();
+        showBanner('🜏 ЖЕРТВА ПРИЙНЯТА: −3 душі → +1 ◆ кристал','#a78bfa'); }
+      else showBanner('🜏 ритуал вимагає 3 душі (рахунок)','#94a3b8'); } },
+];
+const ROTS=[(x,y)=>[x,y],(x,y)=>[y,-x],(x,y)=>[-x,-y],(x,y)=>[-y,x]];
+setInterval(()=>{ try{
+  for(const p of obstacles){
+    if(!p.alive || p.mtype!=='plasma') continue;
+    for(const R of RITUALS){
+      if(R.done()) continue;
+      for(const rot of ROTS){
+        const found=[];
+        let ok=true;
+        for(const [ox,oy,mt] of R.cells){
+          const [rx,ry]=rot(ox,oy);
+          const o=obstacleAt(p.gx+rx, p.gy+ry);
+          if(!o || !o.alive || o.mtype!==mt){ ok=false; break; }
+          found.push(o);
+        }
+        if(ok){
+          for(const o of found) killBlock(o);
+          killBlock(p);
+          doFlash('#e879f9'); buzz([0,70,50,140]); blip(880,0.3,'sine',0.2);
+          logE('РИТУАЛ «'+R.name+'» здійснено ('+p.gx+','+p.gy+')');
+          R.grant(); snapshotRoom();
+          return;   // один ритуал за тік
+        }
+      }
+    }
+  }
+}catch(e){} }, 900);
+
+/* ── КОДЕКС: знайдені сувої-рецепти ── */
+const SCROLLS={
+  glass:{ t:'📜 РЕЦЕПТ: СКЛО ◇', d:'1) Постав <b>КРЕМНІЙ (Si)</b> поруч із <b>КИСНЕМ (O)</b>, поруч — <b>ПЛАЗМУ</b> (нагрів) → буде ПІСОК.<br>2) <b>ПЛАЗМА</b> поруч із <b>ПІСКОМ</b> — розплав → <b>СКЛО ◇</b>.<br>Рубай скло клинком — збереш ресурс.' },
+  steel:{ t:'📜 РЕЦЕПТ: СТАЛЬ ▦', d:'Постав <b>ЗАЛІЗО (Fe)</b> поруч із <b>ВУГЛЕЦЕМ (C)</b> і піднеси <b>ПЛАЗМУ</b> → <b>СТАЛЬ ▦</b>.<br>Порада: сталь поруч із <b>ВОДОЮ</b> гартується (міцніє).' },
+  blaster:{ t:'📜 РИТУАЛ: БЛАСТЕР 🜍', d:'Виклади на підлозі У РЯД:<br><br><b>▦ СТАЛЬ · 🜂 ПЛАЗМА · ◇ СКЛО</b><br><br>(будь-яка орієнтація; блоки ставляться у режимі 🔨 ТВОРЕЦЬ). Ритуал поглине блоки і дарує зброю.' },
+  sacrifice:{ t:'📜 РИТУАЛ: ЖЕРТВА ДУШ 🜏', d:'Виклади У РЯД: <b>СІЛЬ · 🜂 ПЛАЗМА · СІЛЬ</b>.<br>Ритуал забере <b>3 душі</b> (рахунок) і поверне <b>◆ кристал</b>.' },
+};
+const CODEX={
+  list(){ try{ return JSON.parse(localStorage.getItem('vb3d_codex')||'[]'); }catch(e){ return []; } },
+  add(k){ const l=this.list(); if(!l.includes(k)){ l.push(k); try{ localStorage.setItem('vb3d_codex',JSON.stringify(l)); }catch(e){} return true; } return false; }
+};
+function openScrollModal(){
+  const known=CODEX.list(), pool=Object.keys(SCROLLS).filter(k=>!known.includes(k));
+  const k=pool.length? pool[Math.floor(Math.random()*pool.length)] : Object.keys(SCROLLS)[Math.floor(Math.random()*4)];
+  CODEX.add(k);
+  const sc=SCROLLS[k];
+  tutModal(sc.t, sc.d+'<br><br><i>Збережено у КОДЕКС — переглянь у 🔥 КУЗНІ вдома.</i>', [{t:'ЗБЕРЕГТИ ▷'}]);
+  logE('сувій знайдено: '+k);
+}
+function openCodexModal(){
+  const known=CODEX.list();
+  if(!known.length){ tutModal('📜 КОДЕКС ПОРОЖНІЙ','Сувої-рецепти лежать у ⬜ білих кімнатах — шукай бежеві октаедри.',[{t:'ЗРОЗУМІЛО'}]); return; }
+  tutModal('📜 КОДЕКС РЕЦЕПТІВ', known.map(k=>'<div style="margin-bottom:12px"><b>'+SCROLLS[k].t+'</b><br>'+SCROLLS[k].d+'</div>').join(''), [{t:'ЗАКРИТИ'}]);
+}
+
+/* ════ КВЕСТИ (07-14): плита-завдання у ⬜, нагорода — рідкісні матеріали ════ */
+const QPLATE={mesh:null,gx:0,gy:0,standT:0,seed:0};
+const QST={
+  a:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_quest')||'null'); }catch(e){ return null; } })(),
+  save(){ try{ localStorage.setItem('vb3d_quest', JSON.stringify(this.a)); }catch(e){} },
+  offer(seed){
+    if(this.a) return;
+    const rng=mulberry32(seed);
+    const deep=Math.round(rng()*2);
+    const q = rng()<0.55
+      ? { t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3, prog:0 }
+      : { t:'hunt', kind:null, goal:3+deep*2, prog:0 };
+    q.reward = rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2});
+    this.a=q; this.save(); this.hud();
+    const rk=Object.keys(q.reward)[0];
+    tutModal('🎯 ЗАВДАННЯ ПРИЙНЯТО', this.text(q)+'<br><br>Нагорода: <b>+'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+'</b> + 5 душ.<br><i>Виконається сама — стеж за рядком угорі.</i>', [{t:'ДО СПРАВИ ▷'}]);
+  },
+  text(q){ return q.t==='mine'
+    ? 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)'
+    : 'Розвтіли <b>'+q.goal+' фантомів</b>'; },
+  progress(t,kind,amt){
+    const q=this.a; if(!q || q.t!==t) return;
+    if(t==='mine' && q.kind!==kind) return;
+    q.prog=Math.min(q.goal, q.prog+(amt||1)); this.save(); this.hud();
+    if(q.prog>=q.goal){
+      const rk=Object.keys(q.reward)[0];
+      RES[rk]=(RES[rk]||0)+q.reward[rk]; player.score=(player.score||0)+5;
+      saveRes(); resHUD();
+      showBanner('🎯 ЗАВДАННЯ ВИКОНАНО: +'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+' +5 душ','#4ade80');
+      buzz([0,60,40,120]); logE('квест виконано: '+q.t);
+      this.a=null; this.save(); this.hud();
+    }
+  },
+  hud(){
+    const q=this.a;
+    qstHudEl.style.display=q?'block':'none';
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?RES_ICON[q.kind]:'☠')+' '+q.prog+' / '+q.goal;
+  }
+};
+const qstHudEl=document.createElement('div');
+qstHudEl.style.cssText='position:fixed;left:10px;bottom:78px;z-index:22;display:none;padding:6px 10px;'+
+  'background:rgba(2,12,26,.8);border:1px solid #14532d;border-radius:8px;color:#86efac;'+
+  'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
+document.body.appendChild(qstHudEl);
+QST.hud();
+function clearQuestPlate(){ if(QPLATE.mesh){ try{scene.remove(QPLATE.mesh);}catch(e){} QPLATE.mesh=null; } QPLATE.standT=0; }
+function makeQuestPlate(rx,ry,rng,st){
+  let gx,gy,tries=0;
+  do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while((obstacleAt(gx,gy)||(TRADER.mesh&&TRADER.gx===gx&&TRADER.gy===gy))&&tries<20);
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.12,0.9),
+    new THREE.MeshBasicMaterial({color:0x22d3ee,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+  m.frustumCulled=false; m.position.set(worldX(gx),0.06-0.45,worldZ(gy)); scene.add(m);
+  QPLATE.mesh=m; QPLATE.gx=gx; QPLATE.gy=gy; QPLATE.standT=0; QPLATE.seed=rx*977+ry*31+7;
+  showBanner('🎯 ЗАВДАННЯ: стань на блакитну плиту','#22d3ee');
+}
+
 /* ── МІНІМАПА мета-світу 13×13: де я у глобальному світі ── */
 const MM={seen:new Set(['6,6'])};
 const mmC=document.createElement('canvas'); mmC.width=93; mmC.height=93;
@@ -4719,7 +4870,7 @@ function plantRock(gx,gy,rng){
 function advRoomExtras(rx,ry,st){
   MM.seen.add(rx+','+ry); miniMapDraw();   // мінімапа: кімнату відвідано
   clearScars(); VOXREG.clear();            // сліди косметичні; воксель-реєстр — покімнатний
-  clearTrader();
+  clearTrader(); clearQuestPlate();
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
   // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
@@ -4758,6 +4909,8 @@ function advRoomExtras(rx,ry,st){
     if(obstacleAt(gx,gy)) continue;
     spawnPickup(gx,gy,pool[Math.floor(rng()*pool.length)]);
   }
+  if(rng()<0.28) spawnPickup(2+Math.floor(rng()*9), 2+Math.floor(rng()*9), 'scroll');   // 📜 сувій рецепта
+  if(rng()<0.3+st.weight*0.35) makeQuestPlate(rx,ry,rng,st);       // 🎯 квестова плита
   if(rng()<0.3+st.weight*0.5){                                    // глибше — частіше торговець
     let gx,gy,tries=0;
     do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
@@ -4831,11 +4984,11 @@ setTimeout(()=>{
 },300);
 
 /* ════════════════════ РЕСУРСИ + КУЗНЯ (2026-07-13) ════════════════════ */
-const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0},
-  JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0}; } })();
+const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0},
+  JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0}; } })();
 function saveRes(){ try{ localStorage.setItem('vb3d_res', JSON.stringify(RES)); }catch(e){} }
-const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆'};
-const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал'};
+const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆',glass:'◇',steel:'▦'};
+const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал',glass:'скло',steel:'сталь'};
 const resHudEl=document.createElement('div');
 resHudEl.style.cssText='position:fixed;right:10px;bottom:46px;z-index:22;display:none;padding:6px 10px;'+
   'background:rgba(2,12,26,.75);border:1px solid #1e3a5f;border-radius:8px;color:#cbd5e1;'+
@@ -4844,11 +4997,11 @@ document.body.appendChild(resHudEl);
 function resHUD(){
   const any=RES.wood||RES.stone||RES.iron||RES.crystal;
   resHudEl.style.display=(any||ADV.on)?'block':'none';
-  resHudEl.textContent='🪵'+RES.wood+'  🪨'+RES.stone+'  ⛓'+RES.iron+'  ◆'+RES.crystal;
+  resHudEl.textContent='🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+((RES.glass||RES.steel)?(' ◇'+RES.glass+' ▦'+RES.steel):'');
 }
 resHUD();
 // материал розбитого блока → ресурс
-const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone'};
+const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone', glass:'glass', steel:'steel'};
 function resFromObstacle(o){
   const kind=RES_OF[o.mtype]; if(!kind) return;
   const amt=1+(Math.random()<0.25?1:0);
@@ -4866,8 +5019,7 @@ const CRAFT={ unlocked:(()=>{ try{ return Object.assign({sword:true},
     spear:   {wood:3, iron:1},
     axe:     {wood:2, stone:2},
     whip:    {wood:2, crystal:2},
-    blaster: {iron:3, crystal:3},
-  }};
+  }};   // бластер — ТІЛЬКИ ритуалом (сталь·плазма·скло у ряд)
 function saveCraft(){ try{ localStorage.setItem('vb3d_unlocked', JSON.stringify(CRAFT.unlocked)); }catch(e){} }
 const CRAFT_CELL=[4,6];
 function recipeStr(r){ return Object.keys(r).map(k=>r[k]+RES_ICON[k]).join(' + '); }
@@ -4880,6 +5032,7 @@ function openCraftModal(){
     if(CRAFT.unlocked[w]){ rows.push({t:'✓ '+W.label+' — вже скрафчено',c:'#334155'}); continue; }
     if(w==='axe' && !CRAFT.unlocked.bossTech){
       rows.push({t:'🔒 '+W.label+' — здолай БОСА (край світу) і опануєш техніку',c:'#475569'}); continue; }
+    // (бластер не в recipes — див. ритуальний рядок нижче)
     const ok=canAfford(r);
     rows.push({t:(ok?'🔥 ':'🔒 ')+W.label+' — '+recipeStr(r), c:ok?'#22c55e':'#475569', f:ok?()=>{
       for(const k in r) RES[k]-=r[k];
@@ -4889,7 +5042,9 @@ function openCraftModal(){
       logE('КУЗНЯ: '+W.label);
     }:null});
   }
+  rows.push({t:CRAFT.unlocked.blaster?'✓ БЛАСТЕР — здобуто ритуалом':'🜍 БЛАСТЕР — лише РИТУАЛ: ▦СТАЛЬ·🜂ПЛАЗМА·◇СКЛО у ряд на підлозі',c:CRAFT.unlocked.blaster?'#334155':'#e879f9'});
   rows.push({t:'🌀 ЦІП — не крафтиться: активація на його стійці, 2⛓+2◆ на '+FLAIL_DUR+'с',c:'#a78bfa'});
+  rows.push({t:'📜 РЕЦЕПТИ-СУВОЇ ('+CODEX.list().length+')',c:'#f5deb3',f:()=>setTimeout(openCodexModal,50)});
   rows.push({t:'ЗАКРИТИ',c:'#64748b'});
   tutModal('🔥 КУЗНЯ','Маєш: 🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+
     '<br>Ресурси видобуваються у ⬜ білих кімнатах: рубай <b>дерева</b> (🪵), <b>скелі</b> (🪨), '+
@@ -4923,6 +5078,132 @@ setInterval(()=>{
   } else FLAIL.t=0;
   resHUD(); miniMapDraw();
 },160);
+/* ════ ГОЛОС НАСТАВНИКА (Web Speech API, укр. голос якщо є в системі) ════ */
+const TTS={ on:(()=>{ try{ return (localStorage.getItem('vb3d_tts')??'1')==='1'; }catch(e){ return true; } })(), v:null };
+function ttsPick(){ try{ const vs=speechSynthesis.getVoices();
+  TTS.v = vs.find(v=>/^uk/i.test(v.lang)) || vs.find(v=>/ukrain/i.test(v.name)) || null; }catch(e){} }
+if('speechSynthesis' in window){ ttsPick(); try{ speechSynthesis.onvoiceschanged=ttsPick; }catch(e){} }
+function speakTut(html){
+  if(!TTS.on || !('speechSynthesis' in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const txt=String(html)
+      .replace(/<br\s*\/?>/gi,'. ').replace(/<[^>]+>/g,' ')
+      .replace(/[📚📷⚡🔺✨⚔🔥🏁🎓👣🌀🛒⛏🪓🜍🜏🎯📜◆◇▦⬜⬛🪵🪨⛓·▷×→]/g,' ')
+      .replace(/\s+/g,' ').trim();
+    if(!txt) return;
+    const u=new SpeechSynthesisUtterance(txt);
+    if(TTS.v) u.voice=TTS.v;
+    u.lang=(TTS.v&&TTS.v.lang)||'uk-UA'; u.rate=1.04; u.pitch=0.95;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+/* ════ ГОЛОСОВИЙ ЧАТ «ПОРУЧ» (07-14, ЕКСПЕРИМЕНТ) ═══════════════════════════
+   WebRTC-mesh між гравцями ОДНІЄЇ кімнати (у пригоді мета-кімната спільна за
+   консенсусом — тож усі, хто поруч, і є співрозмовники). Сигналінг — гілка
+   blade/{room}/rtc/{to}/{from}/{ts} у тій самій Firebase. Гучність чужого голосу
+   спадає з відстанню по сітці: поруч — голосно, >16 клітин — тиша.            */
+const VC={ on:false, stream:null, pcs:{}, els:{}, seen:{}, unsub:null,
+  path(to){ return 'blade/'+NET.room+'/rtc/'+to+'/'+NET.myId; },
+  send(to,msg){ try{ msg.t=Date.now(); set(ref(NET.db, this.path(to)+'/'+msg.t+'_'+Math.floor(Math.random()*999)), JSON.stringify(msg)); }catch(e){} },
+  async enable(){
+    if(this.on) return;
+    try{
+      this.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    }catch(e){ showBanner('🎙 мікрофон недоступний — дозвіл відхилено','#ef4444'); return; }
+    this.on=true;
+    try{
+      const inbox=ref(NET.db,'blade/'+NET.room+'/rtc/'+NET.myId);
+      this.unsub=onValue(inbox, snap=>{ const v=snap.val(); if(!v) return;
+        for(const from in v) for(const k in v[from]){
+          if(this.seen[from+k]) continue; this.seen[from+k]=1;
+          let m; try{ m=JSON.parse(v[from][k]); }catch(e){ continue; }
+          this.onMsg(from,m);
+        } });
+      onDisconnect(inbox).remove();
+    }catch(e){}
+    showBanner('🎙 ГОЛОС ПОРУЧ УВІМКНЕНО — чути гравців поблизу','#4ade80');
+    logE('VC: увімкнено');
+  },
+  disable(){
+    if(!this.on) return; this.on=false;
+    try{ this.stream&&this.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    this.stream=null;
+    for(const id in this.pcs){ try{ this.pcs[id].close(); }catch(e){} }
+    for(const id in this.els){ try{ this.els[id].remove(); }catch(e){} }
+    this.pcs={}; this.els={}; this.seen={};
+    try{ this.unsub&&this.unsub(); }catch(e){}
+    try{ remove(ref(NET.db,'blade/'+NET.room+'/rtc/'+NET.myId)); }catch(e){}
+    showBanner('🎙 голос вимкнено','#94a3b8'); logE('VC: вимкнено');
+  },
+  pc(id, initiator){
+    if(this.pcs[id]) return this.pcs[id];
+    const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
+    this.pcs[id]=pc;
+    try{ this.stream.getTracks().forEach(t=>pc.addTrack(t,this.stream)); }catch(e){}
+    pc.onicecandidate=e=>{ if(e.candidate) this.send(id,{y:'c',c:e.candidate.toJSON()}); };
+    pc.ontrack=e=>{
+      let el=this.els[id];
+      if(!el){ el=document.createElement('audio'); el.autoplay=true; el.playsInline=true;
+        el.style.display='none'; document.body.appendChild(el); this.els[id]=el; }
+      el.srcObject=e.streams[0]; el.play&&el.play().catch(()=>{});
+    };
+    pc.onconnectionstatechange=()=>{ if(/failed|closed/.test(pc.connectionState)){ this.drop(id); } };
+    if(initiator){
+      pc.onnegotiationneeded=async()=>{ try{
+        const o=await pc.createOffer(); await pc.setLocalDescription(o);
+        this.send(id,{y:'o',s:pc.localDescription.sdp});
+      }catch(e){} };
+    }
+    return pc;
+  },
+  drop(id){ try{ this.pcs[id]&&this.pcs[id].close(); }catch(e){} delete this.pcs[id];
+    if(this.els[id]){ try{ this.els[id].remove(); }catch(e){} delete this.els[id]; } },
+  async onMsg(from,m){
+    if(!this.on) return;
+    try{
+      if(m.y==='o'){ const pc=this.pc(from,false);
+        await pc.setRemoteDescription({type:'offer',sdp:m.s});
+        const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+        this.send(from,{y:'a',s:pc.localDescription.sdp});
+      }else if(m.y==='a'){ const pc=this.pcs[from]; if(pc) await pc.setRemoteDescription({type:'answer',sdp:m.s});
+      }else if(m.y==='c'){ const pc=this.pcs[from]; if(pc) await pc.addIceCandidate(m.c).catch(()=>{}); }
+    }catch(e){ console.warn('VC msg',e); }
+  }
+};
+setInterval(()=>{ try{
+  if(!VC.on || !NET.online) return;
+  for(const id in NET.remotes){
+    const r=NET.remotes[id]; if(!r) continue;
+    if(!VC.pcs[id] && NET.myId<id) VC.pc(id,true);        // ініціатор — менший id (без дзеркальних офферів)
+    const el=VC.els[id];
+    if(el){ const d=Math.abs((r.gx??6)-player.gx)+Math.abs((r.gy??6)-player.gy);
+      el.volume=clamp(1-d/16,0,1); }                       // ГОЛОС СПАДАЄ З ВІДСТАННЮ
+  }
+  for(const id in VC.pcs) if(!NET.remotes[id]) VC.drop(id);   // пішов з кімнати — тиша
+}catch(e){} }, 1000);
+// кнопка в меню паузи
+setTimeout(()=>{ try{
+  const b=document.createElement('button'); b.id='mVoice';
+  const lbl=()=> b.textContent='🎙 ГОЛОС ПОРУЧ: '+(VC.on?'УВІМК':'ВИМК');
+  lbl();
+  $('mNew').parentNode.insertBefore(b, $('mNew'));
+  b.onclick=()=>{ if(VC.on) VC.disable(); else VC.enable(); setTimeout(lbl,400); };
+}catch(e){} }, 600);
+
+/* ════ БЛОК-кнопка творця — завжди на екрані (не свайпається, не блякне) ════ */
+setTimeout(()=>{ try{
+  const cp=$('cPlace'); if(!cp) return;
+  const wrap=document.createElement('div'); wrap.id='cPlaceWrap';
+  wrap.style.cssText='position:fixed;right:12px;bottom:80px;z-index:22;display:none';
+  document.body.appendChild(wrap); wrap.appendChild(cp);
+  cp.style.cssText+=';padding:18px 22px;font-size:15px;box-shadow:0 2px 16px rgba(0,0,0,.5);opacity:1';
+  setInterval(()=>{ try{
+    wrap.style.display = ($('creatorUI').style.display==='flex'||$('creatorUI').style.display==='block') ? 'block' : ($('creatorUI').style.display===''?'none':'none');
+    if(mode==='creator' && started) wrap.style.display='block'; else wrap.style.display='none';
+  }catch(e){} }, 400);
+}catch(e){} }, 500);
 </script>
 </body>
 </html>
