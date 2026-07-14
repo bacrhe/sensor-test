@@ -2037,7 +2037,7 @@ function resolveBurn(dt){
     if(ph){
       if(burnCd>0) continue;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
-      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg);
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg*((window.ENCH&&ENCH.t>0)?1.3:1));   // 🔥 плазмовий клинок
       if(ph.kind==='boss'){
         const [fdx,fdy]=DIRV[ph.dirIdx];
         const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
@@ -2897,6 +2897,7 @@ function equalizerRebirth(){
 function clearClinch(){
   if(!clinch.active) return;
   clinch.active=false; clinch.foe=null; clinch.delta=0; setWorldMuffle(0);
+  try{ hideAstral(); }catch(e){}   // ФІКС 07-14: смерть у клінчі лишала заморожене лезо висіти в повітрі
   if(navigator.vibrate) navigator.vibrate(0);
 }
 function handleDeath(av, dt){
@@ -3590,7 +3591,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-14c · РИТУАЛИ+СУВОЇ+КВЕСТИ · СКЛО/СТАЛЬ · ГОЛОС-наставника(TTS) · 🎙ГОЛОС-ПОРУЧ(WebRTC-експ.) · БЛОК-завжди · макро-на-мікро';
+const BUILD_TAG='2026-07-14d · МОРЗЕ-ЗАКЛЯТТЯ(тапи·−→елемент-у-погляд·плазма-палить·енчант-клинка) · фікс-астрального-леза · квест-каст';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4626,14 +4627,14 @@ function voxelizeObstacle(o){
   else if(shape==='panel') cols=[[0,1],[1,1],[2,1]];
   else { cols=[]; for(let sx=0;sx<3;sx++)for(let sz=0;sz<3;sz++)cols.push([sx,sz]); }
   if(microBlocks.length + cols.length*hV > MAX_MICRO-10) return false;   // ліміт — fallback на HP
-  const mt=o.mtype||'amber', tint=o.tint??null, alpha=o.alpha??null;
+  const mt=o.mtype||'amber', tint=o.tint??null, alpha=o.alpha??null, noRes=!!o.noRes;
   o.alive=false; if(o.mesh) scene.remove(o.mesh);
   const oi=obstacles.indexOf(o); if(oi>=0) obstacles.splice(oi,1);
   let cnt=0;
   for(const [sx,sz] of cols) for(let sy=0;sy<hV;sy++){
     if(addMicro(gx,gy,n,sx,sy,sz,mt,tint,alpha,null,0,baseY+sy*m,m)) cnt++;
   }
-  VOXREG.set(gx+','+gy,{mtype:mt,total:cnt,left:cnt});
+  VOXREG.set(gx+','+gy,{mtype:mt,total:cnt,left:cnt,noRes});
   snapshotRoom();
   return cnt>0;
 }
@@ -4649,7 +4650,7 @@ function burnVoxelsAt(gx,gy,tip){
     const reg=VOXREG.get(gx+','+gy);
     if(reg){ reg.left--;
       if(reg.left<=0){ VOXREG.delete(gx+','+gy);
-        const kind=RES_OF[reg.mtype];
+        const kind=reg.noRes?null:RES_OF[reg.mtype];
         if(kind){ const amt=1+(Math.random()<0.35?1:0);
           RES[kind]+=amt; saveRes(); resHUD();
           try{ QST.progress('mine', kind, amt); }catch(e){}
@@ -4755,6 +4756,10 @@ const SCROLLS={
   steel:{ t:'📜 РЕЦЕПТ: СТАЛЬ ▦', d:'Постав <b>ЗАЛІЗО (Fe)</b> поруч із <b>ВУГЛЕЦЕМ (C)</b> і піднеси <b>ПЛАЗМУ</b> → <b>СТАЛЬ ▦</b>.<br>Порада: сталь поруч із <b>ВОДОЮ</b> гартується (міцніє).' },
   blaster:{ t:'📜 РИТУАЛ: БЛАСТЕР 🜍', d:'Виклади на підлозі У РЯД:<br><br><b>▦ СТАЛЬ · 🜂 ПЛАЗМА · ◇ СКЛО</b><br><br>(будь-яка орієнтація; блоки ставляться у режимі 🔨 ТВОРЕЦЬ). Ритуал поглине блоки і дарує зброю.' },
   sacrifice:{ t:'📜 РИТУАЛ: ЖЕРТВА ДУШ 🜏', d:'Виклади У РЯД: <b>СІЛЬ · 🜂 ПЛАЗМА · СІЛЬ</b>.<br>Ритуал забере <b>3 душі</b> (рахунок) і поверне <b>◆ кристал</b>.' },
+  morse:{ t:'📜 АБЕТКА МОРЗЕ-ЗАКЛЯТЬ ⚡', d:'Тапай по екрану: <b>короткий тап «·»</b>, <b>довгий «−»</b>. Пауза — кінець літери, довша пауза — закляття летить у клітинку, куди дивишся (1 душа).<br><br>'+
+    '<b>P</b> ·−−· ПЛАЗМА (палить істот!)<br><b>W</b> ·−− ВОДА · <b>G</b> −−· ГАЗ<br>'+
+    '<b>H</b> ···· · <b>C</b> −·−· · <b>O</b> −−−<br><b>FE</b> ··−· / · ЗАЛІЗО · <b>SI</b> ··· / ·· КРЕМНІЙ<br><b>NA</b> −· / ·− НАТРІЙ · <b>CL</b> −·−· / ·−·· ХЛОР<br><br>'+
+    'У МАЯКУ (боком) промов <b>P</b> — <b>плазмовий клинок</b> на 25с (+30% шкоди).' },
 };
 const CODEX={
   list(){ try{ return JSON.parse(localStorage.getItem('vb3d_codex')||'[]'); }catch(e){ return []; } },
@@ -4783,9 +4788,12 @@ const QST={
     if(this.a) return;
     const rng=mulberry32(seed);
     const deep=Math.round(rng()*2);
-    const q = rng()<0.55
+    const r0=rng();
+    const q = r0<0.45
       ? { t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3, prog:0 }
-      : { t:'hunt', kind:null, goal:3+deep*2, prog:0 };
+      : (r0<0.8
+      ? { t:'hunt', kind:null, goal:3+deep*2, prog:0 }
+      : { t:'cast', kind:'plasma', goal:1+deep, prog:0 });
     q.reward = rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2});
     this.a=q; this.save(); this.hud();
     const rk=Object.keys(q.reward)[0];
@@ -4793,7 +4801,8 @@ const QST={
   },
   text(q){ return q.t==='mine'
     ? 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)'
-    : 'Розвтіли <b>'+q.goal+' фантомів</b>'; },
+    : (q.t==='hunt' ? 'Розвтіли <b>'+q.goal+' фантомів</b>'
+    : 'Промов закляттям Морзе <b>ПЛАЗМУ (P: ·−−·) '+q.goal+' раз</b> — тапай по екрану: короткий тап «·», довгий «−»'); },
   progress(t,kind,amt){
     const q=this.a; if(!q || q.t!==t) return;
     if(t==='mine' && q.kind!==kind) return;
@@ -4810,7 +4819,7 @@ const QST={
   hud(){
     const q=this.a;
     qstHudEl.style.display=q?'block':'none';
-    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?RES_ICON[q.kind]:'☠')+' '+q.prog+' / '+q.goal;
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?RES_ICON[q.kind]:(q.t==='hunt'?'☠':'⚡'))+' '+q.prog+' / '+q.goal;
   }
 };
 const qstHudEl=document.createElement('div');
@@ -5003,6 +5012,7 @@ resHUD();
 // материал розбитого блока → ресурс
 const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone', glass:'glass', steel:'steel'};
 function resFromObstacle(o){
+  if(o.noRes) return;                          // сотворене закляттям — не фармиться
   const kind=RES_OF[o.mtype]; if(!kind) return;
   const amt=1+(Math.random()<0.25?1:0);
   RES[kind]+=amt; saveRes(); resHUD();
@@ -5204,6 +5214,120 @@ setTimeout(()=>{ try{
     if(mode==='creator' && started) wrap.style.display='block'; else wrap.style.display='none';
   }catch(e){} }, 400);
 }catch(e){} }, 500);
+/* ════ МОРЗЕ-ЗАКЛЯТТЯ (07-14): магія = абетка Морзе + хімія ══════════════════
+   Тапи по екрану (не свайпи): короткий «·», довгий «−». Пауза 0.9с — літера,
+   1.9с — слово летить закляттям. Слова — символи Менделєєва (H, C, O, NA, SI,
+   CL, FE) і стани: P=плазма, W=вода, G=газ. Ціль — клітинка погляду (до 4 кл.):
+   істота там — закляття б'є по ній (плазма палить); вільно — блок матеріалізу-
+   ється (1 душа; сотворене не фармиться). У МАЯКУ «P» — плазмовий клинок.     */
+const MORSE_AB={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H','..':'I',
+  '.---':'J','-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P','--.-':'Q','.-.':'R','...':'S',
+  '-':'T','..-':'U','...-':'V','.--':'W','-..-':'X','-.--':'Y','--..':'Z'};
+const SPELL_WORDS={ H:'H', C:'C', O:'O', NA:'Na', SI:'Si', CL:'Cl', FE:'Fe', P:'plasma', W:'liquid', G:'gas' };
+const SPELL_UA={ H:'ВОДЕНЬ', C:'ВУГЛЕЦЬ', O:'КИСЕНЬ', Na:'НАТРІЙ', Si:'КРЕМНІЙ', Cl:'ХЛОР', Fe:'ЗАЛІЗО',
+  plasma:'ПЛАЗМА', liquid:'ВОДА', gas:'ГАЗ' };
+const ENCH={t:0};
+window.ENCH=ENCH;
+const MI={sym:'', word:'', t0:0, lastUp:0, active:false};
+const morseHud=document.createElement('div');
+morseHud.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:23;display:none;'+
+  'padding:8px 16px;background:rgba(2,8,20,.9);border:1px solid #7c3aed;border-radius:10px;color:#c4b5fd;'+
+  'font:inherit;font-size:16px;letter-spacing:.2em;pointer-events:none';
+document.body.appendChild(morseHud);
+function morseShow(){ const txt=(MI.word?MI.word+' ':'')+MI.sym;
+  if(txt){ morseHud.textContent='⚡ '+txt; morseHud.style.display='block'; } else morseHud.style.display='none'; }
+function morseUiBlocked(){
+  return !started || mode!=='fighter' || paused || player.dead
+    || tutModalEl.style.display!=='none' || (window.TUT&&TUT.active&&TUT.stage>=0&&TUT.stage<=2);
+}
+window.addEventListener('touchstart',e=>{
+  if(morseUiBlocked()) return;
+  if(e.target && e.target.closest && e.target.closest('button,#menu,#creatorUI,#gate,a,input')) return;
+  MI.t0=performance.now(); MI.sx=e.touches[0].clientX; MI.sy=e.touches[0].clientY; MI.active=true;
+},{passive:true});
+window.addEventListener('touchend',e=>{
+  if(!MI.active) return; MI.active=false;
+  if(morseUiBlocked()) return;
+  const t=e.changedTouches&&e.changedTouches[0];
+  if(t && MI.sx!=null && Math.hypot(t.clientX-MI.sx, t.clientY-MI.sy)>24) return;   // свайп — це крок, не символ
+  const dur=performance.now()-MI.t0;
+  if(dur>900) return;                                                              // довгий притиск — не символ
+  MI.sym += dur<280 ? '.' : '-';
+  MI.lastUp=performance.now();
+  blip(dur<280?900:520, dur<280?0.06:0.16, 'sine', 0.12);
+  morseShow();
+},{passive:true});
+setInterval(()=>{ try{
+  if(!MI.sym && !MI.word) return;
+  const idle=performance.now()-MI.lastUp;
+  if(MI.sym && idle>900){                             // пауза — літера
+    const L=MORSE_AB[MI.sym]||'?';
+    MI.word+=L; MI.sym=''; morseShow();
+  }
+  if(!MI.sym && MI.word && idle>1900){                // довша пауза — КАСТ
+    const w=MI.word; MI.word=''; morseShow();
+    castSpell(w);
+  }
+}catch(e){} },120);
+function castSpell(word){
+  const mt=SPELL_WORDS[word];
+  if(!mt){ showBanner('⚡ невідоме слово: «'+word+'» — абетка у 📜 КОДЕКСІ','#94a3b8'); logE('морзе: невідоме '+word); return; }
+  // ЕНЧАНТ: у МАЯКУ плазма лягає на власний клинок
+  if(player.beaconLatch && mt==='plasma'){
+    ENCH.t=25;
+    showBanner('🔥 ПЛАЗМОВИЙ КЛИНОК: +30% шкоди на 25с','#f97316');
+    doFlash('#f97316'); buzz([0,60,40,80]); logE('закляття: плазмовий клинок');
+    try{ QST.progress('cast','plasma',1); }catch(e){}
+    return;
+  }
+  const v=dirXZ(sensor.yawFused||0);
+  for(let i=1;i<=4;i++){
+    const cx=Math.round(player.gx+v[0]*i), cy=Math.round(player.gy+v[1]*i);
+    if(cx<1||cx>11||cy<1||cy>11) break;
+    const ph=phantomAtCell(cx,cy);
+    if(ph){                                            // закляття на істоту
+      if((player.score||0)<1){ showBanner('⚡ треба 1 душа','#94a3b8'); return; }
+      player.score-=1;
+      if(mt==='plasma'){
+        damageTier(ph,1,30); ph.hitGlow=0.4;
+        try{ const tp={x:worldX(cx),y:TIER_H,z:worldZ(cy)}; for(let k=0;k<4;k++) spawnChunk(tp,0xf97316); }catch(e){}
+        showBanner('🔥 ПЛАЗМА ПАЛИТЬ '+(ph.kind==='boss'?'БОСА':'фантома')+' −30','#f97316');
+        logE('закляття: плазма по істоті');
+      }else{
+        damageTier(ph,1,8);
+        showBanner('⚡ '+SPELL_UA[mt]+' поглинуто істотою −8','#a78bfa');
+      }
+      doFlash('#a78bfa'); buzz([0,50]);
+      try{ QST.progress('cast',mt,1); }catch(e){}
+      return;
+    }
+    if(obstacleAt(cx,cy)){ showBanner('⚡ погляд упирається у блок — закляття згасло','#94a3b8'); return; }
+    // вільна клітинка: МАТЕРІАЛІЗАЦІЯ
+    if((player.score||0)<1){ showBanner('⚡ треба 1 душа для матеріалізації','#94a3b8'); return; }
+    player.score-=1;
+    addObstacle(cx,cy,mt,new Set());
+    const o=obstacles[obstacles.length-1];
+    if(o && o.gx===cx && o.gy===cy) o.noRes=true;      // сотворене — не фармиться
+    snapshotRoom();
+    showBanner('⚡ '+SPELL_UA[mt]+' → ('+cx+','+cy+')  (−1 душа)','#c4b5fd');
+    doFlash('#7c3aed'); buzz([0,40,30,60]); blip(760,0.2,'sine',0.15);
+    logE('закляття: '+SPELL_UA[mt]+' у ('+cx+','+cy+')');
+    try{ QST.progress('cast',mt,1); }catch(e){}
+    return;
+  }
+  showBanner('⚡ нема куди — підійди ближче','#94a3b8');
+}
+// відлік енчанту — у спільному ритмі
+setInterval(()=>{ try{
+  if(ENCH.t>0){ ENCH.t-=0.16;
+    if(ENCH.t<=0){ ENCH.t=0; showBanner('🔥 плазма на клинку згасла','#94a3b8'); } }
+}catch(e){} },160);
+// довідник у меню паузи
+setTimeout(()=>{ try{
+  const b=document.createElement('button'); b.id='mMorse'; b.textContent='⚡ МОРЗЕ-ЗАКЛЯТТЯ (довідник)';
+  $('mNew').parentNode.insertBefore(b, $('mNew'));
+  b.onclick=()=>{ closeMenu(); tutModal(SCROLLS.morse.t, SCROLLS.morse.d, [{t:'ЗРОЗУМІЛО ▷'}]); };
+}catch(e){} }, 700);
 </script>
 </body>
 </html>
