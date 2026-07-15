@@ -381,7 +381,8 @@ function orientationHeading(alpha,beta){
 let haveAbsOrient=false;
 function onOrient(e){
   // beta — запасной наклон (используется, только если нет гравитации)
-  if(e.beta!=null && !sensor.haveGrav) sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
+  if(e.beta!=null && !sensor.haveGrav){ sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
+    sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }   // елевація задньої кришки (fallback без грав.)
   if(e.gamma!=null) sensor.roll = e.gamma;
   if(e.alpha!=null && !isNaN(e.alpha)){
     if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютний азимут активний (orientation.absolute)'); }
@@ -404,6 +405,10 @@ function onMotion(e){
   const gg = e.accelerationIncludingGravity;
   if(gg){
     if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
+    // ВИДОШУКАЧ (07-15): елевація ЗАДНЬОЇ КРИШКИ (-Z пристрою). Екран догори → кришка
+    // дивиться в підлогу → -1; телефон вертикально (будь-яка орієнтація!) → 0 (горизонт);
+    // «фотографуєш небо» → +1. Це і є метафора справжньої камери — працює і боком.
+    if(gg.z!=null) sensor.camPitchRaw = clamp(-GRAV_SIGN*gg.z/9.4, -1, 1);
     if(gg.z!=null) sensor.gz = gg.z;
   }
   // level (для отладки/HUD): 1 ровно, 0 вертикально
@@ -484,9 +489,9 @@ function initAudio(){
     // worldFilter: lowpass — при рассинхроне опускаем частоту (глухота)
     worldFilter = AC.createBiquadFilter();
     worldFilter.type='lowpass'; worldFilter.frequency.value=18000; worldFilter.connect(master);
-    // ambient — низкий дрон мира
+    // (07-15) дрон світу 42Гц ВИМКНЕНО назавжди — грає лише музика і точкові звуки.
     const amb = AC.createOscillator(); amb.type='sine'; amb.frequency.value=42;
-    ambGain = AC.createGain(); ambGain.gain.value=0.05;
+    ambGain = AC.createGain(); ambGain.gain.value=0.0;
     amb.connect(ambGain); ambGain.connect(worldFilter); amb.start();
     // sword hum — пространственный источник (остаётся в точке блокировки при клинче)
     swordOsc = AC.createOscillator(); swordOsc.type='sawtooth'; swordOsc.frequency.value=120;
@@ -512,8 +517,10 @@ function setListener(camera){
     L.setOrientation(listenerForward.x,listenerForward.y,listenerForward.z, listenerUp.x,listenerUp.y,listenerUp.z);
   }
   AUDIO.gridTick(1/60);
+  AUDIO.motionTick(1/60);
 }
 function setSwordSound(x,y,z, level, freq){
+  level=0;   // (07-15) постійний гул меча прибрано за відгуками — лишаються точкові звуки
   if(!swordPanner) return;
   if(swordPanner.positionX){ swordPanner.positionX.value=x; swordPanner.positionY.value=y; swordPanner.positionZ.value=z; }
   else swordPanner.setPosition(x,y,z);
@@ -531,6 +538,22 @@ const AUDIO={
   vol:{music:0.65, sfx:1.0, ambient:0.55},
   buses:{}, cache:{}, manifest:null,
   cur:null, curName:null, amb:null, ambName:null,
+  motionTick(dt){                                       // (07-15) МАХ/ЗАРЯД/ВИПАД дихають у музиці
+    try{
+      const R=this.ritual; if(!R||!R.moLP||!AC) return;
+      const sp=clamp((sensor.speed||0)/22,0,1);
+      this._mo=lerp(this._mo??0, sp, clamp(dt*9,0,1));
+      R.moLP.frequency.setTargetAtTime(lerp(18000, 1500, this._mo), AC.currentTime, 0.05);   // мах «прикриває» спектр
+      if(this.cur && this.cur.src && this.cur.src.detune){
+        let det=this._mo*90;                                              // швидкий рух — легкий підйом тону
+        if(mode==='fighter' && player){
+          if(player.beaconLatch) det=-26*(player.charge||1);              // заряд тягне музику вниз, тягуче
+          if(player.strikeT>0)   det= 170*player.strikeT/0.4;             // ВИПАД — сплеск угору
+        }
+        this.cur.src.detune.setTargetAtTime(det, AC.currentTime, 0.06);
+      }
+    }catch(e){}
+  },
   bus(name){                                            // шина громкости (лениво, когда AC уже есть)
     if(!AC) return null;
     if(!this.buses[name]){ const g=AC.createGain(); g.gain.value=this.vol[name]??1; g.connect(master||AC.destination); this.buses[name]=g; }
@@ -604,7 +627,9 @@ const AUDIO={
     R.limiter=AC.createDynamicsCompressor();
     R.limiter.threshold.value=-6; R.limiter.knee.value=4; R.limiter.ratio.value=12;
     R.limiter.attack.value=0.004; R.limiter.release.value=0.18;
-    R.limiter.connect(master||AC.destination);
+    // (07-15) РУХ КЛИНКА → музика: власний фільтр ПІСЛЯ лімітера, не чіпає гілки Ритма
+    R.moLP=AC.createBiquadFilter(); R.moLP.type='lowpass'; R.moLP.frequency.value=18000;
+    R.limiter.connect(R.moLP); R.moLP.connect(master||AC.destination);
     // ── MAIN: HP+LP последовательно (плавный «свет/вязкость» по Y без переключения type) ──
     R.hp=AC.createBiquadFilter(); R.hp.type='highpass'; R.hp.frequency.value=30;
     R.lp=AC.createBiquadFilter(); R.lp.type='lowpass';  R.lp.frequency.value=18000;
@@ -719,7 +744,7 @@ const AUDIO={
   },
   stopMusic(fade=1){ if(this.cur&&AC){ const t=AC.currentTime; this.cur.g.gain.linearRampToValueAtTime(0,t+fade);
     const old=this.cur; setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); this.cur=null; this.curName=null;
-    if(!this.ambName && ambGain) ambGain.gain.setTargetAtTime(0.05, AC.currentTime, 1); } },
+    if(!this.ambName && ambGain) ambGain.gain.setTargetAtTime(0.0, AC.currentTime, 1); } },   // дрон не повертається
 };
 AUDIO.boot();
 function blip(freq, dur, type='square', vol=0.12){
@@ -1387,7 +1412,10 @@ function updateStanceAndCamera(dt){
   const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
   camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
   const ttx=px+dx*(topV?1.4:3.2), tty=TIER_H*(topV?0.0:0.2), ttz=pz+dz*(topV?1.4:3.2);     // прицел вперёд-вниз
-  const ftx=px+dx*6,   fty=TIER_H*1.7 + sensor.pitch*4.5, ftz=pz+dz*6;   // 1-е лицо смотрит вверх/вниз по наклону (видно себе под ноги)
+  // ВИДОШУКАЧ (07-15): у МАЯКУ дивишся туди, куди «знімає» задня кришка телефону —
+  // нахили телефон як камеру вгору/вниз, і погляд піде за нею (а не за віссю «пульта»).
+  const _cp=(sensor.camPitch??sensor.pitch);
+  const ftx=px+dx*6,   fty=TIER_H*1.7 + _cp*5.2, ftz=pz+dz*6;
   camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
 }
 
@@ -3591,7 +3619,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-14d · МОРЗЕ-ЗАКЛЯТТЯ(тапи·−→елемент-у-погляд·плазма-палить·енчант-клинка) · фікс-астрального-леза · квест-каст';
+const BUILD_TAG='2026-07-15b · ТИША-дронів(42Гц+гул-меча-геть) · МУЗИКА-дихає-рухом(мах/заряд/випад) · ВИПАД-лише-з-заряду';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4173,6 +4201,7 @@ function frame(now){
     // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
     const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
     sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*10,0,1));
+    sensor.camPitch = lerp(sensor.camPitch||0, clamp(sensor.camPitchRaw||0,-1,1), clamp(dt*10,0,1));
 
     if(!clinch.active){
       // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
@@ -4183,10 +4212,8 @@ function frame(now){
       player.speedPulse = clamp(sensor.speed/16,0,0.4);
       // ЖЕСТ ВЗМАХА: резкое движение руки → видимый удар клинком (снап-выпад)
       player.swingCd = (player.swingCd||0) - dt;
-      if(sensor.speed > 11 && player.swingCd<=0 && !player.disarmed && !player.dead){
-        player.strikeT = STRIKE_DUR; player.swingCd = 0.4; addExhaustion(player, 8);
-        blip(300+sensor.speed*4, 0.07, 'sawtooth', 0.06);   // «вжух»
-      }
+      // (07-15) РИВОК ТЕЛЕФОНА БІЛЬШЕ НЕ Б'Є: клинок пропалює контактом (resolveBurn),
+      // а ВИПАД (strikeT) народжується ЛИШЕ з заряду МАЯКА — поверни боком, заряди, різко назад.
       // КЛИНОК/тело трейлит за движением; камера уже мгновенная
       player.visYaw = smoothAngle(player.visYaw, sensor.yawFused, dt*6);
     }
@@ -4426,13 +4453,42 @@ window.TUT={
     if(ADV.on) $('mAdv').click();               // туторіал — поза пригодою
     spawnPhantoms(phantomCount=0); botDiff=0;
     player.hp=100; player.stamina=100;
-    logE('ТУТОРІАЛ: старт');
-    tutModal('📚 ЛАСКАВО ПРОСИМО','Це навчання для тих, хто <b>ніколи не грав</b> — все по черзі, від простого до складного.<br><br>'+
-      '<b>Крок 1 — камера.</b> Телефон — це твої очі, тримай його перед собою вертикально, '+
-      '<b>наче пульт від телевізора</b>: куди «світить» телефон — туди дивиться герой. '+
-      'Повільно повернися всім тілом разом із телефоном — світ повернеться теж.<br><br>'+
-      'Роздивись навколо і повертайся до вікна.',
-      [{t:'Я РОЗДИВИВСЯ, ДАЛІ ▷',f:()=>TUT.goStage(1)}]);
+    logE('ТУТОРІАЛ: старт (Пролог Пустоти)');
+    this.prologue=1; voidStatic(true);
+    /* ЗАПОВІТ МАШИНИ · Вузол Перший: Вторгнення */
+    tutModal('▮▮ ПЕРШИЙ КОНТАКТ','<i>…статика… …статика…</i><br><br>'+
+      '«Аналіз матриці 13×13… З\'єднання встановлено. <b>Я — твій Командир.</b> '+
+      'Відповідай, новобранцю: стерео-канал активний? Ти сприймаєш чисту статику?»',
+      [{t:'СИГНАЛ ЧИСТИЙ ▷',f:()=>TUT.prologue2(false)},
+       {t:'Є ШУМ У КАНАЛІ',c:'#f59e0b',f:()=>TUT.prologue2(true)}]);
+  },
+  prologue2(noisy){ this.prologue=2;
+    /* Вузол Другий: Ультиматум Екіпіровки */
+    tutModal('🎧 УЛЬТИМАТУМ',(noisy?'«Відфільтруй перешкоди свідомістю — тут зір безсилий, править лише слух. »<br><br>':'')+
+      '«Твій маршрут пролягає крізь Шляхи Сходження та Спуску. Тут Відлуння і Шум — сили порядку й хаосу. '+
+      '<b>Одягни стереонавушники негайно!</b> Твої вуха — твій єдиний радар. Без них ти розчинишся у пітьмі.»',
+      [{t:'🎧 ЕКІПІРОВАНО ▷',f:()=>TUT.prologue3()}]);
+  },
+  prologue3(){ this.prologue=3;
+    /* Вузол Третій: Ініціація Зліпка — БЕЗ КНОПОК. Лише довге утримання. */
+    tutModal('▣ ІНІЦІАЦІЯ ЗЛІПКА','«Твій пристрій — це твій клинок. Але щоб твій поступ не згинув, потрібен '+
+      '<b>Зліпок Свідомості</b>. Жодної метушні. <b>Подвійні дотики — під найсуворішою забороною.</b> '+
+      'Доведи, що контролюєш Ритм:<br><br><b>виконай ДОВГЕ, БЕЗПЕРЕРВНЕ УТРИМАННЯ пальця на дисплеї — просто зараз.</b>»',
+      []);   // кнопок НЕМАЄ — система в активному очікуванні, короткі тапи і свайпи ігноруються
+  },
+  prologueTriumph(){ this.prologue=0; voidStatic(false);
+    /* Тріумф Ритму: акорд на октаву вище фону + глибока вібрація */
+    blip(440,0.5,'sine',0.22); setTimeout(()=>blip(880,0.6,'sine',0.26),120); setTimeout(()=>blip(1320,0.4,'sine',0.18),260);
+    buzz([0,60,40,260]); doFlash('#7cc8ff');
+    tutModalEl.style.display='none';
+    showBanner('▣ ЗЛІПОК СВІДОМОСТІ ЗАФІКСОВАНО — шлях відкрито','#7cc8ff');
+    logE('ПРОЛОГ: зліпок зафіксовано (довге утримання)');
+    setTimeout(()=>{
+      tutModal('📚 БАЗОВЕ НАВЧАННЯ','«Ритм у тебе в руках, новобранцю. Тепер — тіло.»<br><br>'+
+        '<b>Камера.</b> Телефон — твої очі: тримай вертикально, наче пульт, і повертайся всім тілом — світ повернеться теж. '+
+        'Роздивись навколо і повертайся.',
+        [{t:'Я РОЗДИВИВСЯ, ДАЛІ ▷',f:()=>TUT.goStage(1)}]);
+    },1600);
   },
   goStage(n){ this.stage=n; player.hp=100; player.stamina=100;
     if(n===1){ this.steps=0; this.lastGX=player.gx; this.lastGY=player.gy;
@@ -4442,11 +4498,12 @@ window.TUT={
         [{t:'ПРОБУЮ ▷',f:()=>tutHint('👣 Свайпай по екрану · кроків: 0 / 6')}]);
     }
     if(n===2){ this.smashed=0; tutSpawnCrystals();
-      tutModal('⚡ КРОК 2/7 · УДАР','Поруч з тобою з\'явились <b>два блакитні кристали</b>.<br><br>'+
-        'Тримай телефон вертикально (це стійка <b>МОЛНІЯ</b> — атака) і <b>махни телефоном</b>, наче б\'єш мечем. '+
-        'Підійди до кристала впритул і вдар кілька разів.<br><br>'+
-        '<b>Завдання: розбий обидва кристали.</b>',
-        [{t:'ДО БОЮ ▷',f:()=>tutHint('⚡ Підійди і махай телефоном · кристалів: 0 / 2')}]);
+      tutModal('⚡ КРОК 2/7 · КЛИНОК','Поруч з тобою з\'явились <b>два блакитні кристали</b>.<br><br>'+
+        'Тримай телефон вертикально (стійка <b>БЛИСКАВКА</b>). З телефона «росте» світловий промінь-клинок — '+
+        '<b>він пропалює все, чого торкається</b>. Підійди до кристала впритул і <b>наведи промінь на нього</b> — '+
+        'дивись, як летять частинки.<br><br>'+
+        '<b>Завдання: пропали обидва кристали.</b>',
+        [{t:'ДО СПРАВИ ▷',f:()=>tutHint('⚡ Підійди впритул і наведи промінь · кристалів: 0 / 2')}]);
     }
     if(n===3){ this.sub=0;
       tutModal('📷 КРОК 3/7 · ЩИТ І ЗАРЯД (МАЯК)','Зараз спробуємо на власні руки, по одному кроку:<br><br>'+
@@ -4459,7 +4516,9 @@ window.TUT={
     }
     if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
       'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
-      '• Вертикально + мах = <b>удар</b><br>• Боком = <b>захист і тиск</b><br>• Свайп = ухилитися кроком<br><br>'+
+      '• Вертикально: <b>промінь пропалює</b> того, кого торкається — цілься<br>'+
+      '• Боком 📷 = щит і заряд → різко назад = <b>ВИПАД</b> (сильний удар)<br>'+
+      '• Свайп = ухилитися кроком<br><br>'+
       'Якщо загинеш — нічого страшного, відродишся і спробуєш ще.<br><br><b>Завдання: перемогти 1 фантома.</b>'); }
     if(n===5){ this.armBattle(2,['fighter','crawler'],0,'⚔ КРОК 5/7 · ДВОЄ',
       'Тепер <b>двоє</b>: звичайний фантом і <b>повзун</b> (низький, пролазить під стінами).<br><br>'+
@@ -4573,7 +4632,7 @@ setInterval(()=>{
     else if(T.stage===3){
       if(T.sub===0){                                             // фаза 1: тримай боком, заряджай
         if(player.beaconLatch && !player.dead){
-          tutHint('📷 Так! Тримай боком · ЗАРЯД: ×'+player.charge.toFixed(1)+' (дотягни до ×2.2) — зараз ти під щитом');
+          tutHint('📷 Так! Нахиляй телефон як камеру — бачиш те, куди дивиться задня кришка · ЗАРЯД: ×'+player.charge.toFixed(1)+' / 2.2');
           if(player.charge>=2.2){ T.sub=1; buzz([0,50]);
             tutHint('⚡ ГОТОВО! Тепер РІЗКО поверни телефон назад ВЕРТИКАЛЬНО!'); }
         } else tutHint('📷 Поверни телефон БОКОМ, як фотоапарат (горизонтально) — і тримай');
@@ -4757,9 +4816,11 @@ const SCROLLS={
   blaster:{ t:'📜 РИТУАЛ: БЛАСТЕР 🜍', d:'Виклади на підлозі У РЯД:<br><br><b>▦ СТАЛЬ · 🜂 ПЛАЗМА · ◇ СКЛО</b><br><br>(будь-яка орієнтація; блоки ставляться у режимі 🔨 ТВОРЕЦЬ). Ритуал поглине блоки і дарує зброю.' },
   sacrifice:{ t:'📜 РИТУАЛ: ЖЕРТВА ДУШ 🜏', d:'Виклади У РЯД: <b>СІЛЬ · 🜂 ПЛАЗМА · СІЛЬ</b>.<br>Ритуал забере <b>3 душі</b> (рахунок) і поверне <b>◆ кристал</b>.' },
   morse:{ t:'📜 АБЕТКА МОРЗЕ-ЗАКЛЯТЬ ⚡', d:'Тапай по екрану: <b>короткий тап «·»</b>, <b>довгий «−»</b>. Пауза — кінець літери, довша пауза — закляття летить у клітинку, куди дивишся (1 душа).<br><br>'+
-    '<b>P</b> ·−−· ПЛАЗМА (палить істот!)<br><b>W</b> ·−− ВОДА · <b>G</b> −−· ГАЗ<br>'+
+    'Символи Менделєєва священні: <b>P — це фосфор</b>, тому стани звуться інакше:<br>'+
+    '<b>PL</b> ·−−· / ·−·· ПЛАЗМА (палить істот!)<br><b>AQ</b> ·− / −−·− ВОДА · <b>G</b> −−· ГАЗ<br><br>'+
     '<b>H</b> ···· · <b>C</b> −·−· · <b>O</b> −−−<br><b>FE</b> ··−· / · ЗАЛІЗО · <b>SI</b> ··· / ·· КРЕМНІЙ<br><b>NA</b> −· / ·− НАТРІЙ · <b>CL</b> −·−· / ·−·· ХЛОР<br><br>'+
-    'У МАЯКУ (боком) промов <b>P</b> — <b>плазмовий клинок</b> на 25с (+30% шкоди).' },
+    'У МАЯКУ (боком) промов <b>PL</b> — <b>плазмовий клинок</b> на 25с (+30% шкоди).<br>'+
+    'Промовиш справжній елемент, якого ще нема (P, S, K…) — світ відповість, що він не відкритий.' },
 };
 const CODEX={
   list(){ try{ return JSON.parse(localStorage.getItem('vb3d_codex')||'[]'); }catch(e){ return []; } },
@@ -4802,7 +4863,7 @@ const QST={
   text(q){ return q.t==='mine'
     ? 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)'
     : (q.t==='hunt' ? 'Розвтіли <b>'+q.goal+' фантомів</b>'
-    : 'Промов закляттям Морзе <b>ПЛАЗМУ (P: ·−−·) '+q.goal+' раз</b> — тапай по екрану: короткий тап «·», довгий «−»'); },
+    : 'Промов закляттям Морзе <b>ПЛАЗМУ (PL: ·−−· / ·−··) '+q.goal+' раз</b> — тапай по екрану: короткий тап «·», довгий «−»'); },
   progress(t,kind,amt){
     const q=this.a; if(!q || q.t!==t) return;
     if(t==='mine' && q.kind!==kind) return;
@@ -5088,6 +5149,37 @@ setInterval(()=>{
   } else FLAIL.t=0;
   resHUD(); miniMapDraw();
 },160);
+/* ════ ПУСТОТА: статика першого контакту + довге утримання (Заповіт Машини) ════ */
+const VOID={noise:null, holdT0:0, holdX:0, holdY:0};
+function voidStatic(on){ try{
+  if(!AC) return;
+  if(on && !VOID.noise){
+    const len=Math.floor(AC.sampleRate*2), buf=AC.createBuffer(1,len,AC.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*0.6;
+    const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
+    const g=AC.createGain(); g.gain.value=0.045;
+    src.connect(g); g.connect(AC.destination); src.start();
+    VOID.noise={src,g};
+  }
+  if(!on && VOID.noise){
+    try{ VOID.noise.g.gain.linearRampToValueAtTime(0, AC.currentTime+0.5);
+      VOID.noise.src.stop(AC.currentTime+0.6); }catch(e){}
+    VOID.noise=null;
+  }
+}catch(e){} }
+window.addEventListener('touchstart',e=>{ try{
+  if(!(window.TUT&&TUT.active&&TUT.prologue===3)) return;
+  const t=e.touches[0]; VOID.holdT0=performance.now(); VOID.holdX=t.clientX; VOID.holdY=t.clientY;
+}catch(e){} },{passive:true});
+window.addEventListener('touchend',e=>{ try{
+  if(!(window.TUT&&TUT.active&&TUT.prologue===3) || !VOID.holdT0) return;
+  const t=e.changedTouches&&e.changedTouches[0];
+  const dur=performance.now()-VOID.holdT0; VOID.holdT0=0;
+  if(t && Math.hypot(t.clientX-VOID.holdX, t.clientY-VOID.holdY)>26) return;   // свайп — ігноруємо
+  if(dur>=1200) TUT.prologueTriumph();                                         // ДОВГЕ УТРИМАННЯ ✓
+  else { blip(180,0.05,'square',0.08); }                                       // короткий тап — сухий щиглик статики
+}catch(e){} },{passive:true});
+
 /* ════ ГОЛОС НАСТАВНИКА (Web Speech API, укр. голос якщо є в системі) ════ */
 const TTS={ on:(()=>{ try{ return (localStorage.getItem('vb3d_tts')??'1')==='1'; }catch(e){ return true; } })(), v:null };
 function ttsPick(){ try{ const vs=speechSynthesis.getVoices();
@@ -5223,7 +5315,12 @@ setTimeout(()=>{ try{
 const MORSE_AB={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H','..':'I',
   '.---':'J','-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P','--.-':'Q','.-.':'R','...':'S',
   '-':'T','..-':'U','...-':'V','.--':'W','-..-':'X','-.--':'Y','--..':'Z'};
-const SPELL_WORDS={ H:'H', C:'C', O:'O', NA:'Na', SI:'Si', CL:'Cl', FE:'Fe', P:'plasma', W:'liquid', G:'gas' };
+const SPELL_WORDS={ H:'H', C:'C', O:'O', NA:'Na', SI:'Si', CL:'Cl', FE:'Fe', PL:'plasma', AQ:'liquid', G:'gas' };
+// Символи Менделєєва — ЗАРЕЗЕРВОВАНІ за елементами (07-15): P — це ФОСФОР, не плазма.
+// Ще не відкриті у цьому світі елементи чемно відмовляють, а не мовчать.
+const RESERVED_ELEM={ P:'ФОСФОР', S:'СІРКА', N:'АЗОТ', K:'КАЛІЙ', B:'БОР', F:'ФТОР', I:'ЙОД', W:'ВОЛЬФРАМ',
+  U:'УРАН', V:'ВАНАДІЙ', AL:'АЛЮМІНІЙ', AU:'ЗОЛОТО', AG:'СРІБЛО', CU:'МІДЬ', ZN:'ЦИНК', SN:'ОЛОВО',
+  PB:'СВИНЕЦЬ', MG:'МАГНІЙ', CA:'КАЛЬЦІЙ', HE:'ГЕЛІЙ', NE:'НЕОН', AR:'АРГОН', LI:'ЛІТІЙ', TI:'ТИТАН' };
 const SPELL_UA={ H:'ВОДЕНЬ', C:'ВУГЛЕЦЬ', O:'КИСЕНЬ', Na:'НАТРІЙ', Si:'КРЕМНІЙ', Cl:'ХЛОР', Fe:'ЗАЛІЗО',
   plasma:'ПЛАЗМА', liquid:'ВОДА', gas:'ГАЗ' };
 const ENCH={t:0};
@@ -5271,9 +5368,12 @@ setInterval(()=>{ try{
 }catch(e){} },120);
 function castSpell(word){
   const mt=SPELL_WORDS[word];
-  if(!mt){ showBanner('⚡ невідоме слово: «'+word+'» — абетка у 📜 КОДЕКСІ','#94a3b8'); logE('морзе: невідоме '+word); return; }
+  if(!mt){
+    if(RESERVED_ELEM[word]){ showBanner('⚗ '+word+' ('+RESERVED_ELEM[word]+') — елемент ще не відкритий у цьому світі','#94a3b8');
+      logE('морзе: зарезервований елемент '+word); return; }
+    showBanner('⚡ невідоме слово: «'+word+'» — абетка у 📜 КОДЕКСІ','#94a3b8'); logE('морзе: невідоме '+word); return; }
   // ЕНЧАНТ: у МАЯКУ плазма лягає на власний клинок
-  if(player.beaconLatch && mt==='plasma'){
+  if(player.beaconLatch && mt==='plasma'){   // енчант: слово PL у МАЯКУ
     ENCH.t=25;
     showBanner('🔥 ПЛАЗМОВИЙ КЛИНОК: +30% шкоди на 25с','#f97316');
     doFlash('#f97316'); buzz([0,60,40,80]); logE('закляття: плазмовий клинок');
