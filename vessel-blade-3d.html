@@ -541,16 +541,17 @@ const AUDIO={
   motionTick(dt){                                       // (07-15) МАХ/ЗАРЯД/ВИПАД дихають у музиці
     try{
       const R=this.ritual; if(!R||!R.moLP||!AC) return;
-      const sp=clamp((sensor.speed||0)/22,0,1);
-      this._mo=lerp(this._mo??0, sp, clamp(dt*9,0,1));
-      R.moLP.frequency.setTargetAtTime(lerp(18000, 1500, this._mo), AC.currentTime, 0.05);   // мах «прикриває» спектр
+      const sp=clamp((sensor.speed||0)/18,0,1);                          // чутливіше до маху
+      this._mo=lerp(this._mo??0, sp, clamp(dt*11,0,1));
+      R.moLP.frequency.setTargetAtTime(lerp(18000, 700, this._mo), AC.currentTime, 0.04);    // мах «топить» спектр глибше
+      R.moLP.Q.setTargetAtTime(lerp(0.7, 6, this._mo), AC.currentTime, 0.05);                // резонанс — «вжик» співає
       if(this.cur && this.cur.src && this.cur.src.detune){
-        let det=this._mo*90;                                              // швидкий рух — легкий підйом тону
+        let det=this._mo*160;                                             // швидкий рух — помітний підйом тону
         if(mode==='fighter' && player){
-          if(player.beaconLatch) det=-26*(player.charge||1);              // заряд тягне музику вниз, тягуче
-          if(player.strikeT>0)   det= 170*player.strikeT/0.4;             // ВИПАД — сплеск угору
+          if(player.beaconLatch) det=-48*(player.charge||1);              // заряд тягне музику вниз, в'язко
+          if(player.strikeT>0)   det= 320*player.strikeT/0.4;             // ВИПАД — різкий сплеск угору
         }
-        this.cur.src.detune.setTargetAtTime(det, AC.currentTime, 0.06);
+        this.cur.src.detune.setTargetAtTime(det, AC.currentTime, 0.05);
       }
     }catch(e){}
   },
@@ -3619,7 +3620,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-15b · ТИША-дронів(42Гц+гул-меча-геть) · МУЗИКА-дихає-рухом(мах/заряд/випад) · ВИПАД-лише-з-заряду';
+const BUILD_TAG='2026-07-15c · викривлення-глибше(Q-резонанс) · швидкий-старт=ПРИГОДА-без-РІВНОВАГИ · туторіал→автопригода';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4384,7 +4385,15 @@ $('btnReq').addEventListener('click', async ()=>{
     if(!phantoms.length && phantomCount>0) spawnPhantoms(phantomCount);   // первый спавн — здесь (модуль уже целиком жив, TDZ невозможен)
     started=true; last=0;
     applyMode();
-    try{ if(window.TUT && TUT.requested) TUT.begin(); }catch(e){ console.warn('TUT',e); }
+    try{
+      if(window.TUT && TUT.requested) TUT.begin();
+      else if(mode==='fighter'){                       // «ГРАТИ ОДРАЗУ» (07-15): пригода стартує сама, рівновага геть
+        equalizerOn=false;
+        try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
+        if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
+        logE('швидкий старт: пригода УВІМК, рівновага ВИМК');
+      }
+    }catch(e){ console.warn('TUT',e); }
   }catch(err){
     $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
     $('btnReq').textContent='▷ СПРОБУВАТИ ЗНОВУ'; $('btnReq').disabled=false;
@@ -4591,19 +4600,21 @@ window.TUT={
         f:()=>TUT.finish(d) })));
   },
   finish(diff){ this.active=false; this.stage=0;
-    if(this.eqSave!==undefined){ equalizerOn=this.eqSave; this.eqSave=undefined; }   // повернути рівновагу
+    this.eqSave=undefined;
+    equalizerOn=false;                                       // (07-15) пригода після навчання — БЕЗ рівноваги
+    try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
     botDiff=diff; window.ADV_DIFF=diff;
     try{ $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; }catch(e){}
     try{ localStorage.setItem('vb3d_tut_done','1'); }catch(e){}
-    logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths);
-    tutModal('🎓 НАВЧАННЯ ЗАВЕРШЕНО','Ти готовий. Куди далі?<br><br>'+
-      '🚪 <b>ПРИГОДА</b> — мета-світ 13×13 кімнат-шахівниця: ⬜ білі — безпечні коридори '+
-      '(рубай дерева 🪵, скелі 🪨, руду ⛓ і кристали ◆ — це ресурси; лут, торговці), ⬛ чорні — бої. '+
-      'Вдома є 🔥 <b>КУЗНЯ</b>: з ресурсів крафтиться нова зброя (починаєш лише з мечем). '+
-      'Чим далі від дому — тим складніше, на краю світу чекають <b>БОСИ</b>.<br><br>'+
-      '⚔ <b>ВІЛЬНИЙ БІЙ</b> — просто арена з фантомами.',
-      [{t:'🚪 ПОЧАТИ ПРИГОДУ',c:'#22c55e',f:()=>{ if(!ADV.on) $('mAdv').click(); }},
-       {t:'⚔ ВІЛЬНИЙ БІЙ',f:()=>{ phantomCount=1; spawnPhantoms(1); try{$('mPhan').textContent='☠ ФАНТОМОВ: 1';}catch(e){} }}]);
+    logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths+' → ПРИГОДА (рівновага ВИМК)');
+    if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }       // пригода стартує САМА
+    tutModal('🎓 ПРИГОДА ПОЧАЛАСЬ','Ти вдома — у «Чистій Свідомості» (центр шахівниці 13×13).<br><br>'+
+      '⬜ <b>Білі кімнати</b> — безпечні коридори: рубай дерева 🪵, скелі 🪨, руду ⛓, кристали ◆; шукай 📜 сувої, 🎯 завдання і 🛒 торговців.<br>'+
+      '⬛ <b>Чорні</b> — бої. Чим далі від дому — тим складніше, на краю світу — <b>БОСИ</b>.<br><br>'+
+      'Вдома: стійки зброї та 🔥 <b>КУЗНЯ</b> (смарагдова плита). Мінімапа — угорі праворуч. '+
+      'Перехід між кімнатами — стій на кромці поля 3 секунди.<br><br>'+
+      '<i>Вільний бій — у меню ⏸ вимкни «ПРИГОДА».</i>',
+      [{t:'РУШАЙМО ▷',c:'#22c55e'}]);
   }
 };
 
