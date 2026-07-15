@@ -477,7 +477,7 @@ function pitchTier(p, prev){
 }
 
 /* ════════════════════════ WEB AUDIO ══════════════════════════ */
-let AC=null, master=null, worldFilter=null, ambGain=null;
+let AC=null, master=null, worldFilter=null, ambGain=null, fxGain=null;
 let swordOsc=null, swordGain=null, swordPanner=null;
 const listenerForward = new THREE.Vector3();
 const listenerUp = new THREE.Vector3();
@@ -488,7 +488,10 @@ function initAudio(){
     master = AC.createGain(); master.gain.value = 0.9; master.connect(AC.destination);
     // worldFilter: lowpass — при рассинхроне опускаем частоту (глухота)
     worldFilter = AC.createBiquadFilter();
-    worldFilter.type='lowpass'; worldFilter.frequency.value=18000; worldFilter.connect(master);
+    worldFilter.type='lowpass'; worldFilter.frequency.value=18000;
+    fxGain=AC.createGain();                                  // (07-15) окрема гучність точкових ефектів
+    try{ fxGain.gain.value=+(localStorage.getItem('vb3d_fxvol')??1); }catch(e){ fxGain.gain.value=1; }
+    worldFilter.connect(fxGain); fxGain.connect(master);
     // (07-15) дрон світу 42Гц ВИМКНЕНО назавжди — грає лише музика і точкові звуки.
     const amb = AC.createOscillator(); amb.type='sine'; amb.frequency.value=42;
     ambGain = AC.createGain(); ambGain.gain.value=0.0;
@@ -3620,7 +3623,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-15c · викривлення-глибше(Q-резонанс) · швидкий-старт=ПРИГОДА-без-РІВНОВАГИ · туторіал→автопригода';
+const BUILD_TAG='2026-07-15d · ФІКС-квесту(воксель-реєстр-по-матеріалу:дерево=дерево) · ПОВЗУНКИ(музика/ефекти/голос)';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4704,7 +4707,11 @@ function voxelizeObstacle(o){
   for(const [sx,sz] of cols) for(let sy=0;sy<hV;sy++){
     if(addMicro(gx,gy,n,sx,sy,sz,mt,tint,alpha,null,0,baseY+sy*m,m)) cnt++;
   }
-  VOXREG.set(gx+','+gy,{mtype:mt,total:cnt,left:cnt,noRes});
+  // (07-15) ключ = клітинка+МАТЕРІАЛ: стовбур і крона дерева ведуться ОКРЕМО,
+  // повторна вокселізація того ж матеріалу ЗЛИВАЄТЬСЯ, а не перетирає лічильник
+  const vk=gx+','+gy+','+mt, prev=VOXREG.get(vk);
+  if(prev){ prev.total+=cnt; prev.left+=cnt; prev.noRes=prev.noRes&&noRes; }
+  else VOXREG.set(vk,{mtype:mt,total:cnt,left:cnt,noRes});
   snapshotRoom();
   return cnt>0;
 }
@@ -4717,9 +4724,10 @@ function burnVoxelsAt(gx,gy,tip){
     if(b.mesh.position.distanceTo(tip)>CELL*1.15) break;       // тільки ЗОНА ДОТИКУ
     spawnChunk(b.mesh.position, b.mesh.material.color.getHex());
     scene.remove(b.mesh); microBlocks.splice(microBlocks.indexOf(b),1); removed++;
-    const reg=VOXREG.get(gx+','+gy);
+    const vk=gx+','+gy+','+(b.type||'amber');            // реєстр САМЕ цього матеріалу
+    const reg=VOXREG.get(vk);
     if(reg){ reg.left--;
-      if(reg.left<=0){ VOXREG.delete(gx+','+gy);
+      if(reg.left<=0){ VOXREG.delete(vk);
         const kind=reg.noRes?null:RES_OF[reg.mtype];
         if(kind){ const amt=1+(Math.random()<0.35?1:0);
           RES[kind]+=amt; saveRes(); resHUD();
@@ -5218,6 +5226,7 @@ function speakTut(html){
    blade/{room}/rtc/{to}/{from}/{ts} у тій самій Firebase. Гучність чужого голосу
    спадає з відстанню по сітці: поруч — голосно, >16 клітин — тиша.            */
 const VC={ on:false, stream:null, pcs:{}, els:{}, seen:{}, unsub:null,
+  vol:(()=>{ try{ return clamp(+(localStorage.getItem('vb3d_vcvol')??1),0,1); }catch(e){ return 1; } })(),
   path(to){ return 'blade/'+NET.room+'/rtc/'+to+'/'+NET.myId; },
   send(to,msg){ try{ msg.t=Date.now(); set(ref(NET.db, this.path(to)+'/'+msg.t+'_'+Math.floor(Math.random()*999)), JSON.stringify(msg)); }catch(e){} },
   async enable(){
@@ -5292,7 +5301,7 @@ setInterval(()=>{ try{
     if(!VC.pcs[id] && NET.myId<id) VC.pc(id,true);        // ініціатор — менший id (без дзеркальних офферів)
     const el=VC.els[id];
     if(el){ const d=Math.abs((r.gx??6)-player.gx)+Math.abs((r.gy??6)-player.gy);
-      el.volume=clamp(1-d/16,0,1); }                       // ГОЛОС СПАДАЄ З ВІДСТАННЮ
+      el.volume=clamp(1-d/16,0,1)*(VC.vol??1); }           // ГОЛОС СПАДАЄ З ВІДСТАННЮ × повзунок
   }
   for(const id in VC.pcs) if(!NET.remotes[id]) VC.drop(id);   // пішов з кімнати — тиша
 }catch(e){} }, 1000);
@@ -5439,6 +5448,36 @@ setTimeout(()=>{ try{
   $('mNew').parentNode.insertBefore(b, $('mNew'));
   b.onclick=()=>{ closeMenu(); tutModal(SCROLLS.morse.t, SCROLLS.morse.d, [{t:'ЗРОЗУМІЛО ▷'}]); };
 }catch(e){} }, 700);
+/* ════ ГУЧНОСТІ (07-15): 🎵 музика · ✨ ефекти · 🎙 голос гравців ════ */
+setTimeout(()=>{ try{
+  const box=document.createElement('div');
+  box.style.cssText='width:100%;margin:6px 0 10px;padding:10px 12px;background:rgba(2,10,22,.6);'+
+    'border:1px solid #1e3a5f;border-radius:10px';
+  const mkRow=(icon,label,val,onIn)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:10px;margin:6px 0';
+    const l=document.createElement('span');
+    l.textContent=icon+' '+label;
+    l.style.cssText='flex:0 0 108px;color:#93c5fd;font-size:11px;letter-spacing:.08em;text-align:left';
+    const r=document.createElement('input');
+    r.type='range'; r.min='0'; r.max='100'; r.value=String(Math.round(val*100));
+    r.style.cssText='flex:1;accent-color:#3b82f6;height:26px';
+    r.oninput=()=>onIn(+r.value/100);
+    row.appendChild(l); row.appendChild(r); box.appendChild(row);
+    return r;
+  };
+  mkRow('🎵','МУЗИКА', AUDIO.vol.music??0.65, v=>AUDIO.setVol('music',v));
+  mkRow('✨','ЕФЕКТИ', (()=>{ try{ return clamp(+(localStorage.getItem('vb3d_fxvol')??1),0,1); }catch(e){ return 1; } })(), v=>{
+    AUDIO.setVol('sfx',v);                                        // файлові sfx
+    if(fxGain) fxGain.gain.setTargetAtTime(v, AC.currentTime, 0.05);   // синтез-щиглики
+    try{ localStorage.setItem('vb3d_fxvol', String(v)); }catch(e){}
+  });
+  mkRow('🎙','ГОЛОС ГРАВЦІВ', VC.vol??1, v=>{
+    VC.vol=v; try{ localStorage.setItem('vb3d_vcvol', String(v)); }catch(e){}
+    for(const id in VC.els){ try{ VC.els[id].volume=Math.min(VC.els[id].volume, v); }catch(e){} }
+  });
+  $('mNew').parentNode.insertBefore(box, $('mNew'));
+}catch(e){ console.warn('vol sliders', e); } }, 800);
 </script>
 </body>
 </html>
