@@ -2544,7 +2544,7 @@ function snapshotRoom(){ NET.roomDirty=true; roomEdits.set(curRoomKey(), {
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
 // ── ОБЩИЙ МИР: снимки комнат синхронизируются через Firebase (blade/{room}/roomEdits/{key}) ──
 function rebuildFromSnapshot(v){
-  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  obstacles.forEach(o=>{ if(o.mesh){ scene.remove(o.mesh); freeMesh(o.mesh); } }); obstacles.length=0;
   clearMicro();
   const taken=new Set();
   for(const b of Object.values(v.blocks||{})) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
@@ -3375,6 +3375,22 @@ const microBlocks=[];                      // {gx,gy,n,sx,sy,sz,type,tint,alpha,
 const MAX_MICRO=500;
 const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9, glass:0xbfe8ff, steel:0x93a3b8};
 function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
+const _geoCache=new Map();      // (07-15) спільні геометрії: сотні вокселів = одна геометрія на розмір
+function sharedBox(w,h,d){
+  const k=w.toFixed(3)+'|'+h.toFixed(3)+'|'+d.toFixed(3);
+  let g=_geoCache.get(k);
+  if(!g){ g=new THREE.BoxGeometry(w,h,d); g.userData.shared=true; _geoCache.set(k,g); }
+  return g;
+}
+function freeMesh(m){            // звільнити GPU-ресурси (спільні геометрії не чіпаємо)
+  try{ m.traverse?m.traverse(ch=>{
+      if(ch.geometry && !ch.geometry.userData?.shared) ch.geometry.dispose();
+      if(ch.material){ Array.isArray(ch.material)?ch.material.forEach(x=>x.dispose()):ch.material.dispose(); }
+    }):0;
+    if(m.geometry && !m.geometry.userData?.shared) m.geometry.dispose();
+    if(m.material){ Array.isArray(m.material)?m.material.forEach(x=>x.dispose()):m.material.dispose(); }
+  }catch(e){}
+}
 function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ МЕЖА МІКРОБЛОКІВ ('+MAX_MICRO+')','#ef4444'); return null; }
   const m=CELL/n;
@@ -3390,7 +3406,7 @@ function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   let w=m*0.96, d=m*0.96;
   if(shape==='post'){ w=m*0.34; d=m*0.34; }
   else if(shape==='panel'){ d=m*0.2; }
-  const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,hgt*0.96,d), mat);
+  const mesh=new THREE.Mesh(sharedBox(w,hgt*0.96,d), mat);   // спільна геометрія
   mesh.frustumCulled=false;
   mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+y0+hgt*0.5, worldZ(gy)-CELL/2+(sz+0.5)*m);
   if(rotY) mesh.rotation.y=rotY;
@@ -3410,7 +3426,7 @@ function microTopY(gx,gy,n,sx,sz){
   }
   return top;
 }
-function clearMicro(){ for(const m of microBlocks) scene.remove(m.mesh); microBlocks.length=0; }
+function clearMicro(){ for(const m of microBlocks){ scene.remove(m.mesh); freeMesh(m.mesh); } microBlocks.length=0; }
 // ── ПРИЗРАК: контур показывает, КУДА встанет блок (макро-стек / микроячейка / клетка префаба) ──
 const ghost=(function(){
   const g=new THREE.Group(); g.frustumCulled=false; g.visible=false;
@@ -3623,7 +3639,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-15d · ФІКС-квесту(воксель-реєстр-по-матеріалу:дерево=дерево) · ПОВЗУНКИ(музика/ефекти/голос)';
+const BUILD_TAG='2026-07-15e · АНТИ-ФРИЗ(dispose+спільні-геометрії+дебаунс-знімків) · гонка-консенсусу-виправлена · соло=дім';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -3882,6 +3898,8 @@ const NET = {
         if(v && ADV.on && (v.rx!==ADV.rx || v.ry!==ADV.ry)
            && Number.isInteger(v.rx) && Number.isInteger(v.ry)
            && v.rx>=0 && v.rx<=12 && v.ry>=0 && v.ry<=12){
+          if(v.by===this.myId) return;                                    // власна луна
+          if(v.t && ADV.locT && v.t < ADV.locT) return;                   // (07-15) СТАРІШЕ за наш локальний перехід — ігнор
           applyAdvRoom(v.rx, v.ry);
           const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
         }
@@ -3906,6 +3924,7 @@ const NET = {
     return true;
   },
   advPub(){
+    ADV.locT=Date.now();   // мітка нашого локального переходу — гонки з чужими знімками
     if(!this.online||!this.db||!ADV.on) return;
     set(ref(this.db,`blade/${this.room}/adv`), {rx:ADV.rx, ry:ADV.ry, t:Date.now(), by:this.myId}).catch(()=>{});
   },
@@ -4394,6 +4413,10 @@ $('btnReq').addEventListener('click', async ()=>{
         equalizerOn=false;
         try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
         if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
+        setTimeout(()=>{ try{                                             // (07-15) соло? — світ повертається ДОДОМУ
+          if(ADV.on && !Object.keys(NET.remotes||{}).length && (ADV.rx!==6||ADV.ry!==6)){
+            applyAdvRoom(6,6); NET.advPub(); logE('соло-старт: консенсус повернуто додому'); }
+        }catch(e){} }, 2600);
         logE('швидкий старт: пригода УВІМК, рівновага ВИМК');
       }
     }catch(e){ console.warn('TUT',e); }
@@ -4664,6 +4687,8 @@ setInterval(()=>{
       } }
   }
   tickTrader(0.16);
+  _snapT+=0.16;
+  if(_snapPend && _snapT>=1.2){ _snapT=0; _snapPend=false; try{ snapshotRoom(); }catch(e){} }
   try{ if(QPLATE.mesh && ADV.on && mode==='fighter' && !player.dead){
     QPLATE.mesh.material.opacity=0.35+0.25*Math.sin(performance.now()*0.005);
     if(player.gx===QPLATE.gx && player.gy===QPLATE.gy){
@@ -4680,7 +4705,9 @@ setInterval(()=>{
    (та сама форма/колір). Далі кожен контакт випалює вокселі НАЙБЛИЖЧІ до кінчика
    зброї — з урахуванням висоти (ярус/нахил) і сторони, з якої б'єш. Шматки
    відлітають і падають (не іскри). Видобув усе = пропалив кожен воксель. */
-const VOXREG=new Map();   // 'gx,gy' → {mtype,total,left}
+const VOXREG=new Map();   // 'gx,gy,mtype' → {total,left,noRes}
+let _snapT=0, _snapPend=false;
+function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не частіше 1.2с — Firebase дихає
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
   const v=dirXZ(sensor.yawFused||0);
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
@@ -4701,7 +4728,7 @@ function voxelizeObstacle(o){
   else { cols=[]; for(let sx=0;sx<3;sx++)for(let sz=0;sz<3;sz++)cols.push([sx,sz]); }
   if(microBlocks.length + cols.length*hV > MAX_MICRO-10) return false;   // ліміт — fallback на HP
   const mt=o.mtype||'amber', tint=o.tint??null, alpha=o.alpha??null, noRes=!!o.noRes;
-  o.alive=false; if(o.mesh) scene.remove(o.mesh);
+  o.alive=false; if(o.mesh){ scene.remove(o.mesh); freeMesh(o.mesh); }
   const oi=obstacles.indexOf(o); if(oi>=0) obstacles.splice(oi,1);
   let cnt=0;
   for(const [sx,sz] of cols) for(let sy=0;sy<hV;sy++){
@@ -4712,7 +4739,7 @@ function voxelizeObstacle(o){
   const vk=gx+','+gy+','+mt, prev=VOXREG.get(vk);
   if(prev){ prev.total+=cnt; prev.left+=cnt; prev.noRes=prev.noRes&&noRes; }
   else VOXREG.set(vk,{mtype:mt,total:cnt,left:cnt,noRes});
-  snapshotRoom();
+  snapshotSoon();
   return cnt>0;
 }
 function burnVoxelsAt(gx,gy,tip){
@@ -4723,7 +4750,7 @@ function burnVoxelsAt(gx,gy,tip){
   for(const b of vox.slice(0,4)){                              // до 4 вокселів за контакт
     if(b.mesh.position.distanceTo(tip)>CELL*1.15) break;       // тільки ЗОНА ДОТИКУ
     spawnChunk(b.mesh.position, b.mesh.material.color.getHex());
-    scene.remove(b.mesh); microBlocks.splice(microBlocks.indexOf(b),1); removed++;
+    scene.remove(b.mesh); freeMesh(b.mesh); microBlocks.splice(microBlocks.indexOf(b),1); removed++;
     const vk=gx+','+gy+','+(b.type||'amber');            // реєстр САМЕ цього матеріалу
     const reg=VOXREG.get(vk);
     if(reg){ reg.left--;
@@ -4736,7 +4763,7 @@ function burnVoxelsAt(gx,gy,tip){
         try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
         logE('блок ('+gx+','+gy+') випалено вщент'); } }
   }
-  if(removed) snapshotRoom();
+  if(removed) snapshotSoon();
   return removed;
 }
 /* ШМАТКИ: справжні уламки з гравітацією і відскоком (не іскри) */
@@ -4744,9 +4771,10 @@ const CHUNKS=[];
 function fleshColor(av){ try{ const P=av.parts&&Object.values(av.parts).find(p=>p&&p.isMesh);
   return P?P.material.color.getHex():0x9fb6d8; }catch(e){ return 0x9fb6d8; } }
 function spawnChunk(pos,color,size){
-  if(CHUNKS.length>36){ const c=CHUNKS.shift(); scene.remove(c.mesh); }
+  if(CHUNKS.length>36){ const c=CHUNKS.shift(); scene.remove(c.mesh); freeMesh(c.mesh); }
   const sz=size||(0.06+Math.random()*0.09);
-  const mesh=new THREE.Mesh(new THREE.BoxGeometry(sz,sz,sz), new THREE.MeshBasicMaterial({color}));
+  const mesh=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color}));
+  mesh.scale.setScalar(sz);
   mesh.position.copy(pos); mesh.frustumCulled=false; scene.add(mesh);
   CHUNKS.push({mesh, vx:(Math.random()-0.5)*2.6, vy:1.5+Math.random()*1.8, vz:(Math.random()-0.5)*2.6,
     rx:(Math.random()-0.5)*9, rz:(Math.random()-0.5)*9, t:0});
@@ -4760,21 +4788,21 @@ function spawnChunk(pos,color,size){
     c.mesh.position.x+=c.vx*dt; c.mesh.position.y+=c.vy*dt; c.mesh.position.z+=c.vz*dt;
     c.mesh.rotation.x+=c.rx*dt; c.mesh.rotation.z+=c.rz*dt;
     if(c.mesh.position.y<-0.42){ c.mesh.position.y=-0.42; c.vy*=-0.35; c.vx*=0.72; c.vz*=0.72; }
-    if(c.t>1.9){ scene.remove(c.mesh); CHUNKS.splice(i,1); }
+    if(c.t>1.9){ scene.remove(c.mesh); freeMesh(c.mesh); CHUNKS.splice(i,1); }
   }
 })();
 /* ПОДРЯПИНИ/ОПІКИ на нерушимих поверхнях (косметика, чиститься при зміні кімнати) */
 const SCARS=[];
 function addScar(tip){
-  if(SCARS.length>50){ scene.remove(SCARS.shift()); }
-  const g=new THREE.Mesh(new THREE.BoxGeometry(0.1+Math.random()*0.16, 0.02+Math.random()*0.05, 0.025),
-    new THREE.MeshBasicMaterial({color:0x140e06}));
+  if(SCARS.length>50){ const old=SCARS.shift(); scene.remove(old); freeMesh(old); }
+  const g=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color:0x140e06}));
+  g.scale.set(0.1+Math.random()*0.16, 0.02+Math.random()*0.05, 0.025);
   g.position.set(tip.x,tip.y,tip.z);
   g.rotation.y=(sensor.yawFused||0)*Math.PI/180;
   g.rotation.z=(Math.random()-0.5)*1.3;
   g.frustumCulled=false; scene.add(g); SCARS.push(g);
 }
-function clearScars(){ while(SCARS.length) scene.remove(SCARS.pop()); }
+function clearScars(){ while(SCARS.length){ const g=SCARS.pop(); scene.remove(g); freeMesh(g); } }
 /* ЕРОЗІЯ тіла: істота втрачає об'єм там, де її ріжуть */
 function erodePart(av){
   try{ if(!av.parts) return;
@@ -4908,7 +4936,7 @@ qstHudEl.style.cssText='position:fixed;left:10px;bottom:78px;z-index:22;display:
   'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
 document.body.appendChild(qstHudEl);
 QST.hud();
-function clearQuestPlate(){ if(QPLATE.mesh){ try{scene.remove(QPLATE.mesh);}catch(e){} QPLATE.mesh=null; } QPLATE.standT=0; }
+function clearQuestPlate(){ if(QPLATE.mesh){ try{scene.remove(QPLATE.mesh); freeMesh(QPLATE.mesh);}catch(e){} QPLATE.mesh=null; } QPLATE.standT=0; }
 function makeQuestPlate(rx,ry,rng,st){
   let gx,gy,tries=0;
   do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while((obstacleAt(gx,gy)||(TRADER.mesh&&TRADER.gx===gx&&TRADER.gy===gy))&&tries<20);
@@ -4942,7 +4970,7 @@ function miniMapDraw(){
 
 /* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
 const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
-function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
+function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh); freeMesh(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
 /* ── ПРИРОДА: дерева/скелі/руда/кристали з наявних елементних блоків.
    Видобуток: розрубай — отримай ресурс (resFromObstacle). Форми post/slab/cube +
    baseY-стек: крона над стовбуром — світ живіший, ніж голі куби.               */
