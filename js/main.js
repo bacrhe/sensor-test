@@ -1,0 +1,5232 @@
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, set, onValue, onDisconnect, push, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { BUILD_TAG } from './config.js';
+import { TTS, speakTut } from './tts.js';
+import { MM, miniMapDraw } from './minimap.js';
+
+/* ════════════════════════════════════════════════════════════════
+   МАТРИЦА 13×13 — Слепок Сознания · Voxel Blade Engine
+   Реализует ядро ТЗ (блоки 1–7) в одиночном тестовом контуре vs Фантом.
+   Стек: Three.js (InstancedMesh, emissive, без теней) + Web Audio (PannerNode,
+   BiquadFilter) + DeviceMotion/Orientation (комплементарный фильтр).
+   Сетевой слой (блок 8, Firebase) подготовлен ниже как NET-структура.
+   ════════════════════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+/* ════════════════════ ЛОГ ИГРЫ (для отладки) ════════════════
+   Кольцевой буфер событий. Кнопка LOG (внизу) открывает панель,
+   COPY копирует весь лог в буфер обмена — пришли его мне.        */
+const LOG=[]; const LOGMAX=300;
+function logE(msg){
+  const t=(performance.now()/1000).toFixed(2);
+  LOG.push(`[${t}] ${msg}`);
+  if(LOG.length>LOGMAX) LOG.shift();
+  const p=$('logbody');
+  if(p && $('logPanel').style.display==='flex'){ p.textContent=LOG.slice(-80).join('\n'); p.scrollTop=p.scrollHeight; }
+}
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp = (a,b,t)=>a+(b-a)*t;
+const wrap360 = a => ((a%360)+360)%360;
+// кратчайшая разница углов (−180..180)
+const angDiff = (a,b)=>{let d=wrap360(a-b);if(d>180)d-=360;return d;};
+// плавное доведение угла к цели по кратчайшей дуге
+const smoothAngle = (cur,tgt,t)=>wrap360(cur + angDiff(tgt,cur)*clamp(t,0,1));
+
+const G = 13, CX = 6, CY = 6;      // глобальная сетка 13×13, центр (6,6)
+const CELL = 1.0;                  // мировой размер макро-клетки
+const TIER_H = 0.9;                // высота яруса (ноги/торс/голова)
+const DIRV = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]]; // 8 направлений
+const DSYM = ['N','NE','E','SE','S','SW','W','NW'];
+
+/* ── мир→экран координаты клетки ─────────────────────────────── */
+const worldX = gx => (gx - CX) * CELL;
+const worldZ = gy => (gy - CY) * CELL;
+
+/* ════════════ ДИАГНОСТИКА + РАЗРЕШЕНИЯ (из sensor-test) ════════ */
+const ua = navigator.userAgent;
+const isBrave = navigator.brave !== undefined;
+const hasOri = typeof DeviceOrientationEvent !== 'undefined';
+const hasMot = typeof DeviceMotionEvent !== 'undefined';
+const needsPerm = hasOri && typeof DeviceOrientationEvent.requestPermission === 'function';
+const isSecure = location.protocol==='https:'||location.hostname==='localhost'||location.protocol==='file:';
+[
+  ['Контекст', isSecure?'HTTPS ✓':'НЕ захищено ⚠', isSecure?'ok':'err'],
+  ['Гироскоп/ориентация', hasOri?'есть ✓':'нет ✗', hasOri?'ok':'err'],
+  ['Акселерометр', hasMot?'есть ✓':'нет ✗', hasMot?'ok':'err'],
+  ['Разрешение', needsPerm?'спросит (iOS)':'авто (Android)', 'ok'],
+  ['Браузер', isBrave?'Brave — блокирует ⚠':'OK ✓', isBrave?'warn':'ok'],
+].forEach(([k,v,c])=>{
+  const d=document.createElement('div');d.className='diag-row';
+  d.innerHTML=`<span style="color:#1e3a5f">${k}</span><span class="${c}">${v}</span>`;
+  $('diag').appendChild(d);
+});
+
+/* ════════════════════════ СЕНСОРНЫЙ СИНТЕЗ ════════════════════
+   Комплементарный фильтр: гироскоп даёт мгновенный отклик (95%),
+   компас непрерывно корректирует дрейф по Северу (5%).            */
+const sensor = {
+  yawFused: 0,    // итоговый азимут клинка (°)
+  pitch: 0,       // наклон вниз/вверх (нормирован −1..1) → выбор яруса
+  roll: 0,        // γ, поворот корпуса → стойка
+  compass: null,  // абсолютный компас (°)
+  rRateA: 0,      // скорость рыскания (°/с) от гироскопа
+  speed: 0,       // |a| без g — скорость руки (для яркости свечения)
+  haveCompass: false,
+  pitchRaw: 0,    // сырой наклон (−1..1)
+  haveGrav: false,
+  gz: 9.4,        // проекция g на ось «перпендикуляр экрану» → «ровно ли держим»
+  level: 1,       // 1=ровно, 0=вертикально
+  headConf: 1,    // надёжность ролл-независимого азимута (0 плашмя … 1 вертикально)
+  yawRate: 0,     // °/с вокруг мировой вертикали (от гироскопа)
+  chx: null, chz: null,   // сглаженный компас как вектор (нет рывка на 359°→0°)
+};
+let invertPitch = false;   // перемикач у меню (страховка)
+let mode = 'fighter';      // 'fighter' | 'spectator' | 'follow' | 'map'
+// iOS отдаёт accelerationIncludingGravity с ПРОТИВОПОЛОЖНЫМ знаком → наклон инвертирован.
+// Определяем платформу и правим знак автоматически (без ручного тумблера).
+const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent)
+  || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1)
+  || (typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function');
+const GRAV_SIGN = IS_IOS ? -1 : 1;
+// знак интегрирования гироскопа для азимута. Если поворот окажется «зеркальным»
+// (крутишь вправо — мир едет влево) — поменяй на +1. Проверяется на реальном телефоне.
+const YAW_GYRO_SIGN = -1;
+let lastMotT = 0;
+
+// ── АЗИМУТ КАМЕРЫ: только α (и β), γ ИСКЛЮЧЕНА ───────────────
+// Разделение осей по назначению:
+//   α (alpha) — куда смотрит камера (этот азимут);
+//   β (beta)  — наклон → ярус/присед (pitch, уже корректен);
+//   γ (gamma) — ТОЛЬКО сторона клинка + плавный переход в 1-е лицо. Камеру НЕ трогает.
+// Проверено численно: при β=60° старая формула утаскивала азимут на ~72° за поворот
+// запястья γ 0→70° (ривок камеры при входе в МАЯК). Обнуляем γ в эйлере — азимут
+// становится γ-инвариантным по построению, отклик на α остаётся 1:1.
+const _oEuler=new THREE.Euler(), _oQuat=new THREE.Quaternion();
+const _q0h=new THREE.Quaternion(), _q1h=new THREE.Quaternion(-Math.SQRT1_2,0,0,Math.SQRT1_2);
+const _upZh=new THREE.Vector3(0,0,1), _lookh=new THREE.Vector3(), _toph=new THREE.Vector3();
+function orientationHeading(alpha,beta){
+  const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
+  _oEuler.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180, 0,'YXZ');   // γ→0: крен не трогает камеру
+  _oQuat.setFromEuler(_oEuler);
+  _oQuat.multiply(_q1h);
+  _oQuat.multiply(_q0h.setFromAxisAngle(_upZh,-o));
+  // НЕВЫРОЖДЕННЫЙ азимут: «верхушка» телефона (клинок, +Y) определена, когда телефон
+  // плашмя-в-горизонт, «спинка» (−Z) — когда телефон вертикально. Их горизонтальные
+  // проекции лежат на ОДНОМ азимуте (крен обнулён), сумма |H|≥1.0 ПО ВСЕЙ СФЕРЕ —
+  // проверено численно. Компасу больше не нужны ни порог доверия, ни удержание
+  // последнего значения: он корректирует ВСЕГДА, в любом хвате.
+  _lookh.set(0,0,-1).applyQuaternion(_oQuat);   // спинка
+  _toph.set(0,1,0).applyQuaternion(_oQuat);     // верхушка (клинок)
+  const s = _toph.y>=0 ? 1 : -1;                // клинок ниже горизонта → азимут спинки зеркален
+  const hx=_toph.x + s*_lookh.x, hz=_toph.z + s*_lookh.z;
+  sensor.headConf = 1;                          // азимут определён всегда
+  return wrap360(Math.atan2(hx,-hz)*180/Math.PI);
+}
+
+// Приоритет источников азимута: 'deviceorientationabsolute' (магнитометр, привязан к
+// реальной комнате) > 'deviceorientation' (ОТНОСИТЕЛЬНЫЙ: произвольный ноль, дрейфует).
+// Раньше оба писали в sensor.compass наперегонки, и относительный (частый) затирал
+// абсолютный — «вернулся в тот же угол комнаты» ≠ «тот же угол в игре». Теперь как
+// только абсолютный источник появился, относительный к компасу не допускается.
+let haveAbsOrient=false;
+function onOrient(e){
+  // beta — запасной наклон (используется, только если нет гравитации)
+  if(e.beta!=null && !sensor.haveGrav){ sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
+    sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }   // елевація задньої кришки (fallback без грав.)
+  if(e.gamma!=null) sensor.roll = e.gamma;
+  if(e.alpha!=null && !isNaN(e.alpha)){
+    if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютний азимут активний (orientation.absolute)'); }
+    if(e.absolute===true || !haveAbsOrient){ sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true; }
+  }
+}
+function onOrientAbs(e){
+  if(e.alpha!=null && !isNaN(e.alpha)){
+    if(!haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютний азимут активний (deviceorientationabsolute)'); }
+    sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true;
+  }
+}
+function onMotion(e){
+  const now = performance.now();
+  const dt = lastMotT ? clamp((now-lastMotT)/1000, 0, 0.1) : 0.016;
+  lastMotT = now;
+  const r = e.rotationRate || {};
+  sensor.rRateA = r.alpha || 0;
+  // НАКЛОН + «ровно ли держим» по гравитации
+  const gg = e.accelerationIncludingGravity;
+  if(gg){
+    if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
+    // ВИДОШУКАЧ (07-15): елевація ЗАДНЬОЇ КРИШКИ (-Z пристрою). Екран догори → кришка
+    // дивиться в підлогу → -1; телефон вертикально (будь-яка орієнтація!) → 0 (горизонт);
+    // «фотографуєш небо» → +1. Це і є метафора справжньої камери — працює і боком.
+    if(gg.z!=null) sensor.camPitchRaw = clamp(-GRAV_SIGN*gg.z/9.4, -1, 1);
+    if(gg.z!=null) sensor.gz = gg.z;
+  }
+  // level (для отладки/HUD): 1 ровно, 0 вертикально
+  sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
+  // ── АЗИМУТ: комплементарный фильтр (гироскоп + медленная коррекция компасом) ──
+  // Мгновенный, ГЛАДКИЙ поворот берём от гироскопа: omegaG — скорость вращения вокруг
+  // МИРОВОЙ вертикали = проекция угловой скорости на вектор гравитации. Устойчиво в любой
+  // ориентации и не шумит на сингулярности «плашмя» (в отличие от сырого компаса).
+  const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
+  const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
+  // γ-СЛАГАЕМОЕ ИСКЛЮЧЕНО: r.gamma — вращение вокруг ДЛИННОЙ оси телефона (крен запястья).
+  // При поднятом телефоне (ярус 2) эта ось почти вертикальна, и старый omegaG интегрировал
+  // крен прямо в yaw — камера уезжала при каждом входе/выходе из МАЯКА. Теперь крен
+  // по определению не крутит камеру; телесный поворот ловится через α/β-компоненты
+  // гироскопа + γ-инвариантный компас (orientationHeading) добирает остальное.
+  const omegaG=((r.beta||0)*cgx + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали, БЕЗ крена
+  sensor.yawRate=omegaG;
+  // 1) ГИРОСКОП — мгновенный отклик, работает при ЛЮБОМ наклоне (в т.ч. когда смотрим вниз на доску).
+  sensor.yawFused=wrap360(sensor.yawFused + YAW_GYRO_SIGN*omegaG*dt);
+  // 2) КОМПАС — абсолютный ориентир, гасит дрейф гироскопа. Сглаживаем его как ВЕКТОР (cos/sin),
+  //    чтобы не было рывка на стыке 359°→0°. Сглаживание АДАПТИВНОЕ: стоим ровно → сильное (нет
+  //    дрожи), крутим телефон → слабое (нет запаздывания) — это и лечит «дёргается / тормозит».
+  if(sensor.compass!=null){
+    const cr=sensor.compass*Math.PI/180, cx=Math.sin(cr), cz=-Math.cos(cr);
+    const rot=clamp(Math.abs(omegaG)/45,0,1);
+    // Сглаживание МИНИМАЛЬНОЕ (пользовательский вердикт: «плавность только мешает»):
+    // лёгкий вектор-фильтр против дрожи магнитометра, при движении — почти сырой сигнал.
+    const aC=lerp(0.3,0.95,rot);
+    sensor.chx = sensor.chx==null ? cx : lerp(sensor.chx, cx, aC);
+    sensor.chz = sensor.chz==null ? cz : lerp(sensor.chz, cz, aC);
+    const comp=wrap360(Math.atan2(sensor.chx,-sensor.chz)*180/Math.PI);
+    // Коррекция ВСЕГДА ВКЛЮЧЕНА и сильная: комбинированный азимут (верхушка+спинка)
+    // невырожден по всей сфере, порог доверия больше не нужен. Постоянная времени ~0.1с:
+    // тот же угол реальной комнаты = тот же угол в игре, буквально по компасу.
+    const k=clamp(12.0*dt, 0, 0.5);
+    sensor.yawFused=smoothAngle(sensor.yawFused, comp, k);
+  }
+  // скорость руки = чистое ускорение
+  const a = e.acceleration || {};
+  sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
+  sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
+  sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
+}
+
+function bindSensors(){
+  window.addEventListener('deviceorientation', onOrient, true);
+  window.addEventListener('deviceorientationabsolute', onOrientAbs, true);
+  window.addEventListener('devicemotion', onMotion);
+  // если компас не пришёл — yaw всё равно интегрируется от гиро
+}
+
+/* ── азимут → индекс из 8 направлений на сетке ──────────────── */
+function yawToDirIdx(yaw){ return Math.round(wrap360(yaw)/45) % 8; }
+// непрерывное направление в МИРЕ из угла. Согласовано с DIRV:
+//   yaw 0° → (0,-1) «север» = −Z ;  yaw 90° → (1,0) = +X
+function dirXZ(yaw){ const a=yaw*Math.PI/180; return [Math.sin(a), -Math.cos(a)]; }
+// наклон телефона → ярус. ВНИЗ (луч в ноги) = ярус 0, ВВЕРХ (в голову) = ярус 2.
+// pitch<0 когда телефон наклонён лучом вниз — значит низкий ярус.
+// С prev — ГИСТЕРЕЗИС: выйти из среднего яруса можно за ±0.35, вернуться — только под ±0.22.
+// Без него ярус дрожал у границы 0.3 (лог: ярус1 pitch0.12 → ярус2 pitch0.31 → назад).
+function pitchTier(p, prev){
+  if(prev==null) return p < -0.3 ? 0 : (p > 0.3 ? 2 : 1);
+  if(prev===0) return p > -0.22 ? (p > 0.35 ? 2 : 1) : 0;
+  if(prev===2) return p <  0.22 ? (p < -0.35 ? 0 : 1) : 2;
+  return p < -0.35 ? 0 : (p > 0.35 ? 2 : 1);
+}
+
+/* ════════════════════════ WEB AUDIO ══════════════════════════ */
+let AC=null, master=null, worldFilter=null, ambGain=null, fxGain=null;
+let swordOsc=null, swordGain=null, swordPanner=null;
+const listenerForward = new THREE.Vector3();
+const listenerUp = new THREE.Vector3();
+
+function initAudio(){
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.9; master.connect(AC.destination);
+    // worldFilter: lowpass — при рассинхроне опускаем частоту (глухота)
+    worldFilter = AC.createBiquadFilter();
+    worldFilter.type='lowpass'; worldFilter.frequency.value=18000;
+    fxGain=AC.createGain();                                  // (07-15) окрема гучність точкових ефектів
+    try{ fxGain.gain.value=+(localStorage.getItem('vb3d_fxvol')??1); }catch(e){ fxGain.gain.value=1; }
+    worldFilter.connect(fxGain); fxGain.connect(master);
+    // (07-15) дрон світу 42Гц ВИМКНЕНО назавжди — грає лише музика і точкові звуки.
+    const amb = AC.createOscillator(); amb.type='sine'; amb.frequency.value=42;
+    ambGain = AC.createGain(); ambGain.gain.value=0.0;
+    amb.connect(ambGain); ambGain.connect(worldFilter); amb.start();
+    // sword hum — пространственный источник (остаётся в точке блокировки при клинче)
+    swordOsc = AC.createOscillator(); swordOsc.type='sawtooth'; swordOsc.frequency.value=120;
+    swordGain = AC.createGain(); swordGain.gain.value=0.0;
+    swordPanner = AC.createPanner();
+    swordPanner.panningModel='HRTF'; swordPanner.distanceModel='inverse';
+    swordPanner.refDistance=1; swordPanner.maxDistance=20; swordPanner.rolloffFactor=1.2;
+    swordOsc.connect(swordGain); swordGain.connect(swordPanner); swordPanner.connect(worldFilter);
+    swordOsc.start();
+  }catch(err){ console.warn('audio init failed', err); }
+}
+function setListener(camera){
+  if(!AC) return;
+  const L = AC.listener, p = camera.position;
+  camera.getWorldDirection(listenerForward);
+  listenerUp.set(0,1,0).applyQuaternion(camera.quaternion);
+  if(L.positionX){
+    L.positionX.value=p.x; L.positionY.value=p.y; L.positionZ.value=p.z;
+    L.forwardX.value=listenerForward.x; L.forwardY.value=listenerForward.y; L.forwardZ.value=listenerForward.z;
+    L.upX.value=listenerUp.x; L.upY.value=listenerUp.y; L.upZ.value=listenerUp.z;
+  }else{ // старый API
+    L.setPosition(p.x,p.y,p.z);
+    L.setOrientation(listenerForward.x,listenerForward.y,listenerForward.z, listenerUp.x,listenerUp.y,listenerUp.z);
+  }
+  AUDIO.gridTick(1/60);
+  AUDIO.motionTick(1/60);
+}
+function setSwordSound(x,y,z, level, freq){
+  level=0;   // (07-15) постійний гул меча прибрано за відгуками — лишаються точкові звуки
+  if(!swordPanner) return;
+  if(swordPanner.positionX){ swordPanner.positionX.value=x; swordPanner.positionY.value=y; swordPanner.positionZ.value=z; }
+  else swordPanner.setPosition(x,y,z);
+  swordGain.gain.setTargetAtTime(level, AC.currentTime, 0.05);
+  if(freq) swordOsc.frequency.setTargetAtTime(freq, AC.currentTime, 0.05);
+}
+function setWorldMuffle(t){ // t: 0 норма .. 1 полная глухота
+  if(!worldFilter) return;
+  worldFilter.frequency.setTargetAtTime(lerp(18000, 320, t), AC.currentTime, 0.08);
+}
+/* ═══ АУДИОДВИЖОК (файлы): music/sfx/ambient поверх существующего WebAudio ═══
+   Файлы лежат в репозитории рядом с игрой: audio/music/*.m4a, audio/sfx/*.m4a, audio/ambient/*.m4a
+   + audio/manifest.json описывает, что есть. Нет манифеста — движок молчит, синтез-звуки работают как раньше. */
+const AUDIO={
+  vol:{music:0.65, sfx:1.0, ambient:0.55},
+  buses:{}, cache:{}, manifest:null,
+  cur:null, curName:null, amb:null, ambName:null,
+  motionTick(dt){                                       // (07-15) МАХ/ЗАРЯД/ВИПАД дихають у музиці
+    try{
+      const R=this.ritual; if(!R||!R.moLP||!AC) return;
+      const sp=clamp((sensor.speed||0)/18,0,1);                          // чутливіше до маху
+      this._mo=lerp(this._mo??0, sp, clamp(dt*11,0,1));
+      R.moLP.frequency.setTargetAtTime(lerp(18000, 700, this._mo), AC.currentTime, 0.04);    // мах «топить» спектр глибше
+      R.moLP.Q.setTargetAtTime(lerp(0.7, 6, this._mo), AC.currentTime, 0.05);                // резонанс — «вжик» співає
+      if(this.cur && this.cur.src && this.cur.src.detune){
+        let det=this._mo*160;                                             // швидкий рух — помітний підйом тону
+        if(mode==='fighter' && player){
+          if(player.beaconLatch) det=-48*(player.charge||1);              // заряд тягне музику вниз, в'язко
+          if(player.strikeT>0)   det= 320*player.strikeT/0.4;             // ВИПАД — різкий сплеск угору
+        }
+        this.cur.src.detune.setTargetAtTime(det, AC.currentTime, 0.05);
+      }
+    }catch(e){}
+  },
+  bus(name){                                            // шина громкости (лениво, когда AC уже есть)
+    if(!AC) return null;
+    if(!this.buses[name]){ const g=AC.createGain(); g.gain.value=this.vol[name]??1; g.connect(master||AC.destination); this.buses[name]=g; }
+    return this.buses[name];
+  },
+  setVol(name,v){ this.vol[name]=clamp(+v,0,1); if(this.buses[name]) this.buses[name].gain.value=this.vol[name];
+    try{ localStorage.setItem('vb_vol', JSON.stringify(this.vol)); }catch(e){} },
+  async boot(){                                          // тихо: манифест опционален
+    try{ const v=JSON.parse(localStorage.getItem('vb_vol')||'null'); if(v) Object.assign(this.vol,v); }catch(e){}
+    try{
+      const r=await fetch('audio/manifest.json',{cache:'no-cache'});
+      if(r.ok){ this.manifest=await r.json(); logE('АУДІО: маніфест — музики '+Object.keys(this.manifest.music||{}).length+', звуков '+Object.keys(this.manifest.sfx||{}).length); }
+    }catch(e){}
+  },
+  url(kind,name){ const m=this.manifest&&this.manifest[kind]; return m&&m[name] ? 'audio/'+m[name] : null; },
+  async load(u){                                         // fetch+decode с кешем
+    if(this.cache[u]) return this.cache[u];
+    const res=await fetch(u); if(!res.ok) throw new Error(u+' '+res.status);
+    const buf=await AC.decodeAudioData(await res.arrayBuffer());
+    return (this.cache[u]=buf);
+  },
+  async sfx(name,opt={}){                                // короткий звук; с x,z — позиционный в мире
+    try{
+      if(!AC||!this.manifest) return; const u=this.url('sfx',name); if(!u) return;
+      const b=await this.load(u); const src=AC.createBufferSource(); src.buffer=b;
+      if(opt.rate) src.playbackRate.value=opt.rate;
+      const g=AC.createGain(); g.gain.value=opt.vol??1;
+      let head=src; 
+      if(opt.x!=null){ const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=2;
+        p.positionX.value=opt.x; p.positionY.value=opt.y??1; p.positionZ.value=opt.z??0; src.connect(p); head=p; }
+      head.connect(g); g.connect(this.bus('sfx')); src.start();
+    }catch(e){}
+  },
+  async music(name,{fade=1.6}={}){                       // фоновый трек с кроссфейдом, петля
+    try{
+      if(!AC||!this.manifest) return; if(this.curName===name) return;
+      const u=this.url('music',name); if(!u) return;
+      const b=await this.load(u);
+      this.buildRitual();                                 // граф Ритма собирается при первом треке
+      const src=AC.createBufferSource(); src.buffer=b; src.loop=true;
+      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('music')); src.start();
+      const t=AC.currentTime;
+      g.gain.linearRampToValueAtTime(1, t+fade);
+      if(this.cur){ const old=this.cur; old.g.gain.linearRampToValueAtTime(0, t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}}, fade*1000+80); }
+      this.cur={src,g}; this.curName=name; logE('АУДІО: музика → '+name);
+      if(ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, 0.8);   // синтез-дрон уступает живому треку
+    }catch(e){}
+  },
+  async ambient(name,{fade=2}={}){                       // атмосфера комнаты (петля, один слот)
+    try{
+      if(!AC||!this.manifest) return; if(this.ambName===name) return;
+      const u=this.url('ambient',name); if(!u) return;
+      const b=await this.load(u);
+      const src=AC.createBufferSource(); src.buffer=b; src.loop=true;
+      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('ambient')); src.start();
+      const t=AC.currentTime; g.gain.linearRampToValueAtTime(1,t+fade);
+      if(this.amb){ const old=this.amb; old.g.gain.linearRampToValueAtTime(0,t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); }
+      this.amb={src,g}; this.ambName=name;
+      if(ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, 0.8);
+    }catch(e){}
+  },
+  /* ═══ «РИТМ» — три параллельные шины поверх музыки (ТЗ: единый трек как орган чувств) ═══
+     music-шина ветвится: Main (EQ по Y + эхо/шум по X) ‖ Entity (панер + метаморфоза по типу
+     ближайшей сущности) ‖ Obstacle (эхолокация стены с материалом) → общий ЛИМИТЕР → master.
+     Все узлы создаются ОДИН раз; шаги меняют лишь параметры (без фазового шума и пересборки). */
+  ritual:null,
+  buildRitual(){
+    if(this.ritual || !AC) return this.ritual;
+    const mus=this.bus('music'); try{ mus.disconnect(); }catch(e){}
+    const R={};
+    R.limiter=AC.createDynamicsCompressor();
+    R.limiter.threshold.value=-6; R.limiter.knee.value=4; R.limiter.ratio.value=12;
+    R.limiter.attack.value=0.004; R.limiter.release.value=0.18;
+    // (07-15) РУХ КЛИНКА → музика: власний фільтр ПІСЛЯ лімітера, не чіпає гілки Ритма
+    R.moLP=AC.createBiquadFilter(); R.moLP.type='lowpass'; R.moLP.frequency.value=18000;
+    R.limiter.connect(R.moLP); R.moLP.connect(master||AC.destination);
+    // ── MAIN: HP+LP последовательно (плавный «свет/вязкость» по Y без переключения type) ──
+    R.hp=AC.createBiquadFilter(); R.hp.type='highpass'; R.hp.frequency.value=30;
+    R.lp=AC.createBiquadFilter(); R.lp.type='lowpass';  R.lp.frequency.value=18000;
+    R.mainG=AC.createGain(); R.mainG.gain.value=1;
+    mus.connect(R.hp); R.hp.connect(R.lp); R.lp.connect(R.mainG); R.mainG.connect(R.limiter);
+    // X→0 (Порядок): структуроване відлуння — короткий loop-delay
+    R.echo=AC.createDelay(1); R.echo.delayTime.value=0.16;
+    R.echoFb=AC.createGain(); R.echoFb.gain.value=0.34;
+    R.echoG=AC.createGain(); R.echoG.gain.value=0;
+    R.lp.connect(R.echo); R.echo.connect(R.echoFb); R.echoFb.connect(R.echo);
+    R.echo.connect(R.echoG); R.echoG.connect(R.limiter);
+    // X→12 (Хаос): сатурація
+    R.shaper=AC.createWaveShaper();
+    { const N=256, c=new Float32Array(N); for(let i=0;i<N;i++){ const x=i/(N-1)*2-1; c[i]=Math.tanh(2.6*x); } R.shaper.curve=c; }
+    R.distG=AC.createGain(); R.distG.gain.value=0;
+    R.lp.connect(R.shaper); R.shaper.connect(R.distG); R.distG.connect(R.limiter);
+    // ── ENTITY: три постійні гілки-метаморфози, вмикається одна (one-hot) ──
+    R.entPan=AC.createPanner(); R.entPan.panningModel='HRTF'; R.entPan.distanceModel='inverse';
+    R.entPan.refDistance=1.6; R.entPan.rolloffFactor=1.1;
+    R.entG=AC.createGain(); R.entG.gain.value=0;
+    R.entPan.connect(R.entG); R.entG.connect(R.limiter);
+    //   злі: tremolo (LFO по амплітуді — «заїкається»)
+    R.tremG=AC.createGain(); R.tremG.gain.value=0;
+    R.tremAmp=AC.createGain(); R.tremAmp.gain.value=0.55;
+    R.tremLFO=AC.createOscillator(); R.tremLFO.frequency.value=6.5;
+    R.tremDepth=AC.createGain(); R.tremDepth.gain.value=0.45;
+    R.tremLFO.connect(R.tremDepth); R.tremDepth.connect(R.tremAmp.gain); R.tremLFO.start();
+    mus.connect(R.tremG); R.tremG.connect(R.tremAmp); R.tremAmp.connect(R.entPan);
+    //   добрі: chorus (модульована коротка затримка — «мерехтіння»)
+    R.chorG=AC.createGain(); R.chorG.gain.value=0;
+    R.chor=AC.createDelay(0.06); R.chor.delayTime.value=0.014;
+    R.chorLFO=AC.createOscillator(); R.chorLFO.frequency.value=0.6;
+    R.chorDepth=AC.createGain(); R.chorDepth.gain.value=0.004;
+    R.chorLFO.connect(R.chorDepth); R.chorDepth.connect(R.chor.delayTime); R.chorLFO.start();
+    mus.connect(R.chorG); R.chorG.connect(R.chor); R.chor.connect(R.entPan);
+    //   гравці-Душі: формантний bandpass («голос крізь мелодію»)
+    R.voxG=AC.createGain(); R.voxG.gain.value=0;
+    R.vox=AC.createBiquadFilter(); R.vox.type='bandpass'; R.vox.frequency.value=740; R.vox.Q.value=8.5;
+    mus.connect(R.voxG); R.voxG.connect(R.vox); R.vox.connect(R.entPan);
+    // ── OBSTACLE: ехолокація — відбита копія Ритму від стіни попереду ──
+    R.obDelay=AC.createDelay(0.5); R.obDelay.delayTime.value=0.05;
+    R.obEQ=AC.createBiquadFilter(); R.obEQ.type='lowpass'; R.obEQ.frequency.value=900; R.obEQ.Q.value=1;
+    R.obPan=AC.createPanner(); R.obPan.panningModel='HRTF'; R.obPan.distanceModel='inverse';
+    R.obPan.refDistance=1.4; R.obPan.rolloffFactor=1.2;
+    R.obG=AC.createGain(); R.obG.gain.value=0;
+    mus.connect(R.obDelay); R.obDelay.connect(R.obEQ); R.obEQ.connect(R.obPan);
+    R.obPan.connect(R.obG); R.obG.connect(R.limiter);
+    this.ritual=R; logE('РИТМ: аудио-граф собран (Main/Entity/Obstacle → лимитер)');
+    return R;
+  },
+  _entT:0,
+  gridTick(dt){                                          // вызывается каждый кадр из setListener
+    const R=this.ritual; if(!R||!AC||!this.curName) return;
+    const t=AC.currentTime, ST=(pr,v,tc)=>pr.setTargetAtTime(v,t,tc??0.12);
+    if(mode==='fighter'||mode==='creator'){
+      // MAIN · ось Y: Сходження → світлий верх; Спуск → глуха вязкість
+      const ny=clamp(player.gy/12,0,1);
+      ST(R.hp.frequency, ny<0.5 ? lerp(700,30,ny*2) : 30, 0.18);
+      ST(R.lp.frequency, ny>0.5 ? lerp(18000,520,(ny-0.5)*2) : 18000, 0.18);
+      // MAIN · ось X: Відлуння ←→ Шум
+      const nx=clamp(player.gx/12,0,1);
+      ST(R.echoG.gain, Math.max(0,(0.5-nx)*2)*0.5);
+      ST(R.distG.gain, Math.max(0,(nx-0.5)*2)*0.42);
+    }
+    // ENTITY: одна найближча сутність у радіусі 5 (пошук ~7 раз/с)
+    this._entT-=dt;
+    if(this._entT<=0){
+      this._entT=0.15;
+      let best=null, bd=5.01, bkind='evil';
+      if(mode==='fighter' && !player.dead){
+        for(const ph of phantoms){ if(ph.dead) continue;
+          const d=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy);
+          if(d<bd){ bd=d; best=ph; bkind='evil'; } }
+        for(const key in NET.rphantoms){ const r=NET.rphantoms[key], sv=r.latest||{};
+          if(sv.dead||r.hidden) continue;
+          const d=Math.abs(r.av.gx-player.gx)+Math.abs(r.av.gy-player.gy);
+          if(d<bd){ bd=d; best=r.av; bkind=(sv.side==='ally')?'good':'evil'; } }
+        for(const id in NET.remotes){ const r=NET.remotes[id];
+          if(!r || r.spec || (r.hp??100)<=0) continue;
+          const d=Math.abs(r.gx-player.gx)+Math.abs(r.gy-player.gy);
+          if(d<bd){ bd=d; best=r; bkind='soul'; } }
+      }
+      if(best){
+        R.entPan.positionX.value=worldX(best.gx); R.entPan.positionY.value=1.2; R.entPan.positionZ.value=worldZ(best.gy);
+        ST(R.entG.gain, clamp(1-bd/6,0,1)*0.9, 0.15);
+        ST(R.tremG.gain, bkind==='evil'?1:0, 0.15);
+        ST(R.chorG.gain, bkind==='good'?1:0, 0.15);
+        ST(R.voxG.gain,  bkind==='soul'?1:0, 0.15);
+      } else ST(R.entG.gain, 0, 0.25);
+      // OBSTACLE: промінь погляду до 6 клітин — перша стіна/межа відбиває Ритм
+      if(mode==='fighter'||mode==='creator'){
+        const [dx,dz]=dirXZ(sensor.yawFused);
+        let hit=null, D=6;
+        for(let i=1;i<=6;i++){
+          const cx=Math.round(player.gx+dx*i), cy=Math.round(player.gy+dz*i);
+          if(cx<0||cx>12||cy<0||cy>12){ hit={gx:clamp(cx,0,12),gy:clamp(cy,0,12),mat:'stone'}; D=i; break; }
+          const o=obstacleAt(cx,cy);
+          if(o && o.solid!==false && !o.pass){ 
+            const mt=o.mtype||'wall';
+            hit={gx:cx,gy:cy, mat: mt==='fragile'?'glass' : (mt==='Fe'?'metal':'stone')}; D=i; break; }
+        }
+        if(hit){
+          R.obPan.positionX.value=worldX(hit.gx); R.obPan.positionY.value=1.0; R.obPan.positionZ.value=worldZ(hit.gy);
+          ST(R.obDelay.delayTime, clamp(0.012*D,0.012,0.09), 0.2);
+          ST(R.obG.gain, clamp(1-D/7,0,1)*0.55, 0.2);
+          if(hit.mat==='glass'){ R.obEQ.type='highpass'; ST(R.obEQ.frequency,1400,0.2); ST(R.obEQ.Q,7,0.2); }
+          else if(hit.mat==='metal'){ R.obEQ.type='bandpass'; ST(R.obEQ.frequency,1900,0.2); ST(R.obEQ.Q,12,0.2); }
+          else { R.obEQ.type='lowpass'; ST(R.obEQ.frequency, lerp(1200,320,clamp(1-D/6,0,1)),0.2); ST(R.obEQ.Q,1,0.2); }
+        } else ST(R.obG.gain, 0, 0.3);
+      }
+    }
+  },
+  stopMusic(fade=1){ if(this.cur&&AC){ const t=AC.currentTime; this.cur.g.gain.linearRampToValueAtTime(0,t+fade);
+    const old=this.cur; setTimeout(()=>{try{old.src.stop();}catch(e){}},fade*1000+80); this.cur=null; this.curName=null;
+    if(!this.ambName && ambGain) ambGain.gain.setTargetAtTime(0.0, AC.currentTime, 1); } },   // дрон не повертається
+};
+AUDIO.boot();
+function blip(freq, dur, type='square', vol=0.12){
+  if(!AC) return;
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.value=freq; o.connect(g); g.connect(worldFilter);
+  const t=AC.currentTime; g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.start(t); o.stop(t+dur);
+}
+
+/* ════════════════════════ THREE.JS СЦЕНА ═════════════════════ */
+const renderer = new THREE.WebGLRenderer({canvas:$('cv'), antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));   // запас под bloom на телефоне
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // OutputPass применит её в конце цепочки
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02040c);
+scene.fog = new THREE.Fog(0x03060f, 8, 22);           // мягче и дальше — мир не «схлопнут»
+const camera = new THREE.PerspectiveCamera(68, 1, 0.05, 200);
+
+/* ── ПОСТ-ОБРАБОТКА: bloom делает воксели/клинки светящимися (Tron) ── */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),
+  0.6,    // strength — умеренный ореол (не выжигает кадр)
+  0.4,    // radius   — компактнее
+  0.78);  // threshold — светятся только самые яркие места (клинок, искры), а не всё тело
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
+function resize(){
+  const w=innerWidth,h=innerHeight;
+  renderer.setSize(w,h); composer.setSize(w,h); bloomPass.setSize(w,h);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+/* ── пол: сетка 13×13 (слабо светящиеся тайлы) ───────────────── */
+const floorGeo = new THREE.BoxGeometry(CELL*0.92, 0.06, CELL*0.92);
+const floorMat = new THREE.MeshBasicMaterial({color:0x0a2038});
+const floor = new THREE.InstancedMesh(floorGeo, floorMat, G*G);
+{
+  const d=new THREE.Object3D(); const col=new THREE.Color();
+  let i=0;
+  for(let y=0;y<G;y++)for(let x=0;x<G;x++){
+    d.position.set(worldX(x), -0.45, worldZ(y)); d.updateMatrix();
+    floor.setMatrixAt(i, d.matrix);
+    // лёгкий градиент к краям (как в метасетке стилей)
+    const dx=(x-CX)/6, dy=(y-CY)/6, w=Math.min(1,(dx*dx+dy*dy)/2);
+    col.setHSL(0.58 - w*0.06, 0.5, 0.06 + w*0.05);
+    floor.setColorAt(i, col); i++;
+  }
+}
+floor.instanceColor.needsUpdate = true;
+floor.frustumCulled = false;
+scene.add(floor);
+/* ── ПОВЕРХНОСТИ: у каждой комнаты свой узор пола (цвет + рельеф тайлов) ── */
+const _fd=new THREE.Object3D(), _fc=new THREE.Color();
+const FLOOR_HUES={ center:0.58, ascension:0.38, descent:0.02, echo:0.6, noise:0.85,
+  ascension_echo:0.5, ascension_noise:0.13, descent_echo:0.68, descent_noise:0.98 };
+function paintFloor(rx,ry){
+  const st=roomStyle(rx,ry), a=st.archetype, rng=mulberry32(rx*911+ry*37+5);
+  const hBase=FLOOR_HUES[a]??0.58; let i=0;
+  const acc=new THREE.Color(st.accent||'#60a5fa');
+  for(let y=0;y<G;y++)for(let x=0;x<G;x++){
+    const dx=(x-CX)/6, dy=(y-CY)/6, rad=Math.hypot(dx,dy);
+    let l=0.07, h2=hBase, sat=0.6, lift=0, isAcc=false;
+    if(a==='center'){ l=0.05+0.11*(0.5+0.5*Math.sin(rad*9)); sat=0.5; }           // кольца
+    else if(a.startsWith('ascension')){ const w2=0.5+0.5*Math.sin((y/G)*Math.PI*4);
+      l=0.05+0.16*w2; lift=w2*0.14; sat=0.65; }                                    // светлые СТУПЕНИ
+    else if(a.startsWith('descent')){ const cr=rng()<0.18;
+      l=cr?0.22:0.03; if(cr){h2=0.02;sat=1;} lift=cr?-0.1:0; }                      // раскалённые ТРЕЩИНЫ
+    if(a.includes('echo')||a==='echo'){ if((x+y)%2===0){ l+=0.1; sat=0.35; } }      // контрастная ШАХМАТКА
+    if(a.includes('noise')||a==='noise'){ l+=rng()*0.14; lift+=(rng()-0.5)*0.16; sat=0.85; h2=(h2+rng()*0.08)%1; }
+    if(rng()<0.04 && !(x===CX&&y===CY)){ isAcc=true; l=0.3; }                       // редкие АКЦЕНТ-плиты
+    _fd.position.set(worldX(x), -0.45+lift, worldZ(y));
+    _fd.scale.set(1, 1+Math.abs(lift)*7, 1);
+    _fd.updateMatrix(); floor.setMatrixAt(i,_fd.matrix);
+    if(isAcc) _fc.copy(acc).multiplyScalar(0.55);
+    else _fc.setHSL(h2, sat, clamp(l,0.02,0.32));
+    floor.setColorAt(i,_fc);
+    i++;
+  }
+  floor.instanceMatrix.needsUpdate=true;
+  if(floor.instanceColor) floor.instanceColor.needsUpdate=true;
+}
+
+/* ── бесконечная тёмная площадка под сеткой (убирает «пустоту» по краям) ── */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80,80),
+  new THREE.MeshBasicMaterial({color:0x020610}));
+ground.rotation.x = -Math.PI/2; ground.position.y = -0.52; ground.frustumCulled=false;
+scene.add(ground);
+
+/* ── неоновая решётка 13×13: светящиеся линии по границам клеток (bloom) ── */
+{
+  const pts=[]; const half=G*CELL/2; const y=-0.40;
+  for(let i=0;i<=G;i++){
+    const p=(i-G/2)*CELL;
+    pts.push(-half,y,p,  half,y,p);   // линии вдоль X
+    pts.push(p,y,-half,  p,y,half);   // линии вдоль Z
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+  const grid=new THREE.LineSegments(g,new THREE.LineBasicMaterial({
+    color:0x2f6bd6, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false}));
+  grid.frustumCulled=false; scene.add(grid);
+  // яркая рамка арены
+  const bh=half;
+  const bg=new THREE.BufferGeometry();
+  bg.setAttribute('position',new THREE.Float32BufferAttribute(
+    [-bh,y,-bh, bh,y,-bh,  bh,y,-bh, bh,y,bh,  bh,y,bh, -bh,y,bh,  -bh,y,bh, -bh,y,-bh],3));
+  const border=new THREE.LineSegments(bg,new THREE.LineBasicMaterial({
+    color:0x49b6ff, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false}));
+  border.frustumCulled=false; scene.add(border);
+}
+
+/* ── звёздное поле-фон: наполняет «слепок сознания» глубиной ── */
+{
+  const N=650, pos=new Float32Array(N*3), col=new Float32Array(N*3), c=new THREE.Color();
+  for(let i=0;i<N;i++){
+    const r=26+Math.random()*70, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+    pos[i*3]=r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1]=Math.abs(r*Math.cos(ph))*0.6+2;   // держим звёзды выше горизонта
+    pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+    c.setHSL(0.55+Math.random()*0.12, 0.6, 0.35+Math.random()*0.4);
+    col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
+  }
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  sg.setAttribute('color',new THREE.BufferAttribute(col,3));
+  const stars=new THREE.Points(sg,new THREE.PointsMaterial({
+    size:0.34, vertexColors:true, transparent:true, opacity:0.85,
+    blending:THREE.AdditiveBlending, depthWrite:false, fog:false, sizeAttenuation:true}));
+  stars.frustumCulled=false; scene.add(stars);
+}
+
+/* ── ИСКРЫ: пул частиц для попаданий/клинча (juice, дёшево на GPU) ── */
+const SPARK_MAX=140;
+const _sPos=new Float32Array(SPARK_MAX*3), _sCol=new Float32Array(SPARK_MAX*3);
+const _sVel=new Float32Array(SPARK_MAX*3), _sLife=new Float32Array(SPARK_MAX), _sMax=new Float32Array(SPARK_MAX);
+const _sBaseCol=new Float32Array(SPARK_MAX*3);
+let _sHead=0;
+const _sGeo=new THREE.BufferGeometry();
+_sGeo.setAttribute('position',new THREE.BufferAttribute(_sPos,3));
+_sGeo.setAttribute('color',new THREE.BufferAttribute(_sCol,3));
+const _sPts=new THREE.Points(_sGeo,new THREE.PointsMaterial({
+  size:0.2, vertexColors:true, transparent:true, blending:THREE.AdditiveBlending,
+  depthWrite:false, fog:false}));
+_sPts.frustumCulled=false; scene.add(_sPts);
+const _sc=new THREE.Color();
+function emitSparks(x,y,z,hex,n=12,spd=3.2){
+  _sc.set(hex);
+  for(let k=0;k<n;k++){
+    const i=_sHead=(_sHead+1)%SPARK_MAX, j=i*3;
+    _sPos[j]=x; _sPos[j+1]=y; _sPos[j+2]=z;
+    const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1), v=spd*(0.4+Math.random());
+    _sVel[j]=Math.sin(ph)*Math.cos(th)*v;
+    _sVel[j+1]=Math.abs(Math.cos(ph))*v*0.9+1;
+    _sVel[j+2]=Math.sin(ph)*Math.sin(th)*v;
+    _sBaseCol[j]=_sc.r; _sBaseCol[j+1]=_sc.g; _sBaseCol[j+2]=_sc.b;
+    _sCol[j]=_sc.r; _sCol[j+1]=_sc.g; _sCol[j+2]=_sc.b;
+    _sLife[i]=_sMax[i]=0.5+Math.random()*0.35;
+  }
+  _sGeo.attributes.position.needsUpdate=true;
+  _sGeo.attributes.color.needsUpdate=true;
+}
+function updateSparks(dt){
+  let live=false;
+  for(let i=0;i<SPARK_MAX;i++){
+    if(_sLife[i]<=0) continue;
+    live=true;
+    _sLife[i]-=dt; const j=i*3;
+    _sVel[j+1]-=9*dt;                       // гравитация
+    _sPos[j]+=_sVel[j]*dt; _sPos[j+1]+=_sVel[j+1]*dt; _sPos[j+2]+=_sVel[j+2]*dt;
+    if(_sPos[j+1]<-0.45){ _sPos[j+1]=-0.45; _sVel[j+1]*=-0.35; _sVel[j]*=0.6; _sVel[j+2]*=0.6; }
+    const f=clamp(_sLife[i]/_sMax[i],0,1);   // гаснут в чёрный → на аддитиве исчезают
+    _sCol[j]=_sBaseCol[j]*f; _sCol[j+1]=_sBaseCol[j+1]*f; _sCol[j+2]=_sBaseCol[j+2]*f;
+  }
+  if(live){ _sGeo.attributes.position.needsUpdate=true; _sGeo.attributes.color.needsUpdate=true; }
+}
+
+/* ════════════════════ ВОКСЕЛЬНОЕ ТЕЛО (аватар) ═══════════════
+   Локальная сфера: 3 яруса (0 ноги, 1 торс, 2 голова).
+   Микро-воксели рендерим представительным набором (телефон-перф);
+   попадание считается по паре (клетка × ярус) — это макро-проекция
+   «прожигания» микро-вокселей клинка сквозь чужие микро-воксели.    */
+/* Ориентируем сегмент-конечность (руку) от точки A к точке B в ЛОКАЛЬНЫХ
+   координатах группы аватара. Базовая геометрия — длиной 1 вдоль +Z. */
+const _zAxis=new THREE.Vector3(0,0,1), _limbV=new THREE.Vector3(), _limbQ=new THREE.Quaternion();
+function setLimb(m, ax,ay,az, bx,by,bz){
+  const dx=bx-ax, dy=by-ay, dz=bz-az, len=Math.hypot(dx,dy,dz)||0.001;
+  m.position.set((ax+bx)*0.5,(ay+by)*0.5,(az+bz)*0.5);
+  _limbV.set(dx/len,dy/len,dz/len);
+  m.quaternion.setFromUnitVectors(_zAxis,_limbV);
+  m.scale.set(1,1,len);
+}
+function makeAvatar(baseHue){
+  const g=new THREE.Group(); g.frustumCulled=false; scene.add(g);
+  const box=(w,h,d)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial());
+    m.frustumCulled=false; g.add(m); return m; };
+  const limb=()=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(0.19,0.19,1), new THREE.MeshBasicMaterial());
+    m.frustumCulled=false; g.add(m); return m; };
+  // цельная блочная фигура (локальные координаты: +Y вверх, +Z «вперёд/лицо»)
+  const parts={
+    legL:box(0.26,0.66,0.32), legR:box(0.26,0.66,0.32),
+    footL:box(0.3,0.16,0.42), footR:box(0.3,0.16,0.42),
+    pelvis:box(0.6,0.32,0.44), torso:box(0.66,0.74,0.44),
+    head:box(0.5,0.48,0.5),   visor:box(0.52,0.12,0.06),   // визор = команда + куда смотрит
+    armLU:limb(), armLF:limb(), armRU:limb(), armRF:limb(),// плечо/предплечье ×2
+    grip:box(0.24,0.24,0.26),                              // кисти на рукояти
+  };
+  // клинок: тонкий световой луч (сегменты) в МИРОВОМ пространстве
+  const bladeGeo=new THREE.BoxGeometry(0.17,0.17,CELL*0.95);
+  const bladeMat=new THREE.MeshBasicMaterial({transparent:true, blending:THREE.AdditiveBlending, depthWrite:false});
+  const blade=new THREE.InstancedMesh(bladeGeo,bladeMat,6);
+  blade.frustumCulled=false; blade.count=0; scene.add(blade);
+  return {
+    mesh:g, parts, blade, baseHue,
+    gx:CX, gy:CY, dirIdx:0, visYaw:0, tier:1, crouch:0,
+    pitch:0, roll:0, speedPulse:0, bladeHue:0.95,
+    hp:100, stamina:100, swordLen:1, charging:false, charge:1,
+    hitActive:false, strikeT:0, disarmed:false,
+    dead:false, respawnT:0, score:0, painT:0, hitGlow:0, hue:baseHue,
+    disarmT:0, fpSmooth:0,   // таймер телекинеза; сглаженный переход в 1-е лицо
+    mods:{dmg:1, charge:1, reach:0},   // подбираемые улучшения (лут)
+  };
+}
+
+const player = makeAvatar(0.33);   // зелёный спектр
+player.bladeHue = 0.5;             // клинок игрока — голубой
+let phantomCount = 1;                 // настройка: 0..N фантомов
+let phantoms = [];
+const PH_STARTS = [[6,1],[2,2],[10,2],[6,11],[2,10],[10,10]];
+/* ── ЗВЕРИНЕЦ: kind ∈ fighter | crawler(повзун) | flyer(літун) | gunner(стрілець) | boss ──
+   crawler: 1 клетка, кусает ЯРУС 0 (ноги/выносливость), быстрый, без клинка;
+   flyer:   парит НАД полом (не касается), жалит ЯРУС 2, летает сквозь препятствия;
+   gunner:  держит дистанцию 3–6, стреляет МЕДЛЕННЫМИ снарядами — их МОЖНО ОТБИТЬ мечом;
+   boss:    занимает 2×2 (в глубоких комнатах 3×3), длинное оружие, легко продавливает
+            клинч, но НЕПОВОРОТЛИВ (разворот раз в 1.2с — обходи за спину!), слабое место
+            — СПИНА (×3 урона), раз в ~7с круговой замах с 1с предупреждения (уклоняйся). */
+/* ── МОДЕЛИ ЗВЕРЕЙ: каждому виду — своё тело и процедурная анимация ──
+   Гуманоид прячется, в ph.mesh добавляется kmodel; ph.kanim(av,t) гоняет анимацию. */
+function _kbox(g,w,h,d,color){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+  new THREE.MeshBasicMaterial({color})); m.frustumCulled=false; g.add(m); return m; }
+function applyKindModel(ph){
+  if(ph.kind==='fighter') return;
+  for(const k in ph.parts){ try{ ph.parts[k].visible=false; }catch(e){} }   // манекен спит
+  const g=new THREE.Group(); g.frustumCulled=false; ph.mesh.add(g); ph.kmodel=g;
+  if(ph.kind==='crawler'){
+    // приземистая тварь: панцирь, 4 лапы, щёлкающая пасть
+    const body=_kbox(g,0.8,0.3,1.0,0xb45309); body.position.y=0.28;
+    const jawT=_kbox(g,0.5,0.1,0.4,0xf59e0b); jawT.position.set(0,0.34,0.62);
+    const jawB=_kbox(g,0.5,0.08,0.36,0x92400e); jawB.position.set(0,0.2,0.6);
+    const legs=[];
+    for(const [lx,lz] of [[-0.42,0.3],[0.42,0.3],[-0.42,-0.3],[0.42,-0.3]]){
+      const l=_kbox(g,0.14,0.3,0.14,0x7c2d12); l.position.set(lx,0.14,lz); legs.push(l); }
+    const eL=_kbox(g,0.08,0.08,0.05,0xffe08a); eL.position.set(-0.16,0.42,0.52);
+    const eR=_kbox(g,0.08,0.08,0.05,0xffe08a); eR.position.set(0.16,0.42,0.52);
+    ph.kanim=(av,t)=>{ const s=t*0.02;
+      legs.forEach((l,i)=>{ l.position.y=0.14+Math.max(0,Math.sin(s*3+i*1.7))*0.1; });
+      jawB.position.y=0.2-Math.max(0,Math.sin(s*2.2))*0.09;         // клацает пастью
+      g.position.y=Math.abs(Math.sin(s*3))*0.04; };
+  }else if(ph.kind==='flyer'){
+    // парящее жало: ядро-ромб и пара машущих крыльев
+    const core=new THREE.Mesh(new THREE.OctahedronGeometry(0.3),
+      new THREE.MeshBasicMaterial({color:0x8b5cf6})); core.frustumCulled=false;
+    core.position.y=0.5; g.add(core);
+    const sting=_kbox(g,0.07,0.07,0.4,0xd8b4fe); sting.position.set(0,0.36,0.35);
+    const wL=_kbox(g,0.66,0.04,0.3,0xc4b5fd); wL.position.set(-0.4,0.56,0);
+    const wR=_kbox(g,0.66,0.04,0.3,0xc4b5fd); wR.position.set(0.4,0.56,0);
+    ph.kanim=(av,t)=>{ const s=t*0.02;
+      wL.rotation.z= Math.sin(s*9)*0.9; wR.rotation.z=-Math.sin(s*9)*0.9;   // частые взмахи
+      g.position.y=Math.sin(s*1.6)*0.12;                                    // покачивание в воздухе
+      core.rotation.y=s*0.7; };
+  }else if(ph.kind==='gunner'){
+    // стрелец: корпус, «глаз» и ствол-бластер с накалом перед выстрелом
+    const body=_kbox(g,0.6,0.9,0.5,0x475569); body.position.y=0.6;
+    const eye=_kbox(g,0.3,0.16,0.08,0xfca5a5); eye.position.set(0,0.95,0.28);
+    const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,0.7,8),
+      new THREE.MeshBasicMaterial({color:0xff8844})); barrel.frustumCulled=false;
+    barrel.rotation.x=Math.PI/2; barrel.position.set(0.22,0.72,0.5); g.add(barrel);
+    ph.kanim=(av,t)=>{ const chg=clamp(1-(av.shootT||2)/1.0,0,1);           // накал за 1с до выстрела
+      barrel.material.color.setHSL(0.07,1,0.35+chg*0.45);
+      barrel.position.z=0.5-(av.shootT!=null&&av.shootT>2.2?0.12:0);        // отдача сразу после
+      body.rotation.y=Math.sin(t*0.001)*0.08; };
+  }else if(ph.kind==='boss'){
+    // ТИТАН: массивный корпус, рогатая голова, ГИГАНТСКАЯ секира в руке
+    const torso=_kbox(g,1.1,1.2,0.8,0x7f1d1d); torso.position.y=1.1;
+    const shL=_kbox(g,0.44,0.44,0.7,0x991b1b);  shL.position.set(-0.76,1.62,0);
+    const shR=_kbox(g,0.44,0.44,0.7,0x991b1b);  shR.position.set(0.76,1.62,0);
+    const head=_kbox(g,0.56,0.5,0.56,0xb91c1c); head.position.y=2.06;
+    const hL=_kbox(g,0.12,0.4,0.12,0xfbbf24);   hL.position.set(-0.26,2.42,0); hL.rotation.z=0.4;
+    const hR=_kbox(g,0.12,0.4,0.12,0xfbbf24);   hR.position.set(0.26,2.42,0);  hR.rotation.z=-0.4;
+    const eye=_kbox(g,0.4,0.1,0.06,0xfef08a);   eye.position.set(0,2.1,0.3);
+    const axe=new THREE.Group(); axe.frustumCulled=false; g.add(axe); axe.position.set(1.05,1.2,0.2);
+    const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,2.4,6),
+      new THREE.MeshBasicMaterial({color:0x78350f})); shaft.frustumCulled=false; axe.add(shaft);
+    const blade1=_kbox(axe,0.08,0.7,0.9,0xef4444); blade1.position.set(0,1.0,0.3);
+    const blade2=_kbox(axe,0.08,0.5,0.5,0xfca5a5); blade2.position.set(0,1.0,-0.28);
+    ph.kanim=(av,t)=>{ const s=t*0.001;
+      torso.rotation.y=Math.sin(s*0.9)*0.06;                                 // тяжёлое дыхание
+      eye.material.color.setHSL(0.12,1, av.sweepWarned?0.75:0.45);
+      // ЗАМАХ: во время предупреждения секира поднимается над головой, после — резкий круг
+      const warn=av.sweepWarned?clamp(1-(av.sweepT||0),0,1):0;
+      axe.rotation.z=lerp(axe.rotation.z, warn? -2.2 : -0.35, 0.12);
+      axe.rotation.y=av.sweepWarned?0:axe.rotation.y*0.9;
+      if(av.sweepJustHit){ av.sweepJustHit-=0.016; axe.rotation.y+=0.55; }   // видимый круговой мах
+    };
+  }
+}
+function makePhantom(i, kind){
+  const ph = makeAvatar(0.92);        // пурпур/красный спектр
+  ph.kind = kind||'fighter';
+  const s = PH_STARTS[i%PH_STARTS.length];
+  const c = freeSpawnCell(s[0],s[1],ph); ph.gx=c[0]; ph.gy=c[1];
+  ph.ai = { moveT:Math.random()*0.6, swingT:1+Math.random()*2, windT:0 };
+  if(ph.kind==='crawler'){ ph.hp=40; ph.noBlade=true;
+    try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
+  else if(ph.kind==='flyer'){ ph.hp=35; ph.noBlade=true; ph.hover=TIER_H*1.7;
+    try{ ph.mesh.scale.set(0.45,0.45,0.45); }catch(e){} }
+  else if(ph.kind==='gunner'){ ph.hp=55; ph.noBlade=true; ph.wpn='blaster'; ph.shootT=1.6+Math.random();
+    try{ ph.mesh.scale.set(0.8,0.85,0.8); }catch(e){} }
+  else if(ph.kind==='boss'){ ph.hp=320; ph.boss=true; ph.size=2; ph.wpn='bossaxe';
+    ph.sweepT=7; ph.slow=1.9; ph.turnT=0;
+    try{ ph.mesh.scale.setScalar(1.35); }catch(e){} }   // модель титана и так крупная
+  applyKindModel(ph);
+  return ph;
+}
+function spawnPhantoms(n, kinds){
+  phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
+  phantoms = [];
+  for(let i=0;i<n;i++) phantoms.push(makePhantom(i, kinds&&kinds[i]));
+  logE('ворогів: '+n+(kinds&&kinds.length?' ['+kinds.join(',')+']':''));
+}
+// клетка принадлежит фантому с учётом СЛЕДА (босс 2×2/3×3)
+function phantomAtCell(cx,cy){
+  return phantoms.find(p=>!p.dead
+    && cx>=p.gx && cx<p.gx+(p.size||1)
+    && cy>=p.gy && cy<p.gy+(p.size||1));
+}
+// ВАЖНО: НЕ спавнить фантомов на верхнем уровне модуля! freeSpawnCell → isCellOccupied
+// трогает const obstacles (объявлен ниже) и NET (объявлен сильно ниже) → TDZ ReferenceError,
+// модуль умирает при загрузке и НИ ОДИН обработчик кнопок не вешается («меню мёртвое»).
+// Первый спавн делает startGame(), когда модуль уже целиком инициализирован.
+
+/* ════════════════════ ПРЕПЯТСТВИЯ ════════════════════════════
+   4 штуки в случайных клетках: 2 прочных (не рушатся, блокируют
+   и клинок, и движение) + 2 разрушаемых (можно прожечь).          */
+const obstacles = [];
+function spawnObstacles(rng, count){
+  rng = rng || Math.random;                       // сид → у всех клиентов ОДИНАКОВАЯ комната
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  // не ставим препятствия на центр игрока и на стартовые клетки фантомов
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
+  const plan=[]; const total=(count==null?4:count);
+  for(let i=0;i<total;i++) plan.push(i<Math.ceil(total/2));
+  for(const solid of plan){
+    let gx,gy,key,tries=0;
+    do{ gx=1+Math.floor(rng()*11); gy=1+Math.floor(rng()*11); key=gx+','+gy; tries++; }
+    while(taken.has(key) && tries<50);
+    taken.add(key);
+    // прочное — тёмный стальной блок; разрушаемое — светящийся янтарный кристалл
+    const h = solid?TIER_H*2.1:TIER_H*1.8;
+    const geo = new THREE.BoxGeometry(0.74,h,0.74);
+    const mat = solid
+      ? new THREE.MeshBasicMaterial({color:0x28374f})
+      : new THREE.MeshBasicMaterial({color:0xc9a03a, transparent:true, opacity:0.9});
+    const grp=new THREE.Group(); grp.frustumCulled=false;
+    const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
+    const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({color: solid?0x5f86c0:0xffd47a, transparent:true,
+        opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
+    edges.frustumCulled=false; grp.add(edges);
+    grp.position.set(worldX(gx), h*0.5-0.45, worldZ(gy)); scene.add(grp);
+    obstacles.push({gx,gy,solid,hp:solid?Infinity:40,alive:true,mesh:grp,mat});
+  }
+  logE('перешкоди: '+obstacles.filter(o=>o.solid).length+' міцних + '+obstacles.filter(o=>!o.solid).length+' руйнівних');
+}
+function obstacleAt(gx,gy){ return obstacles.find(o=>o.alive && o.gx===gx && o.gy===gy); }
+function damageObstacle(o,amount){
+  if(o.solid || !o.alive) return;
+  o.hp-=amount; o.mat.color.offsetHSL(0,0,0.06);
+  if(o.hp<=0){ o.alive=false; scene.remove(o.mesh); logE('перешкоду зруйновано'); doFlash('#d99a3a'); snapshotRoom();   // мир один на всех
+    try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
+    try{ resFromObstacle(o); }catch(e){}   // видобуток: дерево/камінь/залізо/кристал
+    if(Math.random()<0.4){                      // из разбитого — иногда полезное
+      const pool=Math.random()<0.35 ? ['heal'] : ['up_dmg','up_charge','up_reach'];
+      spawnPickup(o.gx, o.gy, pool[Math.floor(Math.random()*pool.length)]);
+    }
+  }
+}
+spawnObstacles();
+
+/* ── обновление вокселей аватара (позиция, цвет=состояние) ───── */
+const _d = new THREE.Object3D(), _c = new THREE.Color();
+function aggressionHue(a){ // a:0 (норма) колодный синий → 1 (низкий HP) раскалённый
+  // 0.55 (cyan) → 0.0 (red)
+  return lerp(0.55, 0.0, a);
+}
+/* ── геометрия «рука+клинок» ──────────────────────────────────────
+   Клинок держится ПРЯМО перед грудью и уходит прямым лучом вперёд по
+   направлению взгляда; наклон (pitch) задаёт возвышение, стойка (roll)
+   лишь слегка наклоняет гарду. Во время удара — снап-выпад вперёд +
+   рубящая дуга вниз (atk 1→0), возврат в стойку. Всё это чисто визуально;
+   хитбокс считается по клеткам (bladeContestCell) и не зависит от анимации. */
+const STRIKE_DUR = 0.32;               // длительность видимого взмаха
+function handInfo(av){
+  const [dx,dz] = dirXZ(av.visYaw);
+  const rx = -dz, rz = dx;                        // «вправо» от направления
+  const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);   // якір руки = візуальне тіло (плавний крок)
+  const cr = av.crouch||0;
+  const pitch = av.pitch||0;
+  const guard = clamp((av.roll||0)/70, -1, 1);    // стойка: лёгкий наклон гарды вбок
+
+  // фаза удара 0..1: снап в начале, плавный возврат к 0 (в покое анимации нет)
+  const atk = clamp((av.strikeT||0)/STRIKE_DUR, 0, 1);
+  const lunge   = atk*0.7;                         // рывок кисти вперёд
+  const dipAtk  = atk*0.85;                        // клинок рубит вниз и возвращается
+  const lenBoost= atk*0.7;                         // на выпаде луч чуть длиннее
+
+  // якорь кисти: перед грудью (двуручный хват), небольшой сдвиг по стойке
+  const hx = px + dx*(0.26+lunge) - rx*guard*0.5;
+  const hz = pz + dz*(0.26+lunge) - rz*guard*0.5;
+  const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
+
+  const len = clamp(Math.round(av.swordLen),1,6);
+  // ВИЗУАЛ = ФИЗИКЕ: длина луча в клетках считается КАК в weaponCells (maxLen оружия + лут-«досяжність»).
+  // Иначе прокачка рушит на расстоянии взгляда, а клинок туда визуально не дотягивается.
+  const wnm = av===player ? playerWpn : (av.wpn||'sword');
+  const Wv = (typeof WEAPONS!=='undefined' && WEAPONS[wnm]) || {maxLen:6};
+  let extraL = av===player ? ((player.mods&&player.mods.reach)||0) : (av.reachMod||0);
+  if(Wv.rel==='shot') extraL = 0;   // у бластера дуло не растёт — досяжність идёт в веер пуль
+  const cellsL = clamp(Math.round(av.swordLen*Wv.maxLen/6)+extraL, 1, Wv.maxLen+2);
+  // угол возвышения луча: прицел наклоном + рубящая дуга атаки
+  const elev = clamp(pitch*0.9 - dipAtk, -1.15, 1.15);
+  const ce=Math.cos(elev), se=Math.sin(elev);
+  const reach = CELL*(cellsL+lenBoost);
+  const tipX = hx + dx*ce*reach;
+  const tipY = clamp(hy + se*reach, -0.06, TIER_H*2.4);
+  const tipZ = hz + dz*ce*reach;
+  return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr,atk,guard};
+}
+
+function updateAvatarMesh(av, t){
+  const P=av.parts, g=av.mesh; if(!P) return;
+  const hpFrac=clamp(av.hp/100,0,1), aggr=1-hpFrac, hue=aggressionHue(aggr);
+  if(av.hitGlow>0) av.hitGlow-=0.016;
+  const glow=clamp(av.hitGlow,0,0.3);
+  const pain=av.painT>0?(Math.sin(t*0.05)*0.5+0.5)*0.4:0;
+  const base=0.32 + aggr*0.24 + (av.speedPulse||0)*0.35 + pain + glow*1.1;
+  const cr=av.crouch||0, sq=1-cr*0.26;
+  const col=(m,l,s)=>m.material.color.setHSL(hue, s??0.75, clamp(l,0.06,0.6));
+  // ── позиция + поворот всей фигуры по направлению взгляда ──
+  const _fo=((av.size||1)-1)*0.5;
+  // ПЛАВНИЙ КРОК (07-13): логіка — миттєво по клітинах, ВІЗУАЛ ковзає (~0.15с) з підскоком.
+  // Телепорти (респавн/перехід кімнати, >2.5 кл.) не «їдуть» через мапу — снап.
+  if(av.vgx==null || Math.abs(av.vgx-av.gx)>2.5 || Math.abs(av.vgy-av.gy)>2.5){ av.vgx=av.gx; av.vgy=av.gy; }
+  av.vgx += (av.gx-av.vgx)*0.26; av.vgy += (av.gy-av.vgy)*0.26;
+  const _trans=Math.min(Math.abs(av.gx-av.vgx)+Math.abs(av.gy-av.vgy),1);
+  const _hop=Math.sin(_trans*Math.PI)*0.14;   // маленький підскок під час кроку
+  g.position.set(worldX(av.vgx+_fo), (av.hover||0)+_hop, worldZ(av.vgy+_fo));
+  g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
+  // КАСТОМНАЯ МОДЕЛЬ зверя (повзун/літун/стрілець/босс): своя анимация, мимо гуманоида
+  if(av.kmodel){ if(av.kanim) av.kanim(av, t); return; }
+  // ── ноги/стопы: присед опускает и разводит колени ──
+  const spread=0.17+cr*0.13;
+  P.legL.position.set(-spread,0.33*sq,0); P.legL.scale.y=sq;
+  P.legR.position.set( spread,0.33*sq,0); P.legR.scale.y=sq;
+  P.footL.position.set(-spread,0.09,0.08); P.footR.position.set(spread,0.09,0.08);
+  P.pelvis.position.set(0,0.78*sq,0);
+  P.torso.position.set(0,1.26*sq,0);  P.torso.scale.y=sq;
+  P.head.position.set(0,1.86*sq,0.02);
+  P.visor.position.set(0,1.9*sq,0.27);
+  col(P.legL,base*0.78); col(P.legR,base*0.78);
+  col(P.footL,base*0.55); col(P.footR,base*0.55);
+  col(P.pelvis,base*0.9); col(P.torso,base,0.8); col(P.head,base*1.08,0.7);
+  P.visor.material.color.setHSL(av.bladeHue??0.95, 0.9, clamp(0.5+glow,0.2,0.95));
+  // ── руки к рукояти (двуручный хват), локоть наружу-вниз; выпад тянет руки вперёд ──
+  const atk=clamp((av.strikeT||0)/STRIKE_DUR,0,1);
+  let lunge=atk*0.7, latk=0;   // по умолчанию: выпад вперёд (меч)
+  if(av===player){
+    const _rel=WEAPONS[playerWpn].rel;
+    if(_rel==='arc'){        // руки ведут ДУГУ вместе с секирой: вбок → через фронт
+      lunge=atk*0.12;
+      const side=(wfx.sim&&wfx.sim.axeSide)||1, ph3=1-atk, e3=ph3*ph3*(3-2*ph3);
+      latk=side*Math.cos(e3*Math.PI)*0.55;
+    }else if(_rel==='spin'){ lunge=0; }                       // раскрутка — корпус спокоен
+    else if(_rel==='crack'){ lunge=atk*0.25; }                // короткий кистевой посыл
+    else if(playerWpn==='spear'){ lunge=atk*1.15; }           // выпад глубже и дальше
+  }
+  const guard=clamp((av.roll||0)/70,-1,1);
+  const hlx=guard*0.5+latk, hly=TIER_H*(1.12-cr*0.42), hlz=0.26+lunge;   // рукоять: наклон + ДУГА маха
+  const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
+  const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
+  const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
+  setLimb(P.armLU, Slx,sy,sz, Elx,Ely,Elz); setLimb(P.armLF, Elx,Ely,Elz, hlx,hly,hlz);
+  setLimb(P.armRU, Srx,sy,sz, Erx,Ely,Elz); setLimb(P.armRF, Erx,Ely,Elz, hlx,hly,hlz);
+  P.grip.position.set(hlx,hly,hlz);
+  col(P.armLU,base*0.85); col(P.armLF,base*0.85); col(P.armRU,base*0.85); col(P.armRF,base*0.85);
+  col(P.grip,base*0.5,0.3);
+}
+
+/* ── обновление клинка: ровный луч-сегменты от кисти к кончику ── */
+const _bladeDir = new THREE.Vector3();
+/* стиль луча-зоны по оружию: толщина, «скрыть луч» (у цепа/хлыста место луча занимает физ-модель) */
+const WEAPON_FX={
+  sword:{thick:1.0}, spear:{thick:0.55}, axe:{thick:1.7},
+  flail:{hideBeam:true}, nunchaku:{hideBeam:true}, whip:{hideBeam:true}, blaster:{thick:0.45},
+  bossaxe:{thick:2.2},
+};
+function updateBlade(av){
+  if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
+  const wname = av===player ? playerWpn : av.wpn;
+  const wst = wname && WEAPON_FX[wname];
+  if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
+  const H = handInfo(av);
+  const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;   // вектор клинка
+  const blen = Math.hypot(bx,by,bz)||1;
+  const segs = clamp(Math.round(blen/(CELL*0.9)), 1, 6);  // плотное заполнение без разрывов
+  av.blade.count = segs;
+  const hot = av.strikeT>0;
+  const segLen = blen/segs;
+  const hue = av.bladeHue??0.95;
+  for(let i=0;i<segs;i++){
+    const f=(i+0.5)/segs;
+    _d.position.set(lerp(H.hx,H.tipX,f), lerp(H.hy,H.tipY,f), lerp(H.hz,H.tipZ,f));
+    _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);   // +Z вдоль клинка
+    const dmgF = av===player ? (1+clamp(((player.mods&&player.mods.dmg)||1)-1,0,2)*0.55) : 1;   // УРОН → клинок массивнее
+    const _th=((wst&&wst.thick)||1)*dmgF;
+    _d.scale.set(_th, _th, segLen/(CELL*0.95));                        // толщина по оружию + подгон длины
+    _d.updateMatrix(); av.blade.setMatrixAt(i,_d.matrix);
+    // яркое ядро у рукояти + разгорается к кончику; во время удара — вспышка и белее
+    const lum = clamp((hot?0.72:0.55) + f*0.22 + (hot?H.atk*0.15:0), 0, 0.97);
+    const sat = hot ? lerp(0.85,0.5,H.atk) : 0.95;
+    _c.setHSL(hue, sat, lum);
+    av.blade.setColorAt(i,_c);
+  }
+  _d.scale.set(1,1,1);                                     // сброс общего масштаба
+  av.blade.instanceMatrix.needsUpdate=true;
+  av.blade.instanceColor.needsUpdate=true;
+  av.blade.material.opacity = hot?1.0:0.92;
+}
+
+/* ════════════════════ СТОЙКИ И КАМЕРА ════════════════════════ */
+const STANCE = {BEACON:'beacon', STRIKE:'strike'};
+let stance = STANCE.STRIKE;
+const camTarget = new THREE.Vector3();
+const camPos = new THREE.Vector3();
+const camLook = new THREE.Vector3();   // сглаженная точка взгляда камеры
+
+function updateStanceAndCamera(dt){
+  if(mode==='creator'){ setCreatorCamera(); return; }   // творец: камера = задняя камера смартфона
+  if(clinch.active){ player.mesh.visible=false; updatePressMeter(); setClinchCamera(); return; }  // клинч — 1-е лицо + метр тиску
+  const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
+  const fpRaw = (mode==='creator') ? 1
+    : CAM.view==='fp' ? 1
+    : (CAM.view==='third'||CAM.view==='top') ? 0
+    : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // АВТО: наклон в альбомную = 1-е лицо
+  player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*3.2,0,1));   // повільніше (~0.3с) — перехід читається, не смикає
+  const fp = player.fpSmooth;
+  // ГИСТЕРЕЗИС стойки: вход в МАЯК при fp>0.58, выход при fp<0.42.
+  // Один порог (0.5) в обе стороны давал десятки ложных переключений от дрожи руки у границы 55°
+  // (лог 2026-07-02: серии МАЯК↔МОЛНИЯ по 2-3 за секунду + случайные «ВЫБРОС длина=1.1»).
+  player.beaconLatch = player.beaconLatch ? fp>0.42 : fp>0.58;
+  const beacon = player.beaconLatch;
+  // ГОЛОВУ/визор прячем ЛОКАЛЬНО как только уходим в 1-е лицо — иначе они закрывают обзор.
+  // Другие клиенты рендерят свою копию этого игрока → у них голова на месте.
+  const hideHead = beacon;
+  player.parts.head.visible = !hideHead; player.parts.visor.visible = !hideHead;
+  const prevStance = stance;
+  stance = beacon ? STANCE.BEACON : STANCE.STRIKE;
+  if(prevStance!==stance) logE('СТІЙКА → '+(beacon?'МАЯК (1-ша особа)':'БЛИСКАВКА'));
+  if(player.jamT>0) player.jamT-=dt;
+  if(player.jamCd>0) player.jamCd-=dt;
+  player.hitActive = !player.disarmed && !player.dead && !(player.jamT>0);   // клинок живий, крім заклину
+
+  // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах).
+  // Выброс засчитывается ТОЛЬКО если заряд держали ≥0.25с (charge>1.25) — короткое
+  // дрожание у порога стойки тихо отменяется: без звука, лога и штрафа выносливости.
+  if(beacon){ player.charging=true; player.charge=clamp(player.charge+dt*(player.mods.charge||1),1,3); }
+  else if(player.charging){
+    player.charging=false;
+    if(player.charge>1.25){
+      const W=WEAPONS[playerWpn];
+      player.strikeT=0.4;
+      if(W.rel==='arc'){
+        // МАХ: длина НЕ растёт — заряд уходит в веер (зона ±2 направления на 2 клетки)
+        player.swordLen=1.6;
+        blip(120,0.16,'sawtooth',0.2); logE('МАХ '+W.label+' зі сторони '+((sensor.roll||1)>=0?'права':'ліва'));
+      }else if(W.rel==='spin'){
+        // РАСКРУТКА: заряд конвертируется в угловую скорость маятника — импульс в pp
+        player.swordLen=1.2;
+        if(wfx.sim && wfx.sim.p){ const S2=wfx.sim, side=(sensor.roll||1)>=0?1:-1;
+          const kick=(player.charge-1)*0.42*side;
+          S2.pp[0]-=kick; }                     // мгновенная боковая скорость грузу
+        blip(300,0.1,'sine',0.16); blip(520,0.08,'sine',0.12);
+        logE('РАСКРУТКА '+W.label+' ×'+player.charge.toFixed(1));
+      }else if(W.rel==='shot'){
+        // ВЫСТРЕЛ: заряд уходит в снаряд (скорость+урон). Ближней зоны почти нет.
+        player.swordLen=1;
+        firePlayerShot(player.charge);
+        blip(760,0.08,'square',0.18); logE('ВЫСТРЕЛ бластера ×'+player.charge.toFixed(1));
+      }else if(W.rel==='crack'){
+        // ЩЕЛЧОК: хвост выпрямляется вперёд на полную длину (импульс уже в верле-блоке)
+        player.swordLen=player.charge;
+        blip(1200,0.06,'square',0.16); logE('ЩЕЛЧОК хлиста, длина='+player.charge.toFixed(1));
+      }else{
+        // ЛИНИЯ (меч/спис): классический выпад вперёд
+        player.swordLen=player.charge;
+        blip(180,0.12,'sawtooth',0.18); logE('ВЫПАД, длина='+player.charge.toFixed(1));
+      }
+      addExhaustion(player, 14*W.w/5);
+    }
+    player.charge=1;
+  }
+  if(player.strikeT>0) player.strikeT-=dt;
+  // ── ЗАКЛИН: клинок упёрся в НЕРУШИМУЮ стену → как клинч с миром.
+  // Держишь оружие в стене — выносливость горит; не отвёл (укоротил/увёл в сторону)
+  // за 2.5с или выносливость кончилась → оружие ВЫРЫВАЕТ из рук. Разрушаемые не клинят —
+  // их ПРОЖИГ и так грызёт до нуля.
+  // ГИБКОЕ (ціп/нунчаки/хлист) НЕ КЛИНИТ: раньше кольцо ціпа накрывало соседнюю клетку,
+  // и достаточно было СТОЯТЬ по диагонали от стены, чтобы терять оружие. Гибкое платит
+  // только физикой шара (столкновение в маятнике). Жёсткое клинит ТОЛЬКО линией вперёд.
+  if(!player.disarmed && !player.dead && !clinch.active
+     && (WEAPONS[playerWpn].rel==='line' || WEAPONS[playerWpn].rel==='arc')){
+    let jammed=null;
+    {
+      const [dx,dy]=DIRV[player.dirIdx];
+      const L=clamp(Math.round(player.swordLen*WEAPONS[playerWpn].maxLen/6),1,WEAPONS[playerWpn].maxLen);
+      for(let i=1;i<=L;i++){
+        const jx=player.gx+dx*i, jy=player.gy+dy*i;
+        const o=obstacleAt(jx,jy);
+        if(o){ if(o.solid) jammed=o; break; }   // контакт: прочное клинит, хрупкое — просто стоп (его грызёт прожиг)
+      }
+    }
+    if(jammed){
+      player.jamT=(player.jamT||0)+dt;
+      player.stamina=clamp(player.stamina-dt*16,0,100);
+      addExhaustion(player, dt*20);
+      if(!player.jamWarned){ player.jamWarned=true;
+        showBanner('⚠ КЛИНОК ЗАКЛИНИЛО В СТІНІ — ВІДВЕДИ!','#f59e0b');
+        blip(160,0.2,'sawtooth',0.16); buzz([0,70]); }
+      if(Math.random()<dt*5){ const [jx,jy]=[jammed.gx,jammed.gy];
+        emitSparks(worldX(jx), TIER_H*1.1, worldZ(jy), '#f59e0b', 4, 1.8); }
+      if(player.jamT>2.5 || player.stamina<=0){
+        player.disarmed=true; player.disarmT=0; player.jamT=0; player.jamWarned=false;
+        dropBlade(player);
+        showBanner('✕ ЗБРОЮ ВИРВАЛО З РУК','#ef4444'); doFlash('#ef4444');
+        blip(70,0.5,'sawtooth',0.24); buzz([0,200]);
+        logE('заклин: зброю вирвано стіною');
+      }
+    }else{ player.jamT=0; player.jamWarned=false; }
+  }
+  player.swordLen = lerp(player.swordLen, beacon?1.4:1, clamp(dt*(beacon?4:1.6),0,1));
+  player.mesh.visible = fp < 0.85;          // тело исчезает только у самого 1-го лица
+
+  // камера — плавный бленд между 3-м и 1-м лицом
+  const Zc=(mode==='creator')?1:CAM.zoom, topV=(CAM.view==='top');   // зум камеры + вид «сверху»
+  const tpx=px-dx*(topV?0.8:1.6)*Zc, tpy=TIER_H*(topV?8.0:4.8)*Zc, tpz=pz-dz*(topV?0.8:1.6)*Zc;
+  const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
+  camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
+  const ttx=px+dx*(topV?1.4:3.2), tty=TIER_H*(topV?0.0:0.2), ttz=pz+dz*(topV?1.4:3.2);     // прицел вперёд-вниз
+  // ВИДОШУКАЧ (07-15): у МАЯКУ дивишся туди, куди «знімає» задня кришка телефону —
+  // нахили телефон як камеру вгору/вниз, і погляд піде за нею (а не за віссю «пульта»).
+  const _cp=(sensor.camPitch??sensor.pitch);
+  const ftx=px+dx*6,   fty=TIER_H*1.7 + _cp*5.2, ftz=pz+dz*6;
+  camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
+}
+
+/* ════════════════════ КЛИНЧ / РАССИНХРОН ═════════════════════ */
+const clinch = {
+  active:false, foe:null, lockYaw:0, lockX:0, lockY:0, lockZ:0,
+  delta:0, t:0, parryWindow:0, vibT:0, cd:0,   // cd — пауза после клинча, чтобы не залипать в цепочку
+  // ── ВЗАИМНОЕ ДАВЛЕНИЕ НА МЕЧ ──: X∈[−1,+1] — смещение точки скрещения.
+  // Каждая сторона копит СВОЙ монотонный импульс (myImp); по сети публикуется только он.
+  // X = (мой − чужой)/шкала считается детерминированно на обоих клиентах (у противника
+  // ровно −X) → арбитр не нужен. Урон от продавливания каждый применяет СЕБЕ сам.
+  myImp:0, foeImp:0, foeBase:null, foeT:0, pressX:0, pressDmgT:0, pressPubT:0, pvpPair:null,
+  lockPitch:0, lockLen:1, broke:false, participants:[],   // замороженные наклон/длина + участники клинча (Часть 2)
+};
+let friendlyFire = true;        // наносить/получать урон между игроками
+let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
+const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СКЛАДНО'}];
+const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
+const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
+const CLINCH_RETURN_T = 6.0;    // без клинка столько секунд → телекинез возвращает меч в руку
+// шкала давления для HUD: ⟨▓▓▓▓│▓░░░⟩ — заливка уезжает к проигрывающему
+function pressBar(x){
+  const n=clamp(Math.round((x+1)*4),0,8);   // 0..8, 4 = равновесие
+  let s='⟨';
+  for(let i=0;i<8;i++){ if(i===4) s+='│'; s += i<n ? '▓' : '░'; }
+  return s+'⟩';
+}
+const PUSH_COST = 15;           // выносливость, снимаемая при обоюдном толчке (Часть 4.1)
+const ACTIVITY_COOL = 28;       // скорость остывания «недавней активности» в покое (ед/с) (Часть 4.2)
+function addExhaustion(av, amt){ if(av) av.activityExhaustion = clamp((av.activityExhaustion||0)+amt, 0, 100); }
+// Часть 2: суммарная выносливость удерживающих клинч (по массиву участников)
+function clinchHoldersStamina(){
+  let s=0;
+  for(const p of (clinch.participants||[])){
+    if(!p) continue;
+    if(p===player) s+=player.stamina;
+    else if(p.remote){ const r=NET.remotes[p.id]; s += (r&&r.stamina!=null)?r.stamina:55; }
+    else s += (p.stamina??60);
+  }
+  return s || 55;
+}
+
+function bladeContestCell(av){   // клетка-кончик клинка
+  const [dx,dy]=DIRV[av.dirIdx];
+  const len=clamp(Math.round(av.swordLen),1,6);
+  return {x: av.gx+dx*len, y: av.gy+dy*len};
+}
+
+function startClinch(foe){
+  if(clinch.active) return;
+  clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
+  addExhaustion(player, 18);   // вход в клинч — энергозатратно (Часть 4.2)
+  clinch.participants = foe ? [player, foe] : [player];   // Часть 2: участники клинча
+  clinch.lockYaw = sensor.yawFused;
+  const tip = bladeContestCell(player);
+  clinch.lockX = worldX(clamp(tip.x,0,12));
+  clinch.lockY = TIER_H*1.2;
+  clinch.lockZ = worldZ(clamp(tip.y,0,12));
+  showBanner('⚡ КЛІНЧ — ПОВЕРНИ ТЕЛЕФОН У ТОЧКУ МЕЧА','#a78bfa');
+  logE('КЛІНЧ старт, lockYaw='+Math.round(clinch.lockYaw));
+  doFlash('#a78bfa');
+  emitSparks(clinch.lockX, clinch.lockY, clinch.lockZ, '#c4a8ff', 22, 4.2);
+  // звонкий «лязг» столкновения клинков (две ноты)
+  blip(900,0.09,'square',0.22); blip(70,0.45,'sawtooth',0.2);
+  buzz([0,90]);   // чёткий старт-импульс
+  // ── ЗАМОРОЗКА: тело и клинок игрока застывают в позе зацепа ──
+  clinch.lockPitch = sensor.pitch;
+  clinch.lockLen   = clamp(Math.round(player.swordLen),1,6);
+  clinch.broke     = false;
+  // давление: обнулить счётчики; для PvP — открыть канал в Firebase
+  clinch.myImp=0; clinch.foeImp=0; clinch.foeBase=null; clinch.foeT=0; clinch.spinHold=0;
+  clinch.pressX=0; clinch.pressDmgT=0; clinch.pressPubT=0; clinch.pvpPair=null;
+  if(foe && foe.remote){ clinch.pvpPair = NET.pressPair(foe.id); NET.pressSub(clinch.pvpPair); }
+  player.visYaw = clinch.lockYaw; player.dirIdx = yawToDirIdx(clinch.lockYaw);
+  player.strikeT = 0; player.mesh.visible = false;   // тело игрока скрыто (1-е лицо): видны только клинок-ориентир и астрал
+}
+function endClinch(reason){
+  logE('КЛІНЧ кінець: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
+  clinch.active=false; clinch.delta=0;
+  clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
+  if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
+  clinch.pressX=0;
+  setWorldMuffle(0);
+  if(navigator.vibrate) navigator.vibrate(0);
+  setAvatarAlpha(player, 1); hideAstral();          // тело снова плотное, астрал убран
+  player.mesh.visible=true;   // вернуть тело игрока в кадр после клинча
+  if(reason==='parry'){
+    showBanner('✦ ПАРИРУВАННЯ — СПАЛАХ','#22d3ee');
+    doFlash('#22d3ee');
+    // короткое окно идеальной контратаки: бонусный урон соупернику в клинче
+    if(clinch.foe){
+      if(clinch.foe.remote){ if(friendlyFire) NET.sendHit(clinch.foe.id, 1, 28, 'player'); }
+      else if(!clinch.foe.dead) damageTier(clinch.foe, 1, 28);
+    }
+    blip(880,0.18,'sine',0.2);
+    buzz([0,40,40,40]);
+  }else if(reason==='retreat'){
+    showBanner('↩ РОЗРИВ — ВІДСТУП','#93c5fd');       // ушёл из клинча шагом назад
+    blip(300,0.12,'sine',0.12);
+    player.stamina=clamp(player.stamina-10,0,100);
+  }else if(reason==='disarm'){
+    player.disarmed=true; player.stamina=0; player.disarmT=0;
+    dropBlade(player);
+    showBanner('✖ РОЗЗБРОЄННЯ — КРОКНИ ДО МЕЧА','#ef4444');
+    blip(50,0.6,'sawtooth',0.22);
+    buzz([0,200]);
+  }else if(reason==='pressed'){
+    // тебя ПРОДАВИЛИ: клинок отброшен — это разоружение, заработанное противником
+    player.disarmed=true; player.stamina=0; player.disarmT=0;
+    dropBlade(player);
+    showBanner('⇣ ПРОДАВЛЕНО — КЛИНОК ВІДКИНУТО','#ef4444');
+    doFlash('#ef4444');
+    blip(60,0.7,'sawtooth',0.24);
+    buzz([0,260]);
+  }else if(reason==='presswin'){
+    showBanner('⇡ ПРОДАВИВ КЛИНОК СУПРОТИВНИКА','#4ade80');
+    doFlash('#4ade80');
+    blip(660,0.22,'sine',0.2); blip(990,0.16,'sine',0.16);
+    buzz([0,40,30,90]);
+  }else if(reason==='spinout'){
+    showBanner('🌀 РОЗКРУТИВСЯ — ВИРВАВСЯ ЗІ ЗВ’ЯЗКИ','#fbbf24');
+    blip(500,0.1,'sine',0.16); blip(760,0.1,'sine',0.14); buzz([0,40,20,40]);
+  }else if(reason==='slipout'){
+    showBanner('〰 ВИСЛИЗНУВ','#22d3ee');   // хлыст: без штрафа выносливости
+    blip(900,0.08,'sine',0.12);
+  }else if(reason==='net'){
+    showBanner('◌ ЗВ’ЯЗОК ВТРАЧЕНО — КЛІНЧ РОЗПАВСЯ','#94a3b8');   // без штрафа
+    blip(220,0.15,'sine',0.1);
+  }else if(reason==='shattered'){
+    showBanner('✷ КЛІНЧ РОЗБИТО ТРЕТЬОЮ СИЛОЮ','#f59e0b');   // третий боец пробил зацеп для всех
+    doFlash('#f59e0b');
+    player.stamina=clamp(player.stamina-8,0,100);
+    blip(200,0.2,'sawtooth',0.16); buzz([0,80]);
+  }
+  clinch.participants = [];
+  { const pm=$('pressMeter'); if(pm) pm.style.display='none'; }
+}
+
+function updateClinch(dt){
+  if(!clinch.active) return;
+  clinch.t += dt;
+  // Δ — между заблокированным азимутом и текущим положением гироскопа
+  clinch.delta = Math.abs(angDiff(sensor.yawFused, clinch.lockYaw));
+  // звук собственного меча остаётся в точке блокировки; мир глохнет
+  const muffle = clamp(clinch.delta/CLINCH_DELTA_CRIT + clinch.t/CLINCH_TIME_CRIT*0.4, 0, 1);
+  setWorldMuffle(muffle);
+  setSwordSound(clinch.lockX, clinch.lockY, clinch.lockZ, 0.28, 110);
+  // ВИБРАЦИЯ = насколько телефон ушёл от точки меча. Близко (Δ мал) — тихие редкие
+  // импульсы; далеко (Δ велик) — частые и долгие. Это «компас рассинхрона».
+  clinch.vibT -= dt;
+  if(clinch.vibT<=0){
+    const n = clamp(clinch.delta/CLINCH_DELTA_CRIT, 0, 1);   // 0..1
+    clinch.vibT = lerp(0.45, 0.10, n);        // чем дальше — тем чаще
+    buzz(Math.round(lerp(20, 110, n)));
+  }
+  // сначала рассинхрон должен «разорваться» (телефон ушёл от точки меча),
+  // и только потом возврат считается парированием — иначе мгновенный фрипарри
+  if(clinch.delta > 25) clinch.broke = true;
+
+  // ── ВЗАИМНОЕ ДАВЛЕНИЕ ────────────────────────────────────────
+  // Жмёшь, пока держишь клинок В ТОЧКЕ (Δ мал): сила = точность удержания × запас
+  // выносливости × рывок руки (sensor.speed). Давить дорого — выносливость капает.
+  {
+    /* КЛИНЧ РАЗНЫМ ОРУЖИЕМ — разные пути к победе:
+       меч/спис — ТОЧНОСТЬ: держи точку (Δ мал) → давишь и паришь (спис чуть слабее в связке);
+       сокира   — СИЛА: точность почти не важна (hold мягкий), давит ×1.45, но парирование грубое;
+       нунчаки/ціп — РАСКРУТКА: давить и ВЫРВАТЬСЯ можно только вращением (маятник >7 рад/с);
+       хлист    — ВЫСКАЛЬЗЫВАНИЕ: в связке слаб (×0.4), зато уводишь Δ>15 — просто выдернул. */
+    const Wc=WEAPONS[playerWpn];
+    let hold;
+    if(Wc.rel==='spin'){
+      const sp=(wfx.sim&&wfx.sim.p)?Math.hypot(wfx.sim.p[0]-wfx.sim.pp[0],wfx.sim.p[1]-wfx.sim.pp[1],wfx.sim.p[2]-wfx.sim.pp[2])/Math.max(dt,1e-3)/0.7:0;
+      hold=clamp(sp/9,0,1);                                    // сила связки = скорость вращения
+      clinch.spinHold=(clinch.spinHold||0)+(sp>7?dt:0);
+      if(clinch.spinHold>0.5){ endClinch('spinout'); return; } // РАЗОГНАЛ → ВЫРВАЛСЯ
+    }else if(Wc.rel==='arc'){ hold=clamp(1-clinch.delta/60,0.35,1); }
+    else if(Wc.rel==='crack'){ hold=clamp(1-clinch.delta/25,0,1);
+      if(clinch.delta>15 && clinch.t>0.4){ endClinch('slipout'); return; } }  // гибкий — выдернул
+    else hold=clamp(1-clinch.delta/25,0,1);
+    const pressMul = Wc.rel==='arc'?1.45 : Wc.rel==='crack'?0.4 : playerWpn==='spear'?0.85 : 1;
+    const staF = clamp(player.stamina/60, 0.15, 1);
+    const push = hold * (0.55 + 0.45*clamp(sensor.speed/5,0,1)) * staF * pressMul;
+    clinch.myImp += push*dt;
+    player.stamina = clamp(player.stamina - dt*4*hold, 0, 100);
+    // сторона противника
+    if(clinch.foe && clinch.foe.remote){
+      // PvP: читаем ЕГО опубликованный импульс (базлайн-вычитание страхует от
+      // остаточного узла прошлого клинча), публикуем свой ~8 Гц
+      const fp=NET.pressFoe;
+      if(fp && clinch.pvpPair===fp.pair){
+        // базлайн ловит сироту прошлого клинча И следует ВНИЗ за сбросом счётчика:
+        // противник начал заново с 0 → принимаем его новую базу, иначе он «невидим»,
+        // пока не перерастёт сироту (симуляция это поймала)
+        if(clinch.foeBase==null || fp.imp<clinch.foeBase) clinch.foeBase=fp.imp;
+        clinch.foeImp=Math.max(0, fp.imp-clinch.foeBase); clinch.foeT=fp.t||0;
+      }
+      clinch.pressPubT-=dt;
+      if(clinch.pressPubT<=0){ clinch.pressPubT=0.12; NET.pressPub(clinch.pvpPair, clinch.myImp); }
+      // связь с противником потеряна (его onDisconnect ещё молчит) → клинч тихо распадается
+      if(clinch.t>1.5 && (Date.now()-(clinch.foeT||0))>3000){ endClinch('net'); return; }
+    }else if(clinch.foe && !clinch.foe.dead){
+      // бот давит по сложности и своей выносливости — механика тестируется соло
+      const bs = clamp((clinch.foe.stamina??100)/60, 0.15, 1);
+      clinch.foeImp += [0.45,0.62,0.8][botDiff]*bs*(clinch.foe.boss?2.2:1)*dt;   // босса в лоб не передавить — обходи
+    }
+    const X = clamp((clinch.myImp - clinch.foeImp)/2.2, -1, 1);
+    clinch.pressX = X;
+    // искры на точке скрещения ползут К ПРОИГРЫВАЮЩЕМУ — давление видно в мире, не только в HUD
+    clinch.sparkT=(clinch.sparkT||0)-dt;
+    if(clinch.sparkT<=0 && Math.abs(X)>0.15){
+      clinch.sparkT=0.28;
+      const [sdx,sdz]=dirXZ(clinch.lockYaw);
+      const off=-X*CELL*0.7;
+      emitSparks(clinch.lockX+sdx*off, clinch.lockY, clinch.lockZ+sdz*off,
+                 X<0?'#f87171':'#86efac', 6, 2.2);
+    }
+    // ПРОДАВЛИВАНИЕ: глубже ±0.55 — проигрывающий получает порезы у самой гарды.
+    // Себе урон применяю только Я (hp разлетается моими пакетами); противнику — только ОН
+    // (у него X зеркален) → сеть без двойного счёта. Боту режу локально, я же его владелец.
+    clinch.pressDmgT -= dt;
+    if(clinch.pressDmgT<=0){
+      if(X < -0.55){
+        clinch.pressDmgT=0.45;
+        damageTier(player, 1, 7);
+        logE('ПРОДАВЛЮВАННЯ: клинок біля горла → HP '+Math.round(player.hp));
+        doFlash('#ef4444'); buzz([0,60,40,60]);
+      }else if(X > 0.55 && clinch.foe && !clinch.foe.remote && !clinch.foe.dead){
+        clinch.pressDmgT=0.45;
+        damageTier(clinch.foe, 1, 7);
+        logE('ПРОДАВЛЮВАННЯ: продавлюю фантома → HP '+Math.round(clinch.foe.hp));
+      }else clinch.pressDmgT=0.1;
+    }
+    // ПРОБИТИЕ: |X|=1. Проигравший сам себя разоружает (endClinch('pressed') на ЕГО клиенте),
+    // победитель просто закрывает клинч с фанфарой — состояния сходятся без арбитра.
+    if(X<=-1){ endClinch('pressed'); return; }
+    if(X>=1){
+      if(clinch.foe && !clinch.foe.remote && !clinch.foe.dead){
+        damageTier(clinch.foe, 1, 26);
+        // ВЫБИЛ ОРУЖИЕ: бот/босс роняет его на пол — подними и владей (даже СОКИРОЙ ТИТАНА)
+        const f=clinch.foe;
+        if(!f.noBlade && !f.disarmed){
+          f.disarmed=true; f.disarmT=0;
+          spawnDrop(f.gx, f.gy, f.wpn||'sword');
+          setTimeout(()=>{ if(!f.dead) f.disarmed=false; }, 6000);   // боту куют новое через 6с
+          logE((f.boss?'БОС':'фантом')+' роззброєно продавлюванням');
+        }
+      }
+      // финальный толчок: без него противник мог застрять на X≈−0.97 (лаг публикаций)
+      // и уйти без разоружения. Один set — и его клиент детерминированно дожимает до −1.
+      if(clinch.pvpPair) NET.pressPub(clinch.pvpPair, clinch.myImp+9);
+      endClinch('presswin'); return;
+    }
+  }
+
+  if(clinch.broke){
+    // РАССИНХРОН истощает тем быстрее, чем дальше телефон ушёл от точки меча.
+    // Действия «астрала» отделены от аватара — это дорого стоит выносливости.
+    const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);
+    player.stamina = clamp(player.stamina - dt*(12+26*n), 0, 100);
+    addExhaustion(player, dt*(18+38*n));   // удержание рассинхрона накапливает усталость (Часть 4.2)
+  }
+  // ПАРИРОВАНИЕ (победа в клинче): держишь клинок в точке (Δ<10) — продавливаешь.
+  // После разрыва зачёт быстрый (контра); без разрыва (просто не дал себя сбить) — чуть дольше.
+  {
+    const Wc2=WEAPONS[playerWpn];
+    const tol = Wc2.rel==='arc'?16 : playerWpn==='spear'?8 : 10;   // сокира груба, спис требует точности
+    if(Wc2.rel!=='spin' && clinch.delta < tol){
+      clinch.parryWindow += dt;
+      const need = (clinch.broke ? 0.15 : 1.2) * (Wc2.rel==='arc'?1.25:1);
+      if(clinch.parryWindow > need){ endClinch('parry'); return; }
+    }else clinch.parryWindow = 0;
+  }
+  // РАЗОРУЖЕНИЕ — только реальный провал: увёл клинок за критический угол, ЛИБО ДОЛГО держал
+  // рассинхрон, ЛИБО кончилась выносливость. Ровно держащего НЕ разоружаем по таймеру
+  // (иначе честное удержание = гарантированный проигрыш → бесконечная петля disarm↔телекинез).
+  const heldDesynced = clinch.broke && clinch.delta > 25 && clinch.t > CLINCH_TIME_CRIT;
+  if(clinch.delta > CLINCH_DELTA_CRIT || heldDesynced || player.stamina<=0){
+    endClinch('disarm');
+  }
+}
+
+/* ── разоружение: оружие падает МОДЕЛЬЮ своего типа; чужое можно ПОДНЯТЬ (свап) ── */
+const DROPS=[];   // {gx,gy,wpn,mesh} — оружие, оброненное ботами/боссами/игроками
+function dropModel(wpn){
+  const col=(RACK_COLORS&&RACK_COLORS[wpn])|| (wpn==='bossaxe'?0xef4444:0x93c5fd);
+  const g=new THREE.Group(); g.frustumCulled=false;
+  const core=new THREE.Mesh(
+    wpn==='flail'? new THREE.SphereGeometry(0.2,8,8)
+    : wpn==='bossaxe'? new THREE.BoxGeometry(0.9,0.16,0.5)
+    : wpn==='axe'? new THREE.BoxGeometry(0.6,0.14,0.4)
+    : wpn==='nunchaku'? new THREE.BoxGeometry(0.7,0.12,0.12)
+    : wpn==='whip'? new THREE.BoxGeometry(0.9,0.08,0.08)
+    : new THREE.BoxGeometry(0.72,0.14,0.14),                   // меч/спис — брус
+    new THREE.MeshBasicMaterial({color:col}));
+  core.frustumCulled=false; core.rotation.y=Math.random()*Math.PI; g.add(core);
+  return g;
+}
+function spawnDrop(gx,gy,wpn){
+  const c=freeCellNear(gx,gy);
+  const mesh=dropModel(wpn);
+  mesh.position.set(worldX(c.gx), -0.3, worldZ(c.gy)); scene.add(mesh);
+  DROPS.push({gx:c.gx, gy:c.gy, wpn, mesh});
+  logE('зброя на підлозі: '+(WEAPONS[wpn]?WEAPONS[wpn].label:wpn)+' ('+c.gx+','+c.gy+')');
+}
+function removeDrop(d){
+  const i=DROPS.indexOf(d); if(i>=0) DROPS.splice(i,1);
+  try{ d.mesh.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(e){}
+  scene.remove(d.mesh);
+}
+/* ── АПГРЕЙДЫ: подбираемые улучшения. Общие модификаторы бойца:
+   dmg ×1.15 за штуку, charge ×1.2 (скорость набора заряда), reach +1 клетка, heal +25HP.
+   (гілки развития ПО КАЖДОМУ оружию — следующий пласт; каркас mods уже готов.)      */
+const PICKUPS=[];
+const PICKUP_DEF={
+  up_dmg:   {col:0xef4444, label:'ШКОДА ×1.15',    apply(){ player.mods.dmg*=1.15; }},
+  up_charge:{col:0xfbbf24, label:'ЗАРЯД ×1.2',    apply(){ player.mods.charge*=1.2; }},
+  up_reach: {col:0x4ade80, label:'ДОСЯЖНІСТЬ +1', apply(){ player.mods.reach+=1; }},
+  heal:     {col:0xf9a8d4, label:'+25 HP',        apply(){ player.hp=clamp(player.hp+25,0,100); }},
+  scroll:   {col:0xf5deb3, label:'📜 СУВІЙ РЕЦЕПТА', apply(){ try{ openScrollModal(); }catch(e){} }},
+};
+function spawnPickup(gx,gy,kind){
+  const c=freeCellNear(gx,gy), d=PICKUP_DEF[kind];
+  const m=new THREE.Mesh(new THREE.OctahedronGeometry(0.22),
+    new THREE.MeshBasicMaterial({color:d.col, transparent:true, opacity:0.95}));
+  m.frustumCulled=false; m.position.set(worldX(c.gx), 0.35, worldZ(c.gy)); scene.add(m);
+  PICKUPS.push({gx:c.gx, gy:c.gy, kind, mesh:m});
+}
+function removePickup(pk){
+  const i=PICKUPS.indexOf(pk); if(i>=0) PICKUPS.splice(i,1);
+  try{ pk.mesh.geometry.dispose(); pk.mesh.material.dispose(); }catch(e){}
+  scene.remove(pk.mesh);
+}
+function rollMobLoot(ph){
+  // 50% — ЕГО оружие на пол; 50% — апгрейд. У бесствольной мелочи всегда апгрейд.
+  const hasWpn=!ph.noBlade || ph.kind==='gunner';
+  if(hasWpn && Math.random()<0.5) spawnDrop(ph.gx, ph.gy, ph.wpn||'sword');
+  else{
+    const pool=['up_dmg','up_charge','up_reach','heal'];
+    spawnPickup(ph.gx, ph.gy, pool[Math.floor(Math.random()*pool.length)]);
+  }
+}
+function updatePickupCollect(){
+  for(const pk of PICKUPS){
+    if(player.gx===pk.gx && player.gy===pk.gy){
+      const d=PICKUP_DEF[pk.kind]; d.apply();
+      showBanner('◆ '+d.label,'#'+d.col.toString(16).padStart(6,'0'));
+      blip(880,0.1,'sine',0.16); blip(1180,0.08,'sine',0.12); buzz([0,30]);
+      logE('апгрейд: '+d.label+'  [шкода ×'+player.mods.dmg.toFixed(2)
+        +' заряд ×'+player.mods.charge.toFixed(2)+' +'+player.mods.reach+'дос]');
+      removePickup(pk);
+      return;
+    }
+  }
+}
+let dropDwell=0, pickupCd=0, dwellDrop=null;
+function dropToNeighbor(wpn){
+  // своё оружие ложится РЯДОМ, не под ноги — иначе пинг-понг «свап туда-сюда» каждый кадр
+  for(const [ox,oy] of DIRV){
+    const nx=player.gx+ox, ny=player.gy+oy;
+    if(nx<0||nx>12||ny<0||ny>12) continue;
+    if(obstacleAt(nx,ny)) continue;
+    if(DROPS.some(d=>d.gx===nx&&d.gy===ny)) continue;
+    const mesh=dropModel(wpn);
+    mesh.position.set(worldX(nx), -0.3, worldZ(ny)); scene.add(mesh);
+    DROPS.push({gx:nx, gy:ny, wpn, mesh});
+    return;
+  }
+  spawnDrop(player.gx, player.gy, wpn);   // всё занято — как получится (кулдаун защитит)
+}
+function updateDropPickup(dt){
+  pickupCd=Math.max(0, pickupCd-(dt||0.016));
+  if(pickupCd>0) return;
+  // подбор с ВЫДЕРЖКОЙ: стой на чужом оружии 0.6с — свап; сошёл — счёт сбрасывается
+  for(const d of DROPS){
+    if(player.gx===d.gx && player.gy===d.gy){
+      if(!player.disarmed && playerWpn===d.wpn){ dropDwell=0; dwellDrop=null; return; }
+      if(dwellDrop!==d){ dwellDrop=d; dropDwell=0; }
+      dropDwell+=(dt||0.016);
+      if(dropDwell<0.6) return;
+      dropDwell=0; dwellDrop=null; pickupCd=1.2;
+      const old=playerWpn;
+      if(!player.disarmed) dropToNeighbor(old);                   // своё — РЯДОМ
+      playerWpn = d.wpn==='bossaxe' ? 'bossaxe' : d.wpn;
+      player.disarmed=false; player.disarmT=0;
+      buildWeaponFX(playerWpn==='bossaxe'?'axe':playerWpn);
+      player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55,bossaxe:0.02}[playerWpn]??0.5;
+      removeDrop(d);
+      showBanner('✥ ПІДІБРАНО: '+(WEAPONS[playerWpn]?WEAPONS[playerWpn].label:playerWpn),'#4ade80');
+      blip(700,0.12,'sine',0.16); buzz([0,40]);
+      logE('підібрано зброю: '+playerWpn);
+      try{ if(playerWpn==='bossaxe' && !CRAFT.unlocked.bossTech){ CRAFT.unlocked.bossTech=true; saveCraft();
+        setTimeout(()=>showBanner('🪓 ТЕХНІКУ СОКИРИ ОПАНОВАНО — крафт відкрито у КУЗНІ','#22c55e'),1400); } }catch(e){}
+      return;
+    }
+  }
+}
+let droppedBlade=null;
+const dropGeo=new THREE.BoxGeometry(0.5,0.16,0.16);
+const dropMat=new THREE.MeshBasicMaterial({color:0x60a5fa});
+function freeCellNear(gx,gy){
+  gx=clamp(gx,0,12); gy=clamp(gy,0,12);
+  if(!obstacleAt(gx,gy)) return {gx,gy};
+  for(let r=1;r<=4;r++) for(const [ox,oy] of DIRV){
+    const nx=clamp(gx+ox*r,0,12), ny=clamp(gy+oy*r,0,12);
+    if(!obstacleAt(nx,ny)) return {gx:nx,gy:ny};
+  }
+  return {gx,gy};
+}
+function dropBlade(av){
+  if(droppedBlade) scene.remove(droppedBlade);
+  if(av===player){                                    // модель падает СВОИМ оружием
+    droppedBlade=dropModel(playerWpn);
+  } else droppedBlade=new THREE.Mesh(dropGeo,dropMat);
+  const tip=bladeContestCell(av);
+  const c=freeCellNear(tip.x, tip.y);       // не на непроходимом препятствии
+  droppedBlade.userData={gx:c.gx, gy:c.gy};
+  droppedBlade.position.set(worldX(c.gx), -0.3, worldZ(c.gy));
+  scene.add(droppedBlade);
+  logE('меч упав у ('+c.gx+','+c.gy+')');
+}
+function tryPickupBlade(){
+  if(!droppedBlade || !player.disarmed) return;
+  const dx=Math.abs(player.gx-droppedBlade.userData.gx);
+  const dy=Math.abs(player.gy-droppedBlade.userData.gy);
+  if(dx<=1 && dy<=1){                        // рядом (или на клетке) — поднимаем
+    player.disarmed=false; player.stamina=40; player.swordLen=1; player.disarmT=0;
+    scene.remove(droppedBlade); droppedBlade=null;
+    showBanner('↺ КЛИНОК ПОВЕРНУТО','#22c55e'); blip(660,0.15,'sine',0.18); logE('меч піднято');
+  }
+}
+// ТЕЛЕКИНЕЗ: без клинка слишком долго → аватар жестом призывает меч обратно в руку
+function returnBlade(){
+  if(!player.disarmed) return;
+  player.disarmed=false; player.stamina=Math.max(player.stamina,45); player.swordLen=1;
+  player.strikeT=0.4; player.disarmT=0;                 // короткий «жест рукой навстречу»
+  if(droppedBlade){
+    emitSparks(worldX(droppedBlade.userData.gx),TIER_H,worldZ(droppedBlade.userData.gy),'#7cf3ff',20,4.0);
+    scene.remove(droppedBlade); droppedBlade=null;
+  }
+  emitSparks(worldX(player.gx),TIER_H*1.2,worldZ(player.gy),'#7cf3ff',16,3.2);
+  showBanner('✋ ТЕЛЕКІНЕЗ — КЛИНОК ПОВЕРНУВСЯ','#7cf3ff');
+  blip(500,0.2,'sine',0.18); buzz([0,30,20,60]); logE('меч повернуто телекінезом');
+}
+
+/* ════════════════════ КЛИНЧ: КАМЕРА / АСТРАЛ / ОРИЕНТИР ══════════
+   На зацепе аватар и его клинок ЗАСТЫВАЮТ (поза момента столкновения),
+   а игрок временно правит «астралом» — полупрозрачной рукой-клинком,
+   что отражает фактическое положение телефона. Задача — свести астрал
+   к бледному замороженному клинку (Δ→0 = парирование).                 */
+// прозрачность всех кубов тела аватара (0..1). Клинок рисуется отдельно.
+function setAvatarAlpha(av, a){
+  if(!av||!av.parts) return;
+  const t = a < 0.999;
+  for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
+}
+// камера клинча — плавный вид от 1-го лица на скрещение клинков
+function updatePressMeter(){                              // тиск НАГЛЯДНО: заливка от центра к победе/поражению
+  const pm=$('pressMeter'); if(!pm) return;
+  pm.style.display='block';
+  const X=clinch.pressX||0, f=$('pressFill');
+  const w=Math.abs(X)*50;
+  f.style.width=w+'%';
+  f.style.left=(X>=0?50:50-w)+'%';
+  f.style.background = X>=0 ? (X>0.55?'#22c55e':'#86efac') : (X<-0.55?'#ef4444':'#f87171');
+  $('pressLbl').textContent = X>0.55?'ПРОДАВЛЮЄШ!':(X<-0.55?'ТЕБЕ ПРОДАВЛЮЮТЬ!':'ТИСК');
+}
+function setClinchCamera(){
+  const [dx,dz]=dirXZ(clinch.lockYaw);
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  // ВИД ОТ 1-ГО ЛИЦА: камера на уровне глаз, смотрит почти горизонтально на скрещение клинков.
+  // Тело игрока в клинче полностью скрыто (см. updateStanceAndCamera) → голова не мешает.
+  camPos.set(px - dx*0.3, TIER_H*1.55, pz - dz*0.3);
+  const _po=-(clinch.pressX||0)*0.55;                     // ТИСК видно: контакт съезжает к проигрывающему
+  camTarget.set(clinch.lockX+dx*_po, clinch.lockY + TIER_H*0.35, clinch.lockZ+dz*_po);
+  camera.up.set(0,1,0);
+}
+// астральный риг (создаётся один раз, невидим вне клинча)
+// ── МОРФ ГРАВЦЯ: сервер може перетворити тебе (слайм). Тіло ховається, зброя вимкнена. ──
+const MORPH={form:'human', until:0};
+const slime=(function(){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.42,0.8),
+    new THREE.MeshBasicMaterial({color:0x6ee7a8, transparent:true, opacity:0.82}));
+  m.frustumCulled=false; m.visible=false; scene.add(m); return m;
+})();
+function applyMorph(form,dur){
+  MORPH.form=(form==='slime')?'slime':'human';
+  MORPH.until=(MORPH.form!=='human'&&dur)?Date.now()+dur*1000:0;
+  if(MORPH.form==='slime'){ showBanner('🜏 ТЕБЕ ПЕРЕТВОРЕНО НА СЛИЗ','#6ee7a8'); doFlash('#6ee7a8'); buzz([0,120]); logE('МОРФ: слизь'+(dur?(' на '+dur+'с'):'')); }
+  else { slime.visible=false; player.mesh.visible=(mode==='fighter'); showBanner('☉ ТИ ЗНОВУ СОБОЮ','#7cc8ff'); logE('МОРФ: человек'); }
+}
+function updateMorphVisual(now){
+  if(MORPH.form==='human') return;
+  if(MORPH.until && Date.now()>MORPH.until){ applyMorph('human'); return; }
+  player.mesh.visible=false; player.blade.visible=false; hideAstral();
+  slime.visible=(mode==='fighter');
+  const sq=1+Math.sin(now*0.006)*0.12;                       // дыхание-сквиш
+  slime.scale.set(sq,2-sq,sq);
+  slime.position.set(worldX(player.vgx??player.gx), 0.21*(2-sq)-0.24, worldZ(player.vgy??player.gy));
+}
+const astral = (function(){
+  const mk=(w,h,d,op)=>new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshBasicMaterial({color:0xbfe0ff,transparent:true,opacity:op,blending:THREE.AdditiveBlending,depthWrite:false}));
+  const grip=mk(0.22,0.22,0.24,0.5); grip.frustumCulled=false; grip.visible=false; scene.add(grip);
+  const arm =mk(0.10,0.10,1.0,0.4);  arm.frustumCulled=false;  arm.visible=false;  scene.add(arm);
+  const bg=new THREE.BoxGeometry(0.17,0.17,CELL*0.95);
+  const bm=new THREE.MeshBasicMaterial({transparent:true,blending:THREE.AdditiveBlending,depthWrite:false});
+  const blade=new THREE.InstancedMesh(bg,bm,6); blade.frustumCulled=false; blade.count=0; blade.visible=false; scene.add(blade);
+  return {grip,arm,blade};
+})();
+function hideAstral(){ astral.blade.visible=false; astral.blade.count=0; astral.grip.visible=false; astral.arm.visible=false; }
+function renderClinchGuideAndAstral(){
+  // 1) ЗАМОРОЖЕННЫЙ клинок игрока = ОЧЕНЬ БЛЕДНЫЙ ориентир (хитбокс), куда возвращать телефон
+  updateBlade(player);
+  player.blade.material.opacity = 0.22;
+  for(let i=0;i<player.blade.count;i++){ _c.setHSL(player.bladeHue??0.5,0.35,0.34); player.blade.setColorAt(i,_c); }
+  player.blade.instanceColor.needsUpdate=true;
+  // 2) АСТРАЛ — живой клинок по ТЕКУЩЕМУ положению телефона (им управляет игрок)
+  const live={visYaw:sensor.yawFused, gx:player.gx, gy:player.gy, crouch:player.crouch,
+              pitch:sensor.pitch, roll:sensor.roll, strikeT:0, swordLen:clinch.lockLen};
+  const H=handInfo(live);
+  const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz, blen=Math.hypot(bx,by,bz)||1;
+  const segs=clamp(Math.round(blen/(CELL*0.9)),1,6), segLen=blen/segs;
+  const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);   // 0 — точно на линии, 1 — критический увод
+  const hue=lerp(0.5,0.0,n);                            // близко голубой → далеко красный
+  astral.blade.count=segs; astral.blade.visible=true;
+  for(let i=0;i<segs;i++){ const f=(i+0.5)/segs;
+    _d.position.set(lerp(H.hx,H.tipX,f),lerp(H.hy,H.tipY,f),lerp(H.hz,H.tipZ,f));
+    _d.lookAt(_d.position.x+bx,_d.position.y+by,_d.position.z+bz);
+    _d.scale.set(1,1,segLen/(CELL*0.95)); _d.updateMatrix(); astral.blade.setMatrixAt(i,_d.matrix);
+    _c.setHSL(hue,0.85,clamp(0.55+f*0.2,0,0.95)); astral.blade.setColorAt(i,_c);
+  }
+  _d.scale.set(1,1,1);
+  astral.blade.instanceMatrix.needsUpdate=true; astral.blade.instanceColor.needsUpdate=true;
+  astral.blade.material.opacity=0.85;
+  astral.grip.visible=true; astral.grip.position.set(H.hx,H.hy,H.hz);
+  // рука-тень от груди к рукояти
+  const [ldx,ldz]=dirXZ(sensor.yawFused);
+  const cx=worldX(player.gx)-ldx*0.1, cy=TIER_H*1.4, cz=worldZ(player.gy)-ldz*0.1;
+  astral.arm.visible=true; setLimb(astral.arm, cx,cy,cz, H.hx,H.hy,H.hz);
+}
+
+/* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
+function damageTier(av, tier, amount){
+  if(av.dead) return;
+  if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
+  if(tier===0){
+    // ноги → теряется мобильность (Ритм/Выносливость).
+    // ПРОГРЫЗ ДО КРОВИ: когда выносливость уже добита (≤15), защита ног кончилась —
+    // излишек уходит в HP. Без этого атаки в ярус 0 полностью съедала регенерация
+    // (лог: 20+ укусов повзуна за 22с → ВЫН 92→65, HP нетронут — рой был безобиден).
+    if(av.stamina<=15){
+      av.hp = clamp(av.hp - Math.round(amount*0.7), 0, 100);
+      if(av===player) logE('ПРОГРИЗ до крові → HP '+Math.round(av.hp));
+    }
+    av.stamina = clamp(av.stamina - amount, 0, 100);
+  }else{
+    // торс/голова → HP (Душа)
+    av.hp = clamp(av.hp - amount, 0, 100);
+  }
+  av.painT = 0.28;
+  // звук удара (вибрацию НЕ трогаем — она зарезервирована под рассинхрон)
+  blip(av===player?220:300, 0.08, 'square', 0.1);
+}
+
+/* ── ПРОЖИГАНИЕ: клинок жив → касание тела фантома наносит урон ─
+   Срабатывает непрерывно (не только на перекате стойки). Кулдаун,
+   чтобы за кадр не снести всё HP. Подробно пишем в лог.            */
+function applyIncomingHit(h){
+  // эхо равновесия: я добил игрока — его клиент прислал сигнал перерождения (не урон)
+  if(h.src==='rebirth'){ if(equalizerOn) equalizerRebirth(); return; }
+  if(h.src!=='phantom' && !friendlyFire) return;   // урон от игроков — по настройке; от фантомов — всегда
+  if(h.src==='player' && h.from){ lastPlayerHitFrom=h.from; lastPlayerHitT=performance.now(); }
+  const tier = clamp((h.tier|0),0,2);
+  damageTier(player, tier, h.dmg||14);
+  player.painT=0.5; doFlash('#ef4444'); buzz([0,40,30,40]);
+  emitSparks(worldX(player.gx), TIER_H*(0.6+tier*0.7), worldZ(player.gy), '#ff5a5a', 18, 3.4);
+  logE(`ПОПАДАНИЕ соперника, ярус ${tier} → HP ${Math.round(player.hp)}`);
+}
+/* ── СВЕЖЕСТЬ сетевых данных ────────────────────────────────────
+   onDisconnect у Firebase срабатывает с задержкой (мобильный Safari в фоне —
+   минуты), а до тех пор «призрак» ушедшего игрока висит в комнате: боты его
+   таргетят и вечно кружат рядом, он блокирует клетки и ловит клинчи.
+   Пакеты несут t=Date.now() → всё старше 6с игнорируем, старше 12с — сносим. */
+const NET_FRESH_MS = 6000, NET_PURGE_MS = 12000;
+function remoteFresh(r){ return !!r && (((r.latest&&r.latest.t)||0) > Date.now()-NET_FRESH_MS); }
+function sameAdvRoom(r){ if(!ADV.on) return true;
+  const rx=(r.rx??(r.latest&&r.latest.rx)); if(rx==null) return true;
+  return rx===ADV.rx && (r.ry??(r.latest&&r.latest.ry))===ADV.ry; }
+function remoteFighterAt(cx,cy){
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && remoteFresh(r) && sameAdvRoom(r) && r.gx===cx && r.gy===cy) return {id,r}; }
+  return null;
+}
+let burnCd = 0;            // кулдаун прожига (с)
+function resolveBurn(dt){
+  if(burnCd>0) burnCd-=dt;
+  if(!player.hitActive || player.disarmed || player.dead || MORPH.form!=='human') return;   // слизь безоружна
+  if(playerWpn==='whip' && player.strikeT<=0) return;   // хлыст вредит только в момент ЩЕЛЧКА — вися, он безвреден
+  // ЕДИНАЯ ЗОНА ОРУЖИЯ: та же геометрия, что и у клинча/заклина — weaponCells.
+  // Раньше тут была своя линия по DIRV, из-за чего кольцо ціпа и дуга сокири
+  // НИКОГДА не наносили урон вбок/назад («бьёт только спереди»).
+  for(const c of bladeCells(player)){
+    const [cx,cy]=c.split(',').map(Number);
+    if(cx<0||cx>12||cy<0||cy>12) continue;
+    const o=obstacleAt(cx,cy);
+    if(o){                                     // клинок упёрся в препятствие
+      if(o.solid){                             // прочное — луч заблокирован (лязг)
+        if(burnCd<=0){ blip(200,0.06,'square',0.12); doFlash('#6b7d94'); burnCd=0.2; }
+        // ЗАКЛИН (07-13): ціна досяжності. Довгий (>2 кліт.) або розкручений клинок,
+        // що шкрябає стіну, ПРИКУШУЄТЬСЯ: −6 сил, зброя офлайн 0.45с, довжина скидається.
+        player.jamCd=(player.jamCd||0);
+        const extended = player.strikeT>0 || player.swordLen>2 || (player.spinBonus||1)>1.15
+          || ((player.mods.reach||0)>=2 && player.swordLen>1.2);
+        if(extended && player.jamCd<=0){
+          player.jamCd=0.9; player.jamT=0.45; player.swordLen=1;
+          player.stamina=Math.max(0,player.stamina-6);
+          showBanner('⚠ ЗАКЛИН — зброю прикусило стіною (−сили)','#fbbf24');
+          buzz([0,60]); blip(140,0.12,'square',0.16);
+          logE('заклин: стіна прикусила зброю, сили '+Math.round(player.stamina));
+        }
+        try{ addScar(burnTip(cx,cy)); }catch(e){}   // слід/опік на нерушимій поверхні
+      }else if(burnCd<=0){                      // РУЙНІВНЕ: вокселізація в точці дотику (07-14)
+        const tip=burnTip(cx,cy);
+        if(voxelizeObstacle(o)){                 // блок → мікровокселі (той самий, але з частинок)
+          burnVoxelsAt(cx,cy,tip);               // і одразу пропалюємо місце дотику
+          burnCd=0.3; buzz(35);
+          logE('вокселізація блока ('+cx+','+cy+') — пропалюй частинки');
+        }else{                                   // fallback: ліміт мікроблоків — стара HP-модель
+          damageObstacle(o,16); burnCd=0.3; buzz(35);
+          emitSparks(worldX(cx), TIER_H, worldZ(cy), '#ffb454', 14, 3.2);
+          logE(`ПРОЖИГ перешкоди, hp→${Math.max(0,o.hp)}`);
+        }
+      }
+      continue;                                 // блок линии уже в weaponCells; кольцо — контактное
+    }
+    if(burnCd<=0 && burnVoxelsAt(cx,cy,burnTip(cx,cy))){   // мікровокселі: пропал точки дотику
+      burnCd=0.25; buzz(25);
+      emitSparks(worldX(cx), TIER_H*0.6, worldZ(cy), '#ffb454', 10, 2.6);
+      logE('зрізано мікровоксель ('+cx+','+cy+')');
+      continue;
+    }
+    const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
+    if(rf){
+      if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
+      if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.35;
+        doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
+        logE('УДАР по сопернику '+rf.id.slice(0,4)); }
+      return;
+    }
+    const ph = phantomAtCell(cx,cy);
+    if(ph){
+      if(burnCd>0) continue;
+      const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg*((window.ENCH&&ENCH.t>0)?1.3:1));   // 🔥 плазмовий клинок
+      if(ph.kind==='boss'){
+        const [fdx,fdy]=DIRV[ph.dirIdx];
+        const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
+        if(fdx*rx2+fdy*ry2 < -0.3){   // игрок в заднем секторе — СЛАБОЕ МЕСТО
+          dmg*=3; showBanner('✧ СЛАБКЕ МІСЦЕ — СПИНА БОСА ×3','#4ade80');
+          logE('удар у слабке місце боса ×3');
+        }
+      }
+      damageTier(ph, tier, dmg); burnCd = 0.3; ph.hitGlow = 0.3;
+      player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
+      doFlash('#22c55e'); buzz(40);
+      try{ const _tp=burnTip(cx,cy); _tp.y=TIER_H*(0.4+tier*0.7);   // ШМАТКИ тіла з місця дотику (07-14)
+        const _n=(ph.hp<=0)?6:2;                                   // добивання — великий розліт
+        for(let _i=0;_i<_n;_i++) spawnChunk(_tp, fleshColor(ph), ph.hp<=0?0.12:undefined);
+        erodePart(ph);                                             // тіло втрачає об'єм там, де ріжуть
+      }catch(e){}
+      emitSparks(worldX(cx), TIER_H*(0.5+tier), worldZ(cy), '#63ffa0', 6, 2.2);
+      logE(`ПРОЖИГ: ярус ${tier} → HP ${Math.round(ph.hp)}`);
+      continue;
+    }
+    const rp = remotePhantomAt(cx,cy);            // общий фантом чужого владельца
+    if(rp){
+      if(burnCd<=0){ const owner=rp.key.split('_')[0], pi=rp.key.slice(owner.length+1);
+        const dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg);
+        if(owner==='forge'||owner==='algocrat') NET.hitServerEntity(owner, pi, dmg, rp);   // у них нет клиента-владельца — бьём hp напрямую
+        else NET.sendPhantomHit(owner, pi, player.tier, dmg);
+        burnCd=0.3;
+        doFlash('#22c55e'); buzz(40); logE('ПРОПАЛ спільного фантома '+rp.key.slice(0,8)); }
+      continue;
+    }
+  }
+}
+
+/* ── все клетки, которые накрывает клинок (для клинча) ────────── */
+/* ════════════ ОРУЖЕЙНЯ (канон «МИР 13×13», myr13x13-mp) ════════════
+   w=вес (расход сил), maxLen=предел длины (меч=6 — прежнее поведение),
+   arc=боковые клетки у гарды, sweep=кольцо вокруг бойца, dmg=множитель урона */
+const WEAPONS={
+  sword:   {label:'МЕЧ ⚔',      w:5, maxLen:6, arc:0, sweep:false, dmg:1.0,  rel:'line',  desc:'баланс лінії'},
+  spear:   {label:'СПИС 🔱',    w:4, maxLen:8, arc:0, sweep:false, dmg:0.85, rel:'line',  desc:'довга лінія вперед'},
+  axe:     {label:'СОКИРА 🪓',  w:8, maxLen:3, arc:1, sweep:false, dmg:1.5,  rel:'arc',   desc:'мах віялом зі сторони нахилу'},
+  flail:   {label:'ЦІП 🌀',     w:6, maxLen:2, arc:0, sweep:true,  dmg:1.15, rel:'spin',  desc:'кільце; виброс = розкрутка'},
+  nunchaku:{label:'НУНЧАКИ 🥢', w:2, maxLen:2, arc:1, sweep:false, dmg:0.7,  rel:'spin',  desc:'виброс = розкрутка'},
+  whip:    {label:'ХЛИСТ 〰',   w:3, maxLen:9, arc:0, sweep:false, dmg:0.55, rel:'crack', desc:'клац: довгий, слабкий'},
+  bossaxe: {label:'СОКИРА ТИТАНА', w:9, maxLen:5, arc:1, sweep:false, dmg:1.6, rel:'arc', desc:'зброя боса'},
+  blaster: {label:'БЛАСТЕР ⌖',  w:4, maxLen:1, arc:0, sweep:false, dmg:1.0,  rel:'shot',  desc:'повільний снаряд; заряд = швидкість і шкода'},
+};
+let playerWpn='sword';
+/* НЕПЕРЕРВНИЙ ПРОМІНЬ (фікс 07-13): раніше лінія йшла лише по DIRV[dirIdx] — 8 снап-
+   напрямків, тому клітинки «ходом коня» (2,1) були НЕДОСЯЖНІ ні для урону, ні для
+   прожигу, хоч візуальний клинок (dirXZ(visYaw)) на них показував. Тепер фізика =
+   візуалу: маршируємо дрібним кроком уздовж реального азимута, збираючи клітинки
+   до першої зайнятої (контакт) включно. */
+function contRayCells(gx,gy,yawDeg,L,out,seen){
+  const v=dirXZ(yawDeg);
+  for(let t=0.5; t<=L+0.45; t+=0.3){
+    const cx=Math.round(gx+v[0]*t), cy=Math.round(gy+v[1]*t);
+    if(cx===gx && cy===gy) continue;
+    const k=cx+','+cy;
+    if(!seen.has(k)){ seen.add(k); out.push(k); }
+    if(cx<0||cx>12||cy<0||cy>12) return;                                 // за межами
+    if(obstacleAt(cx,cy)) return;                                        // упёрся в препятствие
+    if(typeof phantomAtCell==='function' && phantomAtCell(cx,cy)) return;// воткнулся в тело
+    if(typeof remoteFighterAt==='function' && remoteFighterAt(cx,cy)) return;
+    if(mode==='fighter' && !player.dead && player.gx===cx && player.gy===cy) return;
+  }
+}
+function weaponCells(gx,gy,dirIdx,len,wpn,striking,extraL,aimYaw){
+  const W=WEAPONS[wpn]||WEAPONS.sword, out=[], seen=new Set();
+  const yaw=(aimYaw!=null)?aimYaw:dirIdx*45;      // без aimYaw — старий 8-снап (боси, fallback)
+  // МАХ (rel:'arc' во время strikeT): веер ±90° из 5 лучей на 2 клетки — сектор дуги
+  if(W.rel==='arc' && striking){
+    for(const off of [-90,-45,0,45,90]) contRayCells(gx,gy,yaw+off,2,out,seen);
+    return out;
+  }
+  const L=clamp(Math.round(len*W.maxLen/6)+(extraL||0),1,W.maxLen+2);   // меч 1:1 + лут-досяжність
+  if(W.sweep){
+    for(const [ox,oy] of DIRV){ const k=(gx+ox)+','+(gy+oy);            // кольцо из 8 клеток — контакт
+      if(!seen.has(k)){ seen.add(k); out.push(k); } }
+    contRayCells(gx,gy,yaw,L,out,seen);
+    return out;
+  }
+  contRayCells(gx,gy,yaw,L,out,seen);
+  const bi=((Math.round(yaw/45)%8)+8)%8;
+  for(let a=1;a<=W.arc;a++){
+    const dl=DIRV[(bi+a)%8], dr=DIRV[(bi+8-a)%8];
+    for(const d of [dl,dr]){ const k=(gx+d[0])+','+(gy+d[1]);
+      if(!seen.has(k)){ seen.add(k); out.push(k); } }
+  }
+  return out;
+}
+
+/* ════════════ ПРИГОДА: МЕТАСЕТКА КОМНАТ 13×13 ════════════
+   Порт математики из style_map_13x13: центр (6,6) = Чистая Свідомість = ДОМ.
+   Вес опасности = ((|dX|/6)²+(|dY|/6)²)/2 — чем дальше от дома, тем сложнее.  */
+const ROOM_PAL={
+  center:        {bg:0x020c1a,accent:'#60a5fa',name:'Чиста Свідомість',sym:'◌'},
+  ascension:     {bg:0x0a1410,accent:'#bbf7d0',name:'Сходження',sym:'▲'},
+  descent:       {bg:0x140a0a,accent:'#fca5a5',name:'Спуск',sym:'▼'},
+  echo:          {bg:0x0a0f16,accent:'#93c5fd',name:'Відлуння',sym:'◈'},
+  noise:         {bg:0x160a14,accent:'#f0abfc',name:'Шум',sym:'※'},
+  ascension_echo:{bg:0x0a1416,accent:'#a5f3fc',name:'Храм Світла',sym:'✦'},
+  ascension_noise:{bg:0x141014,accent:'#fde68a',name:'Спалах',sym:'❋'},
+  descent_echo:  {bg:0x0f0c14,accent:'#c7d2fe',name:'Механізм',sym:'⬢'},
+  descent_noise: {bg:0x120608,accent:'#fecaca',name:'Безодня',sym:'✖'},
+};
+function roomStyle(rx,ry){
+  const dX=rx-6, dY=ry-6;
+  const wX=Math.pow(Math.abs(dX)/6,2), wY=Math.pow(Math.abs(dY)/6,2);
+  const weight=Math.min(1,(wX+wY)/2);
+  const axisV=dY/6, axisH=dX/6, absV=Math.abs(axisV), absH=Math.abs(axisH);
+  let a='center';
+  if(absV<0.18&&absH<0.18)a='center';
+  else if(absV>=absH)a=axisV>0?'ascension':'descent';
+  else a=axisH>0?'echo':'noise';
+  if(absV>=0.4&&absH>=0.4){
+    if(axisV>0&&axisH>0)a='ascension_echo';
+    else if(axisV>0&&axisH<0)a='ascension_noise';
+    else if(axisV<0&&axisH>0)a='descent_echo';
+    else a='descent_noise';
+  }
+  return Object.assign({weight,archetype:a},ROOM_PAL[a]);
+}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
+/* ── СНАРЯДЫ стрельцов: медленные, ОТБИВАЮТСЯ мечом (зона клинка) обратно в хозяина ── */
+const SHOTS=[];
+/* ═══ ФИЗИКА И МОДЕЛИ ОРУЖИЯ ИГРОКА ══════════════════════════════
+   нунчаки: вторая палка ВИСИТ на маятнике у конца первой; крутишь запястьем
+            (sensor.rollRate) — раскручивается до полных оборотов; быстрый спин = урон ×1.3;
+   ціп:     шар на цепи от кисти, тот же маятник, инерция тяжелее;
+   хлыст:   7-звенный верле-хвост от кисти — им реально машешь, хвост следует с запаздыванием;
+   сокира/спис: свои наконечники поверх луча (широкие клинья / жало).                       */
+let wfx={kind:null, group:null, parts:null, sim:{a:0.6, w:0, pts:null, pp:null}};
+function disposeWfx(){ if(wfx.group){ wfx.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); scene.remove(wfx.group); } wfx={kind:null,group:null,parts:null,sim:{a:0.6,w:0,pts:null,pp:null}}; }
+function buildWeaponFX(wpn){
+  disposeWfx(); wfx.kind=wpn;
+  const g=new THREE.Group(); g.frustumCulled=false; scene.add(g); wfx.group=g;
+  const box=(w,h,d,c)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshBasicMaterial({color:c})); m.frustumCulled=false; g.add(m); return m; };
+  const ball=(r,c)=>{ const m=new THREE.Mesh(new THREE.SphereGeometry(r,10,10),
+    new THREE.MeshBasicMaterial({color:c})); m.frustumCulled=false; g.add(m); return m; };
+  if(wpn==='nunchaku'){
+    wfx.parts={ stick1:box(0.09,0.09,0.6,0xfbbf24), stick2:box(0.09,0.09,0.6,0xf59e0b),
+      link:ball(0.05,0xd1d5db) };
+  }else if(wpn==='flail'){
+    wfx.parts={ chain:[ball(0.06,0x9ca3af),ball(0.06,0x9ca3af),ball(0.06,0x9ca3af),ball(0.06,0x9ca3af)],
+      head:ball(0.24,0xa78bfa) };
+  }else if(wpn==='whip'){
+    const seg=[]; for(let i=0;i<7;i++) seg.push(box(0.07,0.07,0.34,0x22d3ee));
+    wfx.parts={ seg };
+    wfx.sim.pts=null;
+  }else if(wpn==='axe'){
+    wfx.parts={ blade1:box(0.08,0.55,0.7,0xef4444), blade2:box(0.08,0.4,0.4,0xfca5a5) };
+  }else if(wpn==='spear'){
+    const tip=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.5,8),
+      new THREE.MeshBasicMaterial({color:0x4ade80})); tip.frustumCulled=false; g.add(tip);
+    wfx.parts={ tip };
+  }else if(wpn==='blaster'){
+    const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.1,0.5,8),
+      new THREE.MeshBasicMaterial({color:0x66e0ff})); bar.frustumCulled=false; g.add(bar);
+    wfx.parts={ bar };
+  }
+  g.visible = !!wfx.parts;
+}
+function updateWeaponFX(dt){
+  if(!wfx.group || player.dead || player.disarmed){ if(wfx.group) wfx.group.visible=false; player.spinBonus=1; return; }
+  wfx.group.visible=true;
+  const H=handInfo(player);
+  const fx=(H.tipX-H.hx), fy=(H.tipY-H.hy), fz=(H.tipZ-H.hz);
+  const fl=Math.hypot(fx,fy,fz)||1, ux=fx/fl, uy=fy/fl, uz=fz/fl;   // единичный «вперёд по клинку»
+  const S=wfx.sim;
+  player.spinBonus=1;
+  if(wfx.kind==='nunchaku' || wfx.kind==='flail'){
+    /* СФЕРИЧЕСКИЙ 3D-МАЯТНИК: точка-груз на ЖЁСТКОМ стержне от подвеса.
+       Качается СВОБОДНО ВО ВСЕ СТОРОНЫ: движение руки (якорь едет с кистью)
+       раскачивает само по себе; запястье докручивает — rollRate вбок, pitchRate вперёд.
+       Полные обороты в любой плоскости возможны — это просто верле без ограничений угла. */
+    const reachF = 1 + 0.5*((player.mods&&player.mods.reach)||0);   // ДОСЯЖНІСТЬ визуально/физически удлиняет цепь
+    const L = clamp((wfx.kind==='flail'?0.85:0.62)*reachF, 0.6, 3.6), damp=wfx.kind==='flail'?0.988:0.982;
+    // подвес: конец первой палки нунчаков / кисть для цепа
+    const ax = wfx.kind==='nunchaku'? H.hx+ux*0.6 : H.hx;
+    const ay = wfx.kind==='nunchaku'? H.hy+uy*0.6 : H.hy;
+    const az = wfx.kind==='nunchaku'? H.hz+uz*0.6 : H.hz;
+    if(!S.p){ S.p=[ax,ay-L,az]; S.pp=[ax,ay-L,az]; }
+    const p=S.p, pp=S.pp;
+    // верле-шаг с гравитацией
+    const vx=(p[0]-pp[0])*damp, vy=(p[1]-pp[1])*damp, vz=(p[2]-pp[2])*damp;
+    pp[0]=p[0]; pp[1]=p[1]; pp[2]=p[2];
+    p[0]+=vx; p[1]+=vy-11*dt*dt; p[2]+=vz;
+    // ПРИВОД: численные производные углов — работают на ЛЮБОМ телефоне, даже когда
+    // devicemotion.rotationRate пустой (на части Android он null — тогда старый привод
+    // был мёртв и качало только рукой = «только вперёд-назад»).
+    if(S.lr==null){ S.lr=sensor.roll||0; S.lp=sensor.pitch||0; S.ly=player.visYaw||0; }
+    const dRoll = ((sensor.roll||0)-S.lr)/Math.max(dt,1e-3);           // °/с крена запястья
+    const dPitch= ((sensor.pitch||0)-S.lp)/Math.max(dt,1e-3)*90;       // pitch −1..1 → ~°/с
+    let dYaw  = ((player.visYaw||0)-S.ly); dYaw=((dYaw+540)%360)-180; dYaw/=Math.max(dt,1e-3);
+    S.lr=sensor.roll||0; S.lp=sensor.pitch||0; S.ly=player.visYaw||0;
+    const gyroR=sensor.rollRate||0, gyroP=sensor.pitchRate||0;
+    const rr=clamp(Math.abs(gyroR)>Math.abs(dRoll)?gyroR:dRoll,-500,500)*(Math.PI/180);
+    const pr=clamp(Math.abs(gyroP)>Math.abs(dPitch)?gyroP:dPitch,-500,500)*(Math.PI/180);
+    const yr=clamp(dYaw,-400,400)*(Math.PI/180);
+    const kSpin = wfx.kind==='flail'?1.2:2.0;
+    // крен → вбок, наклон → вперёд, поворот корпуса → центробежно вбок (интуитивно: повернул — грузик вынесло)
+    p[0]+=( uz*(rr+yr*0.9) + ux*pr )*L*kSpin*dt*dt*60;
+    p[2]+=(-ux*(rr+yr*0.9) + uz*pr )*L*kSpin*dt*dt*60;
+    // жёсткий стержень: |p−якорь| = L строго (и растяжение, и сжатие)
+    let dx=p[0]-ax, dy=p[1]-ay, dz=p[2]-az;
+    const d=Math.hypot(dx,dy,dz)||1e-6;
+    p[0]=ax+dx/d*L; p[1]=ay+dy/d*L; p[2]=az+dz/d*L;
+    // СТОЛКНОВЕНИЕ С МИРОМ + ЗАЧЕП (только ціп): обвил — тянет/сдвигает
+    {
+      const cgx=Math.round(p[0]/CELL+CX), cgy=Math.round(p[2]/CELL+CY);
+      const spd=Math.hypot(p[0]-pp[0],p[2]-pp[2])/Math.max(dt,1e-3);
+      const ob=obstacleAt(cgx,cgy);
+      if(ob && p[1]<TIER_H*2.4){
+        p[0]=pp[0]; p[2]=pp[2];
+        pp[0]=p[0]+(p[0]-pp[0])*0.4; pp[2]=p[2]+(p[2]-pp[2])*0.4;
+        if(spd>3){ emitSparks(p[0],p[1],p[2], ob.solid?'#f59e0b':'#ffd47a', 4, 1.8);
+          blip(200,0.05,'square',0.1);
+          if(!ob.solid){
+            damageObstacle(ob, Math.round(spd*2));
+            // ЗАЧЕП хрупкого на скорости: ціп СДВИГАЕТ его с места (и им же ломает)
+            if(wfx.kind==='flail' && spd>6 && ob.alive && Math.random()<0.5){
+              const sdx=Math.sign(p[0]-pp[0])||0, sdy=Math.sign(p[2]-pp[2])||0;
+              const nx2=clamp(ob.gx+sdx,1,11), ny2=clamp(ob.gy+sdy,1,11);
+              if(!isCellOccupied(nx2,ny2,null) && !(nx2===ob.gx&&ny2===ob.gy)){
+                ob.gx=nx2; ob.gy=ny2;
+                ob.mesh.position.set(worldX(nx2), ob.mesh.position.y, worldZ(ny2));
+                damageObstacle(ob, 10);
+                logE('ціп зрушив перешкоду → ('+nx2+','+ny2+')');
+              }
+            }
+          } else player.stamina=clamp(player.stamina-1.5,0,100);
+        }
+      }
+      // ЗАЧЕП МОБА: шар ціпа обвивается вокруг врага на скорости → ПРИТЯГИВАЕТ к себе
+      if(wfx.kind==='flail'){
+        S.hookCd=Math.max(0,(S.hookCd||0)-dt);
+        if(S.hookCd<=0 && spd>6){
+          const hp3=phantomAtCell(cgx,cgy);
+          if(hp3 && !hp3.dead && (hp3.size||1)===1){   // босса 2×2 ціпом не утащишь
+            const tdx=Math.sign(player.gx-hp3.gx), tdy=Math.sign(player.gy-hp3.gy);
+            const nx3=clamp(hp3.gx+tdx,0,12), ny3=clamp(hp3.gy+tdy,0,12);
+            if(!isCellOccupied(nx3,ny3,hp3) && !(nx3===player.gx&&ny3===player.gy)){
+              hp3.gx=nx3; hp3.gy=ny3; damageTier(hp3,1,6); hp3.hitGlow=0.3;
+              S.hookCd=1.1;
+              emitSparks(worldX(nx3),TIER_H*1.1,worldZ(ny3),'#a78bfa',8,2.4);
+              blip(340,0.1,'sine',0.16); buzz([0,50]);
+              logE('ціп ЗАЧЕПИВ — ворога притягнуто');
+            }
+          }
+        }
+      }
+    }
+    // скорость груза → раскрутка (в ЛЮБОЙ плоскости) = урон ×1.3 + искры
+    const sp=Math.hypot(p[0]-pp[0],p[1]-pp[1],p[2]-pp[2])/Math.max(dt,1e-3)/L;
+    if(sp>9){ player.spinBonus=1.3;
+      if(Math.random()<dt*7) emitSparks(p[0],p[1],p[2],'#fbbf24',3,1.6); }
+    if(wfx.kind==='nunchaku'){
+      const P=wfx.parts;
+      P.stick1.position.set(H.hx+ux*0.3, H.hy+uy*0.3, H.hz+uz*0.3);
+      P.stick1.lookAt(ax,ay,az);
+      P.link.position.set(ax,ay,az);
+      P.stick2.position.set((ax+p[0])/2,(ay+p[1])/2,(az+p[2])/2);
+      P.stick2.lookAt(p[0],p[1],p[2]);
+    }else{
+      const P=wfx.parts;
+      for(let i=0;i<P.chain.length;i++){ const f=(i+1)/(P.chain.length+1);
+        P.chain[i].position.set(lerp(ax,p[0],f), lerp(ay,p[1],f), lerp(az,p[2],f)); }
+      P.head.position.set(p[0],p[1],p[2]);
+      P.head.scale.setScalar(1+clamp(((player.mods&&player.mods.dmg)||1)-1,0,2)*0.5);   // УРОН → шар массивнее
+    }
+  }else if(wfx.kind==='whip'){
+    // ВЕРЛЕ-ХВОСТ: 8 точек, кисть — якорь; хвост тянется за рукой, провисает и хлещет
+    const N=8, SEG=clamp(0.4*(1+0.45*((player.mods&&player.mods.reach)||0)), 0.4, 1.25);   // хвост хлыста удлиняется от «досяжності»
+    if(!S.pts){ S.pts=[]; S.pp=[];
+      for(let i=0;i<N;i++){ S.pts.push([H.hx+ux*SEG*i, H.hy, H.hz+uz*SEG*i]);
+        S.pp.push([S.pts[i][0],S.pts[i][1],S.pts[i][2]]); } }
+    S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
+    for(let i=1;i<N;i++){ const p=S.pts[i], q=S.pp[i];
+      const vx=(p[0]-q[0])*0.985, vy=(p[1]-q[1])*0.985, vz=(p[2]-q[2])*0.985;
+      q[0]=p[0]; q[1]=p[1]; q[2]=p[2];
+      p[0]+=vx; p[1]+=vy-7.5*dt*dt; p[2]+=vz;                        // гравитация провешивает
+    }
+    for(let i=1;i<N;i++){                                            // мир твёрд и для хвоста
+      const cgx=Math.round(S.pts[i][0]/CELL+CX), cgy=Math.round(S.pts[i][2]/CELL+CY);
+      const ob=obstacleAt(cgx,cgy);
+      if(ob && S.pts[i][1]<TIER_H*2.4){ S.pts[i][0]=S.pp[i][0]; S.pts[i][2]=S.pp[i][2]; }
+    }
+    for(let it=0; it<3; it++) for(let i=1;i<N;i++){                  // жёсткость звеньев
+      const a=S.pts[i-1], b=S.pts[i];
+      const dx=b[0]-a[0], dy=b[1]-a[1], dz=b[2]-a[2];
+      const d=Math.hypot(dx,dy,dz)||1e-6, corr=(d-SEG)/d;
+      if(i===1){ b[0]-=dx*corr; b[1]-=dy*corr; b[2]-=dz*corr; }
+      else { b[0]-=dx*corr*0.5; b[1]-=dy*corr*0.5; b[2]-=dz*corr*0.5;
+             a[0]+=dx*corr*0.5; a[1]+=dy*corr*0.5; a[2]+=dz*corr*0.5; }
+    }
+    // ЩЕЛЧОК ВИДЕН: пока идёт удар, хвост тянется к ПРЯМОЙ линии прицела на полную длину —
+    // игрок видит, куда именно бьёт хлыст (совпадает с физикой weaponCells)
+    if(player.strikeT>0){
+      const k=clamp(player.strikeT/STRIKE_DUR,0,1)*0.65;
+      for(let i=1;i<N;i++){
+        const tx=H.hx+ux*SEG*i, ty=H.hy+uy*SEG*i, tz=H.hz+uz*SEG*i;
+        S.pts[i][0]=lerp(S.pts[i][0],tx,k); S.pts[i][1]=lerp(S.pts[i][1],ty,k); S.pts[i][2]=lerp(S.pts[i][2],tz,k);
+      }
+    }
+    S.pts[0][0]=H.hx; S.pts[0][1]=H.hy; S.pts[0][2]=H.hz;
+    // ЩЕЛЧОК: на выбросе клинка хвост получает волну-импульс вперёд (кончик хлещет)
+    if(player.strikeT>0.34 && !S.cracked){ S.cracked=true;
+      for(let i=3;i<N;i++){ const w2=(i-2)/(N-3);
+        S.pp[i][0]-=ux*0.5*w2; S.pp[i][2]-=uz*0.5*w2; }   // сдвиг прошлой позиции = мгновенная скорость
+      blip(1200,0.06,'square',0.14);
+    }
+    if(player.strikeT<=0) S.cracked=false;
+    const P=wfx.parts;
+    for(let i=0;i<P.seg.length;i++){ const a=S.pts[i], b=S.pts[i+1];
+      P.seg[i].position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
+      P.seg[i].lookAt(b[0],b[1],b[2]); }
+    // хлёсткий кончик — искры на большой скорости
+    const tip=S.pts[N-1], tp=S.pp[N-1];
+    if(Math.hypot(tip[0]-tp[0],tip[1]-tp[1],tip[2]-tp[2])/Math.max(dt,1e-3) > 6 && Math.random()<dt*8)
+      emitSparks(tip[0],tip[1],tip[2],'#22d3ee',3,1.4);
+  }else if(wfx.kind==='axe'){
+    // РАЗМАШИСТЫЙ ДУГОВОЙ ЗАМАХ: на выбросе голова метёт дугу ±100° вокруг кисти
+    const P=wfx.parts;
+    const R=Math.max(Math.hypot(H.tipX-H.hx,H.tipY-H.hy,H.tipZ-H.hz),0.5);
+    let hx2=H.tipX, hy2=H.tipY, hz2=H.tipZ;
+    if(player.strikeT>0){
+      // ЗАМАХ СО СТОРОНЫ: сторона выбирается ЗНАКОМ НАКЛОНА ЭКРАНА в момент выброса —
+      // наклонил влево → секира заходит слева, вправо → справа. Не выпад, а мах:
+      // от ±115° сбоку через фронт до −35° противоположной стороны, хлёсткая середина.
+      if(S.axeSide==null) S.axeSide = (sensor.roll||1)>=0 ? 1 : -1;
+      const ph2=1-clamp(player.strikeT/0.4,0,1);                       // 0→1 за удар
+      const ease=ph2*ph2*(3-2*ph2);                                     // smoothstep
+      const ang=S.axeSide*(115-150*ease)*(Math.PI/180);                 // +115° → −35° (или зеркально)
+      const ca=Math.cos(ang), sa=Math.sin(ang);
+      const sxv= uz, szv=-ux;                                           // горизонтальный перпендикуляр
+      hx2=H.hx+(ux*ca+sxv*sa)*R; hy2=H.hy+(H.tipY-H.hy)*0.6; hz2=H.hz+(uz*ca+szv*sa)*R;
+      if(ease>0.45 && ease<0.55 && !S.axeMidFx){ S.axeMidFx=true; emitSparks(hx2,hy2,hz2,'#ef4444',10,2.6); }  // одна вспышка в середине маха
+    } else { S.axeSide=null; S.axeMidFx=false; }
+    P.blade1.position.set(hx2,hy2,hz2); P.blade1.lookAt(H.hx,H.hy,H.hz);
+    P.blade2.position.set(lerp(hx2,H.hx,0.16), lerp(hy2,H.hy,0.16), lerp(hz2,H.hz,0.16));
+    P.blade2.lookAt(H.hx,H.hy,H.hz);
+  }else if(wfx.kind==='blaster'){
+    const P=wfx.parts;
+    P.bar.position.set(H.hx+ux*0.35, H.hy+uy*0.35, H.hz+uz*0.35);
+    P.bar.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
+    // СТРЕЛЬБА НА ВСТРЯХИВАНИЕ: резкий рывок телефона = быстрый слабый выстрел
+    S.shakeCd=Math.max(0,(S.shakeCd||0)-dt);
+    if(S.shakeCd<=0 && (sensor.speed||0)>8 && !player.charging){
+      S.shakeCd=0.5; firePlayerShot(1.15);
+      blip(700,0.06,'square',0.14); buzz(25);
+      logE('ВЫСТРЕЛ на встряхивание');
+    }
+  }else if(wfx.kind==='spear'){
+    // ВЫПАД: жало резко уходит вперёд и возвращается
+    const P=wfx.parts;
+    const lung = player.strikeT>0 ? Math.sin((1-clamp(player.strikeT/0.4,0,1))*Math.PI)*0.8 : 0;
+    P.tip.position.set(H.tipX+ux*lung, H.tipY+uy*lung, H.tipZ+uz*lung);
+    P.tip.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(ux,uy,uz));
+  }
+}
+function clearShots(){ for(const sh of SHOTS){ scene.remove(sh.mesh);
+  try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){} } SHOTS.length=0; }
+function fireShot(ph){
+  const dx=player.gx-ph.gx, dy=player.gy-ph.gy, L=Math.hypot(dx,dy)||1;
+  const m=new THREE.Mesh(new THREE.SphereGeometry(0.17,8,8),
+    new THREE.MeshBasicMaterial({color:0xff8844}));
+  m.frustumCulled=false; scene.add(m);
+  SHOTS.push({x:ph.gx, y:ph.gy, vx:dx/L*2.1, vy:dy/L*2.1, owner:ph, hostile:true, mesh:m, life:9});
+  blip(480,0.1,'square',0.12);
+}
+function firePlayerShot(charge){
+  if(MORPH.form!=='human') return;   // слизь не стреляет
+  const [dx,dy]=DIRV[player.dirIdx];
+  const dmgMul=(player.mods?player.mods.dmg:1);
+  const rad=0.15*(1+clamp(dmgMul-1,0,2)*0.55);              // УРОН → пуля видимо крупнее
+  const spd=2.4+0.8*(charge-1);
+  const one=(vx,vy)=>{
+    const m=new THREE.Mesh(new THREE.SphereGeometry(rad,8,8),
+      new THREE.MeshBasicMaterial({color:0x66e0ff}));
+    m.frustumCulled=false; scene.add(m);
+    SHOTS.push({x:player.gx, y:player.gy, vx, vy, owner:null, hostile:false, mesh:m, life:8,
+      dmg:Math.round(10*charge*dmgMul)});
+  };
+  one(dx*spd, dy*spd);                                       // основная пуля — прямо
+  // ДОСЯЖНІСТЬ → веер дополнительных пуль по сторонам (±14°, ±28°, …)
+  const extra=clamp(Math.round((player.mods&&player.mods.reach)||0),0,8);
+  for(let i=1;i<=extra;i++){
+    const a=(Math.ceil(i/2))*0.24*(i%2?1:-1);                 // чередуем лево/право
+    const ca=Math.cos(a), sa=Math.sin(a);
+    one((dx*ca-dy*sa)*spd, (dx*sa+dy*ca)*spd);
+  }
+}
+function updateShots(dt){
+  for(let i=SHOTS.length-1;i>=0;i--){
+    const sh=SHOTS[i]; sh.x+=sh.vx*dt; sh.y+=sh.vy*dt; sh.life-=dt;
+    const cx=Math.round(sh.x), cy=Math.round(sh.y);
+    let kill = sh.life<=0 || cx<0||cx>12||cy<0||cy>12 || !!obstacleAt(cx,cy);
+    if(!kill && sh.hostile){
+      if(!player.dead && !player.disarmed && bladeCells(player).includes(cx+','+cy)){
+        sh.hostile=false; const o=sh.owner;   // ОТБИТ — летит обратно, быстрее, нашим цветом
+        const tox=(o&&!o.dead?o.gx:cx)-sh.x, toy=(o&&!o.dead?o.gy:cy)-sh.y, L2=Math.hypot(tox,toy)||1;
+        sh.vx=tox/L2*3.4; sh.vy=toy/L2*3.4;
+        try{ sh.mesh.material.color.setHex(0x66e0ff); }catch(e){}
+        showBanner('↩ СНАРЯД ВІДБИТО','#22d3ee'); blip(880,0.1,'sine',0.15); buzz([0,30]);
+        logE('снаряд відбито мечем');
+      }else if(!player.dead && player.gx===cx && player.gy===cy){
+        damageTier(player, 1, 12); doFlash('#f97316'); buzz([0,50]);
+        logE('снаряд влучив → HP '+Math.round(player.hp)); kill=true;
+      }
+    }else if(!kill && !sh.hostile){
+      const hp2=phantomAtCell(cx,cy);
+      if(hp2){ damageTier(hp2, 1, sh.dmg||20); hp2.hitGlow=0.3;
+        logE('снаряд влучив у ворога → HP '+Math.round(hp2.hp)); kill=true; }
+      else if(friendlyFire){
+        const rf2=(typeof remoteFighterAt==='function')&&remoteFighterAt(cx,cy);
+        if(rf2){ NET.sendHit(rf2.id, 1, sh.dmg||14, 'player'); kill=true;
+          logE('снаряд влучив у гравця '+rf2.id.slice(0,4)); }
+      }
+    }
+    if(kill){ scene.remove(sh.mesh);
+      try{ sh.mesh.geometry.dispose(); sh.mesh.material.dispose(); }catch(e){}
+      SHOTS.splice(i,1); }
+    else sh.mesh.position.set(worldX(sh.x), TIER_H*1.2, worldZ(sh.y));
+  }
+}
+const RACK_CELLS={spear:[3,3],axe:[9,3],flail:[3,9],nunchaku:[9,9],whip:[6,2],sword:[6,10],blaster:[2,6]};
+const RACK_COLORS={spear:0x4ade80,axe:0xef4444,flail:0xa78bfa,nunchaku:0xfbbf24,whip:0x22d3ee,sword:0x93c5fd,blaster:0x66e0ff};
+let rackT=0, rackMeshes=[];
+function clearRacks(){
+  for(const m of rackMeshes){ try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(e){} scene.remove(m); }
+  rackMeshes=[];
+}
+function buildRacks(){
+  clearRacks();
+  for(const w in RACK_CELLS){
+    if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;   // крафт відкриває стійку; ціп — станція
+    const [x,y]=RACK_CELLS[w], col=RACK_COLORS[w];
+    const g=new THREE.Group(); g.frustumCulled=false;
+    const ped=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),
+      new THREE.MeshBasicMaterial({color:0x223047}));
+    ped.position.y=-0.2; ped.frustumCulled=false; g.add(ped);
+    const gem=new THREE.Mesh(new THREE.OctahedronGeometry(0.28),
+      new THREE.MeshBasicMaterial({color:col, transparent:true, opacity:0.95}));
+    gem.position.y=0.55; gem.frustumCulled=false; g.add(gem);
+    const halo=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(0.9,0.05,0.9)),
+      new THREE.LineBasicMaterial({color:col, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false}));
+    halo.position.y=-0.42; halo.frustumCulled=false; g.add(halo);
+    g.position.set(worldX(x),0.4,worldZ(y));
+    scene.add(g); rackMeshes.push(g);
+  }
+  { // 🔥 КУЗНЯ: смарагдова плита (4,6) — стань на 1.2с, розклади ресурси у рецепт
+    const g=new THREE.Group(); g.frustumCulled=false;
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.14,0.92),
+      new THREE.MeshBasicMaterial({color:0x10b981, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false}));
+    plate.frustumCulled=false; g.add(plate);
+    const anvil=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.3,0.26),
+      new THREE.MeshBasicMaterial({color:0x334155}));
+    anvil.position.y=0.28; anvil.frustumCulled=false; g.add(anvil);
+    g.position.set(worldX(CRAFT_CELL[0]), -0.38, worldZ(CRAFT_CELL[1]));
+    scene.add(g); rackMeshes.push(g);
+  }
+}
+function advHome(){ return ADV.rx===6 && ADV.ry===6; }
+// ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
+const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
+function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
+function snapshotRoom(){ NET.roomDirty=true; roomEdits.set(curRoomKey(), {
+  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
+  micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
+// ── ОБЩИЙ МИР: снимки комнат синхронизируются через Firebase (blade/{room}/roomEdits/{key}) ──
+function rebuildFromSnapshot(v){
+  obstacles.forEach(o=>{ if(o.mesh){ scene.remove(o.mesh); freeMesh(o.mesh); } }); obstacles.length=0;
+  clearMicro();
+  const taken=new Set();
+  for(const b of Object.values(v.blocks||{})) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
+  for(const m of Object.values(v.micro||{})) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
+}
+function applyRemoteRoomIfNewer(key){
+  const v=NET.roomRemote && NET.roomRemote[key];
+  if(!v || v.by===NET.myId) return false;
+  if((NET._reApplied[key]||0) >= (v.t||0)) return false;
+  // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
+  const now=Date.now();
+  NET._reAt = NET._reAt||{};
+  if(now - (NET._reAt[key]||0) < 2500){ NET._rePendKey=key; return false; }
+  NET._reAt[key]=now; if(NET._rePendKey===key) NET._rePendKey=null;
+  NET._reApplied[key]=v.t||0;
+  rebuildFromSnapshot(v);
+  roomEdits.set(key, {blocks:v.blocks||[], micro:v.micro||[]});   // локальный кеш = общий
+  logE('СВІТ: кімнату синхронізовано від '+String(v.by||'?').slice(0,4));
+  return true;
+}
+function restoreRoomEdits(rx,ry){
+  const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  clearMicro();
+  const taken=new Set();
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
+  for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
+  return true;
+}
+function applyAdvRoom(rx,ry){
+  ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
+  clearRacks(); clearShots();
+  while(DROPS.length) removeDrop(DROPS[0]);   // оружие не путешествует между комнатами
+  while(PICKUPS.length) removePickup(PICKUPS[0]);
+  paintFloor(rx,ry);
+  const st=roomStyle(rx,ry), home=advHome();
+  try{ scene.background=new THREE.Color(st.bg); if(scene.fog&&scene.fog.color) scene.fog.color.setHex(st.bg); }catch(e){}
+  clearMicro();                              // микроблоки прошлой комнаты не тащим
+  // ПЕРСИСТ (фікс 07-13): ЗНІМОК ГОЛОВНІШИЙ ЗА СІД. Раніше сід-генерація бігла першою
+  // щоразу, а знімок лише накривав її зверху — кімнати «регенерували». Тепер:
+  // є знімок → відновлюємо ТІЛЬКИ його; нема → генеруємо і одразу знімаємо (advRoomExtras).
+  if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
+  applyRemoteRoomIfNewer(rx+','+ry);         // общий мир: правки других игроков поверх   // вернуть сохранённые постройки/скан этой комнаты (если были)
+  const kinds = composeRoomEnemies(rx,ry);
+  phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
+  const bossPh=phantoms.find(p=>p.kind==='boss');
+  if(bossPh && st.weight>0.7){ bossPh.size=3; bossPh.hp=520;   // глубокий босс — 3×3
+    try{ bossPh.mesh.scale.setScalar(2.8); }catch(e){} }
+  const boss=!!bossPh;
+  botDiff = clamp((st.weight<0.15?0 : (st.weight<0.5?1:2)) + ((window.ADV_DIFF??1)-1), 0, 2);   // авто-вага кімнати ± обрана складність
+  if(home){
+    player.hp=100; player.stamina=100; player.activityExhaustion=0; player.disarmed=false;
+    buildRacks();
+    showBanner('◌ ДІМ — стійки зброї (стань 1.2с) · 🔥 КУЗНЯ на смарагдовій плиті','#60a5fa');
+    logE('ДІМ: стійки — спис(3,3) сокира(9,3) ціп(3,9) нунчаки(9,9) хлист(6,2) меч(6,10) · кузня(4,6)');
+  }else if(chessWhite(rx,ry)){
+    showBanner('⬜ '+st.name+' · безпечний коридор','#e2e8f0');
+    try{ const c=new THREE.Color(st.bg).lerp(new THREE.Color(0xdde6f0),0.16);   // білі — світліший фон
+      scene.background=c; if(scene.fog&&scene.fog.color) scene.fog.color.copy(c); }catch(e){}
+  }else{
+    showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
+  }
+  try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
+  try{ AUDIO.music(home?'home':(chessWhite(rx,ry)?'white':(boss?'boss':'black'))); }catch(e){}   // тема кімнати з маніфесту
+  logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
+}
+function chessWhite(rx,ry){ return ((rx+ry)%2)===0; }   // ⬜ ШАХІВНИЦЯ: парна сума = біла (безпечна), (6,6)=дім=біла
+function composeRoomEnemies(rx,ry){
+  const st=roomStyle(rx,ry), dist=Math.abs(rx-6)+Math.abs(ry-6);
+  if(rx===6&&ry===6) return [];
+  if(chessWhite(rx,ry)) return [];                  // ⬜ біла клітинка — коридор: НУЛЬ ворогів (лут/торговці — advRoomExtras)
+  const AD=(window.ADV_DIFF??1);                    // обрана складність пригоди (0/1/2) масштабує щільність
+  const rng=mulberry32(rx*57+ry*901+3);
+  const ring=Math.min(rx,ry,12-rx,12-ry);
+  if(ring<=1){                                      // ⬛ КРАЙ СВІТУ (два зовнішні кільця): гарантовані БОСИ
+    const nb=clamp(1+(st.weight>0.72?1:0)+(AD>=2&&ring===0?1:0),1,3);   // 1..3 босів (складність+глибина)
+    const k=[]; for(let i=0;i<nb;i++)k.push('boss');
+    const extra=2+Math.round(st.weight*(2+AD));
+    for(let i=0;i<extra;i++){ const r=rng(); k.push(r<0.34?'crawler':r<0.62?'flyer':'gunner'); }
+    return k;
+  }
+  if(dist%4===0){                                   // комната БОССА (каждые 4 шага) — лише на чорних
+    const k=['boss'], extra=Math.round(st.weight*(2+AD));
+    for(let i=0;i<extra;i++) k.push(rng()<0.5?'crawler':'flyer');
+    return k;
+  }
+  const n=clamp(1+Math.round(st.weight*(3+AD*2)),1,3+AD*2), k=[];   // легко max4 / норма max6 / складно max8
+  for(let i=0;i<n;i++){
+    const r=rng();
+    if(st.weight<0.12)      k.push(r<0.55?'fighter':'crawler');
+    else if(st.weight<0.35) k.push(r<0.35?'fighter':r<0.6?'crawler':r<0.82?'flyer':'gunner');
+    else                    k.push(r<0.3?'fighter':r<0.55?'gunner':r<0.78?'flyer':'crawler');
+  }
+  return k;
+}
+/* ── СТЕНЫ/КОРИДОРЫ/ЛАЗЫ: комнаты собираются из СТРУКТУР, а не одиночных кубов ──
+   wall — прочная стена-сегмент 3..6 клеток с ПРОЁМОМ-дверью и иногда ЛАЗОМ
+   (o.pass='crawl': низкий отвір — повзун проползает, остальные нет, літун летит поверх);
+   pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
+const ELEM_GAS=['H','O','Cl','co2'];                 // газоподібні елементи: прохідні, світні
+const ELEM_SOLID=['C','Si','Na','Fe','sand','salt','glass','steel']; // тверді елементи/продукти: блокують, руйнівні
+function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
+  const key=gx+','+gy;
+  if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
+  taken.add(key);
+  // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
+  const solid=(type==='wall'||type==='crawl'||type==='base');
+  const crawl=(type==='crawl');
+  const passel=(type==='liquid'||type==='gas'||type==='plasma'||ELEM_GAS.includes(type));      // проходимые элементы
+  const pass = crawl?'crawl' : (type==='liquid'?'liquid' : type==='plasma'?'plasma' : passel?'gas' : null);
+  const destr=(type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type));
+  const low = (type==='rubble'||type==='gas'||ELEM_GAS.includes(type));   // низкие блоки
+  const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
+  let h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
+  let w = (type==='rubble'?0.8:0.86), d = w;
+  // ФОРМЫ ТВОРЦА: 'slab' плита лежачая, 'post' стрижень, 'panel' стоячая тонкая плита, 'cube'/default — как есть
+  if(shape==='slab'){ w=0.92; d=0.92; h=0.2; }
+  else if(shape==='post'){ w=0.2; d=0.2; h=TIER_H*2.0; }
+  else if(shape==='panel'){ w=0.92; d=0.14; h=TIER_H*1.8; }
+  const geo=new THREE.BoxGeometry(w, crawl?h*0.62:h, d);
+  const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9,
+    H:0xdff4ff, C:0x3a3f47, O:0x9ad1ff, Na:0xe8d27a, Si:0x9aa6b6, Cl:0xa6e86a, Fe:0xb87c55,
+    sand:0xe7d8a1, salt:0xf6e7ea, co2:0x8fa1ad, glass:0xbfe8ff, steel:0x93a3b8};
+  const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
+  let mat;
+  if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:type==='gas'?0.26:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
+  else if(type==='liquid')          mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:0.55, depthWrite:false});
+  else if(solid)                    mat=new THREE.MeshBasicMaterial({color:wallCol});
+  else                              mat=new THREE.MeshBasicMaterial({color: tint!=null?tint:(ECOL[type]!=null?ECOL[type]:(type==='fragile'?0x7cc8ff:(type==='rubble'?0x8a6a2e:0xc9a03a))), transparent:true, opacity:0.9});
+  const grp=new THREE.Group(); grp.frustumCulled=false;
+  const boxM=new THREE.Mesh(geo,mat); boxM.frustumCulled=false; grp.add(boxM);
+  boxM.position.y = crawl ? h*0.19 : 0;      // ЛАЗ: стена приподнята, под ней видимый отвір
+  const edgeCol = solid?(crawl?0x86b6f0:(type==='base'?0x6b7280:0x5f86c0)) : (ECOL[type]!=null?ECOL[type]:0xffd47a);
+  const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color: edgeCol, transparent:true,
+      opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
+  edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
+  if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }   // прозрачность от творца
+  grp.position.set(worldX(gx), (baseY||0)+h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,baseY:baseY||0,h,
+    hp: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40), alive:true, mesh:grp, mat});
+}
+function roomReachable(){
+  // ПРОХОДИМОСТЬ: от центра до середин всех 4 кромок (лаз для игрока — стена)
+  const blocked=(x,y)=>{ const o=obstacleAt(x,y); return !!(o&&o.solid); };
+  const seen=new Set(['6,6']), q=[[6,6]];
+  while(q.length){ const [x,y]=q.shift();
+    for(const [ox,oy] of DIRV){ const nx=x+ox, ny=y+oy;
+      if(nx<0||nx>12||ny<0||ny>12) continue;
+      const k=nx+','+ny; if(seen.has(k)||blocked(nx,ny)) continue;
+      seen.add(k); q.push([nx,ny]); } }
+  return seen.has('6,0')&&seen.has('6,12')&&seen.has('0,6')&&seen.has('12,6');
+}
+/* ── ГЕНЕРАЦИЯ ОТСКАНИРОВАННОЙ КОМНАТЫ (Floorplan ~46 m²) + демо элементных блоков ── */
+function buildScannedRoom(tintHex){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
+  const tint = tintHex!=null ? tintHex : 0x28374f;
+  // Контур по плану: кухня слева-вверху (уже), выступ Living Room 2 справа, широкая Living Room 1 внизу,
+  // Г-образное сужение слева (1.02м) и внутренняя L-перегородка у LR2.
+  const layout = [
+    "             ",
+    " WWWWWWWW    ",
+    " Wkk  tt WWW ",
+    " Wkk  tt   W ",
+    " WW   ~    W ",
+    "  W    LL  W ",
+    "  W    L c W ",
+    "  W o    c W ",
+    "  W c      W ",
+    "  W c    * W ",
+    "  WWWWWWWWWW ",
+    "             ",
+    "             "
+  ];
+  const M={ 'W':'wall','L':'wall','k':'rubble','t':'rubble','c':'rubble','~':'liquid','*':'plasma','o':'gas' };
+  for(let y=0;y<13;y++) for(let x=0;x<13;x++){
+    const ch=layout[y] && layout[y][x]; const t=M[ch]; if(!t) continue;
+    if(t==='wall')        addObstacle(x,y,'wall',taken,tint,1.2);
+    else if(t==='rubble') addObstacle(x,y,'rubble',taken,0x4a5568,1);
+    else                  addObstacle(x,y,t,taken,null,1);
+  }
+  logE('Завантажено мапу реального приміщення ~46м² (+елементні блоки)');
+}
+function loadScannedRoom(){
+  buildScannedRoom();
+  snapshotRoom();   // сохранить как постоянную постройку текущей комнаты
+  const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];   // безопасный старт
+  if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  spawnPhantoms(phantomCount); clearClinch(); applyMode(); closeMenu();
+}
+function buildRoomStructures(rng, weight, tintHex){
+  obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+  const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
+  for(let i=0;i<13;i++){ taken.add(i+',0'); taken.add(i+',12'); taken.add('0,'+i); taken.add('12,'+i); }
+  const tint=tintHex!=null?tintHex:0x28374f;
+  const tall=1+weight*0.5;                                 // глубже — стены выше
+  // ПЛОТНОСТЬ ЛАБИРИНТА растёт с удалением от дома
+  const walls=2+Math.round(weight*6), pillars=1+Math.round(weight*2), rubble=Math.round(weight*2);
+  for(let w2=0;w2<walls;w2++){
+    const horiz=rng()<0.5, len=3+Math.floor(rng()*4);
+    let gx=2+Math.floor(rng()*8), gy=2+Math.floor(rng()*8);
+    const gap=Math.floor(rng()*len);
+    const hole=rng()<0.5 ? Math.floor(rng()*len) : -1;
+    for(let k=0;k<len;k++){
+      if(k===gap) continue;
+      addObstacle(gx+(horiz?k:0), gy+(horiz?0:k), k===hole?'crawl':'wall', taken, tint, tall);
+    }
+  }
+  // «БУДИНОЧКИ»: замкнутая комнатка 3×3/4×4 с 1-2 дверьми; внутри бывает сокровище
+  const houses = weight>0.6?2 : weight>0.22?1 : 0;
+  for(let hI=0;hI<houses;hI++){
+    const w3=3+Math.floor(rng()*2), h3=3+Math.floor(rng()*2);
+    const gx=2+Math.floor(rng()*(9-w3)), gy=2+Math.floor(rng()*(9-h3));
+    const per=[];
+    for(let x=gx;x<gx+w3;x++){ per.push([x,gy]); per.push([x,gy+h3-1]); }
+    for(let y=gy+1;y<gy+h3-1;y++){ per.push([gx,y]); per.push([gx+w3-1,y]); }
+    const doors=new Set([Math.floor(rng()*per.length), Math.floor(rng()*per.length)]);
+    per.forEach((pc,idx)=>{ if(!doors.has(idx)) addObstacle(pc[0],pc[1],'wall',taken,tint,tall*1.15); });
+    if(rng()<0.6){
+      const pool=['up_dmg','up_charge','up_reach','heal'];
+      spawnPickup(gx+1+Math.floor(rng()*(w3-2)), gy+1+Math.floor(rng()*(h3-2)),
+        pool[Math.floor(rng()*pool.length)]);
+    }
+  }
+  for(let k2=0;k2<pillars;k2++) addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'pillar',taken);
+  for(let k3=0;k3<rubble;k3++)  addObstacle(2+Math.floor(rng()*9),2+Math.floor(rng()*9),'rubble',taken);
+  // гарантия прохода: пока центр не видит все 4 кромки — сносим случайную стену
+  let guard=0;
+  while(!roomReachable() && guard++<24){
+    const solidW=obstacles.filter(o=>o.solid);
+    if(!solidW.length) break;
+    const o=solidW[Math.floor(rng()*solidW.length)];
+    o.alive=false; scene.remove(o.mesh);
+    obstacles.splice(obstacles.indexOf(o),1);
+  }
+  logE('лабіринт: стін '+obstacles.filter(o=>o.solid&&!o.pass).length
+    +' лазів '+obstacles.filter(o=>o.pass==='crawl').length
+    +' крихких '+obstacles.filter(o=>!o.solid).length
+    +(houses?(' будиночків '+houses):'')+(guard?(' пробито:'+guard):''));
+}
+function spawnObstaclesSeededSafe(rx,ry,home){
+  const rng=mulberry32(rx*131+ry*17+7);
+  if(home){ spawnObstacles(rng,0); return; }
+  const st=roomStyle(rx,ry);
+  // цвет стен: тёмная смесь фона комнаты с её акцентом — у каждого архетипа своя кладка
+  let tint=0x28374f;
+  try{ const c=new THREE.Color(st.bg).lerp(new THREE.Color(st.accent),0.35).multiplyScalar(1.6);
+    tint=c.getHex(); }catch(e){}
+  buildRoomStructures(rng, st.weight, tint);
+}
+function updateAdventure(dt){
+  if(!ADV.on || player.dead || mode!=='fighter') return;
+  const cleared = advHome() || phantoms.every(p=>p.dead);
+  const edgeOf=(x,y)=>{
+    if((x===0||x===12)&&(y===0||y===12)) return null;      // углы неоднозначны — как в 2D-каноне
+    if(y===0)return'N'; if(y===12)return'S'; if(x===0)return'W'; if(x===12)return'E'; return null;
+  };
+  const myE=cleared ? edgeOf(player.gx,player.gy) : null;
+  let all = myE!=null;
+  if(all) for(const id in NET.remotes){ const r=NET.remotes[id];
+    if(r.spec || !remoteFresh(r) || (r.hp??100)<=0) continue;   // мёртвые/призраки не голосуют
+    if(edgeOf(r.gx,r.gy)!==myE){ all=false; break; }
+  }
+  if(!all){
+    if(ADV.edgeDir) showBanner('перехід скасовано — збір розпався','#64748b');
+    ADV.edgeT=0; ADV.edgeDir=null; return;
+  }
+  const step={N:[0,-1],S:[0,1],W:[-1,0],E:[1,0]}[myE];
+  const nrx=ADV.rx+step[0], nry=ADV.ry+step[1];
+  if(nrx<0||nrx>12||nry<0||nry>12){                        // край метамира
+    if(ADV.edgeDir!==myE){ ADV.edgeDir=myE; showBanner('∅ далі метасвіту немає','#cbd5e1'); }
+    ADV.edgeT=0; return;
+  }
+  if(ADV.edgeDir!==myE){                                    // ПОДСКАЗКА: что впереди + право отступить
+    ADV.edgeDir=myE; ADV.edgeT=0;
+    const st=roomStyle(nrx,nry), wht=chessWhite(nrx,nry);
+    showBanner('⏳ ПОПЕРЕДУ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стій 3с або відійди',
+      wht?'#e2e8f0':st.accent);
+    blip(440,0.12,'sine',0.12);
+  }
+  ADV.edgeT+=dt;
+  if(ADV.edgeT>=3){
+    const from=myE;
+    applyAdvRoom(nrx,nry);
+    // входим с противоположной кромки новой комнаты
+    const opp={N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]}[from];
+    const c=freeSpawnCell(opp[0],opp[1],player); player.gx=c[0]; player.gy=c[1];
+    NET.advPub();                                           // консенсус комнаты для всех
+  }
+}
+function equipWpn(w){
+  playerWpn=w; const W=WEAPONS[w];
+  buildWeaponFX(w==='bossaxe'?'axe':w);
+  player.bladeHue={sword:0.5,spear:0.35,axe:0.02,flail:0.75,nunchaku:0.12,whip:0.55,bossaxe:0.02}[w]??0.5;
+  showBanner('✥ ВЗЯТО: '+W.label+' — '+W.desc,'#eab308');
+  logE('зброя: '+W.label); blip(700,0.12,'sine',0.15); buzz([0,40]);
+}
+function updateRacks(dt){
+  if(!ADV.on || !advHome()) return;
+  for(const w in RACK_CELLS){
+    if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;    // закриті стійки не існують
+    const [x,y]=RACK_CELLS[w];
+    if(player.gx===x && player.gy===y){
+      if(w==='flail'){                                                // 🌀 ЦІП: тимчасовий, за ресурси
+        if(playerWpn==='flail') return;
+        rackT+=dt;
+        if(rackT>=1.2){ rackT=-2;
+          if(RES.iron>=2 && RES.crystal>=2){
+            RES.iron-=2; RES.crystal-=2; saveRes(); resHUD();
+            equipWpn('flail'); FLAIL.t=FLAIL_DUR;
+            showBanner('🌀 ЦІП АКТИВОВАНО на '+FLAIL_DUR+'с  (−2⛓ −2◆)','#a78bfa');
+          }else showBanner('🌀 ЦІП: треба 2⛓ заліза + 2◆ кристала — видобудь у ⬜ кімнатах','#94a3b8');
+        }
+        return;
+      }
+      if(playerWpn!==w){
+        rackT+=dt;
+        if(rackT>=1.2){ rackT=0; equipWpn(w); }
+      }
+      return;
+    }
+  }
+  rackT=0;
+}
+
+function bladeCells(av){
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, sensor.yawFused);
+  if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
+  return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0, av.reachMod||0,
+    av.boss?null:av.aimYaw);   // босс лишається неповоротким (снап + слабке місце ззаду)
+}
+function bladeCells_LEGACY(av){
+  const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6), out=[];
+  for(let i=1;i<=len;i++) out.push((av.gx+dx*i)+','+(av.gy+dy*i));
+  return out;
+}
+void bladeCells_LEGACY;
+function bladeCovers(av,gx,gy){
+  const [dx,dy]=DIRV[av.dirIdx], len=clamp(Math.round(av.swordLen),1,6);
+  for(let i=1;i<=len;i++) if(av.gx+dx*i===gx && av.gy+dy*i===gy) return true;
+  return false;
+}
+function remoteBladeCells(r){
+  const p=r.latest||{};
+  return weaponCells(r.gx, r.gy, yawToDirIdx(p.yaw||0), p.swordLength||1, p.wpn||'sword', false, p.reach||0, p.yaw||0);   // чужая досяжність учтена + точний азимут
+}
+/* ── КЛИНЧ: чей-то клинок пересекает твой (фехтование, блок) ── */
+function resolveClinch(){
+  if(clinch.active || clinch.cd>0 || player.disarmed || player.dead) return;
+  const pc=bladeCells(player);
+  // с фантомами
+  for(const ph of phantoms){
+    if(ph.disarmed || ph.dead || !ph.hitActive) continue;
+    const ec=new Set(bladeCells(ph));
+    if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки зійшлись'); return; }
+  }
+  // с реальными игроками (PvP-фехтование)
+  if(friendlyFire) for(const id in NET.remotes){
+    const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
+    const ec=new Set(remoteBladeCells(r));
+    if(pc.some(c=>ec.has(c))){ startClinch({remote:true, id}); logE('ФЕХТ з гравцем '+id.slice(0,4)); return; }
+  }
+}
+
+/* ════════════════════ СМЕРТЬ И ВОЗРОЖДЕНИЕ ═══════════════════ */
+/* ── ПРАВИЛО РАВНОВЕСИЯ мира 13×13 ────────────────────────────
+   «Убил — и сам рождаешься заново, как убитый. Оба становитесь равны,
+   у начала». Убийство не даёт накопленного преимущества: убитый
+   возрождается штатно, убийца проходит то же перерождение мгновенно —
+   полный сброс тела (HP, выносливость, усталость, клинок) и возврат
+   в стартовую клетку. Счёт (память мира) — единственное, что остаётся. */
+let lastPlayerHitFrom=null, lastPlayerHitT=0;   // кто ударил меня последним (для PvP-эха)
+function equalizerRebirth(){
+  player.hp=100; player.stamina=100; player.activityExhaustion=0;
+  player.swordLen=1; player.charge=1; player.charging=false;
+  player.disarmed=false; player.disarmT=0; player.painT=0; player.strikeT=0;
+  clearClinch(); if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
+  const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];
+  if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  showBanner('⚖ РІВНОВАГА: ОБИДВА НАРОДЖЕНІ ЗАНОВО','#eab308');
+  logE('РІВНОВАГА: вбивця народжується заново, як убитий');
+  doFlash('#eab308');
+  blip(392,0.28,'sine',0.16); blip(523,0.28,'sine',0.16);
+  buzz([0,30,30,30,30,90]);
+}
+function clearClinch(){
+  if(!clinch.active) return;
+  clinch.active=false; clinch.foe=null; clinch.delta=0; setWorldMuffle(0);
+  try{ hideAstral(); }catch(e){}   // ФІКС 07-14: смерть у клінчі лишала заморожене лезо висіти в повітрі
+  if(navigator.vibrate) navigator.vibrate(0);
+}
+function handleDeath(av, dt){
+  if(av.dead){
+    av.respawnT -= dt;
+    if(av.respawnT<=0) respawn(av);
+    return;
+  }
+  if(av.hp<=0){
+    av.dead=true; av.respawnT=2.2; av.hitActive=false; av.blade.count=0;
+    clearClinch();
+    if(av!==player){
+      rollMobLoot(av);                          // 50% его оружие / 50% апгрейд
+      player.score=(player.score||0)+1;
+      logE('ФАНТОМ убито, рахунок '+player.score);
+      showBanner('◌ ФАНТОМ РОЗВТІЛЕНО  +'+player.score,'#22c55e');
+      blip(520,0.25,'sine',0.2);
+      try{ if(window.TUT && TUT.active) TUT.onKill(av); }catch(e){}
+      try{ if(av.kind==='boss' && !CRAFT.unlocked.bossTech){ CRAFT.unlocked.bossTech=true; saveCraft();
+        showBanner('🪓 БОСА ПОВАЛЕНО — техніку сокири опановано, крафт у КУЗНІ','#22c55e'); } }catch(e){}
+      try{ QST.progress('hunt', null, 1); }catch(e){}
+      if(equalizerOn) equalizerRebirth();   // правило равновесия: убил — сам рождён заново (тумблер в меню)
+    }else{
+      logE('ГРАВЕЦЬ загинув');
+      try{ if(window.TUT && TUT.active) TUT.onDeath(); }catch(e){}
+      showBanner('▼ СВІДОМІСТЬ ЗГАСЛА','#ef4444'); doFlash('#ef4444');
+      blip(80,0.6,'sawtooth',0.25);
+      buzz([0,80,60,160]);
+      // PvP-эхо равновесия: если добил живой игрок — его клиент тоже переродится.
+      // Идёт по СУЩЕСТВУЮЩЕМУ каналу hits (dmg=0, src='rebirth') — новых узлов в БД нет.
+      if(equalizerOn && lastPlayerHitFrom && performance.now()-lastPlayerHitT<3000){
+        NET.sendHit(lastPlayerHitFrom, 1, 0, 'rebirth');
+        lastPlayerHitFrom=null;
+      }
+    }
+  }
+}
+function respawn(av){
+  // ПРИГОДА: убитые враги НЕ возрождаются — иначе комнату не зачистить и переход невозможен
+  if(ADV.on && av!==player){
+    av.respawnT=1e9;
+    try{ av.mesh.visible=false; av.blade.visible=false; }catch(e){}
+    return;
+  }
+  av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
+  av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
+  try{ if(av.parts) for(const k in av.parts){ const p=av.parts[k];
+    if(p&&p.isMesh&&p.scale) p.scale.setScalar(1); } }catch(e){}   // ерозія тіла загоюється
+  if(av!==player){
+    av.ai.windT=0; av.ai.swingT=2; av.ai.moveT=0.5; av.ai.lastDist=null; av.ai.noProg=0;
+    const c=freeSpawnCell(player.gx<=6?12:0, player.gy<=6?12:0, av); av.gx=c[0]; av.gy=c[1];   // подальше от игрока, в свободную клетку
+  }else{
+    const c=freeSpawnCell(CX,CY,player); av.gx=c[0]; av.gy=c[1];
+    if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+    // (07-16) ПРИГОДА пер-гравцева: загибель ЗАВЖДИ повертає додому — і крапка.
+    if(ADV.on && !advHome()){
+      applyAdvRoom(6,6); NET.advPub();
+      showBanner('▼ СВІДОМІСТЬ ПОВЕРНУЛАСЬ ДОДОМУ','#cbd5e1');
+    }
+  }
+}
+
+/* ════════════════════ ФАНТОМЫ (ИИ) ══════════════════════════ */
+function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead
+  && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)); }
+function nearestTarget(ph){
+  let best=null, bd=1e9;
+  if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r) || !sameAdvRoom(r)) continue;
+    const d=Math.abs(ph.gx-r.gx)+Math.abs(ph.gy-r.gy); if(d<bd){ bd=d; best={gx:r.gx,gy:r.gy,local:false,id}; } }
+  return best;
+}
+// ── Часть 3: клетка 13×13 — монопольный физический объект (пока один слой layer0) ──
+// Возвращает null если свободна; иначе объект-описание (задел под ярусы/астральное прохождение).
+function isCellOccupied(gx,gy,ignore){
+  if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
+  { const o=obstacleAt(gx,gy);
+    if(o && o.pass!=='liquid' && o.pass!=='gas' && o.pass!=='plasma'
+       && !(ignore && ignore.kind==='crawler' && o.pass==='crawl'))
+      return {layer0:true, kind:'obstacle'}; }   // ЛАЗ: повзун проползает; жидкость/газ/плазма — сквозь
+  for(const p of phantoms){ if(p!==ignore && !p.dead
+    && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)) return {layer0:true, kind:'phantom', av:p}; }
+  if(remotePhantomAt(gx,gy)) return {layer0:true, kind:'rphantom'};
+  if(ignore!==player && mode==='fighter' && !player.dead && player.gx===gx && player.gy===gy) return {layer0:true, kind:'player', av:player};
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && (r.hp??100)>0 && remoteFresh(r) && r.gx===gx && r.gy===gy) return {layer0:true, kind:'rplayer'}; }
+  return null;
+}
+function freeSpawnCell(gx,gy,ignore){
+  gx=clamp(gx,0,12); gy=clamp(gy,0,12);
+  if(!isCellOccupied(gx,gy,ignore)) return [gx,gy];
+  for(let rad=1; rad<=12; rad++) for(const [ox,oy] of DIRV){
+    const nx=clamp(gx+ox*rad,0,12), ny=clamp(gy+oy*rad,0,12);
+    if(!isCellOccupied(nx,ny,ignore)) return [nx,ny];
+  }
+  return [gx,gy];
+}
+/* ── BFS: первый шаг кратчайшего 8-направленного пути к клетке, СОСЕДНЕЙ с целью ──
+   Жадный шаг «по знаку разности» намертво застревает за препятствием/углом
+   (лог 2026-07-02: фантом 2 минуты качался у стены (12,4)↔(12,7), dist 10-13).
+   Сетка 13×13 → полный обход дешевле одного кадра рендера.                     */
+function bfsStep(sx,sy,tx,ty,self){
+  const key=(x,y)=>y*13+x, prev=new Int16Array(169).fill(-1), q=[key(sx,sy)];
+  prev[key(sx,sy)]=key(sx,sy);
+  let head=0;
+  while(head<q.length){
+    const c=q[head++], cx=c%13, cy=(c/13)|0;
+    if(Math.max(Math.abs(cx-tx),Math.abs(cy-ty))<=1 && !(cx===sx&&cy===sy)){
+      let k=c; while(prev[k]!==key(sx,sy)) k=prev[k];   // раскрутка до первого шага
+      return [k%13,(k/13)|0];
+    }
+    for(const [ox,oy] of DIRV){
+      const nx=cx+ox, ny=cy+oy;
+      if(nx<0||nx>12||ny<0||ny>12) continue;
+      const nk=key(nx,ny);
+      if(prev[nk]!==-1 || isCellOccupied(nx,ny,self)) continue;
+      prev[nk]=c; q.push(nk);
+    }
+  }
+  return null;   // цель полностью замурована — стоим
+}
+function updatePhantoms(dt){
+  for(const ph of phantoms){
+    if(ph.dead || ph.disarmed){ continue; }
+    const ai=ph.ai;
+    ai.moveT -= dt; ai.swingT -= dt;
+    ai.burnCd = Math.max(0, (ai.burnCd||0)-dt);
+    const tgt = nearestTarget(ph);
+    if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
+    // ── НЕСТАНДАРТНЫЕ ВИДЫ: своя логика, мимо меч-конвейера ──
+    if(ph.kind==='crawler' || ph.kind==='flyer'){
+      ph.hitActive=false;
+      const d0=Math.max(Math.abs(tgt.gx-ph.gx),Math.abs(tgt.gy-ph.gy));
+      if(ai.moveT<=0){
+        ai.moveT=(ph.kind==='flyer'?0.5:0.42)*(0.8+Math.random()*0.4);
+        const sx=Math.sign(tgt.gx-ph.gx), sy=Math.sign(tgt.gy-ph.gy);
+        const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+        const free = ph.kind==='flyer'
+          ? !(phantomAtCell(nx,ny) && phantomAtCell(nx,ny)!==ph) && !(player.gx===nx&&player.gy===ny)
+          : !isCellOccupied(nx,ny,ph);
+        if(free && (nx!==ph.gx||ny!==ph.gy)){ ph.gx=nx; ph.gy=ny; }
+        else{
+          const ax=clamp(ph.gx+(Math.random()<0.5?1:-1),0,12), ay=clamp(ph.gy+(Math.random()<0.5?1:-1),0,12);
+          if(!isCellOccupied(ax,ay,ph)){ ph.gx=ax; ph.gy=ay; }
+        }
+      }
+      if(ai.burnCd<=0 && d0<=1){
+        const bt = ph.kind==='flyer'?2:0;         // літун жалить голову, повзун гризе ноги
+        const dmg = ph.kind==='flyer'?8:13;       // укус повзуна ощутимее: реген его не съедает
+        if(tgt.local && !player.dead){
+          damageTier(player, bt, dmg); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
+          if(bt===0) addExhaustion(player, 12);   // укусы утомляют → реген глохнет → дренаж копится
+          logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВИТР ')
+            + Math.round(bt===0?player.stamina:player.hp));
+        }else if(!tgt.local){ NET.sendHit(tgt.id, bt, dmg, 'phantom'); ai.burnCd=0.8; }
+      }
+      continue;
+    }
+    if(ph.kind==='gunner'){
+      ph.hitActive=false;
+      const dM=Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
+      if(ai.moveT<=0){
+        ai.moveT=0.7*(0.8+Math.random()*0.4);
+        let want=0; if(dM<3)want=-1; else if(dM>6)want=1;   // кайтинг: держит 3..6
+        const sx=Math.sign(tgt.gx-ph.gx)*want, sy=Math.sign(tgt.gy-ph.gy)*want;
+        const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+        if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; }
+      }
+      ph.shootT=(ph.shootT||2)-dt;
+      if(ph.shootT<=0 && dM<=8 && tgt.local && !player.dead){
+        ph.shootT=2.4+Math.random()*0.9; fireShot(ph);
+      }
+      continue;
+    }
+    if(ph.kind==='boss'){
+      // ЗАМАХ-СОБЫТИЕ: 1с предупреждения → круговой удар радиуса 2.5 (уклоняйся!)
+      ph.sweepT=(ph.sweepT??7)-dt;
+      const bcx=ph.gx+((ph.size||1)-1)*0.5, bcy=ph.gy+((ph.size||1)-1)*0.5;
+      if(ph.sweepT<=1 && !ph.sweepWarned){
+        ph.sweepWarned=true;
+        showBanner('⚠ БОС РОЗКРУЧУЄ ЗАМАХ — ВІДІЙДИ НА 3+','#f59e0b');
+        emitSparks(worldX(bcx), TIER_H*1.4, worldZ(bcy), '#f59e0b', 30, 5.5);
+        blip(140,0.7,'sawtooth',0.2); buzz([0,120]);
+      }
+      if(ph.sweepT<=0){
+        ph.sweepT=6+Math.random()*2.5; ph.sweepWarned=false; ph.sweepJustHit=0.6;
+        const inR = Math.max(Math.abs(player.gx-bcx),Math.abs(player.gy-bcy))<=2.5;
+        emitSparks(worldX(bcx), TIER_H*1.2, worldZ(bcy), '#ef4444', 44, 7);
+        blip(70,0.5,'sawtooth',0.26);
+        if(tgt.local && inR && !player.dead){
+          damageTier(player, 1, 24); doFlash('#ef4444'); buzz([0,90,50,90]);
+          logE('КРУГОВИЙ ЗАМАХ боса зачепив → HP '+Math.round(player.hp));
+        }else logE('круговий замах боса — ухилення');
+      }
+    }
+    const ddx = Math.sign(tgt.gx - ph.gx);
+    const ddy = Math.sign(tgt.gy - ph.gy);
+    const dist = Math.abs(tgt.gx-ph.gx)+Math.abs(tgt.gy-ph.gy);
+    let bestIdx=ph.dirIdx, bestDot=-9;
+    for(let i=0;i<8;i++){ const dot=DIRV[i][0]*ddx+DIRV[i][1]*ddy; if(dot>bestDot){bestDot=dot;bestIdx=i;} }
+    if(ph.kind==='boss'){                       // НЕПОВОРОТЛИВОСТЬ: разворот не чаще раза в 1.2с
+      ph.turnT=(ph.turnT||0)-dt;
+      if(ph.turnT<=0 && bestIdx!==ph.dirIdx){ ph.dirIdx=bestIdx; ph.turnT=1.2; }
+    }else ph.dirIdx=bestIdx;
+    // ТОЧНИЙ ПРИЦІЛ (фікс 07-13): неперервний азимут на ціль — б'є і по «коневих» клітинках
+    ph.aimYaw = Math.atan2(tgt.gx-(ph.gx+((ph.size||1)-1)*0.5), -(tgt.gy-(ph.gy+((ph.size||1)-1)*0.5))) * 180/Math.PI;
+    // ПРИЦЕЛ ПО ЯРУСУ как игрок: целится в тело цели (для локальной — в её ярус)
+    ph.tier = tgt.local ? player.tier : 1;
+    ph.pitch = (ph.tier-1)*0.7;
+    if(ai.side===undefined) ai.side = Math.random()<0.5?1:-1;
+    ph.roll = ai.side*55;   // «рукость» бота: клинок/руки на сторону (как игрок в альбомной ориентации)
+    ph.hitActive = true;                              // клинок ЖИВ всегда (как у игрока)
+    // ── ДВИЖЕНИЕ: сближение с обходом препятствий + фланг/отход (живее прямого наскока) ──
+    // Анти-застревание: копим время без сближения; >2.5с — жадный шаг отставлен, ведёт BFS.
+    if(dist>1){
+      if(ai.lastDist==null || dist<ai.lastDist){ ai.lastDist=dist; ai.noProg=0; }
+      else ai.noProg=(ai.noProg||0)+dt;
+    } else { ai.lastDist=dist; ai.noProg=0; }
+    if(ai.moveT<=0){
+      ai.moveT = [1.0,0.8,0.6][botDiff] * (0.85+Math.random()*0.4) * (ph.slow||1);   // темп: сложность × неповоротливость босса
+      const canGo=(nx,ny)=> !isCellOccupied(nx,ny,ph);
+      let moved=false;
+      if((ai.noProg||0)>2.5 && dist>1){
+        const s=bfsStep(ph.gx,ph.gy,tgt.gx,tgt.gy,ph);
+        if(s){ ph.gx=s[0]; ph.gy=s[1]; moved=true; }
+      }
+      if(!moved){
+        const stepX=[clamp(ph.gx+ddx,0,12),ph.gy], stepY=[ph.gx,clamp(ph.gy+ddy,0,12)];
+        // приоритет по доминантной оси, затем по второй (это и есть «обход», когда первая занята)
+        let cand = (Math.abs(tgt.gx-ph.gx)>=Math.abs(tgt.gy-ph.gy)) ? [stepX,stepY] : [stepY,stepX];
+        // на средней/высокой сложности иногда заходит сбоку — ЧЕСТНЫЙ перпендикуляр (-ddy,ddx)
+        // со случайной стороной. Прежняя формула с «||1» на нулевой компоненте толкала бота
+        // прямиком в стену (источник качания у кромки поля).
+        if(botDiff>0 && Math.random()<0.3 && (ddx||ddy)){
+          const sgn=Math.random()<0.5?1:-1;
+          cand.unshift([clamp(ph.gx-ddy*sgn,0,12),clamp(ph.gy+ddx*sgn,0,12)]);
+        }
+        // вплотную — иногда отойти, чтобы снова разогнать выпад (кайтинг вместо «липнет вплотную»)
+        if(dist<=1 && Math.random()<0.35) cand=[[clamp(ph.gx-ddx,0,12),ph.gy],[ph.gx,clamp(ph.gy-ddy,0,12)]];
+        for(const [nx,ny] of cand){ if((nx!==ph.gx||ny!==ph.gy) && canGo(nx,ny)){ ph.gx=nx; ph.gy=ny; moved=true; break; } }
+      }
+      // совсем некуда пойти жадно и BFS ещё не включился — форсируем его сразу
+      if(!moved && dist>1){
+        const s=bfsStep(ph.gx,ph.gy,tgt.gx,tgt.gy,ph);
+        if(s){ ph.gx=s[0]; ph.gy=s[1]; }
+      }
+    }
+    // периодический ВИЗУАЛЬНЫЙ выпад (удлиняет луч на миг), урон при этом непрерывный
+    if(ai.windT>0){
+      ai.windT -= dt; ph.swordLen = lerp(ph.swordLen, 2.0, dt*5);
+      ph.strikeT = Math.max(ph.strikeT, STRIKE_DUR);
+    }else{
+      ph.swordLen = lerp(ph.swordLen, 1.2, dt*2.5);
+      if(ai.swingT<=0 && dist<=3){ ai.swingT=1.6+Math.random()*1.4; ai.windT=0.32; ai.side=-(ai.side||1); }
+    }
+    if(ph.strikeT>0) ph.strikeT-=dt;
+    // Часть 2: третья сила бьёт по УЧАСТНИКУ клинча (локальный игрок в клинче) — арбитраж по выносливости
+    if(clinch.active && tgt.local && !player.dead && !player.disarmed && ai.burnCd<=0 && bladeCovers(ph, player.gx, player.gy)){
+      ai.burnCd = 0.6;
+      const holders = clinchHoldersStamina();
+      if((ph.stamina??100) > holders){
+        // Исход А: выносливость нападающего больше суммы удерживающих → клинч разбит для всех
+        endClinch('shattered'); addExhaustion(ph, 22);
+        logE('фантом РОЗБИВ клінч (витр '+Math.round(ph.stamina??100)+'>'+Math.round(holders)+')');
+      }else{
+        // Исход Б: клинч сдержал удар → нападающий отброшен и теряет выносливость (упрощённо, без заморозки)
+        ph.stamina = clamp((ph.stamina??100) - 22, 0, 100); addExhaustion(ph, 30);
+        player.stamina = clamp(player.stamina - 6, 0, 100); addExhaustion(player, 10);
+        doFlash('#a78bfa'); buzz(60);
+        logE('клінч СТРИМАВ фантома (витр '+Math.round(ph.stamina??100)+'≤'+Math.round(holders)+')');
+      }
+    }
+    // НЕПРЕРЫВНЫЙ урон при накрытии цели клинком (как burn у игрока), с кулдауном
+    if(!clinch.active && ai.burnCd<=0 && bladeCovers(ph, tgt.gx, tgt.gy)){
+      const D=DIFF[botDiff];
+      if(tgt.local && !player.dead){   // ВСЕГДА уязвим: потеря оружия ≠ неуязвимость (щит !disarmed убран)
+        damageTier(player, ph.tier, D.dmg); ai.burnCd=D.cd; doFlash('#ef4444'); buzz(50);
+        emitSparks(worldX(player.gx), TIER_H*(0.6+ph.tier*0.7), worldZ(player.gy), '#ff5a5a', 14, 3.2);
+        logE('фантом ріже гравця ярус '+ph.tier+' → HP '+Math.round(player.hp));
+      }else if(!tgt.local){
+        NET.sendHit(tgt.id, ph.tier, D.dmg, 'phantom'); ai.burnCd=D.cd;
+      }
+    }
+  }
+}
+
+/* ════════════════════ СВАЙП = ШАГ ОТНОСИТЕЛЬНО ВЗГЛЯДА ═══════
+   В виде от 3-го лица: свайп ВВЕРХ = шаг вперёд (от камеры),
+   ВНИЗ = назад, ВЛЕВО/ВПРАВО = вбок. Привязано к направлению клинка,
+   а не к абсолютной сетке — так интуитивно.                       */
+function stepRelative(dx, dy){            // dx,dy — экранный свайп
+  if(mode!=='creator' && (player.moveLockT||0)>0) return;     // Раздел 6: жидкость замедляет — движение на кулдауне (в творце — свободно)
+  if(mode==='creator') creatorTouch();
+  if(clinch.active) endClinch('retreat');  // шаг разрывает клинч (отступ) — затем сам шаг
+  const f = DIRV[player.dirIdx];          // вперёд (куда смотрит игрок)
+  const r = [-f[1], f[0]];                // вправо (перпендикуляр)
+  let mx=0,my=0;
+  if(Math.abs(dx)>Math.abs(dy)){ const s=dx>0?1:-1; mx=r[0]*s; my=r[1]*s; }  // вбок
+  else { const s=dy<0?1:-1; mx=f[0]*s; my=f[1]*s; }                          // вверх=вперёд
+  const nx=clamp(player.gx+mx,0,12), ny=clamp(player.gy+my,0,12);
+  if(nx===player.gx && ny===player.gy) return;                 // упёрлись в край
+  const occ = isCellOccupied(nx,ny,player);
+  if(occ){
+    blip(120,0.07,'square',0.12);
+    if(occ.kind==='obstacle' || occ.kind==='edge'){ logE('стіна: ('+nx+','+ny+')'); }
+    else {
+      // Часть 4.1: врезались в чужое тело — ОБОЮДНЫЙ толчок, выносливость минус обоим
+      addExhaustion(player, 10);
+      player.stamina = clamp(player.stamina - PUSH_COST, 0, 100);
+      if(occ.av && occ.av!==player){ occ.av.stamina = clamp((occ.av.stamina??100) - PUSH_COST, 0, 100); addExhaustion(occ.av,10); }
+      if(player.stamina<=0 && !player.disarmed){ player.disarmed=true; player.stamina=0; player.disarmT=0; dropBlade(player); logE('поштовх вибив твій клинок'); }
+      buzz([0,50]); logE('поштовх у ('+nx+','+ny+') −'+PUSH_COST+' витрив.');
+    }
+    return;                                                     // в занятую клетку не шагаем
+  }
+  player.gx=nx; player.gy=ny;
+  if(mode!=='creator'){ const dc=obstacleAt(nx,ny); if(dc && dc.pass==='liquid') player.moveLockT=0.4; }   // жидкость: вдвое медленнее (кроме творца)
+  if(MORPH.form!=='human') player.moveLockT=Math.max(player.moveLockT||0,0.32);   // слизь ползёт медленно
+  tryPickupBlade(); blip(520,0.05,'sine',0.06);
+}
+let touchStart=null;
+$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY}; },{passive:true});
+$('cv').addEventListener('touchend',e=>{
+  if(!touchStart) return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  if(Math.max(Math.abs(dx),Math.abs(dy))>=28) stepRelative(dx,dy);
+  touchStart=null;
+},{passive:true});
+// мышь — для теста на десктопе
+let mDown=null;
+$('cv').addEventListener('mousedown',e=>{mDown={x:e.clientX,y:e.clientY};});
+addEventListener('mouseup',e=>{
+  if(!mDown) return; const dx=e.clientX-mDown.x,dy=e.clientY-mDown.y;
+  if(Math.max(Math.abs(dx),Math.abs(dy))>=28) stepRelative(dx,dy);
+  mDown=null;
+});
+// клавиши — отладка стойки/направления без телефона
+const keys={};
+addEventListener('keydown',e=>{keys[e.key]=true;});
+addEventListener('keyup',e=>{keys[e.key]=false;});
+
+// ── панель лога ──
+$('logBtn').onclick=()=>{ const lp=$('logPanel'); const open=lp.style.display!=='flex';
+  lp.style.display=open?'flex':'none'; if(open) $('logbody').textContent=LOG.slice(-80).join('\n'); };
+$('logClose').onclick=()=>$('logPanel').style.display='none';
+$('logClear').onclick=()=>{ LOG.length=0; $('logbody').textContent=''; };
+$('logCopy').onclick=async()=>{
+  const txt=LOG.join('\n');
+  try{ await navigator.clipboard.writeText(txt); $('logCopy').textContent='✓ СКОПИРОВАНО'; }
+  catch(e){ const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta);
+    ta.select(); try{document.execCommand('copy');}catch(_){} ta.remove(); $('logCopy').textContent='✓'; }
+  setTimeout(()=>$('logCopy').textContent='COPY',1200);
+};
+
+// ── пауза / меню ──
+let paused=false;
+function copyLog(btn){
+  const txt=LOG.join('\n');
+  navigator.clipboard?.writeText(txt).then(()=>{ btn.textContent='✓ СКОПИРОВАНО'; },()=>fallback());
+  function fallback(){ const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta);
+    ta.select(); try{document.execCommand('copy');}catch(_){} ta.remove(); btn.textContent='✓ СКОПИРОВАНО'; }
+  setTimeout(()=>btn.textContent='⧉ КОПИРОВАТЬ ЛОГ',1400);
+}
+function openMenu(){ paused=true; $('mInfo').textContent=`кімната ${NET.room} · рахунок ${player.score||0}`; $('menu').style.display='flex'; logE('ПАУЗА'); }
+function closeMenu(){ paused=false; last=0; $('menu').style.display='none'; }
+function newGame(){
+  player.hp=100; player.stamina=100; player.swordLen=1; player.charge=1; player.dead=false; player.disarmed=false;
+  player.score=0; player.gx=CX; player.gy=CY;
+  if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  spawnObstacles(); spawnPhantoms(phantomCount);
+  clearClinch(); logE('=== НОВАЯ ИГРА ==='); closeMenu();
+}
+$('pauseBtn').onclick=openMenu;
+$('mResume').onclick=closeMenu;
+// выбор режима на старте
+document.querySelectorAll('.mbtn').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.mode;
+  document.querySelectorAll('.mbtn').forEach(x=>x.classList.toggle('on', x===b));
+});
+// ── ЭТАП A: ТАБЛИЦА РЕАКЦИЙ (данные, не код) — движок обходит соседей раз в 0.7с ──
+// a+b рядом (+heat: плазма в 4-соседстве) → продукт на месте b; keepA: a — катализатор/среда;
+// both: исчезают оба; out:null — b растворяется; boom: вспышка-взрыв.
+const REACTIONS=[
+  {a:'plasma', b:'sand',   keepA:true,           out:{type:'glass',alpha:0.5},                  log:'плазма+пісок(розплав) → СКЛО'},
+  {a:'Fe',     b:'C',      heat:true, both:true, out:{type:'steel'},                            log:'Fe+C(нагрів плазмою) → СТАЛЬ'},
+  {a:'Si',     b:'O',      heat:true, both:true, out:{type:'sand'},                             log:'Si+O(нагрів) → ПІСОК'},
+  {a:'Na',     b:'Cl',     both:true,            out:{type:'salt'},                             log:'Na+Cl → СОЛЬ'},
+  {a:'C',      b:'O',      heat:true, both:true, out:{type:'co2'},                              log:'C+O(нагрів) → CO₂'},
+  {a:'H',      b:'O',      heat:true, both:true, out:{type:'liquid',tint:0x59d0ff}, boom:true,  log:'H+O(нагрів) → ВОДА'},
+  {a:'liquid', b:'salt',   keepA:true,           out:null,                                      log:'сіль розчинилась у рідині'},
+  {a:'liquid', b:'steel',  keepA:true,           out:{type:'steel',tint:0x6f8296},              log:'ГАРТУВАННЯ: сталь у воді — міцніє'},
+];
+function plasmaNear(gx,gy){ for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1],[0,0]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive&&o.mtype==='plasma') return true; } return false; }
+function killBlock(o){ o.alive=false; scene.remove(o.mesh); const k=obstacles.indexOf(o); if(k>=0) obstacles.splice(k,1); }
+function damageMicroAt(gx,gy){                       // клинок сносит ВЕРХНИЙ микроблок клетки
+  let best=null;
+  for(const m of microBlocks) if(m.gx===gx&&m.gy===gy&&(!best||((m.y0??0)+(m.hgt??0))>((best.y0??0)+(best.hgt??0)))) best=m;
+  if(!best) return false;
+  scene.remove(best.mesh); microBlocks.splice(microBlocks.indexOf(best),1); snapshotRoom();
+  return true;
+}
+function transmute(o,out){
+  const {gx,gy,shape,rotY,baseY}=o; killBlock(o);
+  if(!out) return;
+  const taken=new Set(obstacles.filter(q=>!(q.gx===gx&&q.gy===gy)).map(q=>q.gx+','+q.gy));
+  addObstacle(gx,gy,out.type,taken,out.tint??null,1,shape,rotY,out.alpha??null,baseY||0);
+}
+setInterval(()=>{ try{
+  if(!obstacles.length) return; let changed=false;
+  outer:
+  for(const o of obstacles.slice()){
+    if(!o.alive) continue;
+    for(const R of REACTIONS){
+      if(o.mtype!==R.a) continue;
+      for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const n=obstacleAt(o.gx+ox,o.gy+oy);
+        if(!n || !n.alive || n.mtype!==R.b) continue;
+        if(R.heat && !plasmaNear(n.gx,n.gy)) continue;
+        logE('ХІМІЯ: '+R.log+' ('+n.gx+','+n.gy+')');
+        if(R.boom){ doFlash('#ffd166'); buzz([0,60]); blip(90,0.3,'sawtooth',0.22); } else doFlash('#bfe8ff');
+        if(R.both && !R.keepA) killBlock(o);
+        transmute(n, R.out);
+        changed=true; break outer;                      // одна реакция за тик — мир дышит ровно
+      }
+    }
+  }
+  if(changed) snapshotRoom();
+}catch(e){} }, 700);
+// ── РЕЖИМ СОЗДАТЕЛЯ: палитра элементных материалов + прицел на клетку впереди ──
+const CREATOR_MATS=['base','fragile','liquid','gas','plasma','H','C','O','Na','Si','Cl','Fe','sand','salt'];
+const CREATOR_SHAPES=['cube','slab','post','panel'];
+const CREATOR_TINTS=[[null,'АВТО'],[0xef4444,'АЛЫЙ'],[0xf59e0b,'ЯНТАРЬ'],[0x22c55e,'ИЗУМРУД'],[0x38bdf8,'НЕБО'],[0x8b5cf6,'АМЕТИСТ'],[0xf472b6,'РОЗА'],[0xf8fafc,'СНЕГ'],[0x111827,'НОЧЬ']];
+const CREATOR_ALPHAS=[[null,'100%'],[0.7,'70%'],[0.45,'45%'],[0.22,'22%']];
+let creatorTint=0, creatorAlpha=0;
+// ── МИКРОВОКСЕЛИ: подсетка клетки ТОЛЬКО НЕЧЁТНАЯ (3/5/7) — у неё всегда есть ЦЕНТР,
+//    как у самой 13×13 есть (6,6). На два не делится — таков закон мира.
+const SUBGRIDS=[0,3,5,7,-1];              // 0 = макро-клетка, -1 = ПРЕФАБ (штамп сохранённой группы)
+const MICRO={gi:0};                        // индекс в SUBGRIDS
+const microBlocks=[];                      // {gx,gy,n,sx,sy,sz,type,tint,alpha,mesh}
+const MAX_MICRO=500;
+const MICRO_ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9, glass:0xbfe8ff, steel:0x93a3b8};
+function microColKey(m){ return m.gx+','+m.gy+','+m.n+','+m.sx+','+m.sz; }
+const _geoCache=new Map();      // (07-15) спільні геометрії: сотні вокселів = одна геометрія на розмір
+function sharedBox(w,h,d){
+  const k=w.toFixed(3)+'|'+h.toFixed(3)+'|'+d.toFixed(3);
+  let g=_geoCache.get(k);
+  if(!g){ g=new THREE.BoxGeometry(w,h,d); g.userData.shared=true; _geoCache.set(k,g); }
+  return g;
+}
+function freeMesh(m){            // звільнити GPU-ресурси (спільні геометрії не чіпаємо)
+  try{ m.traverse?m.traverse(ch=>{
+      if(ch.geometry && !ch.geometry.userData?.shared) ch.geometry.dispose();
+      if(ch.material){ Array.isArray(ch.material)?ch.material.forEach(x=>x.dispose()):ch.material.dispose(); }
+    }):0;
+    if(m.geometry && !m.geometry.userData?.shared) m.geometry.dispose();
+    if(m.material){ Array.isArray(m.material)?m.material.forEach(x=>x.dispose()):m.material.dispose(); }
+  }catch(e){}
+}
+function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
+  if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ МЕЖА МІКРОБЛОКІВ ('+MAX_MICRO+')','#ef4444'); return null; }
+  const m=CELL/n;
+  if(y0==null) y0=sy*m;
+  if(hgt==null) hgt=(shape==='slab')?m*0.3:m;
+  const col = tint!=null ? tint : (MICRO_ECOL[type]??0xc9a03a);
+  let mat;
+  if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:type==='gas'?0.3:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
+  else if(type==='liquid') mat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.55,depthWrite:false});
+  else mat=new THREE.MeshBasicMaterial({color:col});
+  if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }
+  // ФОРМЫ и в микро-мире: куб / плита / стовп / панель (панель поворачивается)
+  let w=m*0.96, d=m*0.96;
+  if(shape==='post'){ w=m*0.34; d=m*0.34; }
+  else if(shape==='panel'){ d=m*0.2; }
+  const mesh=new THREE.Mesh(sharedBox(w,hgt*0.96,d), mat);   // спільна геометрія
+  mesh.frustumCulled=false;
+  mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+y0+hgt*0.5, worldZ(gy)-CELL/2+(sz+0.5)*m);
+  if(rotY) mesh.rotation.y=rotY;
+  scene.add(mesh);
+  const rec={gx,gy,n,sx,sy:Math.round(y0/m),sz,type,tint:tint??null,alpha:alpha??null,shape:shape||null,rotY:rotY||0,y0,hgt,mesh};
+  microBlocks.push(rec); return rec;
+}
+// вершина колонки прицела с УЧЁТОМ блоков ДРУГИХ подсеток (пересечение по XZ)
+function microTopY(gx,gy,n,sx,sz){
+  const ax0=sx/n, ax1=(sx+1)/n, az0=sz/n, az1=(sz+1)/n;
+  let top=0;
+  for(const b of microBlocks){
+    if(b.gx!==gx||b.gy!==gy) continue;
+    const bx0=b.sx/b.n, bx1=(b.sx+1)/b.n, bz0=b.sz/b.n, bz1=(b.sz+1)/b.n;
+    if(bx0<ax1-1e-6 && bx1>ax0+1e-6 && bz0<az1-1e-6 && bz1>az0+1e-6)
+      top=Math.max(top,(b.y0??b.sy*(CELL/b.n))+(b.hgt??CELL/b.n));
+  }
+  return top;
+}
+function clearMicro(){ for(const m of microBlocks){ scene.remove(m.mesh); freeMesh(m.mesh); } microBlocks.length=0; }
+// ── ПРИЗРАК: контур показывает, КУДА встанет блок (макро-стек / микроячейка / клетка префаба) ──
+const ghost=(function(){
+  const g=new THREE.Group(); g.frustumCulled=false; g.visible=false;
+  const geo=new THREE.BoxGeometry(1,1,1);
+  const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0xffa94d,transparent:true,opacity:0.14,depthWrite:false}));
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0xffa94d,transparent:true,opacity:0.9}));
+  m.frustumCulled=false; e.frustumCulled=false; g.add(m); g.add(e); scene.add(g); return g;
+})();
+const GHOST_DIMS={cube:[0.88,0.9,0.88],slab:[0.92,0.2,0.92],post:[0.2,1.8,0.2],panel:[0.92,1.62,0.14]};
+function updateGhost(){
+  if(mode!=='creator'){ ghost.visible=false; return; }
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){                                             // префаб: контур целой клетки
+    const P=aimedPoint();
+    ghost.scale.set(0.96,0.96,0.96); ghost.rotation.y=0;
+    ghost.position.set(worldX(P.gx), 0.48-0.45, worldZ(P.gy));
+  } else if(n){                                           // микро: точная ячейка поверх колонки (форма учтена)
+    const P=aimedPoint();
+    const m=CELL/n, sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    const topY=Math.min(microTopY(P.gx,P.gy,n,sx,sz), CELL*2-m);
+    const shp=CREATOR_SHAPES[creatorShape];
+    const hgt=(shp==='slab')?m*0.3:m;
+    let w=m*0.96, d=m*0.96;
+    if(shp==='post'){ w=m*0.34; d=m*0.34; } else if(shp==='panel'){ d=m*0.2; }
+    ghost.scale.set(w,hgt*0.96,d);
+    ghost.rotation.y=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    ghost.position.set(worldX(P.gx)-CELL/2+(sx+0.5)*m, -0.45+topY+hgt*0.5, worldZ(P.gy)-CELL/2+(sz+0.5)*m);
+  } else {                                                // макро: форма + вершина стека
+    const [gx,gy]=aimedCell();
+    let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
+    const shp=CREATOR_SHAPES[creatorShape];
+    const d=GHOST_DIMS[shp]||GHOST_DIMS.cube;
+    ghost.scale.set(d[0],d[1],d[2]);
+    ghost.rotation.y=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    ghost.position.set(worldX(gx), baseY+d[1]*0.5-0.45, worldZ(gy));
+  }
+  ghost.visible=true;
+}
+// ── ПРЕФАБ: сохранённая группа микроблоков (кисть) — ставится в клетку одним касанием ──
+const PREFAB={blocks:[]};
+function microExists(gx,gy,n,sx,sz,y0){ return microBlocks.some(m=>m.gx===gx&&m.gy===gy&&m.n===n&&m.sx===sx&&m.sz===sz&&Math.abs((m.y0??0)-(y0??0))<(CELL/n)*0.4); }
+function stampPrefab(){
+  if(!PREFAB.blocks.length){ blip(120,0.06,'square',0.08); showBanner('▣ ПРЕФАБ ПОРОЖНІЙ — спершу ▣ КОПІЯ','#ef4444'); return; }
+  const P=aimedPoint();
+  if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
+  let placed=0;
+  for(const b of PREFAB.blocks){
+    if(microExists(P.gx,P.gy,b.n,b.sx,b.sz,b.y0)) continue;
+    if(!addMicro(P.gx,P.gy,b.n,b.sx,b.sy,b.sz,b.type,b.tint,b.alpha,b.shape||null,b.rotY||0,b.y0,b.hgt)) break;
+    placed++;
+  }
+  if(placed){ snapshotRoom(); blip(700,0.05,'sine',0.09); logE('ПРЕФАБ ×'+placed+' → ('+P.gx+','+P.gy+')'); }
+  else blip(120,0.06,'square',0.08);
+}
+// точка прицела с ДОЛЯМИ внутри клетки — для выбора микроячейки
+function aimedPoint(){
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const e=creatorElev(), eye=TIER_H*1.95;
+  const dist = e<-0.06 ? clamp(eye/Math.tan(-e), 0.6, 11) : 1.5;
+  const wx=worldX(player.gx)+dx*dist, wz=worldZ(player.gy)+dz*dist;
+  const gx=clamp(Math.round(wx/CELL)+CX,0,12), gy=clamp(Math.round(wz/CELL)+CY,0,12);
+  const fx=clamp((wx-(worldX(gx)-CELL/2))/CELL,0,0.999), fz=clamp((wz-(worldZ(gy)-CELL/2))/CELL,0,0.999);
+  return {gx,gy,fx,fz};
+}
+const SHAPE_NAMES={cube:'КУБ',slab:'ПЛИТА',post:'СТОВП',panel:'ПАНЕЛЬ'};
+let creatorShape=0;
+const MAT_NAMES={base:'БАЗА',fragile:'КРИХКЕ',liquid:'РІДИНА',gas:'ГАЗ',plasma:'ПЛАЗМА',
+  H:'ВОДЕНЬ',C:'ВУГЛЕЦЬ',O:'КИСЕНЬ',Na:'НАТРІЙ',Si:'КРЕМНІЙ',Cl:'ХЛОР',Fe:'ЗАЛІЗО',
+  sand:'ПІСОК',salt:'СІЛЬ',co2:'CO₂',glass:'СКЛО',steel:'СТАЛЬ'};
+let creatorMat=0;
+// Возвышение взгляда творца: телефон ВЕРТИКАЛЬНО → горизонт; ПЛАШМЯ → взгляд в пол под ноги.
+function creatorElev(){ return clamp((sensor.pitch-0.88)*1.9, -1.5, 0.9); }
+function setCreatorCamera(){
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const px=worldX(player.gx), pz=worldZ(player.gy);
+  const eye=TIER_H*1.95, e=creatorElev(), D=6;
+  camPos.set(px-dx*0.15, eye, pz-dz*0.15);
+  camTarget.set(px+dx*Math.cos(e)*D, eye+Math.sin(e)*D, pz+dz*Math.cos(e)*D);
+  camera.up.set(0,1,0);
+}
+let creatorIdleT=0;   // авто-затухание панели творца после 3с бездействия
+function creatorTouch(){ creatorIdleT=0; }
+function updatePaletteLabel(){ const el=$('cPalName'); if(el) el.textContent=MAT_NAMES[CREATOR_MATS[creatorMat]]; }
+function aimedCell(){
+  // ЛУЧ ПРИЦЕЛА: смотришь вниз — клетка пересечения взгляда с полом; горизонт/вверх — клетка перед собой
+  const [dx,dz]=dirXZ(sensor.yawFused);
+  const e=creatorElev(), eye=TIER_H*1.95;
+  const dist = e<-0.06 ? clamp(eye/Math.tan(-e), 0.6, 11) : 1.5;
+  const wx=worldX(player.gx)+dx*dist, wz=worldZ(player.gy)+dz*dist;
+  return [clamp(Math.round(wx/CELL)+CX,0,12), clamp(Math.round(wz/CELL)+CY,0,12)];
+}
+function creatorPlace(){
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){ stampPrefab(); return; }            // ПРЕФАБ: штампуем сохранённую группу
+  if(n){                                          // МИКРО: фигурка в прицельную ячейку, стеком вверх (любые подсетки)
+    const P=aimedPoint();
+    if(P.gx<1||P.gx>11||P.gy<1||P.gy>11){ blip(120,0.07,'square',0.1); return; }
+    const m=CELL/n;
+    const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    const topY=microTopY(P.gx,P.gy,n,sx,sz);
+    if(topY>CELL*2-0.02){ blip(120,0.07,'square',0.1); return; }   // колонка не выше двух клеток
+    const shp=CREATOR_SHAPES[creatorShape];
+    const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+    const hgt=(shp==='slab')?m*0.3:m;
+    const rec=addMicro(P.gx,P.gy,n,sx,Math.round(topY/m),sz,CREATOR_MATS[creatorMat],CREATOR_TINTS[creatorTint][0],CREATOR_ALPHAS[creatorAlpha][0],shp==='cube'?null:shp,rotY,topY,hgt);
+    if(rec){ snapshotRoom(); blip(680,0.04,'sine',0.08);
+      logE('мікро·'+n+' '+SHAPE_NAMES[shp]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+P.gx+','+P.gy+')'); }
+    return;
+  }
+  const [gx,gy]=aimedCell();
+  if(gx<1||gx>11||gy<1||gy>11){ blip(120,0.07,'square',0.1); return; }
+  // СТЕК: если в клетке уже есть блоки — новый ложится СВЕРХУ самого высокого (07-14: і мікро теж)
+  let baseY=0; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy) baseY=Math.max(baseY,(o.baseY||0)+(o.h||0.9));
+  for(const b of microBlocks) if(b.gx===gx&&b.gy===gy) baseY=Math.max(baseY,(b.y0||0)+(b.hgt||0));
+  if(baseY>TIER_H*3.4){ blip(120,0.07,'square',0.1); return; }   // башня не выше ~4 блоков
+  const taken=new Set(obstacles.filter(o=>!(o.gx===gx&&o.gy===gy)).map(o=>o.gx+','+o.gy));
+  const shp=CREATOR_SHAPES[creatorShape];
+  const rotY=(shp==='panel' && (player.dirIdx%4===0||player.dirIdx%4===2)) ? Math.PI/2 : 0;
+  addObstacle(gx,gy,CREATOR_MATS[creatorMat],taken,CREATOR_TINTS[creatorTint][0],1,shp==='cube'?null:shp,rotY,CREATOR_ALPHAS[creatorAlpha][0],baseY);
+  snapshotRoom(); blip(620,0.05,'sine',0.09);
+  logE('поставлено '+SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]+' '+MAT_NAMES[CREATOR_MATS[creatorMat]]+' ('+gx+','+gy+')');
+}
+function creatorRemove(){
+  const n=SUBGRIDS[MICRO.gi];
+  if(n===-1){                                     // ПРЕФАБ-режим: очистить ВСЕ микроблоки клетки
+    const P=aimedPoint();
+    const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
+    if(!grp.length){ blip(120,0.06,'square',0.08); return; }
+    for(const m of grp){ scene.remove(m.mesh); microBlocks.splice(microBlocks.indexOf(m),1); }
+    snapshotRoom(); blip(240,0.06,'sine',0.09); logE('клетка очищена от микро ×'+grp.length+' ('+P.gx+','+P.gy+')');
+    return;
+  }
+  if(n){                                          // МИКРО: снимаем ВЕРХНИЙ кубик прицельной колонки
+    const P=aimedPoint();
+    const sx=clamp(Math.floor(P.fx*n),0,n-1), sz=clamp(Math.floor(P.fz*n),0,n-1);
+    const ax0=sx/n, ax1=(sx+1)/n, az0=sz/n, az1=(sz+1)/n;
+    let best=null;
+    for(const m of microBlocks){
+      if(m.gx!==P.gx||m.gy!==P.gy) continue;
+      const bx0=m.sx/m.n, bx1=(m.sx+1)/m.n, bz0=m.sz/m.n, bz1=(m.sz+1)/m.n;
+      if(bx0<ax1-1e-6 && bx1>ax0+1e-6 && bz0<az1-1e-6 && bz1>az0+1e-6)
+        if(!best||((m.y0??0)+(m.hgt??0))>((best.y0??0)+(best.hgt??0))) best=m;
+    }
+    if(best){ scene.remove(best.mesh); microBlocks.splice(microBlocks.indexOf(best),1); snapshotRoom(); blip(240,0.05,'sine',0.08); logE('убран микро ('+P.gx+','+P.gy+')'); }
+    else blip(120,0.06,'square',0.08);
+    return;
+  }
+  const [gx,gy]=aimedCell();
+  let ex=null; for(const o of obstacles) if(o.alive&&o.gx===gx&&o.gy===gy&&(!ex||(o.baseY||0)>(ex.baseY||0))) ex=o;   // верхний блок стека
+  if(ex){ ex.alive=false; scene.remove(ex.mesh); const i=obstacles.indexOf(ex); if(i>=0) obstacles.splice(i,1); snapshotRoom(); blip(220,0.05,'sine',0.08); logE('убран блок ('+gx+','+gy+')'); }
+  else blip(120,0.06,'square',0.08);
+}
+function applyMode(){
+  const fighter = mode==='fighter';
+  const creator = mode==='creator';
+  player.mesh.visible=fighter; player.blade.visible=fighter;
+  phantoms.forEach(ph=>{ ph.mesh.visible=!creator; ph.blade.visible=!creator; });  // в творце врагов прячем
+  obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
+  if(droppedBlade) droppedBlade.visible=fighter;
+  camera.up.set(0,1,0);
+  $('followBtn').style.display = (mode==='follow'||mode==='action')?'block':'none';
+  { const h=$('hud'); if(h) h.style.display=creator?'none':''; }
+  { const c=$('creatorUI'); if(c) c.style.display=creator?'flex':'none'; }
+  { const x=$('crosshair'); if(x) x.style.display=creator?'block':'none'; }
+  ghost.visible=false;   // призрак включит первый же кадр творца
+  if(creator) updatePaletteLabel();
+  AUDIO.music(creator?'creator':(fighter?'combat':'watch'));   // фоновая тема режима (если есть в манифесте)
+  logE('режим: '+mode);
+}
+// Спосіб перегляду ЗА СОБОЮ (не плутати з режимами спостерігача): зум + тип огляду
+const CAM={zoom:1, view:'auto', _hue:null};
+try{ const c=JSON.parse(localStorage.getItem('vb_cam')||'{}');
+  if(c.zoom) CAM.zoom=clamp(+c.zoom,0.5,2.4); if(c.view) CAM.view=c.view;
+  const h=localStorage.getItem('vb_hue'); if(h!=null) CAM._hue=+h; }catch(e){}
+function camSave(){ try{ localStorage.setItem('vb_cam',JSON.stringify({zoom:CAM.zoom,view:CAM.view})); }catch(e){} }
+const MODE_ORDER=['fighter','spectator','follow','action','map'];
+const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',action:'ЭКШН',map:'КАРТА'};
+function cycleMode(){
+  mode = MODE_ORDER[(MODE_ORDER.indexOf(mode)+1)%MODE_ORDER.length];
+  $('mMode').textContent='◎ РЕЖИМ: '+MODE_LABEL[mode];
+  applyMode();
+}
+$('mMode').onclick=cycleMode;
+// стежка від третьої особи: перемикання між гравцями
+let followTarget=null;
+function fighterIds(){ return Object.keys(NET.remotes).filter(id=>!NET.remotes[id].spec); }
+function cycleFollow(){
+  const ids=fighterIds();
+  if(!ids.length){ followTarget=null; showBanner('немає гравців для стеження','#3a6a9f'); return; }
+  const i=ids.indexOf(followTarget);
+  followTarget = ids[(i+1)%ids.length];
+  showBanner('◎ стежу за '+followTarget.slice(0,4),'#a5f3fc');
+}
+$('followBtn').onclick=cycleFollow;
+$('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
+  $('mPhan').textContent='☠ ФАНТОМІВ: '+phantomCount; };
+$('mDiff').onclick=()=>{ botDiff=(botDiff+1)%3;
+  $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
+let equalizerOn=true;
+$('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
+  $('mEq').textContent='⚖ РІВНОВАГА: '+(equalizerOn?'УВІМК':'ВИМК');
+  logE('правило рівноваги: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
+$('mAdv').onclick=()=>{ ADV.on=!ADV.on;
+  $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
+  if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
+  else { clearRacks(); clearShots(); try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
+  logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
+$('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
+  $('mFF').textContent='⚔ ШКОДА ГРАВЦЯМ: '+(friendlyFire?'УВІМК':'ВИМК'); logE('friendlyFire='+friendlyFire); };
+$('mInvert').onclick=()=>{ invertPitch=!invertPitch;
+  $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
+$('mCopy').onclick=()=>copyLog($('mCopy'));
+// BUILD_TAG живе у js/config.js — редагуй версію там
+$('mCache').onclick=async()=>{
+  showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
+  try{
+    if('caches' in window){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); }
+    if('serviceWorker' in navigator){ const rs=await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r=>r.unregister())); }
+  }catch(e){}
+  const u=new URL(location.href); u.searchParams.set('v', Date.now());   // свежий параметр → мимо HTTP-кэша
+  setTimeout(()=>location.replace(u.toString()), 350);
+};
+$('mNew').onclick=newGame;
+$('mScan').onclick=loadScannedRoom;
+$('mCreate').onclick=()=>{ mode='creator'; creatorTouch(); applyMode(); closeMenu(); };
+$('mLore').onclick=()=>{ closeMenu(); $('lorePanel').style.display='flex'; };
+const FG={kinds:[['fighter','БОЕЦ'],['crawler','ПОВЗУН'],['flyer','ЛІТУН'],['gunner','СТРЕЛЕЦ'],['boss','БОСС']],
+  locos:[['walk','ХОДЬБА'],['crawl','ПОЛЗ'],['fly','ПОЛЁТ'],['jump','ПРЫЖКИ']], k:0,l:0, ally:false};
+const FG_COL={fighter:0xe879f9,crawler:0xa3e635,flyer:0x7cc8ff,gunner:0xf59e0b,boss:0xef4444};
+function fgv(id){ return +($(id).value); }
+function fgBind(id,out){ $(id).oninput=()=>{ $(out).textContent=fgv(id); }; $(id).oninput(); }
+let fgPrev=null;
+function fgPreviewInit(){                                   // живой 3D-предпросмотр модели
+  if(fgPrev) return;
+  ['fgW','fgH','fgD','fgSz','fgSpd','fgDmg','fgHp'].forEach(id=>fgBind(id,id+'v'));
+  const rn=new THREE.WebGLRenderer({canvas:$('fgCanvas'),antialias:false,alpha:true}); rn.setSize(170,170,false);
+  const sc=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(40,1,0.1,50); cam.position.set(0,2.2,4.8); cam.lookAt(0,1.0,0);
+  const grp=new THREE.Group(); sc.add(grp);
+  const mk=(w,h,d,y)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial()); m.position.y=y; grp.add(m); return m; };
+  const parts=[mk(0.55,0.7,0.4,0.35), mk(0.7,0.8,0.45,1.15), mk(0.5,0.5,0.5,1.85)];
+  // силуэты видов в предпросмотре: крылья/рога/ствол/хвост включаются по ВИДУ
+  const dx=(w,h,d,x,y,z)=>{ const m2=mk(w,h,d,y); m2.position.set(x,y,z); return m2; };
+  const wings=[dx(0.95,0.06,0.3,-0.85,1.5,0), dx(0.95,0.06,0.3,0.85,1.5,0)];
+  const horns=[dx(0.12,0.42,0.12,-0.2,2.3,0), dx(0.12,0.42,0.12,0.2,2.3,0)];
+  const barrel=[dx(0.14,0.14,0.85,0.22,1.3,0.55)];
+  const tail=[dx(0.35,0.22,0.65,0,0.3,-0.6)];
+  fgPrev={rn,sc,cam,grp,parts,wings,horns,barrel,tail};
+  (function loop(){ requestAnimationFrame(loop);
+    if($('forgePanel').style.display!=='flex') return;      // рендерим только когда панель открыта
+    const kind=FG.kinds[FG.k][0];
+    const c=FG.ally?0x34d399:(FG_COL[kind]||0xe879f9);
+    for(const m of fgPrev.parts) m.material.color.set(c);
+    for(const m of fgPrev.wings)  m.visible=(kind==='flyer');
+    for(const m of fgPrev.horns)  m.visible=(kind==='boss');
+    for(const m of fgPrev.barrel) m.visible=(kind==='gunner');
+    for(const m of fgPrev.tail)   m.visible=(kind==='crawler');
+    for(const arr of [fgPrev.wings,fgPrev.horns,fgPrev.barrel,fgPrev.tail]) for(const m of arr) m.material.color.set(c);
+    const sz=fgv('fgSz');
+    const KMUL={crawler:[1.1,0.45,1.7],flyer:[0.85,0.85,0.85],boss:[1.25,1.2,1.15],gunner:[1,1,1],fighter:[1,1,1]};
+    const km=KMUL[kind]||[1,1,1];
+    fgPrev.grp.scale.set(fgv('fgW')*sz*km[0], fgv('fgH')*sz*km[1], fgv('fgD')*sz*km[2]);
+    fgPrev.parts[0].visible=!(kind==='flyer'||kind==='crawler');   // ноги: летун парит, ползун стелется
+    fgPrev.grp.rotation.y+=0.02;
+    fgPrev.rn.render(fgPrev.sc,fgPrev.cam);
+  })();
+}
+$('mForge').onclick=()=>{ closeMenu(); $('forgePanel').style.display='flex'; fgPreviewInit(); };
+$('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
+$('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
+$('fgLoco').onclick=()=>{ FG.l=(FG.l+1)%FG.locos.length; $('fgLoco').textContent='ХОД: '+FG.locos[FG.l][1]; };
+$('fgSide').onclick=()=>{ FG.ally=!FG.ally; $('fgSide').textContent=FG.ally?'⚑ СОЮЗНИК':'⚔ ВРАГ'; };
+$('fgPurgeMine').onclick=()=>{ if(NET.purgeEntities(false)){ $('fgStatus').textContent='Кованих прибрано.'; blip(300,0.06,'sine',0.08); } };
+$('fgPurgeAll').onclick=()=>{ if(NET.purgeEntities(true)){ $('fgStatus').textContent='ВСІ сутності сервера прибрано.'; blip(260,0.08,'sine',0.09); } };
+$('fgMake').onclick=()=>{
+  const nm=($('fgName').value||'').trim()||'Творение';
+  const c=freeSpawnCell(clamp(player.gx+2,0,12), player.gy, null);
+  const ok=NET.forgeEntity({ x:c[0], y:c[1], yaw:0, hp:Math.round(fgv('fgHp')), len:1, strike:0, roll:0, dead:0,
+    k:FG.kinds[FG.k][0], sz:Math.round(fgv('fgSz')), hov:FG.locos[FG.l][0]==='fly'?1:0,
+    mw:fgv('fgW'), mh:fgv('fgH'), md:fgv('fgD'), loco:FG.locos[FG.l][0], spd:fgv('fgSpd'), dg:Math.round(fgv('fgDmg')),
+    side:FG.ally?'ally':'enemy', nm:nm.slice(0,20), t:Date.now() });
+  $('fgStatus').textContent = ok ? nm+' створено — сервер вдихне життя…' : 'Нет связи с БД';
+  if(ok){ blip(720,0.07,'sine',0.1); setTimeout(()=>{ $('forgePanel').style.display='none'; $('fgStatus').textContent=''; },900); }
+};
+// обработчики камеры/оттенка (после создания player — применяем сохранённое)
+$('mZoom').value=CAM.zoom; $('mZoomV').textContent=CAM.zoom.toFixed(1);
+$('mZoom').oninput=()=>{ CAM.zoom=clamp(+$('mZoom').value,0.5,2.4); $('mZoomV').textContent=CAM.zoom.toFixed(1); camSave(); };
+const VIEWS=[['auto','АВТО'],['third','3-Е ЛИЦО'],['top','СВЕРХУ'],['fp','1-Е ЛИЦО']];
+$('mView').onclick=()=>{ let vi=VIEWS.findIndex(v=>v[0]===CAM.view); vi=(vi+1)%VIEWS.length; CAM.view=VIEWS[vi][0]; $('mView').textContent='ПОГЛЯД: '+VIEWS[vi][1]; camSave(); };
+{ const vi=VIEWS.findIndex(v=>v[0]===CAM.view); if(vi>=0) $('mView').textContent='ПОГЛЯД: '+VIEWS[vi][1]; }
+if(CAM._hue!=null){ player.baseHue=CAM._hue; player.hue=CAM._hue; $('mHue').value=CAM._hue; }
+$('mHue').oninput=()=>{ const v=+$('mHue').value; player.baseHue=v; player.hue=v; try{localStorage.setItem('vb_hue',v);}catch(e){} };
+$('mVolMus').value=AUDIO.vol.music; $('mVolMusV').textContent=Math.round(AUDIO.vol.music*100)+'%';
+$('mVolMus').oninput=()=>{ AUDIO.setVol('music',$('mVolMus').value); $('mVolMusV').textContent=Math.round(AUDIO.vol.music*100)+'%'; };
+$('mVolSfx').value=AUDIO.vol.sfx; $('mVolSfxV').textContent=Math.round(AUDIO.vol.sfx*100)+'%';
+$('mVolSfx').oninput=()=>{ AUDIO.setVol('sfx',$('mVolSfx').value); AUDIO.setVol('ambient',$('mVolSfx').value*0.6); $('mVolSfxV').textContent=Math.round(AUDIO.vol.sfx*100)+'%'; };
+$('sageSend').onclick=()=>{
+  const el=$('sageIn'); const q=(el.value||'').trim(); if(!q) return;
+  if(NET.askSage(q)){ logE('Я → МУДРЕЦУ: '+q); el.value=''; blip(640,0.05,'sine',0.08); }
+  else logE('МУДРЕЦ недоступен (оффлайн)');
+};
+$('loreClose').onclick=()=>{ $('lorePanel').style.display='none'; };
+$('loreSubmit').onclick=()=>{
+  const txt=($('loreText').value||'').trim();
+  if(!txt){ $('loreStatus').textContent='Пусто — вставь текст лора.'; return; }
+  const ok=NET.submitLore(txt);
+  $('loreStatus').textContent = ok ? 'Надіслано. Алго-крат розмірковує…' : 'Нет связи с БД (оффлайн?)';
+  if(ok){ blip(700,0.06,'sine',0.1); setTimeout(()=>{ $('lorePanel').style.display='none'; $('loreStatus').textContent=''; },900); }
+};
+$('cPal').onclick=()=>{ creatorMat=(creatorMat+1)%CREATOR_MATS.length; updatePaletteLabel(); creatorTouch(); blip(500,0.04,'sine',0.06); };
+$('cShape').onclick=()=>{ creatorShape=(creatorShape+1)%CREATOR_SHAPES.length; const el=$('cShapeName'); if(el) el.textContent=SHAPE_NAMES[CREATOR_SHAPES[creatorShape]]; creatorTouch(); blip(560,0.04,'sine',0.06); };
+$('cTint').onclick=()=>{ creatorTint=(creatorTint+1)%CREATOR_TINTS.length; $('cTintName').textContent=CREATOR_TINTS[creatorTint][1]; creatorTouch(); blip(520,0.04,'sine',0.06); };
+$('cAlpha').onclick=()=>{ creatorAlpha=(creatorAlpha+1)%CREATOR_ALPHAS.length; $('cAlphaName').textContent=CREATOR_ALPHAS[creatorAlpha][1]; creatorTouch(); blip(480,0.04,'sine',0.06); };
+$('cGrid').onclick=()=>{ MICRO.gi=(MICRO.gi+1)%SUBGRIDS.length; const n=SUBGRIDS[MICRO.gi];
+  $('cGridName').textContent = n===-1?'ПРЕФАБ':(n?('МИКРО·'+n):'МАКРО'); creatorTouch(); blip(600,0.04,'sine',0.06); };
+$('cPrefCopy').onclick=()=>{                                   // запомнить кубики прицельной клетки как кисть
+  const P=aimedPoint();
+  const grp=microBlocks.filter(m=>m.gx===P.gx&&m.gy===P.gy);
+  if(!grp.length){ blip(120,0.06,'square',0.08); showBanner('▣ У КЛІТИНЦІ НЕМАЄ МІКРОБЛОКІВ','#ef4444'); return; }
+  PREFAB.blocks=grp.map(m=>({n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt}));
+  creatorTouch(); blip(760,0.06,'sine',0.1);
+  showBanner('▣ ПРЕФАБ ЗБЕРЕЖЕНО: '+PREFAB.blocks.length+' кубиків','#7cc8ff');
+  logE('префаб збережено: '+PREFAB.blocks.length+' з ('+P.gx+','+P.gy+')');
+};
+$('cPlace').onclick=()=>{ creatorTouch(); creatorPlace(); };
+$('cRemove').onclick=()=>{ creatorTouch(); creatorRemove(); };
+$('mMenu').onclick=()=>location.reload();
+// подхватить ?room= из ссылки (без обращения к NET — он объявлен ниже)
+{ const ur=(new URLSearchParams(location.search).get('room')||'').toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+  if(ur) $('roomInput').value=ur; }
+
+/* ════════════════════ ВИБРАЦИЯ + ИНДИКАТОР ══════════════════ */
+const HAPTICS = ('vibrate' in navigator);
+let hapticFlash = 0;
+function buzz(pattern){
+  if(HAPTICS){ try{ navigator.vibrate(pattern); }catch(e){} }
+  hapticFlash = 0.16;   // визуальная отметка: импульс отправлен (видно даже без «железа»)
+}
+
+/* ════════════════════ БАННЕР / ВСПЫШКА ═══════════════════════ */
+let bannerT=0;
+function showBanner(text,color){ const b=$('banner'); b.textContent=text; b.style.color=color; b.style.opacity='1'; bannerT=1.6; }
+let flashT=0, flashCol='#fff';
+function doFlash(col){ flashCol=col; flashT=0.35; }
+
+/* ════════════════════ СЕТЕВОЙ СЛОЙ (Firebase, блок 8) ════════
+   Живое подключение к проекту vessel-mir-13 (Realtime Database).
+   ВАЖНО: пишем в собственную ветку  blade/{room}/players/{id}, чтобы
+   НЕ пересекаться с настольной игрой (rooms/) и 2D-версией (mp/),
+   которые живут в том же проекте. Комната — из URL  ?room=КОД  (иначе HALL).
+   Чужие рисуются как 3-ярусные воксельные столбы (цвет=агрессия, луч=атака). */
+const NET = {
+  cfg:{ apiKey:"AIzaSyBFTDfxlGYuMup3bvXpu7FSb1X1ZoaW9kc",
+        authDomain:"vessel-mir-13.firebaseapp.com",
+        databaseURL:"https://vessel-mir-13-default-rtdb.firebaseio.com",
+        projectId:"vessel-mir-13",
+        messagingSenderId:"867742512524",
+        appId:"1:867742512524:web:0e50ec79111eae793492a9" },
+  room:(new URLSearchParams(location.search).get('room')||'HALL').toUpperCase(),
+  myId:'p'+Math.random().toString(36).slice(2,8),
+  db:null, online:false, sendT:0, remotes:{}, rphantoms:{},
+  packet(av){
+    if(mode==='spectator'){                      // наблюдатель: столб-палка у задней кромки
+      const sx = (this.myId.charCodeAt(1)||6) % 13;
+      return { x:sx, y:12, spec:true, hp:100, t:Date.now() };
+    }
+    return { x:av.gx, y:av.gy,
+      rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),               // (07-16) моя кімната мета-світу
+      yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
+      pitch:+sensor.pitch.toFixed(2),
+      roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
+      cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
+      spec:false, t:Date.now() }; },
+  async start(){
+    try{
+      const app=initializeApp(this.cfg,'vessel-blade');
+      this.db=getDatabase(app);
+      const meRef=ref(this.db,`blade/${this.room}/players/${this.myId}`);
+      onDisconnect(meRef).remove();                       // убрать себя при выходе
+      onValue(ref(this.db,`blade/${this.room}/players`), snap=>{
+        const all=snap.val()||{};
+        for(const id in this.remotes){ if(!all[id]) removeRemote(id); }
+        for(const id in all){ if(id!==this.myId) upsertRemote(id, all[id]); }
+      });
+      // входящие удары → применяем к себе и удаляем
+      const hitsRef=ref(this.db,`blade/${this.room}/hits/${this.myId}`);
+      onDisconnect(hitsRef).remove();
+      onValue(hitsRef, snap=>{
+        const hits=snap.val()||{};
+        for(const key in hits){
+          if(hits[key] && !player.dead && mode==='fighter') applyIncomingHit(hits[key]);
+          remove(ref(this.db,`blade/${this.room}/hits/${this.myId}/${key}`)).catch(()=>{});
+        }
+      });
+      // ОБЩИЕ ФАНТОМЫ: читаем всех, рисуем чужих (свои — локально-авторитетно)
+      onValue(ref(this.db,`blade/${this.room}/phantoms`), snap=>{
+        const all=snap.val()||{};
+        const live=new Set();
+        for(const owner in all){
+          if(owner===this.myId) continue;               // свои рисуем из локального массива
+          const list=all[owner]||{};
+          for(const i in list){ const key=owner+'_'+i; live.add(key); upsertRemotePhantom(key, list[i]); }
+        }
+        for(const key in this.rphantoms){ if(!live.has(key)) removeRemotePhantom(key); }
+      });
+      // удары по МОИМ фантомам от других игроков
+      const phHitRef=ref(this.db,`blade/${this.room}/phantomHits/${this.myId}`);
+      onDisconnect(phHitRef).remove();
+      onValue(phHitRef, snap=>{
+        const hits=snap.val()||{};
+        for(const key in hits){
+          const h=hits[key];
+          if(h && phantoms[h.i] && !phantoms[h.i].dead){ damageTier(phantoms[h.i], h.tier|0, h.dmg||16); phantoms[h.i].hitGlow=0.3; }
+          remove(ref(this.db,`blade/${this.room}/phantomHits/${this.myId}/${key}`)).catch(()=>{});
+        }
+      });
+      onDisconnect(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`)).remove();
+      // ОБЩАЯ КОМНАТА ПРИГОДЫ: любой перешедший пишет (rx,ry), остальные следуют.
+      // Записи идемпотентны (все пишут одно и то же по одному консенсусу кромки).
+      // АЛГО-КРАТ: канал architecture — сервер мгновенно перестраивает комнату (обвал, кристальный зал…)
+      onValue(ref(this.db,`blade/${this.room}/architecture`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._archT||0)) return; this._archT=v.t;
+        try{
+          obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
+          clearMicro();
+          const taken=new Set();
+          for(const b of Object.values(v.blocks||{}))
+            addObstacle(clamp(b.gx|0,0,12), clamp(b.gy|0,0,12), b.type||'base', taken,
+                        (b.tint!=null?b.tint:null), b.tall||1, b.shape||null, b.rotY||0, (b.alpha??null), (b.baseY||0));
+          snapshotRoom();                                   // постройка сервера переживает переходы
+          showBanner('⛭ АЛГО-КРАТ ПЕРЕБУДУВАВ КІМНАТУ','#f59e0b'); doFlash('#f59e0b');
+        }catch(e){}
+      });
+      // МОРФ: сервер диктует форму игрока (blade/{room}/morph/{myId})
+      onValue(ref(this.db,`blade/${this.room}/morph/${this.myId}`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._mrphT||0)) return; this._mrphT=v.t;
+        applyMorph(v.form||'human', +(v.dur||0));
+      });
+      // УДАРЫ АЛГО-КРАТА: серверные сущности наносят урон (канал strikes/{myId})
+      onValue(ref(this.db,`blade/${this.room}/strikes/${this.myId}`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._strkT||0)) return; this._strkT=v.t;
+        if(mode!=='fighter' || player.dead) return;
+        damageTier(player, 1, clamp(+(v.dmg||8),1,40));
+        showBanner('☄ '+String(v.from||'СУТНІСТЬ')+' РАНИТЬ ТЕБЕ','#ef4444'); doFlash('#ef4444'); buzz(70);
+        logE((v.from||'сущность')+' ранит → HP '+Math.round(player.hp));
+      });
+      // ОБЩИЙ МИР: правки комнат других игроков
+      onValue(ref(this.db,`blade/${this.room}/roomEdits`), snap=>{
+        this.roomRemote=snap.val()||{};
+        try{ applyRemoteRoomIfNewer(curRoomKey()); }catch(e){}
+      });
+      // ВЕЛИКИЙ МУДРЕЦ: ответы сервера — ненавязчиво на экран (баннер) и в лог
+      onValue(ref(this.db,`blade/${this.room}/sage_out`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._sageT||0)) return; this._sageT=v.t;
+        showBanner('🜄 '+String(v.text||'').slice(0,80), '#7cc8ff');
+        logE('МУДРЕЦ: '+v.text);
+      });
+      // АЛГО-КРАТ: env-канал бекенда — баннер/вспышка/перекраска пола без перезагрузки
+      onValue(ref(this.db,`blade/${this.room}/env`), snap=>{
+        const v=snap.val(); if(!v || !v.t || v.t<=(this._envT||0)) return; this._envT=v.t;
+        try{
+          if(v.banner) showBanner(v.banner, v.color||'#a78bfa');
+          if(v.flash) doFlash(v.flash);
+          if(v.repaint && ADV.on) paintFloor(ADV.rx, ADV.ry);   // пол перекрашивается по текущей комнате
+        }catch(e){}
+      });
+      // (07-16) ПРИГОДА ПЕР-ГРАВЦЕВА: вузол adv лишається інформаційним,
+      // але чужа кімната НІКОЛИ не смикає нашу позицію на мапі.
+      this.online=true;
+    }catch(err){ console.warn('Firebase off:', err); this.online=false; }
+  },
+  forgeEntity(spec){
+    if(!this.online||!this.db) return false;
+    set(ref(this.db,`blade/${this.room}/phantoms/forge/f${Date.now()%1000000}`), spec).catch(()=>{});
+    return true;
+  },
+  askSage(text){
+    if(!this.online||!this.db) return false;
+    push(ref(this.db,`blade/${this.room}/sage_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
+    return true;
+  },
+  roomDirty:false, roomRemote:{}, _reApplied:{}, _rePub:0,
+  submitLore(text){
+    if(!this.online||!this.db) return false;
+    push(ref(this.db,`blade/${this.room}/universe_lore_inputs`), {text, by:this.myId, t:Date.now()}).catch(()=>{});
+    return true;
+  },
+  advPub(){
+    ADV.locT=Date.now();   // мітка нашого локального переходу — гонки з чужими знімками
+    if(!this.online||!this.db||!ADV.on) return;
+    set(ref(this.db,`blade/${this.room}/adv`), {rx:ADV.rx, ry:ADV.ry, t:Date.now(), by:this.myId}).catch(()=>{});
+  },
+  sendHit(targetId, tier, dmg, src){
+    if(!this.online||!this.db) return;
+    push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, src:src||'player', t:Date.now()}).catch(()=>{});
+  },
+  // «УБОРЩИК»: стереть из БД узлы ушедшего игрока, чей onDisconnect так и не сработал.
+  // После удаления onValue у ВСЕХ клиентов штатно вызовет removeRemote/removeRemotePhantom.
+  cleanupPlayer(id){
+    if(!this.online||!this.db) return;
+    remove(ref(this.db,`blade/${this.room}/players/${id}`)).catch(()=>{});
+    remove(ref(this.db,`blade/${this.room}/phantoms/${id}`)).catch(()=>{});
+  },
+  cleanupPhantoms(owner){
+    if(!this.online||!this.db) return;
+    remove(ref(this.db,`blade/${this.room}/phantoms/${owner}`)).catch(()=>{});
+  },
+  /* ── КАНАЛ ВЗАИМНОГО ДАВЛЕНИЯ (клинч PvP) ─────────────────────
+     Узел blade/{room}/press/{pair}/{playerId} = {imp, t}. Каждый пишет ТОЛЬКО свой
+     монотонный импульс; смещение X обе стороны выводят сами (детерминированно,
+     у противника ровно −X) — арбитра нет, гонок нет. Конец клинча = снять подписку
+     и стереть свой дочерний узел; сирота от прошлого клинча гасится базлайном.   */
+  pressFoe:null, _pressUnsub:null,
+  pressPair(foeId){ return [this.myId, foeId].sort().join('~'); },
+  pressSub(pair){
+    if(!this.online||!this.db) return;
+    this.pressEnd(null);                      // страховка от висящей старой подписки
+    this.pressFoe=null;
+    set(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`), {imp:0, t:Date.now()}).catch(()=>{});
+    this._pressUnsub = onValue(ref(this.db,`blade/${this.room}/press/${pair}`), snap=>{
+      const v=snap.val()||{};
+      for(const id in v){ if(id!==this.myId && v[id] && typeof v[id].imp==='number'){
+        this.pressFoe={pair, imp:v[id].imp, t:v[id].t||0}; } }
+    });
+  },
+  pressPub(pair, imp){
+    if(!this.online||!this.db) return;
+    set(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`), {imp:+imp.toFixed(3), t:Date.now()}).catch(()=>{});
+  },
+  pressEnd(pair){
+    if(this._pressUnsub){ try{this._pressUnsub();}catch(e){} this._pressUnsub=null; }
+    this.pressFoe=null;
+    if(pair && this.online && this.db) remove(ref(this.db,`blade/${this.room}/press/${pair}/${this.myId}`)).catch(()=>{});
+  },
+  hitServerEntity(owner, i, dmg, rp){                       // прямой урон сущностям Кузни/Алго-крата
+    if(!this.online||!this.db) return;
+    const cur=(rp&&rp.latest&&rp.latest.hp!=null)?rp.latest.hp:100;
+    const nhp=Math.max(0, Math.round(cur-dmg));
+    const upd={hp:nhp, t:Date.now()}; if(nhp<=0) upd.dead=1;
+    update(ref(this.db,`blade/${this.room}/phantoms/${owner}/${i}`), upd).catch(()=>{});
+    if(rp&&rp.latest){ rp.latest.hp=nhp; if(nhp<=0) rp.latest.dead=1; }   // мгновенно отразить локально
+    if(nhp<=0) logE('сущность повержена: '+(rp&&rp.latest&&rp.latest.nm||owner));
+  },
+  purgeEntities(all){                                        // убрать кованых (и всех серверных, если all)
+    if(!this.online||!this.db) return false;
+    set(ref(this.db,`blade/${this.room}/phantoms/forge`), null).catch(()=>{});
+    if(all) set(ref(this.db,`blade/${this.room}/phantoms/algocrat`), null).catch(()=>{});
+    return true;
+  },
+  sendPhantomHit(owner, i, tier, dmg){
+    if(!this.online||!this.db) return;
+    push(ref(this.db,`blade/${this.room}/phantomHits/${owner}`), {from:this.myId, i, tier, dmg, t:Date.now()}).catch(()=>{});
+  },
+  tick(dt){
+    if(!this.online||!this.db) return;
+    this.sendT-=dt;
+    if(this.sendT>0) return;
+    this.sendT=0.08;                                     // ~12 Гц
+    if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    if(this.roomDirty && Date.now()-(this._rePub||0)>900){          // общий мир: публикуем снимок комнаты
+      this.roomDirty=false; this._rePub=Date.now();
+      const key=curRoomKey(), ed=roomEdits.get(key);
+      if(ed){ const t=Date.now(); this._reApplied[key]=t;
+        set(ref(this.db,`blade/${this.room}/roomEdits/${key}`), {t, by:this.myId, blocks:ed.blocks||[], micro:ed.micro||[]}).catch(()=>{}); }
+    }
+    // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
+    if(phantoms.length){
+      const obj={};
+      phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now()}; });
+      set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
+    }else{
+      set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
+    }
+  },
+};
+
+/* ── рендер чужого: боец → полное воксельное тело (как своё); наблюдатель → палка+голова ── */
+function upsertRemote(id, p){
+  const spec = !!p.spec;
+  let r = NET.remotes[id];
+  if(r && r.spec!==spec){ removeRemote(id); r=null; }   // тип сменился — пересоздать
+  if(!r){
+    if(spec){
+      const g=new THREE.Group();
+      const stick=new THREE.Mesh(new THREE.BoxGeometry(0.16,4.0,0.16),
+        new THREE.MeshBasicMaterial({color:0x7c93b8, transparent:true, opacity:0.45, depthWrite:false}));
+      stick.position.y=2.0;
+      const head=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.46,0.46),
+        new THREE.MeshBasicMaterial({color:0x9fb6d8, transparent:true, opacity:0.65, depthWrite:false}));
+      head.position.y=4.15;
+      g.add(stick); g.add(head); g.traverse(o=>o.frustumCulled=false); scene.add(g);
+      r = NET.remotes[id] = {group:g, spec:true};
+    }else{
+      const av = makeAvatar(0.95);          // полноценный аватар соперника (пурпур)
+      av.bladeHue = 0.95;
+      const nose=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,0.2), new THREE.MeshBasicMaterial({color:0xffffff}));
+      scene.add(nose); nose.frustumCulled=false;
+      r = NET.remotes[id] = {av, nose, spec:false, gx:6, gy:6, hp:100, latest:p};
+    }
+  }
+  if(r.spec){ r.group.position.set(worldX(clamp(p.x|0,0,12)),0,worldZ(clamp(p.y|0,0,12))); return; }
+  r.latest = p;                              // тело обновим в renderRemotes каждый кадр
+  r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
+}
+function setRemoteVisible(r,vis){
+  if(r.av){ r.av.mesh.visible=vis; r.av.blade.visible=vis; }
+  if(r.nose) r.nose.visible=vis;
+}
+function renderRemotes(now, dt){
+  // ПРИЗРАКИ: узел молчит дольше NET_PURGE_MS. НЕЛЬЗЯ удалять запись из NET.remotes —
+  // узел ещё жив в БД, и ближайший onValue (а он приходит ~12 Гц от НАШИХ же записей)
+  // пересоздаст аватар заново → бесконечный цикл makeAvatar/remove, утечка GPU, белый экран.
+  // Вместо этого: СКРЫВАЕМ один раз + один раз стираем узел из БД («уборщик») —
+  // тогда onValue сам вызовет removeRemote с полной утилизацией.
+  const nowMs=Date.now();
+  for(const id in NET.remotes){
+    const r = NET.remotes[id];
+    if(r.spec || !r.av) continue;
+    const _rrx=(r.rx??(r.latest&&r.latest.rx)), _rry=(r.ry??(r.latest&&r.latest.ry));
+    const otherRoom = ADV.on && _rrx!=null && (_rrx!==ADV.rx || _rry!==ADV.ry);
+    if(otherRoom){ if(!r.roomHid){ r.roomHid=true; setRemoteVisible(r,false); } continue; }   // він деінде на мапі
+    else if(r.roomHid){ r.roomHid=false; setRemoteVisible(r,true); }
+    const stale = ((r.latest&&r.latest.t)||0) < nowMs-NET_PURGE_MS;
+    if(stale){
+      if(!r.hidden){ r.hidden=true; setRemoteVisible(r,false);
+        logE('привид гравця '+id.slice(0,4)+' приховано, чищу вузол у БД');
+        NET.cleanupPlayer(id); }
+      continue;                                    // скрытого не рендерим и не трогаем
+    }
+    if(r.hidden){ r.hidden=false; setRemoteVisible(r,true); logE('гравець '+id.slice(0,4)+' вернулся'); }
+    const p = r.latest || {};
+    const av = r.av;
+    av.gx = r.gx; av.gy = r.gy; av.hp = r.hp;
+    av.visYaw = smoothAngle(av.visYaw, p.yaw||0, clamp(dt*8,0,1));
+    av.dirIdx = yawToDirIdx(p.yaw||0);
+    av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
+    av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
+    av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
+    if(p.hue!=null) av.baseHue=+p.hue;                       // чужая раскраска тела
+    if(p.mf){ av.mesh.scale.set(0.8,0.35,0.8); av.swordLen=0.2; av.strikeT=0; }   // чужой слайм: плоское тельце, без клинка
+    else av.mesh.scale.set(1,1,1);
+    av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
+    av.dead = (r.hp<=0);
+    av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
+    updateAvatarMesh(av, now);
+    updateBlade(av);
+    // «нос» — куда смотрит
+    const d = dirXZ(av.visYaw);
+    r.nose.position.set(worldX(r.gx)+d[0]*0.5, TIER_H*2.25, worldZ(r.gy)+d[1]*0.5);
+  }
+}
+/* ── ПОЛНАЯ утилизация аватара: three.js НЕ освобождает GPU-буферы сам —
+   без dispose() каждая удалённая фигура (≈15 геометрий+материалов) навсегда
+   зависает в видеопамяти. Именно это убивало игру: цикл «призрак удалён →
+   onValue пересоздал» на 12 Гц тёк тысячами буферов → потеря WebGL-контекста
+   → белый экран.                                                            */
+function disposeAvatar(av){
+  if(!av) return;
+  if(av.mesh){
+    av.mesh.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    scene.remove(av.mesh);
+  }
+  if(av.blade){
+    if(av.blade.geometry) av.blade.geometry.dispose();
+    if(av.blade.material) av.blade.material.dispose();
+    scene.remove(av.blade);
+  }
+}
+function removeRemote(id){
+  const r=NET.remotes[id];
+  if(r){
+    if(r.group){ r.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); scene.remove(r.group); }
+    disposeAvatar(r.av);
+    if(r.nose){ if(r.nose.geometry) r.nose.geometry.dispose(); if(r.nose.material) r.nose.material.dispose(); scene.remove(r.nose); }
+    delete NET.remotes[id];
+  }
+}
+
+/* ── ОБЩИЕ ФАНТОМЫ чужих владельцев: рисуем как красные аватары ── */
+function upsertRemotePhantom(key, s){
+  let r = NET.rphantoms[key];
+  if(!r){ const av=makeAvatar(0.02); av.bladeHue=0.02; r=NET.rphantoms[key]={av, latest:s};
+    try{
+      if(s&&s.k==='crawler') av.mesh.scale.set(0.55,0.35,0.55);
+      else if(s&&s.k==='flyer') av.mesh.scale.set(0.45,0.45,0.45);
+      else if(s&&s.k==='gunner') av.mesh.scale.set(0.8,0.85,0.8);
+      else if(s&&s.k==='boss') av.mesh.scale.setScalar((s.sz||2)>2?2.8:2.0);
+      // СИЛУЭТЫ ВИДОВ: летун — крылья, босс — рога, стрелец — ствол, повзун — хвост
+      const dec=(w,h,d,x,y,z,c)=>{ const q=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshBasicMaterial({color:c})); q.frustumCulled=false; q.position.set(x,y,z); av.mesh.add(q); return q; };
+      if(s&&s.k==='flyer'){ dec(0.9,0.06,0.3,-0.75,1.45,0,0x9fd8ff); dec(0.9,0.06,0.3,0.75,1.45,0,0x9fd8ff); }
+      else if(s&&s.k==='boss'){ dec(0.12,0.4,0.12,-0.2,2.25,0,0xf3c14b); dec(0.12,0.4,0.12,0.2,2.25,0,0xf3c14b); }
+      else if(s&&s.k==='gunner'){ dec(0.14,0.14,0.8,0.2,1.35,0.5,0x8fa1ad); }
+      else if(s&&s.k==='crawler'){ dec(0.34,0.2,0.6,0,0.35,-0.6,0x86b06a); }
+      // СИЛУЭТ, а не человек: у ползуна прячем ноги и руки, у летуна — ноги
+      const hideP=(nms)=>{ for(const nm of nms){ const q=av.parts&&av.parts[nm]; if(q) q.visible=false; } };
+      if(s&&s.k==='crawler') hideP(['legL','legR','footL','footR','armLU','armLF','armRU','armRF']);
+      else if(s&&s.k==='flyer') hideP(['legL','legR','footL','footR']);
+    }catch(e){}
+    // МОРФОЛОГИЯ от Алго-крата: mw/mh/md (0.4..3) растягивают тело по осям поверх масштаба вида
+    try{ if(s&&(s.mw||s.mh||s.md)){
+      av.mesh.scale.x*=clamp(+(s.mw||1),0.4,3); av.mesh.scale.y*=clamp(+(s.mh||1),0.4,3); av.mesh.scale.z*=clamp(+(s.md||1),0.4,3);
+    }}catch(e){}
+    av.size=(s&&s.sz)||1; av.hover=(s&&s.hov)||0;
+  }
+  r.latest=s;
+}
+// ── 2D-МЕТКИ: имя/статус над головой сущности (проекция мира на экран) ──
+const LABELS=new Map(); let LBF=0;
+const KIND_COL={boss:'#ef4444',gunner:'#f59e0b',flyer:'#7cc8ff',crawler:'#a3e635',fighter:'#e879f9'};
+const _lv=new THREE.Vector3();
+function labelTick(key,text,color,x,y,z){
+  let el=LABELS.get(key);
+  if(!el){ el=document.createElement('div'); el.className='eLabel'; document.body.appendChild(el); LABELS.set(key,el); }
+  el._f=LBF;
+  if(el._t!==text){ el.textContent=text; el._t=text; }
+  el.style.color=color;
+  _lv.set(x,y,z).project(camera);
+  if(_lv.z>1 || _lv.z<-1){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.style.left=((_lv.x*0.5+0.5)*innerWidth)+'px';
+  el.style.top =((-_lv.y*0.5+0.5)*innerHeight)+'px';
+}
+function labelsSweep(){ for(const [k,el] of LABELS){ if(el._f!==LBF){ el.remove(); LABELS.delete(k); } } }
+function renderRemotePhantoms(now, dt){
+  const nowMs=Date.now(); LBF++;
+  for(const key in NET.rphantoms){
+    const r=NET.rphantoms[key], s=r.latest||{}, av=r.av;
+    const own=key.split('_')[0];
+    const serverOwned=(own==='forge'||own==='algocrat');            // ими управляет СЕРВЕР, не владелец-клиент
+    const stale=(s.t||0) < nowMs-(serverOwned?60000:NET_PURGE_MS);  // серверным даём 60с (heartbeat тика)
+    if(stale){
+      if(!r.hidden){ r.hidden=true; av.mesh.visible=false; av.blade.visible=false;
+        if(!serverOwned) NET.cleanupPhantoms(own); }   // кованых/алго-кратовских НЕ стираем из БД — сервер оживит
+      continue;
+    }
+    if(r.hidden){ r.hidden=false; av.mesh.visible=true; av.blade.visible=true; }
+    av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
+    av.visYaw=smoothAngle(av.visYaw, s.yaw||0, clamp(dt*8,0,1));
+    av.dirIdx=yawToDirIdx(s.yaw||0);
+    av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
+    av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
+    updateAvatarMesh(av,now);
+    const biter=(s.k==='crawler'||s.k==='flyer');          // кусающиеся виды — без клинка
+    if(biter){ av.blade.visible=false; av.blade.count=0; } else updateBlade(av);
+    if(s.nm){                                              // имя + статус от Алго-крата
+      const col=s.side==='ally' ? '#34d399' : (KIND_COL[s.k]||'#cfe3ff');
+      const st=av.dead?'✝':(av.hp<=30?'⚠ '+Math.round(av.hp):Math.round(av.hp));
+      labelTick(key, s.nm+' · '+st, col, worldX(av.gx), TIER_H*(2.5*(s.sz||1))+0.3, worldZ(av.gy));
+    }
+  }
+  labelsSweep();
+}
+function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ disposeAvatar(r.av); delete NET.rphantoms[key]; } }
+function remotePhantomAt(cx,cy){
+  for(const key in NET.rphantoms){ const r=NET.rphantoms[key]; const s=r.latest||{};
+    if(!s.dead && (s.t||0)>Date.now()-NET_FRESH_MS && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
+  return null;
+}
+
+/* ════════════════════ ГЛАВНЫЙ ЦИКЛ ═══════════════════════════ */
+let started=false, last=0, introT=4, sampleT=2, resyncT=3;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!started) return;
+  if(paused){ composer.render(); last=0; return; }   // пауза: только рендер
+  const dt = last ? clamp((now-last)/1000,0,0.05) : 0.016;
+  last=now;
+
+  // клавиатурная отладка (если нет сенсоров под рукой)
+  if(keys['ArrowLeft']) sensor.yawFused=wrap360(sensor.yawFused-120*dt);
+  if(keys['ArrowRight']) sensor.yawFused=wrap360(sensor.yawFused+120*dt);
+  if(keys['ArrowUp']) sensor.pitch=clamp(sensor.pitch-dt,-1,1);
+  if(keys['ArrowDown']) sensor.pitch=clamp(sensor.pitch+dt,-1,1);
+  if(keys[' ']) sensor.roll = (sensor.roll>45?0:60); // пробел — переключить стойку
+
+  if(mode==='creator'){
+    const pTgt=clamp(sensor.pitchRaw*(invertPitch?-1:1),-1,1);
+    sensor.pitch=lerp(sensor.pitch,pTgt,clamp(dt*10,0,1));
+    player.dirIdx=yawToDirIdx(sensor.yawFused); player.tier=1;
+    player.pitch=sensor.pitch; player.roll=sensor.roll;
+    player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
+    updateStanceAndCamera(dt);
+    updateMorphVisual(now);
+    updateGhost();      // призрак показывает, куда встанет блок
+    creatorIdleT+=dt;   // авто-затухание панели творца через 3с бездействия (обзор чист)
+    { const cui=$('creatorUI'); if(cui) cui.style.opacity = creatorIdleT>3 ? '0.55':'1'; }   // читабельно навіть у спокої
+  } else if(mode==='fighter'){
+    // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
+    const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
+    sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*10,0,1));
+    sensor.camPitch = lerp(sensor.camPitch||0, clamp(sensor.camPitchRaw||0,-1,1), clamp(dt*10,0,1));
+
+    if(!clinch.active){
+      // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
+      player.dirIdx = yawToDirIdx(sensor.yawFused);
+      player.tier = pitchTier(sensor.pitch, player.tier);   // вниз→ноги, вверх→голова (с гистерезисом)
+      player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1));
+      player.pitch = sensor.pitch; player.roll = sensor.roll;
+      player.speedPulse = clamp(sensor.speed/16,0,0.4);
+      // ЖЕСТ ВЗМАХА: резкое движение руки → видимый удар клинком (снап-выпад)
+      player.swingCd = (player.swingCd||0) - dt;
+      // (07-15) РИВОК ТЕЛЕФОНА БІЛЬШЕ НЕ Б'Є: клинок пропалює контактом (resolveBurn),
+      // а ВИПАД (strikeT) народжується ЛИШЕ з заряду МАЯКА — поверни боком, заряди, різко назад.
+      // КЛИНОК/тело трейлит за движением; камера уже мгновенная
+      player.visYaw = smoothAngle(player.visYaw, sensor.yawFused, dt*6);
+    }
+
+    updateStanceAndCamera(dt);
+    if(!clinch.active){ clinch.cd=Math.max(0,clinch.cd-dt); resolveClinch(); if(!clinch.active) resolveBurn(dt); }
+    updateClinch(dt);
+    handleDeath(player, dt);
+
+    // без клинка слишком долго → телекинез возвращает меч
+    if(player.disarmed){ player.disarmT=(player.disarmT||0)+dt; if(player.disarmT>=CLINCH_RETURN_T) returnBlade(); }
+    else player.disarmT=0;
+
+    // Часть 4.2: активность остывает в покое; регенерация тем медленнее, чем выше недавняя активность
+    player.activityExhaustion = Math.max(0, (player.activityExhaustion||0) - dt*ACTIVITY_COOL);
+    if(!clinch.active && !player.disarmed){
+      const regen = 8 * (1 - 0.85*clamp((player.activityExhaustion||0)/100,0,1));
+      player.stamina = clamp(player.stamina + dt*regen, 0, 100);
+    }
+    // Раздел 6: элементная клетка под игроком — плазма жжёт Душу; кулдаун движения (жидкость) тает
+    if((player.moveLockT||0)>0) player.moveLockT-=dt;
+    { const oc=obstacleAt(player.gx,player.gy);
+      if(oc && oc.pass==='plasma' && !player.dead){
+        player.plasmaCd=(player.plasmaCd||0)-dt;
+        if(player.plasmaCd<=0){ player.plasmaCd=0.5; damageTier(player,1,6); doFlash('#e879f9'); buzz(40); logE('плазма палить Душу → HP '+Math.round(player.hp)); }
+      }
+    }
+    if(player.painT>0) player.painT-=dt;
+    if(!clinch.active){
+      const tip=bladeContestCell(player);
+      const lvl = player.hitActive?0.18: clamp(sensor.speed/40,0,0.08);
+      setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl, 120 + sensor.speed*6);
+    }
+    updateAvatarMesh(player, now);
+    if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
+    else updateBlade(player);
+  }else if(mode==='spectator'){
+    // облёт сверху: высота ~9, вращение вокруг центра по компасу
+    const ang = sensor.yawFused*Math.PI/180;
+    camera.up.set(0,1,0);
+    camPos.set(Math.sin(ang)*8, 9, Math.cos(ang)*8);
+    camTarget.set(0, TIER_H, 0);
+  }else if(mode==='follow'){
+    // третье лицо ЗА выбранным игроком: камера смотрит туда же, куда он
+    camera.up.set(0,1,0);
+    const ids=fighterIds();
+    if(!ids.includes(followTarget)) followTarget = ids[0]||null;
+    const r = followTarget && NET.remotes[followTarget];
+    if(r){
+      const p=r.latest||{}; const [dx,dz]=dirXZ(p.yaw||0);
+      const px=worldX(r.gx), pz=worldZ(r.gy);
+      camPos.set(px-dx*3.6, TIER_H*3.1, pz-dz*3.6);
+      camTarget.set(px+dx*2.5, TIER_H*1.1, pz+dz*2.5);
+    }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
+  }else if(mode==='action'){
+    // ЭКШН-КАМЕРА: динамичная слежка ЗА игроком; в КЛИНЧЕ — кинематографичный вид СБОКУ
+    // (как в файтингах, оба бойца в профиль), по окончании клинча плавно возвращается за
+    // игрока (плавность даёт лерп камеры в кадре).
+    camera.up.set(0,1,0);
+    const ids=fighterIds();
+    if(!ids.includes(followTarget)) followTarget = ids[0]||null;
+    const r = followTarget && NET.remotes[followTarget];
+    if(r){
+      const p=r.latest||{}; const yaw=p.yaw||0; const [dx,dz]=dirXZ(yaw);
+      const px=worldX(r.gx), pz=worldZ(r.gy);
+      if(p.cl){
+        const len=clamp(Math.round(p.swordLength||1),1,6);
+        const clx=px+dx*len*CELL*0.5, clz=pz+dz*len*CELL*0.5;   // середина оси клинков
+        const sx=-dz, sz=dx;                                    // перпендикуляр = вбок от линии боя
+        camPos.set(clx + sx*5.2, TIER_H*2.5, clz + sz*5.2);     // камера сбоку — оба бойца в профиль
+        camTarget.set(clx, TIER_H*1.2, clz);
+      }else{
+        camPos.set(px-dx*3.8, TIER_H*3.2, pz-dz*3.8);           // за спиной, чуть динамичнее слежки
+        camTarget.set(px+dx*2.6, TIER_H*1.1, pz+dz*2.6);
+      }
+    }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
+  }else{ // map — строго сверху, фиксировано
+    camera.up.set(0,0,-1);   // север (−Z) вверх экрана
+    camPos.set(0, 17, 0.001);
+    camTarget.set(0, 0, 0);
+  }
+  // ── ОБЩИЙ МИР (во всех режимах): свои фантомы + чужие тела/фантомы ──
+  if(mode!=='creator') updatePhantoms(dt);   // в творце враги заморожены — не рушат постройки
+  for(const ph of phantoms){
+    handleDeath(ph, dt);
+    if(ph.painT>0) ph.painT-=dt;
+    ph.crouch = lerp(ph.crouch||0, clamp(-(ph.pitch||0),0,1), clamp(dt*6,0,1));  // присед по прицелу — иначе руки/клинок уходят в пах
+    { const oc=obstacleAt(ph.gx,ph.gy);                                          // материал↔моб: плазма жжёт и ботов
+      if(oc && oc.pass==='plasma' && !ph.dead){ ph.plasmaCd=(ph.plasmaCd||0)-dt;
+        if(ph.plasmaCd<=0){ ph.plasmaCd=0.5; damageTier(ph,1,6); } } }
+    ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
+    updateAvatarMesh(ph, now);
+    updateBlade(ph);
+  }
+  renderRemotes(now, dt);              // чужие игроки
+  renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
+  NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
+  updateAdventure(dt);                 // сбор на кромке → переход между комнатами
+  updateRacks(dt);                     // стойки оружия в ДОМЕ
+  updateShots(dt);                     // снаряды стрельцов (и отбитые)
+  updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
+  updateDropPickup(dt);                // подбор чужого оружия (выдержка 0.6с, кулдаун)
+  updatePickupCollect();               // сбор апгрейдов
+
+  // периодическая выборка состояния в лог
+  sampleT -= dt;
+  if(sampleT<=0){
+    sampleT = 2.0;
+    if(mode==='fighter'){
+      const ph = phantoms.filter(p=>!p.dead).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
+      const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомів немає';
+      logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
+           `dir${DSYM[player.dirIdx]} ярус${player.tier} стійка:${stance===STANCE.BEACON?'маяк':'блиск'} pitch${sensor.pitch.toFixed(2)}`);
+    }else if(mode!=='creator') logE(`наблюдение (${mode}), в комнате: ${Object.keys(NET.remotes).length+1}`);
+  }
+
+  // камера: карта — жёстко, остальное — плавно
+  if(mode==='map'){ camera.position.copy(camPos); camLook.copy(camTarget); camera.lookAt(camLook); }
+  else { camera.position.lerp(camPos, clamp(dt*8,0,1)); camLook.lerp(camTarget, clamp(dt*9,0,1)); camera.lookAt(camLook); }
+  setListener(camera);
+
+  // HUD (минимальный — основное состояние видно по цвету тел)
+  const st = stance===STANCE.BEACON?'МАЯК ▲ заряд '+player.charge.toFixed(1):'БЛИСКАВКА ⚡';
+  $('stance').textContent = st;
+  $('stance').style.color = stance===STANCE.BEACON?'#fbbf24':'#60a5fa';
+  $('hudInfo').textContent = `dir ${DSYM[player.dirIdx]} · ярус ${player.tier} · vit ${Math.round(player.stamina)}`;
+  $('dbg').textContent =
+    `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
+    `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
+    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}`;
+
+  // баннер/вспышка таймеры
+  if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
+  if(flashT>0){ flashT-=dt; const f=$('flash');
+    f.style.opacity=(flashT/0.35*0.5); f.style.background=`radial-gradient(circle,${flashCol}00,${flashCol}66)`;
+    if(flashT<=0) f.style.opacity=0;
+  }
+  if(hapticFlash>0){ hapticFlash-=dt; $('haptic').style.opacity = hapticFlash>0 ? 0.9 : 0; }
+  if(introT>0){ introT-=dt; if(introT<=0){ $('intro').style.opacity='0'; setTimeout(()=>$('intro').style.display='none',700);} }
+
+  updateSparks(dt);
+  composer.render();
+}
+requestAnimationFrame(frame);
+
+/* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
+$('btnReq').addEventListener('click', async ()=>{
+  $('btnReq').textContent='⏳ запит...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
+  try{
+    if(needsPerm){
+      if(await DeviceOrientationEvent.requestPermission()!=='granted') throw new Error('Орієнтація: відмовлено');
+      if(typeof DeviceMotionEvent.requestPermission==='function')
+        if(await DeviceMotionEvent.requestPermission()!=='granted') throw new Error('Рух: відмовлено');
+    }
+    bindSensors();
+    initAudio();
+    if(AC && AC.state==='suspended') await AC.resume();
+    const rm = ($('roomInput').value||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+    NET.room = rm || 'HALL';           // комната из меню (а не из URL)
+    NET.start();                       // живое подключение к vessel-mir-13
+    buzz([0,120,60,120]);              // тест вибрации при входе
+    logE('СТАРТ. HAPTICS='+HAPTICS+' компас='+(haveAbsOrient?'АБС':(sensor.haveCompass?'відн(дрейфує!)':'НЕМАЄ'))+' room='+NET.room);
+    logE('BUILD '+BUILD_TAG);
+    $('gate').style.display='none';
+    $('pauseBtn').style.display='block';
+    if(window.TUT && TUT.requested){ phantomCount=0; }   // туторіал стартує без ворогів
+    if(!phantoms.length && phantomCount>0) spawnPhantoms(phantomCount);   // первый спавн — здесь (модуль уже целиком жив, TDZ невозможен)
+    started=true; last=0;
+    applyMode();
+    try{
+      if(window.TUT && TUT.requested) TUT.begin();
+      else if(mode==='fighter'){                       // «ГРАТИ ОДРАЗУ» (07-15): пригода стартує сама, рівновага геть
+        equalizerOn=false;
+        try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
+        if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
+        logE('швидкий старт: пригода УВІМК (мій дім), рівновага ВИМК');
+      }
+    }catch(e){ console.warn('TUT',e); }
+  }catch(err){
+    $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
+    $('btnReq').textContent='▷ СПРОБУВАТИ ЗНОВУ'; $('btnReq').disabled=false;
+  }
+});
+
+/* ════════════════════ ТУТОРІАЛ + ПРОГРЕСІЯ (2026-07-13) ═══════════════════
+   Живе НАПРИКІНЦІ модуля — всі функції гри вже ініціалізовані, TDZ неможливий
+   (урок від зламаної інтеграції 07-11). Гачки в тілі гри: btnReq / onKill /
+   onDeath / onSmash / advRoomExtras. Стан — window.TUT.                      */
+
+// ── UI: панель-підказка (верх екрана) + модальне вікно ──
+const tutHintEl=document.createElement('div');
+tutHintEl.style.cssText='position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:88;'+
+  'display:none;max-width:92vw;padding:10px 16px;background:rgba(1,8,18,.96);border:1px solid #3b82f6;'+
+  'border-radius:10px;color:#bfdbfe;font:inherit;font-size:13px;letter-spacing:.06em;text-align:center;pointer-events:none;box-shadow:0 2px 14px rgba(0,0,0,.6)';
+document.body.appendChild(tutHintEl);
+const tutModalEl=document.createElement('div');
+tutModalEl.style.cssText='position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;'+
+  'background:rgba(1,4,10,.72);padding:16px';
+tutModalEl.innerHTML='<div id="tutCard" style="max-width:420px;width:100%;background:#020c1a;border:1px solid #1e3a5f;'+
+  'border-radius:12px;padding:20px 18px;color:#cbd5e1;font:inherit;font-size:13px;line-height:1.55;'+
+  'letter-spacing:.04em;max-height:82vh;overflow-y:auto"></div>';
+document.body.appendChild(tutModalEl);
+function tutModal(title,html,buttons){         // buttons: [{t:текст, c:колір, f:колбек}]
+  const card=tutModalEl.querySelector('#tutCard');
+  let h='<div style="color:#60a5fa;font-size:16px;letter-spacing:.1em;margin-bottom:12px">'+title+'</div>'+
+        '<div style="margin-bottom:16px">'+html+'</div>';
+  card.innerHTML=h;
+  (buttons||[{t:'ЗРОЗУМІЛО ▷'}]).forEach(b=>{
+    const el=document.createElement('button');
+    el.textContent=b.t;
+    el.style.cssText='display:block;width:100%;margin-top:8px;padding:13px;font:inherit;font-size:14px;'+
+      'letter-spacing:.1em;border-radius:8px;cursor:pointer;background:#0a1a30;'+
+      'border:1px solid '+(b.c||'#2563eb')+';color:'+(b.c||'#60a5fa');
+    el.onclick=()=>{ tutModalEl.style.display='none'; buzz([0,30]); try{speechSynthesis.cancel();}catch(e){} if(b.f)b.f(); };
+    card.appendChild(el);
+  });
+  // 🔊 НАСТАВНИК: озвучення туторіалу голосом (Web Speech, укр.); кнопка НЕ закриває вікно
+  try{ if(window.TUT && (TUT.active||TUT.requested) && ('speechSynthesis' in window)){
+    const sp=document.createElement('button');
+    const lbl=()=> sp.textContent = TTS.on?'🔊 голос наставника: УВІМК':'🔇 голос наставника: ВИМК';
+    sp.style.cssText='display:block;width:100%;margin-top:10px;padding:8px;font:inherit;font-size:11px;'+
+      'letter-spacing:.08em;border-radius:8px;background:transparent;border:1px dashed #334155;color:#64748b';
+    lbl();
+    sp.onclick=()=>{ TTS.on=!TTS.on; try{localStorage.setItem('vb3d_tts',TTS.on?'1':'0');}catch(e){}
+      lbl(); if(!TTS.on){ try{speechSynthesis.cancel();}catch(e){} } else speakTut(title+'. '+html); };
+    card.appendChild(sp);
+    speakTut(title+'. '+html);
+  } }catch(e){}
+  tutModalEl.style.display='flex';
+}
+function tutHint(txt){ if(txt){ tutHintEl.textContent=txt; tutHintEl.style.display='block'; } else tutHintEl.style.display='none'; }
+
+// ── СТАН ТУТОРІАЛУ ──
+window.TUT={
+  requested:false, active:false, stage:0,
+  steps:0, lastGX:null, lastGY:null,           // крок 1: рух
+  smashed:0,                                    // крок 2: кристали
+  beaconT:0,                                    // крок 3: МАЯК (сек у стійці)
+  kills:0, need:0,                              // кроки 4-6: бої
+  trial:false, wave:0, wavesCleared:0,          // крок 7: випробування
+  deaths:0, t0:0,
+  begin(){ this.requested=false; this.active=true; this.stage=0; this.deaths=0; this.t0=performance.now();
+    this.eqSave=equalizerOn; equalizerOn=false;  // рівновага (телепорт при вбивстві) — пауза на час навчання
+    if(ADV.on) $('mAdv').click();               // туторіал — поза пригодою
+    spawnPhantoms(phantomCount=0); botDiff=0;
+    player.hp=100; player.stamina=100;
+    logE('ТУТОРІАЛ: старт (Пролог Пустоти)');
+    this.prologue=1; voidStatic(true);
+    /* ЗАПОВІТ МАШИНИ · Вузол Перший: Вторгнення */
+    tutModal('▮▮ ПЕРШИЙ КОНТАКТ','<i>…статика… …статика…</i><br><br>'+
+      '«Аналіз матриці 13×13… З\'єднання встановлено. <b>Я — твій Командир.</b> '+
+      'Відповідай, новобранцю: стерео-канал активний? Ти сприймаєш чисту статику?»',
+      [{t:'СИГНАЛ ЧИСТИЙ ▷',f:()=>TUT.prologue2(false)},
+       {t:'Є ШУМ У КАНАЛІ',c:'#f59e0b',f:()=>TUT.prologue2(true)}]);
+  },
+  prologue2(noisy){ this.prologue=2;
+    /* Вузол Другий: Ультиматум Екіпіровки */
+    tutModal('🎧 УЛЬТИМАТУМ',(noisy?'«Відфільтруй перешкоди свідомістю — тут зір безсилий, править лише слух. »<br><br>':'')+
+      '«Твій маршрут пролягає крізь Шляхи Сходження та Спуску. Тут Відлуння і Шум — сили порядку й хаосу. '+
+      '<b>Одягни стереонавушники негайно!</b> Твої вуха — твій єдиний радар. Без них ти розчинишся у пітьмі.»',
+      [{t:'🎧 ЕКІПІРОВАНО ▷',f:()=>TUT.prologue3()}]);
+  },
+  prologue3(){ this.prologue=3;
+    /* Вузол Третій: Ініціація Зліпка — БЕЗ КНОПОК. Лише довге утримання. */
+    tutModal('▣ ІНІЦІАЦІЯ ЗЛІПКА','«Твій пристрій — це твій клинок. Але щоб твій поступ не згинув, потрібен '+
+      '<b>Зліпок Свідомості</b>. Жодної метушні. <b>Подвійні дотики — під найсуворішою забороною.</b> '+
+      'Доведи, що контролюєш Ритм:<br><br><b>виконай ДОВГЕ, БЕЗПЕРЕРВНЕ УТРИМАННЯ пальця на дисплеї — просто зараз.</b>»',
+      []);   // кнопок НЕМАЄ — система в активному очікуванні, короткі тапи і свайпи ігноруються
+  },
+  prologueTriumph(){ this.prologue=0; voidStatic(false);
+    /* Тріумф Ритму: акорд на октаву вище фону + глибока вібрація */
+    blip(440,0.5,'sine',0.22); setTimeout(()=>blip(880,0.6,'sine',0.26),120); setTimeout(()=>blip(1320,0.4,'sine',0.18),260);
+    buzz([0,60,40,260]); doFlash('#7cc8ff');
+    tutModalEl.style.display='none';
+    showBanner('▣ ЗЛІПОК СВІДОМОСТІ ЗАФІКСОВАНО — шлях відкрито','#7cc8ff');
+    logE('ПРОЛОГ: зліпок зафіксовано (довге утримання)');
+    setTimeout(()=>{
+      tutModal('📚 БАЗОВЕ НАВЧАННЯ','«Ритм у тебе в руках, новобранцю. Тепер — тіло.»<br><br>'+
+        '<b>Камера.</b> Телефон — твої очі: тримай вертикально, наче пульт, і повертайся всім тілом — світ повернеться теж. '+
+        'Роздивись навколо і повертайся.',
+        [{t:'Я РОЗДИВИВСЯ, ДАЛІ ▷',f:()=>TUT.goStage(1)}]);
+    },1600);
+  },
+  goStage(n){ this.stage=n; player.hp=100; player.stamina=100;
+    if(n===1){ this.steps=0; this.lastGX=player.gx; this.lastGY=player.gy;
+      tutModal('👣 КРОК 1/7 · РУХ','Ти стоїш на полі 13×13 клітинок.<br><br>'+
+        '<b>Проведи пальцем по екрану</b> (свайп) вгору / вниз / вліво / вправо — герой зробить крок у той бік.<br><br>'+
+        '<b>Завдання: зроби 6 кроків.</b>',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('👣 Свайпай по екрану · кроків: 0 / 6')}]);
+    }
+    if(n===2){ this.smashed=0; tutSpawnCrystals();
+      tutModal('⚡ КРОК 2/7 · КЛИНОК','Поруч з тобою з\'явились <b>два блакитні кристали</b>.<br><br>'+
+        'Тримай телефон вертикально (стійка <b>БЛИСКАВКА</b>). З телефона «росте» світловий промінь-клинок — '+
+        '<b>він пропалює все, чого торкається</b>. Підійди до кристала впритул і <b>наведи промінь на нього</b> — '+
+        'дивись, як летять частинки.<br><br>'+
+        '<b>Завдання: пропали обидва кристали.</b>',
+        [{t:'ДО СПРАВИ ▷',f:()=>tutHint('⚡ Підійди впритул і наведи промінь · кристалів: 0 / 2')}]);
+    }
+    if(n===3){ this.sub=0;
+      tutModal('📷 КРОК 3/7 · ЩИТ І ЗАРЯД (МАЯК)','Зараз спробуємо на власні руки, по одному кроку:<br><br>'+
+        '<b>1.</b> Поверни телефон <b>боком, як фотоапарат</b> 📷 — камера стане очима героя.<br>'+
+        '<b>2.</b> Тримай так — угорі побачиш, як росте число <b>ЗАРЯД</b>. Поки тримаєш — це твій <b>щит</b>: '+
+        'у зчепленні клинків (клінчі) цей тиск продавлює ворога.<br>'+
+        '<b>3.</b> Коли я скажу — <b>різко поверни телефон назад вертикально</b>: накопичена сила сама вирветься ударом!<br><br>'+
+        'Нічого не треба вгадувати — я підказуватиму вгорі на кожному кроці.',
+        [{t:'ПРОБУЮ ▷',f:()=>tutHint('📷 Поверни телефон БОКОМ, як фотоапарат — і тримай')}]);
+    }
+    if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
+      'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
+      '• Вертикально: <b>промінь пропалює</b> того, кого торкається — цілься<br>'+
+      '• Боком 📷 = щит і заряд → різко назад = <b>ВИПАД</b> (сильний удар)<br>'+
+      '• Свайп = ухилитися кроком<br><br>'+
+      'Якщо загинеш — нічого страшного, відродишся і спробуєш ще.<br><br><b>Завдання: перемогти 1 фантома.</b>'); }
+    if(n===5){ this.armBattle(2,['fighter','crawler'],0,'⚔ КРОК 5/7 · ДВОЄ',
+      'Тепер <b>двоє</b>: звичайний фантом і <b>повзун</b> (низький, пролазить під стінами).<br><br>'+
+      'Порада: не стій між ними — відходь убік, щоб билися з тобою по одному.<br><br><b>Завдання: перемогти обох.</b>'); }
+    if(n===6){ this.armBattle(3,['fighter','crawler','flyer'],1,'⚔ КРОК 6/7 · ТРОЄ',
+      'Останній навчальний бій: <b>троє</b>, додався <b>літун</b> — літає над стінами.<br><br>'+
+      'Використовуй МАЯК, коли тиснуть, і кроки, щоб розривати оточення.<br><br><b>Завдання: перемогти трьох.</b>'); }
+    if(n===7){ this.trial=false; this.wave=0; this.wavesCleared=0;
+      tutModal('🔥 КРОК 7/7 · ВИПРОБУВАННЯ','Пробний бій: хвилі ворогів, <b>щохвилі — на одного більше</b> (1, 2, 3, 4, 5...).<br><br>'+
+        'Протримайся скільки зможеш — за результатом гра <b>порекомендує складність</b> саме для тебе. '+
+        'Загибель тут — не поразка, а вимірювання.',
+        [{t:'ПОЧАТИ ВИПРОБУВАННЯ ▷',f:()=>{ TUT.trial=true; TUT.nextWave(); }}]);
+    }
+  },
+  armBattle(n,kinds,diff,title,html){ this.kills=0; this.need=n;
+    tutModal(title,html,[{t:'ДО БОЮ ▷',c:'#22c55e',f:()=>{
+      botDiff=diff; player.hp=100; player.stamina=100;
+      phantomCount=n; spawnPhantoms(n,kinds);
+      tutHint('⚔ Перемож ворогів: 0 / '+n);
+    }}]);
+  },
+  nextWave(){ this.wave++; this.kills=0;
+    const KS=[['fighter'],['fighter','crawler'],['fighter','crawler','flyer'],
+              ['fighter','gunner','crawler','flyer'],['fighter','fighter','gunner','crawler','flyer']];
+    const kinds=KS[Math.min(this.wave,5)-1]; this.need=kinds.length;
+    botDiff=this.wave<=2?0:(this.wave<=4?1:2);
+    player.hp=100; player.stamina=100;
+    phantomCount=kinds.length; spawnPhantoms(kinds.length,kinds);
+    showBanner('🔥 ХВИЛЯ '+this.wave+' — ворогів: '+kinds.length,'#f59e0b');
+    tutHint('🔥 Хвиля '+this.wave+' · вороги: 0 / '+this.need);
+  },
+  onKill(av){ if(!this.active) return;
+    av.respawnT=1e9;                                        // у туторіалі вбиті НЕ відроджуються
+    setTimeout(()=>{ try{ av.mesh.visible=false; }catch(e){} },1200);
+    if(this.stage>=4 && this.stage<=6){ this.kills++;
+      tutHint('⚔ Перемож ворогів: '+this.kills+' / '+this.need);
+      if(this.kills>=this.need){ tutHint(null); buzz([0,60,40,120]);
+        setTimeout(()=>this.stage===6 ? this.goStage(7) : this.goStage(this.stage+1), 900); } }
+    else if(this.stage===7 && this.trial){ this.kills++;
+      tutHint('🔥 Хвиля '+this.wave+' · вороги: '+this.kills+' / '+this.need);
+      if(this.kills>=this.need){ this.wavesCleared=this.wave;
+        if(this.wave>=5){ this.trial=false; this.finishTrial(); }
+        else { showBanner('✔ хвилю '+this.wave+' зачищено','#22c55e');
+          setTimeout(()=>{ if(this.trial) this.nextWave(); },1600); } } }
+  },
+  onDeath(){ if(!this.active) return; this.deaths++;
+    if(this.stage>=4 && this.stage<=6){
+      setTimeout(()=>{ if(!TUT.active) return;
+        tutModal('💫 НЕ ЗДАВАЙСЯ','Це нормально — навіть майстри падали тисячу разів.<br><br>'+
+          'Спробуй тримати дистанцію кроками і частіше йти у <b>МАЯК</b> (телефон боком), коли ворог замахується.',
+          [{t:'ЩЕ РАЗ ▷',c:'#f59e0b',f:()=>TUT.goStage(TUT.stage)}]); },2400); }
+    else if(this.stage===7 && this.trial){ this.trial=false;
+      setTimeout(()=>this.finishTrial(),2400); }
+  },
+  onSmash(){ if(!this.active || this.stage!==2) return; this.smashed++;
+    tutHint('⚡ Кристалів розбито: '+this.smashed+' / 2');
+    if(this.smashed>=2){ tutHint(null); buzz([0,60,40,120]); setTimeout(()=>this.goStage(3),900); }
+  },
+  finishTrial(){ tutHint(null);
+    spawnPhantoms(phantomCount=0);
+    const w=this.wavesCleared;
+    let rec = w>=5?2 : (w>=3?1:0);
+    if(this.deaths>=3) rec=0;
+    const NAMES=['🟢 ЛЕГКО','🟡 НОРМА','🔴 СКЛАДНО'];
+    tutModal('🏁 ВИПРОБУВАННЯ ЗАВЕРШЕНО',
+      'Хвиль зачищено: <b>'+w+'</b> · загибелей за навчання: <b>'+this.deaths+'</b><br><br>'+
+      'Рекомендована складність: <b>'+NAMES[rec]+'</b><br><br>Обери свою (потім можна змінити в меню ⏸):',
+      [0,1,2].map(d=>({ t:NAMES[d]+(d===rec?'  ← РЕКОМЕНДОВАНО':''),
+        c:d===0?'#22c55e':(d===1?'#f59e0b':'#ef4444'),
+        f:()=>TUT.finish(d) })));
+  },
+  finish(diff){ this.active=false; this.stage=0;
+    this.eqSave=undefined;
+    equalizerOn=false;                                       // (07-15) пригода після навчання — БЕЗ рівноваги
+    try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
+    botDiff=diff; window.ADV_DIFF=diff;
+    try{ $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; }catch(e){}
+    try{ localStorage.setItem('vb3d_tut_done','1'); }catch(e){}
+    logE('ТУТОРІАЛ завершено: складність='+DIFF[diff].name+' хвиль='+this.wavesCleared+' смертей='+this.deaths+' → ПРИГОДА (рівновага ВИМК)');
+    if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }       // пригода стартує САМА
+    tutModal('🎓 ПРИГОДА ПОЧАЛАСЬ','Ти вдома — у «Чистій Свідомості» (центр шахівниці 13×13).<br><br>'+
+      '⬜ <b>Білі кімнати</b> — безпечні коридори: рубай дерева 🪵, скелі 🪨, руду ⛓, кристали ◆; шукай 📜 сувої, 🎯 завдання і 🛒 торговців.<br>'+
+      '⬛ <b>Чорні</b> — бої. Чим далі від дому — тим складніше, на краю світу — <b>БОСИ</b>.<br><br>'+
+      'Вдома: стійки зброї та 🔥 <b>КУЗНЯ</b> (смарагдова плита). Мінімапа — угорі праворуч. '+
+      'Перехід між кімнатами — стій на кромці поля 3 секунди.<br><br>'+
+      '<i>Вільний бій — у меню ⏸ вимкни «ПРИГОДА».</i>',
+      [{t:'РУШАЙМО ▷',c:'#22c55e'}]);
+  }
+};
+
+// кристали для кроку 2 — крихкі, поруч із гравцем
+function tutSpawnCrystals(){
+  spawnPhantoms(phantomCount=0);
+  const taken=new Set(); let placed=0;
+  for(const [ox,oy] of [[2,0],[-2,0],[0,2],[0,-2],[2,2],[-2,-2]]){
+    if(placed>=2) break;
+    const gx=clamp(player.gx+ox,1,11), gy=clamp(player.gy+oy,1,11);
+    if(obstacleAt(gx,gy) || (gx===player.gx&&gy===player.gy)) continue;
+    addObstacle(gx,gy,'fragile',taken,null,1,'post'); placed++;
+  }
+  if(placed<2){ addObstacle(clamp(player.gx+1,1,11),clamp(player.gy+3,1,11),'fragile',taken,null,1,'post'); }
+}
+
+// ── ПУЛЬС туторіалу (рух/МАЯК) + ТОРГОВЕЦЬ: один спільний таймер ──
+setInterval(()=>{
+  const T=window.TUT;
+  if(T && T.active && started && mode==='fighter'){
+    if(T.stage===1){
+      if(T.lastGX!==player.gx || T.lastGY!==player.gy){
+        T.steps++; T.lastGX=player.gx; T.lastGY=player.gy;
+        tutHint('👣 Свайпай по екрану · кроків: '+T.steps+' / 6');
+        if(T.steps>=6){ tutHint(null); buzz([0,60,40,120]); T.stage=-1; setTimeout(()=>T.goStage(2),700); } } }
+    else if(T.stage===3){
+      if(T.sub===0){                                             // фаза 1: тримай боком, заряджай
+        if(player.beaconLatch && !player.dead){
+          tutHint('📷 Так! Нахиляй телефон як камеру — бачиш те, куди дивиться задня кришка · ЗАРЯД: ×'+player.charge.toFixed(1)+' / 2.2');
+          if(player.charge>=2.2){ T.sub=1; buzz([0,50]);
+            tutHint('⚡ ГОТОВО! Тепер РІЗКО поверни телефон назад ВЕРТИКАЛЬНО!'); }
+        } else tutHint('📷 Поверни телефон БОКОМ, як фотоапарат (горизонтально) — і тримай');
+      } else if(T.sub===1){                                      // фаза 2: різкий поворот назад = удар
+        if(!player.beaconLatch){
+          if(player.strikeT>0 || player.swordLen>1.15){          // виброс стався
+            T.stage=-1; tutHint(null); buzz([0,60,40,120]);
+            setTimeout(()=>tutModal('✨ БАЧИВ СПАЛАХ КЛИНКА?','Це був <b>заряджений удар</b>: '+
+              'потримав боком → накопичив силу → повернув вертикально → сила вирвалась сама.<br><br>'+
+              'Запам\'ятай просте правило:<br>📷 <b>боком</b> = щит і заряд<br>📱 <b>вертикально</b> = бій і удари<br><br>'+
+              'У бою: тиснуть — повернись боком і перечекай; повертаєшся — б\'єш сильніше.',
+              [{t:'ЗРОЗУМІЛО, ДАЛІ ▷',f:()=>TUT.goStage(4)}]),500);
+          } else { T.sub=0; }                                    // повернувся без заряду — м'яко заново
+        } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
+      } }
+  }
+  tickTrader(0.16);
+  _snapT+=0.16;
+  if(_snapPend && _snapT>=1.2){ _snapT=0; _snapPend=false; try{ snapshotRoom(); }catch(e){} }
+  try{ if(NET._rePendKey && Date.now()-((NET._reAt&&NET._reAt[NET._rePendKey])||0)>=2500)
+    applyRemoteRoomIfNewer(NET._rePendKey); }catch(e){}
+  try{ if(QPLATE.mesh && ADV.on && mode==='fighter' && !player.dead){
+    QPLATE.mesh.material.opacity=0.35+0.25*Math.sin(performance.now()*0.005);
+    if(player.gx===QPLATE.gx && player.gy===QPLATE.gy){
+      QPLATE.standT+=0.16;
+      if(QPLATE.standT>=1.2){ QPLATE.standT=-3;
+        if(QST.a) tutModal('🎯 ЗАВДАННЯ ТРИВАЄ', QST.text(QST.a)+'<br>Поступ: <b>'+QST.a.prog+' / '+QST.a.goal+'</b>', [{t:'ГАРАЗД'}]);
+        else QST.offer(QPLATE.seed); }
+    } else QPLATE.standT=0;
+  } }catch(e){}
+},160);
+
+/* ════ ВОКСЕЛЬНЕ РУЙНУВАННЯ (07-14): блок = частинки, пропал у точці дотику ════
+   Перший дотик клинка перетворює руйнівний блок на такий самий з мікровокселів
+   (та сама форма/колір). Далі кожен контакт випалює вокселі НАЙБЛИЖЧІ до кінчика
+   зброї — з урахуванням висоти (ярус/нахил) і сторони, з якої б'єш. Шматки
+   відлітають і падають (не іскри). Видобув усе = пропалив кожен воксель. */
+const VOXREG=new Map();   // 'gx,gy,mtype' → {total,left,noRes}
+let _snapT=0, _snapPend=false;
+function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не частіше 1.2с — Firebase дихає
+function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
+  const v=dirXZ(sensor.yawFused||0);
+  const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
+  const cw=worldX(cx), cz=worldZ(cy);
+  const d=Math.hypot(cw-px,cz-pz), t=Math.max(0.15,d-CELL*0.42);
+  const y=clamp(TIER_H*(0.55+player.tier*0.6)+(sensor.pitch||0)*1.4, 0.02, TIER_H*2.4);
+  return {x:px+v[0]*t, y, z:pz+v[1]*t};
+}
+function voxelizeObstacle(o){
+  if(!o||!o.alive) return false;
+  const n=3, m=CELL/n, gx=o.gx, gy=o.gy;
+  const shape=o.shape||'cube', baseY=o.baseY||0;
+  const meshH=(o.mesh&&o.mesh.geometry&&o.mesh.geometry.parameters&&o.mesh.geometry.parameters.height)||TIER_H*1.5;
+  const hV = shape==='slab' ? 1 : clamp(Math.round(meshH/m),1,4);
+  let cols;
+  if(shape==='post') cols=[[1,1]];
+  else if(shape==='panel') cols=[[0,1],[1,1],[2,1]];
+  else { cols=[]; for(let sx=0;sx<3;sx++)for(let sz=0;sz<3;sz++)cols.push([sx,sz]); }
+  if(microBlocks.length + cols.length*hV > MAX_MICRO-10) return false;   // ліміт — fallback на HP
+  const mt=o.mtype||'amber', tint=o.tint??null, alpha=o.alpha??null, noRes=!!o.noRes;
+  o.alive=false; if(o.mesh){ scene.remove(o.mesh); freeMesh(o.mesh); }
+  const oi=obstacles.indexOf(o); if(oi>=0) obstacles.splice(oi,1);
+  let cnt=0;
+  for(const [sx,sz] of cols) for(let sy=0;sy<hV;sy++){
+    if(addMicro(gx,gy,n,sx,sy,sz,mt,tint,alpha,null,0,baseY+sy*m,m)) cnt++;
+  }
+  // (07-15) ключ = клітинка+МАТЕРІАЛ: стовбур і крона дерева ведуться ОКРЕМО,
+  // повторна вокселізація того ж матеріалу ЗЛИВАЄТЬСЯ, а не перетирає лічильник
+  const vk=gx+','+gy+','+mt, prev=VOXREG.get(vk);
+  if(prev){ prev.total+=cnt; prev.left+=cnt; prev.noRes=prev.noRes&&noRes; }
+  else VOXREG.set(vk,{mtype:mt,total:cnt,left:cnt,noRes});
+  snapshotSoon();
+  return cnt>0;
+}
+function burnVoxelsAt(gx,gy,tip){
+  const vox=microBlocks.filter(b=>b.gx===gx&&b.gy===gy);
+  if(!vox.length) return 0;
+  vox.sort((a,b)=>a.mesh.position.distanceTo(tip)-b.mesh.position.distanceTo(tip));
+  let removed=0;
+  for(const b of vox.slice(0,4)){                              // до 4 вокселів за контакт
+    if(b.mesh.position.distanceTo(tip)>CELL*1.15) break;       // тільки ЗОНА ДОТИКУ
+    spawnChunk(b.mesh.position, b.mesh.material.color.getHex());
+    scene.remove(b.mesh); freeMesh(b.mesh); microBlocks.splice(microBlocks.indexOf(b),1); removed++;
+    const vk=gx+','+gy+','+(b.type||'amber');            // реєстр САМЕ цього матеріалу
+    const reg=VOXREG.get(vk);
+    if(reg){ reg.left--;
+      if(reg.left<=0){ VOXREG.delete(vk);
+        const kind=reg.noRes?null:RES_OF[reg.mtype];
+        if(kind){ const amt=1+(Math.random()<0.35?1:0);
+          RES[kind]+=amt; saveRes(); resHUD();
+          try{ QST.progress('mine', kind, amt); }catch(e){}
+          showBanner('⛏ ВИДОБУТО ВЩЕНТ: +'+amt+' '+RES_ICON[kind]+' '+RES_NAME[kind]+' (разом '+RES[kind]+')','#a7f3d0'); }
+        try{ if(window.TUT && TUT.active) TUT.onSmash(); }catch(e){}
+        logE('блок ('+gx+','+gy+') випалено вщент'); } }
+  }
+  if(removed) snapshotSoon();
+  return removed;
+}
+/* ШМАТКИ: справжні уламки з гравітацією і відскоком (не іскри) */
+const CHUNKS=[];
+function fleshColor(av){ try{ const P=av.parts&&Object.values(av.parts).find(p=>p&&p.isMesh);
+  return P?P.material.color.getHex():0x9fb6d8; }catch(e){ return 0x9fb6d8; } }
+function spawnChunk(pos,color,size){
+  if(CHUNKS.length>36){ const c=CHUNKS.shift(); scene.remove(c.mesh); freeMesh(c.mesh); }
+  const sz=size||(0.06+Math.random()*0.09);
+  const mesh=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color}));
+  mesh.scale.setScalar(sz);
+  mesh.position.copy(pos); mesh.frustumCulled=false; scene.add(mesh);
+  CHUNKS.push({mesh, vx:(Math.random()-0.5)*2.6, vy:1.5+Math.random()*1.8, vz:(Math.random()-0.5)*2.6,
+    rx:(Math.random()-0.5)*9, rz:(Math.random()-0.5)*9, t:0});
+}
+(function chunkLoop(ts){
+  requestAnimationFrame(chunkLoop);
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-(chunkLoop._t||now))/1000); chunkLoop._t=now;
+  for(let i=CHUNKS.length-1;i>=0;i--){ const c=CHUNKS[i]; c.t+=dt;
+    c.vy-=7.5*dt;
+    c.mesh.position.x+=c.vx*dt; c.mesh.position.y+=c.vy*dt; c.mesh.position.z+=c.vz*dt;
+    c.mesh.rotation.x+=c.rx*dt; c.mesh.rotation.z+=c.rz*dt;
+    if(c.mesh.position.y<-0.42){ c.mesh.position.y=-0.42; c.vy*=-0.35; c.vx*=0.72; c.vz*=0.72; }
+    if(c.t>1.9){ scene.remove(c.mesh); freeMesh(c.mesh); CHUNKS.splice(i,1); }
+  }
+})();
+/* ПОДРЯПИНИ/ОПІКИ на нерушимих поверхнях (косметика, чиститься при зміні кімнати) */
+const SCARS=[];
+function addScar(tip){
+  if(SCARS.length>50){ const old=SCARS.shift(); scene.remove(old); freeMesh(old); }
+  const g=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color:0x140e06}));
+  g.scale.set(0.1+Math.random()*0.16, 0.02+Math.random()*0.05, 0.025);
+  g.position.set(tip.x,tip.y,tip.z);
+  g.rotation.y=(sensor.yawFused||0)*Math.PI/180;
+  g.rotation.z=(Math.random()-0.5)*1.3;
+  g.frustumCulled=false; scene.add(g); SCARS.push(g);
+}
+function clearScars(){ while(SCARS.length){ const g=SCARS.pop(); scene.remove(g); freeMesh(g); } }
+/* ЕРОЗІЯ тіла: істота втрачає об'єм там, де її ріжуть */
+function erodePart(av){
+  try{ if(!av.parts) return;
+    const arr=Object.values(av.parts).filter(p=>p&&p.isMesh&&p.scale);
+    if(!arr.length) return;
+    const p=arr[Math.floor(Math.random()*arr.length)];
+    p.scale.setScalar(Math.max(0.55, p.scale.x*0.93));
+  }catch(e){}
+}
+
+/* ════ РИТУАЛЬНИЙ КРАФТ (07-14): викладай блоки на підлозі — світ сам відповість ════
+   Хімічні ланцюги (двигун REACTIONS): Si+O+плазма → ПІСОК; плазма+пісок → СКЛО;
+   Fe+C+плазма → СТАЛЬ; сталь+вода → гартування. РИТУАЛИ вищого порядку сканують
+   візерунок навколо ПЛАЗМИ у будь-якій з 4 орієнтацій. Рецепти — у сувоях ⬜ кімнат. */
+const RITUALS=[
+  { name:'БЛАСТЕР', done:()=>CRAFT.unlocked.blaster,
+    cells:[[0,-1,'steel'],[0,1,'glass']],   // ▦СТАЛЬ — 🜂ПЛАЗМА — ◇СКЛО у ряд
+    grant(){ CRAFT.unlocked.blaster=true; saveCraft(); try{ if(ADV.on&&advHome())buildRacks(); }catch(e){}
+      showBanner('🜍 РИТУАЛ ЗАВЕРШЕНО: БЛАСТЕР ЗДОБУТО — стійка вдома','#e879f9'); } },
+  { name:'ЖЕРТВА ДУШ', done:()=>false,
+    cells:[[-1,0,'salt'],[1,0,'salt']],     // СІЛЬ — 🜂ПЛАЗМА — СІЛЬ: 3 душі → ◆ кристал
+    grant(){ if((player.score||0)>=3){ player.score-=3; RES.crystal+=1; saveRes(); resHUD();
+        showBanner('🜏 ЖЕРТВА ПРИЙНЯТА: −3 душі → +1 ◆ кристал','#a78bfa'); }
+      else showBanner('🜏 ритуал вимагає 3 душі (рахунок)','#94a3b8'); } },
+];
+const ROTS=[(x,y)=>[x,y],(x,y)=>[y,-x],(x,y)=>[-x,-y],(x,y)=>[-y,x]];
+setInterval(()=>{ try{
+  for(const p of obstacles){
+    if(!p.alive || p.mtype!=='plasma') continue;
+    for(const R of RITUALS){
+      if(R.done()) continue;
+      for(const rot of ROTS){
+        const found=[];
+        let ok=true;
+        for(const [ox,oy,mt] of R.cells){
+          const [rx,ry]=rot(ox,oy);
+          const o=obstacleAt(p.gx+rx, p.gy+ry);
+          if(!o || !o.alive || o.mtype!==mt){ ok=false; break; }
+          found.push(o);
+        }
+        if(ok){
+          for(const o of found) killBlock(o);
+          killBlock(p);
+          doFlash('#e879f9'); buzz([0,70,50,140]); blip(880,0.3,'sine',0.2);
+          logE('РИТУАЛ «'+R.name+'» здійснено ('+p.gx+','+p.gy+')');
+          R.grant(); snapshotRoom();
+          return;   // один ритуал за тік
+        }
+      }
+    }
+  }
+}catch(e){} }, 900);
+
+/* ── КОДЕКС: знайдені сувої-рецепти ── */
+const SCROLLS={
+  glass:{ t:'📜 РЕЦЕПТ: СКЛО ◇', d:'1) Постав <b>КРЕМНІЙ (Si)</b> поруч із <b>КИСНЕМ (O)</b>, поруч — <b>ПЛАЗМУ</b> (нагрів) → буде ПІСОК.<br>2) <b>ПЛАЗМА</b> поруч із <b>ПІСКОМ</b> — розплав → <b>СКЛО ◇</b>.<br>Рубай скло клинком — збереш ресурс.' },
+  steel:{ t:'📜 РЕЦЕПТ: СТАЛЬ ▦', d:'Постав <b>ЗАЛІЗО (Fe)</b> поруч із <b>ВУГЛЕЦЕМ (C)</b> і піднеси <b>ПЛАЗМУ</b> → <b>СТАЛЬ ▦</b>.<br>Порада: сталь поруч із <b>ВОДОЮ</b> гартується (міцніє).' },
+  blaster:{ t:'📜 РИТУАЛ: БЛАСТЕР 🜍', d:'Виклади на підлозі У РЯД:<br><br><b>▦ СТАЛЬ · 🜂 ПЛАЗМА · ◇ СКЛО</b><br><br>(будь-яка орієнтація; блоки ставляться у режимі 🔨 ТВОРЕЦЬ). Ритуал поглине блоки і дарує зброю.' },
+  sacrifice:{ t:'📜 РИТУАЛ: ЖЕРТВА ДУШ 🜏', d:'Виклади У РЯД: <b>СІЛЬ · 🜂 ПЛАЗМА · СІЛЬ</b>.<br>Ритуал забере <b>3 душі</b> (рахунок) і поверне <b>◆ кристал</b>.' },
+  morse:{ t:'📜 АБЕТКА МОРЗЕ-ЗАКЛЯТЬ ⚡', d:'Тапай по екрану: <b>короткий тап «·»</b>, <b>довгий «−»</b>. Пауза — кінець літери, довша пауза — закляття летить у клітинку, куди дивишся (1 душа).<br><br>'+
+    'Символи Менделєєва священні: <b>P — це фосфор</b>, тому стани звуться інакше:<br>'+
+    '<b>PL</b> ·−−· / ·−·· ПЛАЗМА (палить істот!)<br><b>AQ</b> ·− / −−·− ВОДА · <b>G</b> −−· ГАЗ<br><br>'+
+    '<b>H</b> ···· · <b>C</b> −·−· · <b>O</b> −−−<br><b>FE</b> ··−· / · ЗАЛІЗО · <b>SI</b> ··· / ·· КРЕМНІЙ<br><b>NA</b> −· / ·− НАТРІЙ · <b>CL</b> −·−· / ·−·· ХЛОР<br><br>'+
+    'У МАЯКУ (боком) промов <b>PL</b> — <b>плазмовий клинок</b> на 25с (+30% шкоди).<br>'+
+    'Промовиш справжній елемент, якого ще нема (P, S, K…) — світ відповість, що він не відкритий.' },
+};
+const CODEX={
+  list(){ try{ return JSON.parse(localStorage.getItem('vb3d_codex')||'[]'); }catch(e){ return []; } },
+  add(k){ const l=this.list(); if(!l.includes(k)){ l.push(k); try{ localStorage.setItem('vb3d_codex',JSON.stringify(l)); }catch(e){} return true; } return false; }
+};
+function openScrollModal(){
+  const known=CODEX.list(), pool=Object.keys(SCROLLS).filter(k=>!known.includes(k));
+  const k=pool.length? pool[Math.floor(Math.random()*pool.length)] : Object.keys(SCROLLS)[Math.floor(Math.random()*4)];
+  CODEX.add(k);
+  const sc=SCROLLS[k];
+  tutModal(sc.t, sc.d+'<br><br><i>Збережено у КОДЕКС — переглянь у 🔥 КУЗНІ вдома.</i>', [{t:'ЗБЕРЕГТИ ▷'}]);
+  logE('сувій знайдено: '+k);
+}
+function openCodexModal(){
+  const known=CODEX.list();
+  if(!known.length){ tutModal('📜 КОДЕКС ПОРОЖНІЙ','Сувої-рецепти лежать у ⬜ білих кімнатах — шукай бежеві октаедри.',[{t:'ЗРОЗУМІЛО'}]); return; }
+  tutModal('📜 КОДЕКС РЕЦЕПТІВ', known.map(k=>'<div style="margin-bottom:12px"><b>'+SCROLLS[k].t+'</b><br>'+SCROLLS[k].d+'</div>').join(''), [{t:'ЗАКРИТИ'}]);
+}
+
+/* ════ КВЕСТИ (07-14): плита-завдання у ⬜, нагорода — рідкісні матеріали ════ */
+const QPLATE={mesh:null,gx:0,gy:0,standT:0,seed:0};
+const QST={
+  a:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_quest')||'null'); }catch(e){ return null; } })(),
+  save(){ try{ localStorage.setItem('vb3d_quest', JSON.stringify(this.a)); }catch(e){} },
+  offer(seed){
+    if(this.a) return;
+    const rng=mulberry32(seed);
+    const deep=Math.round(rng()*2);
+    const r0=rng();
+    const q = r0<0.45
+      ? { t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3, prog:0 }
+      : (r0<0.8
+      ? { t:'hunt', kind:null, goal:3+deep*2, prog:0 }
+      : { t:'cast', kind:'plasma', goal:1+deep, prog:0 });
+    q.reward = rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2});
+    this.a=q; this.save(); this.hud();
+    const rk=Object.keys(q.reward)[0];
+    tutModal('🎯 ЗАВДАННЯ ПРИЙНЯТО', this.text(q)+'<br><br>Нагорода: <b>+'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+'</b> + 5 душ.<br><i>Виконається сама — стеж за рядком угорі.</i>', [{t:'ДО СПРАВИ ▷'}]);
+  },
+  text(q){ return q.t==='mine'
+    ? 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)'
+    : (q.t==='hunt' ? 'Розвтіли <b>'+q.goal+' фантомів</b>'
+    : 'Промов закляттям Морзе <b>ПЛАЗМУ (PL: ·−−· / ·−··) '+q.goal+' раз</b> — тапай по екрану: короткий тап «·», довгий «−»'); },
+  progress(t,kind,amt){
+    const q=this.a; if(!q || q.t!==t) return;
+    if(t==='mine' && q.kind!==kind) return;
+    q.prog=Math.min(q.goal, q.prog+(amt||1)); this.save(); this.hud();
+    if(q.prog>=q.goal){
+      const rk=Object.keys(q.reward)[0];
+      RES[rk]=(RES[rk]||0)+q.reward[rk]; player.score=(player.score||0)+5;
+      saveRes(); resHUD();
+      showBanner('🎯 ЗАВДАННЯ ВИКОНАНО: +'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+' +5 душ','#4ade80');
+      buzz([0,60,40,120]); logE('квест виконано: '+q.t);
+      this.a=null; this.save(); this.hud();
+    }
+  },
+  hud(){
+    const q=this.a;
+    qstHudEl.style.display=q?'block':'none';
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?RES_ICON[q.kind]:(q.t==='hunt'?'☠':'⚡'))+' '+q.prog+' / '+q.goal;
+  }
+};
+const qstHudEl=document.createElement('div');
+qstHudEl.style.cssText='position:fixed;left:10px;bottom:78px;z-index:22;display:none;padding:6px 10px;'+
+  'background:rgba(2,12,26,.8);border:1px solid #14532d;border-radius:8px;color:#86efac;'+
+  'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
+document.body.appendChild(qstHudEl);
+QST.hud();
+function clearQuestPlate(){ if(QPLATE.mesh){ try{scene.remove(QPLATE.mesh); freeMesh(QPLATE.mesh);}catch(e){} QPLATE.mesh=null; } QPLATE.standT=0; }
+function makeQuestPlate(rx,ry,rng,st){
+  let gx,gy,tries=0;
+  do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while((obstacleAt(gx,gy)||(TRADER.mesh&&TRADER.gx===gx&&TRADER.gy===gy))&&tries<20);
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.12,0.9),
+    new THREE.MeshBasicMaterial({color:0x22d3ee,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+  m.frustumCulled=false; m.position.set(worldX(gx),0.06-0.45,worldZ(gy)); scene.add(m);
+  QPLATE.mesh=m; QPLATE.gx=gx; QPLATE.gy=gy; QPLATE.standT=0; QPLATE.seed=rx*977+ry*31+7;
+  showBanner('🎯 ЗАВДАННЯ: стань на блакитну плиту','#22d3ee');
+}
+
+/* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
+const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
+function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh); freeMesh(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
+/* ── ПРИРОДА: дерева/скелі/руда/кристали з наявних елементних блоків.
+   Видобуток: розрубай — отримай ресурс (resFromObstacle). Форми post/slab/cube +
+   baseY-стек: крона над стовбуром — світ живіший, ніж голі куби.               */
+function plantTree(gx,gy,rng){
+  const trunkTint=(rng()<0.5)?0x7a4a1f:0x8a5a2b;
+  addObstacle(gx,gy,'C',new Set(),trunkTint,1.15,'post');                       // стовбур
+  const leaf=(rng()<0.5)?0x2f9e44:0x3fae54;
+  addObstacle(gx,gy,'fragile',new Set(),leaf,0.75,'cube',0,0.82,TIER_H*1.85);   // крона (baseY-стек)
+}
+function plantRock(gx,gy,rng){
+  const tint=[0x8d99ae,0x6b7280,0x9aa6b6][Math.floor(rng()*3)];
+  addObstacle(gx,gy,'Si',new Set(),tint,0.6+rng()*0.5,rng()<0.4?'slab':'cube');
+}
+function advRoomExtras(rx,ry,st){
+  MM.seen.add(rx+','+ry); miniMapDraw();   // мінімапа: кімнату відвідано
+  clearScars(); VOXREG.clear();            // сліди косметичні; воксель-реєстр — покімнатний
+  clearTrader(); clearQuestPlate();
+  if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
+  const rng=mulberry32(rx*131+ry*17+9);
+  // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
+  if(!roomEdits.has(rx+','+ry)){
+    // ГАРАНТОВАНЕ розміщення: шукаємо вільну клітинку до 14 спроб (раніше колізія = пропуск,
+    // і в тісних кімнатах природа «не з'являлась»). Глибше від дому — БІЛЬШЕ і густіше.
+    const freeCell=()=>{ for(let t=0;t<14;t++){ const gx=1+Math.floor(rng()*11), gy=1+Math.floor(rng()*11);
+      if(!obstacleAt(gx,gy) && !(gx===6&&gy===6)) return [gx,gy]; } return null; };
+    const groves=3+Math.round(st.weight*5);                        // 3..8 груп: глибина = багатство
+    let placed=0;
+    for(let gvi=0; gvi<groves; gvi++){
+      const c0=freeCell(); if(!c0) break;
+      const kind=rng();
+      const blocks=2+Math.floor(rng()*3);                          // 2..4 блоки купкою
+      for(let b=0;b<blocks;b++){
+        let gx=clamp(c0[0]+Math.floor(rng()*3)-1,1,11), gy=clamp(c0[1]+Math.floor(rng()*3)-1,1,11);
+        if(obstacleAt(gx,gy)||(gx===6&&gy===6)){ const c=freeCell(); if(!c) continue; gx=c[0]; gy=c[1]; }
+        if(kind<0.4)      plantTree(gx,gy,rng);                                            // 🪵 гай
+        else if(kind<0.7) plantRock(gx,gy,rng);                                            // 🪨 скелі
+        else if(kind<0.88)addObstacle(gx,gy,'Fe',new Set(),null,0.7+rng()*0.4,'cube');     // ⛓ руда
+        else              addObstacle(gx,gy,'fragile',new Set(),null,0.9+rng()*0.5,'post');// ◆ кристали
+        placed++;
+      }
+    }
+    if(st.weight>0.45){                                            // ГЛИБОКІ ⬜: густіше, димка, завали
+      for(let i=0;i<2+Math.round(st.weight*2);i++){ const c=freeCell(); if(c) addObstacle(c[0],c[1],'rubble',new Set()); }
+      for(let i=0;i<2;i++){ const c=freeCell(); if(c) addObstacle(c[0],c[1],'gas',new Set(),0x67f0c0); }
+    }
+    logE('⬜ природа: '+placed+' блоків (гаї/скелі/руда/кристали) — рубай і збирай');
+    snapshotRoom();   // ЗАМОРОЗИТИ кімнату: видобуте НЕ відростає (персист + Firebase)
+  }
+  const n=1+(st.weight>0.35?1:0)+(st.weight>0.7?1:0);             // глибше — щедріше
+  for(let i=0;i<n;i++){
+    const pool = rng()<0.4?['heal']:['up_dmg','up_charge','up_reach'];
+    let gx=2+Math.floor(rng()*9), gy=2+Math.floor(rng()*9);
+    if(obstacleAt(gx,gy)) continue;
+    spawnPickup(gx,gy,pool[Math.floor(rng()*pool.length)]);
+  }
+  if(rng()<0.28) spawnPickup(2+Math.floor(rng()*9), 2+Math.floor(rng()*9), 'scroll');   // 📜 сувій рецепта
+  if(rng()<0.3+st.weight*0.35) makeQuestPlate(rx,ry,rng,st);       // 🎯 квестова плита
+  if(rng()<0.3+st.weight*0.5){                                    // глибше — частіше торговець
+    let gx,gy,tries=0;
+    do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
+    const geo=new THREE.BoxGeometry(0.9,0.12,0.9);
+    const mat=new THREE.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
+    const m=new THREE.Mesh(geo,mat); m.frustumCulled=false;
+    m.position.set(worldX(gx),0.06-0.45,worldZ(gy)); scene.add(m);
+    TRADER.mesh=m; TRADER.gx=gx; TRADER.gy=gy; TRADER.standT=0; TRADER.cool=0;
+    showBanner('🛒 ТОРГОВЕЦЬ: стань на золоту плиту · 3 душі → покращення','#fbbf24');
+    logE('торговець у ('+rx+','+ry+') клітинка '+gx+','+gy);
+  }
+}
+function tickTrader(dt){
+  if(!TRADER.mesh || !ADV.on || mode!=='fighter' || player.dead) return;
+  if(TRADER.cool>0){ TRADER.cool-=dt; return; }
+  TRADER.mesh.material.opacity=0.4+0.25*Math.sin(performance.now()*0.004);
+  if(player.gx===TRADER.gx && player.gy===TRADER.gy){
+    TRADER.standT+=dt;
+    if(TRADER.standT>=1.2){
+      TRADER.standT=0; TRADER.cool=3;
+      if((player.score||0)>=3){
+        player.score-=3;
+        const pool=['up_dmg','up_charge','up_reach'];
+        const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+        for(const [dx,dy] of dirs){ const nx=TRADER.gx+dx, ny=TRADER.gy+dy;
+          if(nx>=1&&nx<=11&&ny>=1&&ny<=11&&!obstacleAt(nx,ny)){
+            spawnPickup(nx,ny,pool[Math.floor(Math.random()*pool.length)]); break; } }
+        showBanner('🛒 ОБМІН: −3 душі → покращення поруч','#fbbf24'); buzz([0,40,30,80]);
+        logE('торговець: обмін, лишилось душ '+player.score);
+      } else showBanner('🛒 замало душ: треба 3 (маєш '+(player.score||0)+') — душі за фантомів','#94a3b8');
+    }
+  } else TRADER.standT=0;
+}
+
+// ── СТАРТОВИЙ ЕКРАН: вибір режиму (динамічно, щоб не чіпати розмітку) ──
+setTimeout(()=>{
+  try{
+    const box=document.createElement('div');
+    box.innerHTML='<div style="color:#334155;font-size:9px;letter-spacing:.06em;margin-bottom:8px;word-break:break-all">BUILD '+BUILD_TAG+'</div>'+
+      '<label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">ЯК ПОЧАТИ</label>';
+    const mk=(txt,col,fn)=>{ const b=document.createElement('button');
+      b.textContent=txt; b.className='btn';
+      b.style.cssText='width:100%;margin-bottom:8px;border-color:'+col+';color:'+col;
+      b.onclick=fn; box.appendChild(b); return b; };
+    const done=(()=>{ try{return localStorage.getItem('vb3d_tut_done')==='1';}catch(e){return false;} })();
+    const bT=mk('📚 НАВЧАННЯ — я новачок'+(done?' (пройдено ✓)':''),'#22c55e',()=>{
+      TUT.requested=true;
+      $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase();   // приватна кімната
+      bT.style.opacity='1'; bD.style.opacity='0.45';
+      showGateNote('Обрано навчання. Тепер натисни «ЗАПРОСИТИ СЕНСОРИ ТА УВІЙТИ» ↓');
+    });
+    const bD=mk('⚔ ГРАТИ ОДРАЗУ — я вмію','#60a5fa',()=>{
+      TUT.requested=false; bD.style.opacity='1'; bT.style.opacity='0.45';
+      if(/^TUT/.test($('roomInput').value)) $('roomInput').value='HALL';
+      showGateNote('Звичайний старт. Тисни «ЗАПРОСИТИ СЕНСОРИ ТА УВІЙТИ» ↓');
+    });
+    if(!done){ bD.style.opacity='0.45'; TUT.requested=true;                 // новим — навчання за замовчуванням
+      $('roomInput').value='TUT'+Math.random().toString(36).slice(2,6).toUpperCase(); }
+    else bT.style.opacity='0.45';
+    function showGateNote(t){ let n=document.getElementById('tutGateNote');
+      if(!n){ n=document.createElement('div'); n.id='tutGateNote';
+        n.style.cssText='color:#93c5fd;font-size:10px;letter-spacing:.08em;margin-bottom:8px'; box.appendChild(n); }
+      n.textContent=t; }
+    const anchorEl=$('errMsg')||$('btnReq');
+    anchorEl.parentNode.insertBefore(box, anchorEl);
+    logE('ворота: блок «ЯК ПОЧАТИ» додано');
+    // кнопка повтору навчання в меню паузи
+    const mb=document.createElement('button');
+    mb.id='mTut'; mb.textContent='📚 ТУТОРІАЛ (навчання)';
+    $('mNew').parentNode.insertBefore(mb, $('mNew'));
+    mb.onclick=()=>{ closeMenu(); TUT.begin(); };
+  }catch(e){ console.warn('gate mode buttons', e); }
+},300);
+
+/* ════════════════════ РЕСУРСИ + КУЗНЯ (2026-07-13) ════════════════════ */
+const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0},
+  JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0}; } })();
+function saveRes(){ try{ localStorage.setItem('vb3d_res', JSON.stringify(RES)); }catch(e){} }
+const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆',glass:'◇',steel:'▦'};
+const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал',glass:'скло',steel:'сталь'};
+const resHudEl=document.createElement('div');
+resHudEl.style.cssText='position:fixed;right:10px;bottom:46px;z-index:22;display:none;padding:6px 10px;'+
+  'background:rgba(2,12,26,.75);border:1px solid #1e3a5f;border-radius:8px;color:#cbd5e1;'+
+  'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
+document.body.appendChild(resHudEl);
+function resHUD(){
+  const any=RES.wood||RES.stone||RES.iron||RES.crystal;
+  resHudEl.style.display=(any||ADV.on)?'block':'none';
+  resHudEl.textContent='🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+((RES.glass||RES.steel)?(' ◇'+RES.glass+' ▦'+RES.steel):'');
+}
+resHUD();
+// материал розбитого блока → ресурс
+const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone', glass:'glass', steel:'steel'};
+function resFromObstacle(o){
+  if(o.noRes) return;                          // сотворене закляттям — не фармиться
+  const kind=RES_OF[o.mtype]; if(!kind) return;
+  const amt=1+(Math.random()<0.25?1:0);
+  RES[kind]+=amt; saveRes(); resHUD();
+  showBanner('⛏ +'+amt+' '+RES_ICON[kind]+' '+RES_NAME[kind]+'  (разом '+RES[kind]+')','#a7f3d0');
+}
+
+/* ── КУЗНЯ: рецепти. Гравець починає лише з МЕЧЕМ; решту — крафтити.
+   Сокира Титана — тільки дроп з боса. Ціп НЕ крафтиться назавжди:
+   активація на смарагдовій станції за 2⛓+2◆, діє FLAIL_DUR секунд. ── */
+const CRAFT={ unlocked:(()=>{ try{ return Object.assign({sword:true},
+    JSON.parse(localStorage.getItem('vb3d_unlocked')||'{}')); }catch(e){ return {sword:true}; } })(),
+  recipes:{
+    nunchaku:{wood:4},
+    spear:   {wood:3, iron:1},
+    axe:     {wood:2, stone:2},
+    whip:    {wood:2, crystal:2},
+  }};   // бластер — ТІЛЬКИ ритуалом (сталь·плазма·скло у ряд)
+function saveCraft(){ try{ localStorage.setItem('vb3d_unlocked', JSON.stringify(CRAFT.unlocked)); }catch(e){} }
+const CRAFT_CELL=[4,6];
+function recipeStr(r){ return Object.keys(r).map(k=>r[k]+RES_ICON[k]).join(' + '); }
+function canAfford(r){ return Object.keys(r).every(k=>RES[k]>=r[k]); }
+let craftModalCd=0;
+function openCraftModal(){
+  const rows=[];
+  for(const w in CRAFT.recipes){
+    const W=WEAPONS[w], r=CRAFT.recipes[w];
+    if(CRAFT.unlocked[w]){ rows.push({t:'✓ '+W.label+' — вже скрафчено',c:'#334155'}); continue; }
+    if(w==='axe' && !CRAFT.unlocked.bossTech){
+      rows.push({t:'🔒 '+W.label+' — здолай БОСА (край світу) і опануєш техніку',c:'#475569'}); continue; }
+    // (бластер не в recipes — див. ритуальний рядок нижче)
+    const ok=canAfford(r);
+    rows.push({t:(ok?'🔥 ':'🔒 ')+W.label+' — '+recipeStr(r), c:ok?'#22c55e':'#475569', f:ok?()=>{
+      for(const k in r) RES[k]-=r[k];
+      CRAFT.unlocked[w]=true; saveRes(); saveCraft(); resHUD(); buildRacks();
+      showBanner('🔥 СКРАФЧЕНО: '+W.label+' — стійка з`явилась удома','#22c55e');
+      buzz([0,50,40,90]); blip(600,0.15,'sine',0.18);
+      logE('КУЗНЯ: '+W.label);
+    }:null});
+  }
+  rows.push({t:CRAFT.unlocked.blaster?'✓ БЛАСТЕР — здобуто ритуалом':'🜍 БЛАСТЕР — лише РИТУАЛ: ▦СТАЛЬ·🜂ПЛАЗМА·◇СКЛО у ряд на підлозі',c:CRAFT.unlocked.blaster?'#334155':'#e879f9'});
+  rows.push({t:'🌀 ЦІП — не крафтиться: активація на його стійці, 2⛓+2◆ на '+FLAIL_DUR+'с',c:'#a78bfa'});
+  rows.push({t:'📜 РЕЦЕПТИ-СУВОЇ ('+CODEX.list().length+')',c:'#f5deb3',f:()=>setTimeout(openCodexModal,50)});
+  rows.push({t:'ЗАКРИТИ',c:'#64748b'});
+  tutModal('🔥 КУЗНЯ','Маєш: 🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+
+    '<br>Ресурси видобуваються у ⬜ білих кімнатах: рубай <b>дерева</b> (🪵), <b>скелі</b> (🪨), '+
+    '<b>руду</b> (⛓), <b>кристали</b> (◆).', rows);
+}
+
+/* ── ЦІП: тимчасова зброя (занадто потужна для постійної) ── */
+const FLAIL_DUR=90;
+const FLAIL={t:0};
+
+// пульс кузні + таймер ціпа (їдемо на власному таймері — кадр не чіпаємо)
+let craftStandT=0, craftArm=true;   // arm: щоб закрив меню → мусиш ЗІЙТИ з плити перед повтором
+setInterval(()=>{
+  if(craftModalCd>0) craftModalCd-=0.16;
+  // кузня: стоїмо на плиті вдома
+  if(ADV.on && advHome() && mode==='fighter' && !player.dead
+     && player.gx===CRAFT_CELL[0] && player.gy===CRAFT_CELL[1]){
+    if(craftArm){
+      craftStandT+=0.16;
+      if(craftStandT>=1.2 && tutModalEl.style.display==='none'){
+        craftStandT=0; craftArm=false; openCraftModal(); buzz([0,40]);
+      }
+    }
+  } else { craftStandT=0; craftArm=true; }
+  // ціп: зворотний відлік
+  if(playerWpn==='flail'){
+    if(FLAIL.t<=0) FLAIL.t=FLAIL_DUR;             // взяв з дропу — теж тимчасовий
+    FLAIL.t-=0.16;
+    if(FLAIL.t<=10 && FLAIL.t>9.84) showBanner('🌀 ціп розряджається: 10с','#a78bfa');
+    if(FLAIL.t<=0){ FLAIL.t=0; equipWpn('sword'); showBanner('🌀 ЦІП РОЗРЯДИВСЯ — знову меч','#94a3b8'); }
+  } else FLAIL.t=0;
+  resHUD(); miniMapDraw();
+},160);
+/* ════ ПУСТОТА: статика першого контакту + довге утримання (Заповіт Машини) ════ */
+const VOID={noise:null, holdT0:0, holdX:0, holdY:0};
+function voidStatic(on){ try{
+  if(!AC) return;
+  if(on && !VOID.noise){
+    const len=Math.floor(AC.sampleRate*2), buf=AC.createBuffer(1,len,AC.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*0.6;
+    const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
+    const g=AC.createGain(); g.gain.value=0.045;
+    src.connect(g); g.connect(AC.destination); src.start();
+    VOID.noise={src,g};
+  }
+  if(!on && VOID.noise){
+    try{ VOID.noise.g.gain.linearRampToValueAtTime(0, AC.currentTime+0.5);
+      VOID.noise.src.stop(AC.currentTime+0.6); }catch(e){}
+    VOID.noise=null;
+  }
+}catch(e){} }
+window.addEventListener('touchstart',e=>{ try{
+  if(!(window.TUT&&TUT.active&&TUT.prologue===3)) return;
+  const t=e.touches[0]; VOID.holdT0=performance.now(); VOID.holdX=t.clientX; VOID.holdY=t.clientY;
+}catch(e){} },{passive:true});
+window.addEventListener('touchend',e=>{ try{
+  if(!(window.TUT&&TUT.active&&TUT.prologue===3) || !VOID.holdT0) return;
+  const t=e.changedTouches&&e.changedTouches[0];
+  const dur=performance.now()-VOID.holdT0; VOID.holdT0=0;
+  if(t && Math.hypot(t.clientX-VOID.holdX, t.clientY-VOID.holdY)>26) return;   // свайп — ігноруємо
+  if(dur>=1200) TUT.prologueTriumph();                                         // ДОВГЕ УТРИМАННЯ ✓
+  else { blip(180,0.05,'square',0.08); }                                       // короткий тап — сухий щиглик статики
+}catch(e){} },{passive:true});
+
+/* ════ ГОЛОСОВИЙ ЧАТ «ПОРУЧ» (07-14, ЕКСПЕРИМЕНТ) ═══════════════════════════
+   WebRTC-mesh між гравцями ОДНІЄЇ кімнати (у пригоді мета-кімната спільна за
+   консенсусом — тож усі, хто поруч, і є співрозмовники). Сигналінг — гілка
+   blade/{room}/rtc/{to}/{from}/{ts} у тій самій Firebase. Гучність чужого голосу
+   спадає з відстанню по сітці: поруч — голосно, >16 клітин — тиша.            */
+const VC={ on:false, stream:null, pcs:{}, els:{}, seen:{}, unsub:null,
+  vol:(()=>{ try{ return clamp(+(localStorage.getItem('vb3d_vcvol')??1),0,1); }catch(e){ return 1; } })(),
+  path(to){ return 'blade/'+NET.room+'/rtc/'+to+'/'+NET.myId; },
+  send(to,msg){ try{ msg.t=Date.now(); set(ref(NET.db, this.path(to)+'/'+msg.t+'_'+Math.floor(Math.random()*999)), JSON.stringify(msg)); }catch(e){} },
+  async enable(){
+    if(this.on) return;
+    try{
+      this.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    }catch(e){ showBanner('🎙 мікрофон недоступний — дозвіл відхилено','#ef4444'); return; }
+    this.on=true;
+    try{
+      const inbox=ref(NET.db,'blade/'+NET.room+'/rtc/'+NET.myId);
+      this.unsub=onValue(inbox, snap=>{ const v=snap.val(); if(!v) return;
+        for(const from in v) for(const k in v[from]){
+          if(this.seen[from+k]) continue; this.seen[from+k]=1;
+          let m; try{ m=JSON.parse(v[from][k]); }catch(e){ continue; }
+          this.onMsg(from,m);
+        } });
+      onDisconnect(inbox).remove();
+    }catch(e){}
+    showBanner('🎙 ГОЛОС ПОРУЧ УВІМКНЕНО — чути гравців поблизу','#4ade80');
+    logE('VC: увімкнено');
+  },
+  disable(){
+    if(!this.on) return; this.on=false;
+    try{ this.stream&&this.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    this.stream=null;
+    for(const id in this.pcs){ try{ this.pcs[id].close(); }catch(e){} }
+    for(const id in this.els){ try{ this.els[id].remove(); }catch(e){} }
+    this.pcs={}; this.els={}; this.seen={};
+    try{ this.unsub&&this.unsub(); }catch(e){}
+    try{ remove(ref(NET.db,'blade/'+NET.room+'/rtc/'+NET.myId)); }catch(e){}
+    showBanner('🎙 голос вимкнено','#94a3b8'); logE('VC: вимкнено');
+  },
+  pc(id, initiator){
+    if(this.pcs[id]) return this.pcs[id];
+    const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
+    this.pcs[id]=pc;
+    try{ this.stream.getTracks().forEach(t=>pc.addTrack(t,this.stream)); }catch(e){}
+    pc.onicecandidate=e=>{ if(e.candidate) this.send(id,{y:'c',c:e.candidate.toJSON()}); };
+    pc.ontrack=e=>{
+      let el=this.els[id];
+      if(!el){ el=document.createElement('audio'); el.autoplay=true; el.playsInline=true;
+        el.style.display='none'; document.body.appendChild(el); this.els[id]=el; }
+      el.srcObject=e.streams[0]; el.play&&el.play().catch(()=>{});
+    };
+    pc.onconnectionstatechange=()=>{ if(/failed|closed/.test(pc.connectionState)){ this.drop(id); } };
+    if(initiator){
+      pc.onnegotiationneeded=async()=>{ try{
+        const o=await pc.createOffer(); await pc.setLocalDescription(o);
+        this.send(id,{y:'o',s:pc.localDescription.sdp});
+      }catch(e){} };
+    }
+    return pc;
+  },
+  drop(id){ try{ this.pcs[id]&&this.pcs[id].close(); }catch(e){} delete this.pcs[id];
+    if(this.els[id]){ try{ this.els[id].remove(); }catch(e){} delete this.els[id]; } },
+  async onMsg(from,m){
+    if(!this.on) return;
+    try{
+      if(m.y==='o'){ const pc=this.pc(from,false);
+        await pc.setRemoteDescription({type:'offer',sdp:m.s});
+        const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+        this.send(from,{y:'a',s:pc.localDescription.sdp});
+      }else if(m.y==='a'){ const pc=this.pcs[from]; if(pc) await pc.setRemoteDescription({type:'answer',sdp:m.s});
+      }else if(m.y==='c'){ const pc=this.pcs[from]; if(pc) await pc.addIceCandidate(m.c).catch(()=>{}); }
+    }catch(e){ console.warn('VC msg',e); }
+  }
+};
+setInterval(()=>{ try{
+  if(!VC.on || !NET.online) return;
+  for(const id in NET.remotes){
+    const r=NET.remotes[id]; if(!r) continue;
+    if(!VC.pcs[id] && NET.myId<id) VC.pc(id,true);        // ініціатор — менший id (без дзеркальних офферів)
+    const el=VC.els[id];
+    if(el){
+      if(!sameAdvRoom(r)){ el.volume=0; }                  // він у іншій кімнаті мапи — тиша
+      else { const d=Math.abs((r.gx??6)-player.gx)+Math.abs((r.gy??6)-player.gy);
+        el.volume=clamp(1-d/16,0,1)*(VC.vol??1); }         // ГОЛОС СПАДАЄ З ВІДСТАННЮ × повзунок
+    }
+  }
+  for(const id in VC.pcs) if(!NET.remotes[id]) VC.drop(id);   // пішов з кімнати — тиша
+}catch(e){} }, 1000);
+// кнопка в меню паузи
+setTimeout(()=>{ try{
+  const b=document.createElement('button'); b.id='mVoice';
+  const lbl=()=> b.textContent='🎙 ГОЛОС ПОРУЧ: '+(VC.on?'УВІМК':'ВИМК');
+  lbl();
+  $('mNew').parentNode.insertBefore(b, $('mNew'));
+  b.onclick=()=>{ if(VC.on) VC.disable(); else VC.enable(); setTimeout(lbl,400); };
+}catch(e){} }, 600);
+
+/* ════ БЛОК-кнопка творця — завжди на екрані (не свайпається, не блякне) ════ */
+setTimeout(()=>{ try{
+  const cp=$('cPlace'); if(!cp) return;
+  const wrap=document.createElement('div'); wrap.id='cPlaceWrap';
+  wrap.style.cssText='position:fixed;right:12px;bottom:80px;z-index:22;display:none';
+  document.body.appendChild(wrap); wrap.appendChild(cp);
+  cp.style.cssText+=';padding:18px 22px;font-size:15px;box-shadow:0 2px 16px rgba(0,0,0,.5);opacity:1';
+  setInterval(()=>{ try{
+    wrap.style.display = ($('creatorUI').style.display==='flex'||$('creatorUI').style.display==='block') ? 'block' : ($('creatorUI').style.display===''?'none':'none');
+    if(mode==='creator' && started) wrap.style.display='block'; else wrap.style.display='none';
+  }catch(e){} }, 400);
+}catch(e){} }, 500);
+/* ════ МОРЗЕ-ЗАКЛЯТТЯ (07-14): магія = абетка Морзе + хімія ══════════════════
+   Тапи по екрану (не свайпи): короткий «·», довгий «−». Пауза 0.9с — літера,
+   1.9с — слово летить закляттям. Слова — символи Менделєєва (H, C, O, NA, SI,
+   CL, FE) і стани: P=плазма, W=вода, G=газ. Ціль — клітинка погляду (до 4 кл.):
+   істота там — закляття б'є по ній (плазма палить); вільно — блок матеріалізу-
+   ється (1 душа; сотворене не фармиться). У МАЯКУ «P» — плазмовий клинок.     */
+const MORSE_AB={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H','..':'I',
+  '.---':'J','-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P','--.-':'Q','.-.':'R','...':'S',
+  '-':'T','..-':'U','...-':'V','.--':'W','-..-':'X','-.--':'Y','--..':'Z'};
+const SPELL_WORDS={ H:'H', C:'C', O:'O', NA:'Na', SI:'Si', CL:'Cl', FE:'Fe', PL:'plasma', AQ:'liquid', G:'gas' };
+// Символи Менделєєва — ЗАРЕЗЕРВОВАНІ за елементами (07-15): P — це ФОСФОР, не плазма.
+// Ще не відкриті у цьому світі елементи чемно відмовляють, а не мовчать.
+const RESERVED_ELEM={ P:'ФОСФОР', S:'СІРКА', N:'АЗОТ', K:'КАЛІЙ', B:'БОР', F:'ФТОР', I:'ЙОД', W:'ВОЛЬФРАМ',
+  U:'УРАН', V:'ВАНАДІЙ', AL:'АЛЮМІНІЙ', AU:'ЗОЛОТО', AG:'СРІБЛО', CU:'МІДЬ', ZN:'ЦИНК', SN:'ОЛОВО',
+  PB:'СВИНЕЦЬ', MG:'МАГНІЙ', CA:'КАЛЬЦІЙ', HE:'ГЕЛІЙ', NE:'НЕОН', AR:'АРГОН', LI:'ЛІТІЙ', TI:'ТИТАН' };
+const SPELL_UA={ H:'ВОДЕНЬ', C:'ВУГЛЕЦЬ', O:'КИСЕНЬ', Na:'НАТРІЙ', Si:'КРЕМНІЙ', Cl:'ХЛОР', Fe:'ЗАЛІЗО',
+  plasma:'ПЛАЗМА', liquid:'ВОДА', gas:'ГАЗ' };
+const ENCH={t:0};
+window.ENCH=ENCH;
+const MI={sym:'', word:'', t0:0, lastUp:0, active:false};
+const morseHud=document.createElement('div');
+morseHud.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:23;display:none;'+
+  'padding:8px 16px;background:rgba(2,8,20,.9);border:1px solid #7c3aed;border-radius:10px;color:#c4b5fd;'+
+  'font:inherit;font-size:16px;letter-spacing:.2em;pointer-events:none';
+document.body.appendChild(morseHud);
+function morseShow(){ const txt=(MI.word?MI.word+' ':'')+MI.sym;
+  if(txt){ morseHud.textContent='⚡ '+txt; morseHud.style.display='block'; } else morseHud.style.display='none'; }
+function morseUiBlocked(){
+  return !started || mode!=='fighter' || paused || player.dead
+    || tutModalEl.style.display!=='none' || (window.TUT&&TUT.active&&TUT.stage>=0&&TUT.stage<=2);
+}
+window.addEventListener('touchstart',e=>{
+  if(morseUiBlocked()) return;
+  if(e.target && e.target.closest && e.target.closest('button,#menu,#creatorUI,#gate,a,input')) return;
+  MI.t0=performance.now(); MI.sx=e.touches[0].clientX; MI.sy=e.touches[0].clientY; MI.active=true;
+},{passive:true});
+window.addEventListener('touchend',e=>{
+  if(!MI.active) return; MI.active=false;
+  if(morseUiBlocked()) return;
+  const t=e.changedTouches&&e.changedTouches[0];
+  if(t && MI.sx!=null && Math.hypot(t.clientX-MI.sx, t.clientY-MI.sy)>24) return;   // свайп — це крок, не символ
+  const dur=performance.now()-MI.t0;
+  if(dur>900) return;                                                              // довгий притиск — не символ
+  MI.sym += dur<280 ? '.' : '-';
+  MI.lastUp=performance.now();
+  blip(dur<280?900:520, dur<280?0.06:0.16, 'sine', 0.12);
+  morseShow();
+},{passive:true});
+setInterval(()=>{ try{
+  if(!MI.sym && !MI.word) return;
+  const idle=performance.now()-MI.lastUp;
+  if(MI.sym && idle>900){                             // пауза — літера
+    const L=MORSE_AB[MI.sym]||'?';
+    MI.word+=L; MI.sym=''; morseShow();
+  }
+  if(!MI.sym && MI.word && idle>1900){                // довша пауза — КАСТ
+    const w=MI.word; MI.word=''; morseShow();
+    if(w==='E'||w==='T'){ logE('морзе: самотнє '+w+' — випадковий тап, тихо ігнорую'); return; }
+    castSpell(w);
+  }
+}catch(e){} },120);
+function castSpell(word){
+  const mt=SPELL_WORDS[word];
+  if(!mt){
+    if(RESERVED_ELEM[word]){ showBanner('⚗ '+word+' ('+RESERVED_ELEM[word]+') — елемент ще не відкритий у цьому світі','#94a3b8');
+      logE('морзе: зарезервований елемент '+word); return; }
+    showBanner('⚡ невідоме слово: «'+word+'» — абетка у 📜 КОДЕКСІ','#94a3b8'); logE('морзе: невідоме '+word); return; }
+  // ЕНЧАНТ: у МАЯКУ плазма лягає на власний клинок
+  if(player.beaconLatch && mt==='plasma'){   // енчант: слово PL у МАЯКУ
+    ENCH.t=25;
+    showBanner('🔥 ПЛАЗМОВИЙ КЛИНОК: +30% шкоди на 25с','#f97316');
+    doFlash('#f97316'); buzz([0,60,40,80]); logE('закляття: плазмовий клинок');
+    try{ QST.progress('cast','plasma',1); }catch(e){}
+    return;
+  }
+  const v=dirXZ(sensor.yawFused||0);
+  for(let i=1;i<=4;i++){
+    const cx=Math.round(player.gx+v[0]*i), cy=Math.round(player.gy+v[1]*i);
+    if(cx<1||cx>11||cy<1||cy>11) break;
+    const ph=phantomAtCell(cx,cy);
+    if(ph){                                            // закляття на істоту
+      if((player.score||0)<1){ showBanner('⚡ треба 1 душа','#94a3b8'); return; }
+      player.score-=1;
+      if(mt==='plasma'){
+        damageTier(ph,1,30); ph.hitGlow=0.4;
+        try{ const tp={x:worldX(cx),y:TIER_H,z:worldZ(cy)}; for(let k=0;k<4;k++) spawnChunk(tp,0xf97316); }catch(e){}
+        showBanner('🔥 ПЛАЗМА ПАЛИТЬ '+(ph.kind==='boss'?'БОСА':'фантома')+' −30','#f97316');
+        logE('закляття: плазма по істоті');
+      }else{
+        damageTier(ph,1,8);
+        showBanner('⚡ '+SPELL_UA[mt]+' поглинуто істотою −8','#a78bfa');
+      }
+      doFlash('#a78bfa'); buzz([0,50]);
+      try{ QST.progress('cast',mt,1); }catch(e){}
+      return;
+    }
+    if(obstacleAt(cx,cy)){ showBanner('⚡ погляд упирається у блок — закляття згасло','#94a3b8'); return; }
+    // вільна клітинка: МАТЕРІАЛІЗАЦІЯ
+    if((player.score||0)<1){ showBanner('⚡ треба 1 душа для матеріалізації','#94a3b8'); return; }
+    player.score-=1;
+    addObstacle(cx,cy,mt,new Set());
+    const o=obstacles[obstacles.length-1];
+    if(o && o.gx===cx && o.gy===cy) o.noRes=true;      // сотворене — не фармиться
+    snapshotRoom();
+    showBanner('⚡ '+SPELL_UA[mt]+' → ('+cx+','+cy+')  (−1 душа)','#c4b5fd');
+    doFlash('#7c3aed'); buzz([0,40,30,60]); blip(760,0.2,'sine',0.15);
+    logE('закляття: '+SPELL_UA[mt]+' у ('+cx+','+cy+')');
+    try{ QST.progress('cast',mt,1); }catch(e){}
+    return;
+  }
+  showBanner('⚡ нема куди — підійди ближче','#94a3b8');
+}
+// відлік енчанту — у спільному ритмі
+setInterval(()=>{ try{
+  if(ENCH.t>0){ ENCH.t-=0.16;
+    if(ENCH.t<=0){ ENCH.t=0; showBanner('🔥 плазма на клинку згасла','#94a3b8'); } }
+}catch(e){} },160);
+// довідник у меню паузи
+setTimeout(()=>{ try{
+  const b=document.createElement('button'); b.id='mMorse'; b.textContent='⚡ МОРЗЕ-ЗАКЛЯТТЯ (довідник)';
+  $('mNew').parentNode.insertBefore(b, $('mNew'));
+  b.onclick=()=>{ closeMenu(); tutModal(SCROLLS.morse.t, SCROLLS.morse.d, [{t:'ЗРОЗУМІЛО ▷'}]); };
+}catch(e){} }, 700);
+/* ════ ГУЧНОСТІ (07-15): 🎵 музика · ✨ ефекти · 🎙 голос гравців ════ */
+setTimeout(()=>{ try{
+  const box=document.createElement('div');
+  box.style.cssText='width:100%;margin:6px 0 10px;padding:10px 12px;background:rgba(2,10,22,.6);'+
+    'border:1px solid #1e3a5f;border-radius:10px';
+  const mkRow=(icon,label,val,onIn)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:10px;margin:6px 0';
+    const l=document.createElement('span');
+    l.textContent=icon+' '+label;
+    l.style.cssText='flex:0 0 108px;color:#93c5fd;font-size:11px;letter-spacing:.08em;text-align:left';
+    const r=document.createElement('input');
+    r.type='range'; r.min='0'; r.max='100'; r.value=String(Math.round(val*100));
+    r.style.cssText='flex:1;accent-color:#3b82f6;height:26px';
+    r.oninput=()=>onIn(+r.value/100);
+    row.appendChild(l); row.appendChild(r); box.appendChild(row);
+    return r;
+  };
+  mkRow('🎵','МУЗИКА', AUDIO.vol.music??0.65, v=>AUDIO.setVol('music',v));
+  mkRow('✨','ЕФЕКТИ', (()=>{ try{ return clamp(+(localStorage.getItem('vb3d_fxvol')??1),0,1); }catch(e){ return 1; } })(), v=>{
+    AUDIO.setVol('sfx',v);                                        // файлові sfx
+    if(fxGain) fxGain.gain.setTargetAtTime(v, AC.currentTime, 0.05);   // синтез-щиглики
+    try{ localStorage.setItem('vb3d_fxvol', String(v)); }catch(e){}
+  });
+  mkRow('🎙','ГОЛОС ГРАВЦІВ', VC.vol??1, v=>{
+    VC.vol=v; try{ localStorage.setItem('vb3d_vcvol', String(v)); }catch(e){}
+    for(const id in VC.els){ try{ VC.els[id].volume=Math.min(VC.els[id].volume, v); }catch(e){} }
+  });
+  $('mNew').parentNode.insertBefore(box, $('mNew'));
+}catch(e){ console.warn('vol sliders', e); } }, 800);
+
+/* ════ ЕКСПОРТНА ПОВЕРХНЯ ЯДРА (07-16): живі зв'язки для майбутніх модулів ════
+   ES-модулі експортують let/const ЖИВИМИ: модуль-споживач бачить актуальне
+   значення. Правило: читати можна вільно; ПРИСВОЮВАТИ імпортоване — не можна
+   (для цього тут з'являться set-функції в міру виносу модулів). */
+export { player, sensor, scene, obstacles, microBlocks, phantoms, ADV, NET, AUDIO, DIFF, mode, botDiff, equalizerOn, playerWpn, phantomCount, clamp, lerp, worldX, worldZ, dirXZ, mulberry32, showBanner, logE, doFlash, blip, buzz, addObstacle, obstacleAt, addMicro, spawnPickup, spawnPhantoms, damageTier, phantomAtCell, applyAdvRoom, advHome, chessWhite, snapshotRoom, killBlock, freeSpawnCell, closeMenu, CELL, TIER_H, WEAPONS, RES, RES_OF, RES_ICON, RES_NAME, CRAFT, QST, tutModal, tutHint };
