@@ -2542,7 +2542,9 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 // ── ПОСТОЯНСТВО КОМНАТ: правки/постройки сохраняются по координате комнаты и не исчезают при переходах ──
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
-function snapshotRoom(){ NET.roomDirty=true; roomEdits.set(curRoomKey(), {
+function snapshotRoom(){
+  if(ADV.on && ADV.rx===6 && ADV.ry===6) return;   // (07-16e) дім не знімається і не шириться
+  NET.roomDirty=true; roomEdits.set(curRoomKey(), {
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
 // ── ОБЩИЙ МИР: снимки комнат синхронизируются через Firebase (blade/{room}/roomEdits/{key}) ──
@@ -2554,6 +2556,7 @@ function rebuildFromSnapshot(v){
   for(const m of Object.values(v.micro||{})) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
 }
 function applyRemoteRoomIfNewer(key){
+  if(key==='6,6') return false;                    // (07-16e) дім священний — чужі забудови повз
   const v=NET.roomRemote && NET.roomRemote[key];
   if(!v || v.by===NET.myId) return false;
   if((NET._reApplied[key]||0) >= (v.t||0)) return false;
@@ -2589,7 +2592,10 @@ function applyAdvRoom(rx,ry){
   // ПЕРСИСТ (фікс 07-13): ЗНІМОК ГОЛОВНІШИЙ ЗА СІД. Раніше сід-генерація бігла першою
   // щоразу, а знімок лише накривав її зверху — кімнати «регенерували». Тепер:
   // є знімок → відновлюємо ТІЛЬКИ його; нема → генеруємо і одразу знімаємо (advRoomExtras).
-  if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
+  if(home){                                   // (07-16e) ДІМ СВЯЩЕННИЙ: чужі/старі забудови
+    roomEdits.delete(rx+','+ry);              // не можуть замурувати спавн — завжди чисто
+    spawnObstaclesSeededSafe(rx,ry,home);
+  } else if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
   applyRemoteRoomIfNewer(rx+','+ry);         // общий мир: правки других игроков поверх   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = composeRoomEnemies(rx,ry);
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
@@ -3644,7 +3650,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16d · ОДИН-ФАЙЛ-відновлено · ПРИГОДА-ПЕР-ГРАВЦЕВА(своя-позиція·смерть=дім) · тротл-знімків · бейдж-на-воротах';
+const BUILD_TAG='2026-07-16e · ДІМ-СВЯЩЕННИЙ(завжди-чистий:знімки-дому-не-відновлюються-не-публікуються) · фікс-замурованого-спавну';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
