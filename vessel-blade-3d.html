@@ -272,17 +272,28 @@ function logE(msg){
   LOG.push(`[${t}] ${msg}`);
 
 // (07-16f) ЧОРНА СКРИНЬКА: перші 3 помилки летять у LOG — діагностика застигань без консолі
-let _errN=0;
+let _errN=0, _errPanelEl=null;
+function errPanel(txt){
+  if(!_errPanelEl){ _errPanelEl=document.createElement('div');
+    _errPanelEl.style.cssText='position:fixed;top:56px;left:4px;right:4px;z-index:99;padding:8px 10px;'+
+      'background:rgba(60,4,4,.93);border:1px solid #ef4444;border-radius:8px;color:#fecaca;'+
+      'font:11px monospace;letter-spacing:.02em;pointer-events:none;white-space:pre-wrap;word-break:break-all';
+    document.body.appendChild(_errPanelEl); }
+  _errPanelEl.textContent += (_errPanelEl.textContent?'\n':'') + txt;
+}
 window.addEventListener('error', ev=>{ if(_errN>=3) return; _errN++;
-  try{ const msg='💥 '+(ev.message||'?')+' @ :'+(ev.lineno||'?');
-    logE('💥 ПОМИЛКА: '+(ev.message||'?')+' @ '+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||'?'));
-    if(_errN<=2 && typeof showBanner==='function') showBanner('['+_errN+'] '+msg.slice(0,105),'#ef4444');
+  try{ const msg='['+_errN+'] '+(ev.message||'?')+' @ :'+(ev.lineno||'?');
+    logE('💥 ПОМИЛКА '+msg);
+    errPanel(msg);
   }catch(e){} });
 window.addEventListener('unhandledrejection', ev=>{ if(_errN>=3) return; _errN++;
   try{ logE('💥 PROMISE: '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,180)); }catch(e){} });
 setTimeout(()=>{ try{ if(!window.__tailAlive){
-  logE('💥 ХВІСТ МОДУЛЯ НЕ ОЖИВ: виконання обірвалося до const CRAFT — дивись першу 💥 вище');
-  if(typeof showBanner==='function') showBanner('💥 хвіст модуля не ожив — глянь LOG','#f59e0b');
+  const cks=['TUT_UI','TRADER','VOX','MM','RES','FLAIL','MORSE'];
+  const reached=cks.filter(k=>window['__ck_'+k]).join(',')||'ЖОДНОЇ';
+  logE('💥 ХВІСТ НЕ ОЖИВ. Досягнуті точки: '+reached+' — обрив ОДРАЗУ ПІСЛЯ останньої');
+  if(typeof showBanner==='function') showBanner('💥 обрив після: '+reached,'#f59e0b');
+  try{ errPanel('ОБРИВ ПІСЛЯ: '+reached); }catch(e){}
 } }catch(e){} }, 3000);
   if(LOG.length>LOGMAX) LOG.shift();
   const p=$('logbody');
@@ -3667,7 +3678,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16h · ІМУНІТЕТ(кадр-невмирущий·TDZ-дзеркала·сторож-хвоста·банер-2-помилок) · мітла-дому';
+const BUILD_TAG='2026-07-16i · КОНТРОЛЬНІ-ТОЧКИ(сторож-називає-місце-обриву) · постійна-панель-помилок · ІМУНІТЕТ';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4462,6 +4473,7 @@ tutModalEl.innerHTML='<div id="tutCard" style="max-width:420px;width:100%;backgr
   'border-radius:12px;padding:20px 18px;color:#cbd5e1;font:inherit;font-size:13px;line-height:1.55;'+
   'letter-spacing:.04em;max-height:82vh;overflow-y:auto"></div>';
 document.body.appendChild(tutModalEl);
+window.__ck_TUT_UI=1;   // контрольна точка виконання
 function tutModal(title,html,buttons){         // buttons: [{t:текст, c:колір, f:колбек}]
   const card=tutModalEl.querySelector('#tutCard');
   let h='<div style="color:#60a5fa;font-size:16px;letter-spacing:.1em;margin-bottom:12px">'+title+'</div>'+
@@ -4732,6 +4744,7 @@ setInterval(()=>{
    зброї — з урахуванням висоти (ярус/нахил) і сторони, з якої б'єш. Шматки
    відлітають і падають (не іскри). Видобув усе = пропалив кожен воксель. */
 const VOXREG=new Map();   // 'gx,gy,mtype' → {total,left,noRes}
+window.__ck_VOX=1;   // контрольна точка виконання
 let _snapT=0, _snapPend=false;
 function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не частіше 1.2с — Firebase дихає
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
@@ -4977,6 +4990,7 @@ function makeQuestPlate(rx,ry,rng,st){
 
 /* ── МІНІМАПА мета-світу 13×13: де я у глобальному світі ── */
 const MM={seen:new Set(['6,6'])};
+window.__ck_MM=1;   // контрольна точка виконання
 const mmC=document.createElement('canvas'); mmC.width=93; mmC.height=93;
 mmC.style.cssText='position:fixed;top:64px;right:10px;z-index:22;display:none;width:93px;height:93px;'+
   'background:#020a14;border:1px solid #1e3a5f;border-radius:6px;pointer-events:none;opacity:.92';
@@ -4998,6 +5012,7 @@ function miniMapDraw(){
 
 /* ── ⬜ БІЛІ КІМНАТИ: лут + ТОРГОВЕЦЬ (валюта — душі фантомів = score) ── */
 const TRADER={mesh:null,gx:0,gy:0,standT:0,cool:0};
+window.__ck_TRADER=1;   // контрольна точка виконання
 function clearTrader(){ if(TRADER.mesh){ try{scene.remove(TRADER.mesh); freeMesh(TRADER.mesh);}catch(e){} TRADER.mesh=null; } TRADER.standT=0; TRADER.cool=0; }
 /* ── ПРИРОДА: дерева/скелі/руда/кристали з наявних елементних блоків.
    Видобуток: розрубай — отримай ресурс (resFromObstacle). Форми post/slab/cube +
@@ -5135,6 +5150,7 @@ const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0,gl
   JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0}; } })();
 function saveRes(){ try{ localStorage.setItem('vb3d_res', JSON.stringify(RES)); }catch(e){} }
 const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆',glass:'◇',steel:'▦'};
+window.__ck_RES=1;   // контрольна точка виконання
 const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал',glass:'скло',steel:'сталь'};
 const resHudEl=document.createElement('div');
 resHudEl.style.cssText='position:fixed;right:10px;bottom:46px;z-index:22;display:none;padding:6px 10px;'+
@@ -5204,6 +5220,7 @@ function openCraftModal(){
 /* ── ЦІП: тимчасова зброя (занадто потужна для постійної) ── */
 const FLAIL_DUR=90;
 const FLAIL={t:0};
+window.__ck_FLAIL=1;   // контрольна точка виконання
 
 // пульс кузні + таймер ціпа (їдемо на власному таймері — кадр не чіпаємо)
 let craftStandT=0, craftArm=true;   // arm: щоб закрив меню → мусиш ЗІЙТИ з плити перед повтором
@@ -5398,6 +5415,7 @@ setTimeout(()=>{ try{
 const MORSE_AB={'.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H','..':'I',
   '.---':'J','-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P','--.-':'Q','.-.':'R','...':'S',
   '-':'T','..-':'U','...-':'V','.--':'W','-..-':'X','-.--':'Y','--..':'Z'};
+window.__ck_MORSE=1;   // контрольна точка виконання
 const SPELL_WORDS={ H:'H', C:'C', O:'O', NA:'Na', SI:'Si', CL:'Cl', FE:'Fe', PL:'plasma', AQ:'liquid', G:'gas' };
 // Символи Менделєєва — ЗАРЕЗЕРВОВАНІ за елементами (07-15): P — це ФОСФОР, не плазма.
 // Ще не відкриті у цьому світі елементи чемно відмовляють, а не мовчать.
