@@ -287,7 +287,8 @@ window.addEventListener('error', ev=>{ if(_errN>=3) return; _errN++;
     errPanel(msg);
   }catch(e){} });
 window.addEventListener('unhandledrejection', ev=>{ if(_errN>=3) return; _errN++;
-  try{ logE('💥 PROMISE: '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,180)); }catch(e){} });
+  try{ const m='[P'+_errN+'] '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,160);
+    logE('💥 PROMISE '+m); errPanel(m); }catch(e){} });
 setTimeout(()=>{ try{ if(!window.__tailAlive){
   const cks=['TUT_UI','TRADER','VOX','MM','RES','FLAIL','MORSE'];
   const reached=cks.filter(k=>window['__ck_'+k]).join(',')||'ЖОДНОЇ';
@@ -3678,7 +3679,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16i · КОНТРОЛЬНІ-ТОЧКИ(сторож-називає-місце-обриву) · постійна-панель-помилок · ІМУНІТЕТ';
+const BUILD_TAG='2026-07-16j · КОРІНЬ-СТРАЧЕНО(QST.hud читав RES_ICON до народження — при активному квесті рвало модуль) · promise→панель';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4716,7 +4717,7 @@ setInterval(()=>{
         } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
       } }
   }
-  tickTrader(0.16);
+  try{ tickTrader(0.16); }catch(e){}
   try{ if(ADV.on && advHome() && mode==='fighter'){          // (07-16g) МІТЛА: дім без привидів
     const GHOST=new Set(['wall','crawl','base','amber','rubble']);
     for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i];
@@ -4966,9 +4967,9 @@ const QST={
     }
   },
   hud(){
-    const q=this.a;
+    const q=this.a, ICO=window.RES_ICON||{};          // (07-16j) дзеркало — жодних TDZ
     qstHudEl.style.display=q?'block':'none';
-    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?RES_ICON[q.kind]:(q.t==='hunt'?'☠':'⚡'))+' '+q.prog+' / '+q.goal;
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?(ICO[q.kind]||q.kind):(q.t==='hunt'?'☠':'⚡'))+' '+q.prog+' / '+q.goal;
   }
 };
 const qstHudEl=document.createElement('div');
@@ -4976,7 +4977,7 @@ qstHudEl.style.cssText='position:fixed;left:10px;bottom:78px;z-index:22;display:
   'background:rgba(2,12,26,.8);border:1px solid #14532d;border-radius:8px;color:#86efac;'+
   'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
 document.body.appendChild(qstHudEl);
-QST.hud();
+setTimeout(()=>{ try{ QST.hud(); }catch(e){} }, 0);   // (07-16j) ФІКС КОРЕНЯ: відкласти до повної ініціалізації
 function clearQuestPlate(){ if(QPLATE.mesh){ try{scene.remove(QPLATE.mesh); freeMesh(QPLATE.mesh);}catch(e){} QPLATE.mesh=null; } QPLATE.standT=0; }
 function makeQuestPlate(rx,ry,rng,st){
   let gx,gy,tries=0;
@@ -5149,7 +5150,7 @@ setTimeout(()=>{
 const RES = (()=>{ try{ return Object.assign({wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0},
   JSON.parse(localStorage.getItem('vb3d_res')||'{}')); }catch(e){ return {wood:0,stone:0,iron:0,crystal:0,glass:0,steel:0}; } })();
 function saveRes(){ try{ localStorage.setItem('vb3d_res', JSON.stringify(RES)); }catch(e){} }
-const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆',glass:'◇',steel:'▦'};
+const RES_ICON={wood:'🪵',stone:'🪨',iron:'⛓',crystal:'◆',glass:'◇',steel:'▦'}; window.RES_ICON=RES_ICON;
 window.__ck_RES=1;   // контрольна точка виконання
 const RES_NAME={wood:'дерево',stone:'камінь',iron:'залізо',crystal:'кристал',glass:'скло',steel:'сталь'};
 const resHudEl=document.createElement('div');
