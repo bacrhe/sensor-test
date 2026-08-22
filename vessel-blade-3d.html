@@ -276,10 +276,14 @@ let _errN=0;
 window.addEventListener('error', ev=>{ if(_errN>=3) return; _errN++;
   try{ const msg='💥 '+(ev.message||'?')+' @ :'+(ev.lineno||'?');
     logE('💥 ПОМИЛКА: '+(ev.message||'?')+' @ '+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||'?'));
-    if(_errN===1 && typeof showBanner==='function') showBanner(msg.slice(0,110),'#ef4444');
+    if(_errN<=2 && typeof showBanner==='function') showBanner('['+_errN+'] '+msg.slice(0,105),'#ef4444');
   }catch(e){} });
 window.addEventListener('unhandledrejection', ev=>{ if(_errN>=3) return; _errN++;
   try{ logE('💥 PROMISE: '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,180)); }catch(e){} });
+setTimeout(()=>{ try{ if(!window.__tailAlive){
+  logE('💥 ХВІСТ МОДУЛЯ НЕ ОЖИВ: виконання обірвалося до const CRAFT — дивись першу 💥 вище');
+  if(typeof showBanner==='function') showBanner('💥 хвіст модуля не ожив — глянь LOG','#f59e0b');
+} }catch(e){} }, 3000);
   if(LOG.length>LOGMAX) LOG.shift();
   const p=$('logbody');
   if(p && $('logPanel').style.display==='flex'){ p.textContent=LOG.slice(-80).join('\n'); p.scrollTop=p.scrollHeight; }
@@ -2521,7 +2525,7 @@ function clearRacks(){
 function buildRacks(){
   clearRacks();
   for(const w in RACK_CELLS){
-    if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;   // крафт відкриває стійку; ціп — станція
+    if(w!=='sword' && w!=='flail' && !(window.CRAFT&&CRAFT.unlocked[w])) continue;   // TDZ-безпечно
     const [x,y]=RACK_CELLS[w], col=RACK_COLORS[w];
     const g=new THREE.Group(); g.frustumCulled=false;
     const ped=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),
@@ -2864,6 +2868,11 @@ function equipWpn(w){
 }
 function updateRacks(dt){
   if(!ADV.on || !advHome()) return;
+  if(!window.CRAFT){ // (07-16h) хвіст модуля не ініціалізувався — стійки в безпечному режимі
+    for(const w in RACK_CELLS){ const [x,y]=RACK_CELLS[w];
+      if(player.gx===x && player.gy===y && playerWpn!==w && w==='sword'){ rackT+=dt;
+        if(rackT>=1.2){ rackT=0; playerWpn='sword'; buildWeaponFX('sword'); } return; } }
+    rackT=0; return; }
   for(const w in RACK_CELLS){
     if(w!=='sword' && w!=='flail' && !CRAFT.unlocked[w]) continue;    // закриті стійки не існують
     const [x,y]=RACK_CELLS[w];
@@ -3658,7 +3667,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16g · СТАБІЛІЗАЦІЯ(фільтр-кімнат-через-stale·мітла-дому·💥-банером) · freeMesh-ownRes · ДІМ-СВЯЩЕННИЙ';
+const BUILD_TAG='2026-07-16h · ІМУНІТЕТ(кадр-невмирущий·TDZ-дзеркала·сторож-хвоста·банер-2-помилок) · мітла-дому';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4348,7 +4357,7 @@ function frame(now){
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
   updateAdventure(dt);                 // сбор на кромке → переход между комнатами
-  updateRacks(dt);                     // стойки оружия в ДОМЕ
+  try{ updateRacks(dt); }catch(e){}    // стойки оружия в ДОМЕ (кадр невмирущий)
   updateShots(dt);                     // снаряды стрельцов (и отбитые)
   updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
   updateDropPickup(dt);                // подбор чужого оружия (выдержка 0.6с, кулдаун)
@@ -5151,6 +5160,7 @@ function resFromObstacle(o){
 /* ── КУЗНЯ: рецепти. Гравець починає лише з МЕЧЕМ; решту — крафтити.
    Сокира Титана — тільки дроп з боса. Ціп НЕ крафтиться назавжди:
    активація на смарагдовій станції за 2⛓+2◆, діє FLAIL_DUR секунд. ── */
+window.__tailAlive=false;   // прапорець: хвостові блоки дожили до ініціалізації
 const CRAFT={ unlocked:(()=>{ try{ return Object.assign({sword:true},
     JSON.parse(localStorage.getItem('vb3d_unlocked')||'{}')); }catch(e){ return {sword:true}; } })(),
   recipes:{
@@ -5159,6 +5169,7 @@ const CRAFT={ unlocked:(()=>{ try{ return Object.assign({sword:true},
     axe:     {wood:2, stone:2},
     whip:    {wood:2, crystal:2},
   }};   // бластер — ТІЛЬКИ ритуалом (сталь·плазма·скло у ряд)
+window.CRAFT=CRAFT; window.__tailAlive=true;   // (07-16h) дзеркало для TDZ-безпечних перевірок
 function saveCraft(){ try{ localStorage.setItem('vb3d_unlocked', JSON.stringify(CRAFT.unlocked)); }catch(e){} }
 const CRAFT_CELL=[4,6];
 function recipeStr(r){ return Object.keys(r).map(k=>r[k]+RES_ICON[k]).join(' + '); }
