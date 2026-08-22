@@ -270,6 +270,13 @@ const LOG=[]; const LOGMAX=300;
 function logE(msg){
   const t=(performance.now()/1000).toFixed(2);
   LOG.push(`[${t}] ${msg}`);
+
+// (07-16f) ЧОРНА СКРИНЬКА: перші 3 помилки летять у LOG — діагностика застигань без консолі
+let _errN=0;
+window.addEventListener('error', ev=>{ if(_errN>=3) return; _errN++;
+  try{ logE('💥 ПОМИЛКА: '+(ev.message||'?')+' @ '+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||'?')); }catch(e){} });
+window.addEventListener('unhandledrejection', ev=>{ if(_errN>=3) return; _errN++;
+  try{ logE('💥 PROMISE: '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,180)); }catch(e){} });
   if(LOG.length>LOGMAX) LOG.shift();
   const p=$('logbody');
   if(p && $('logPanel').style.display==='flex'){ p.textContent=LOG.slice(-80).join('\n'); p.scrollTop=p.scrollHeight; }
@@ -3393,14 +3400,11 @@ function sharedBox(w,h,d){
   if(!g){ g=new THREE.BoxGeometry(w,h,d); g.userData.shared=true; _geoCache.set(k,g); }
   return g;
 }
-function freeMesh(m){            // звільнити GPU-ресурси (спільні геометрії не чіпаємо)
-  try{ m.traverse?m.traverse(ch=>{
-      if(ch.geometry && !ch.geometry.userData?.shared) ch.geometry.dispose();
-      if(ch.material){ Array.isArray(ch.material)?ch.material.forEach(x=>x.dispose()):ch.material.dispose(); }
-    }):0;
-    if(m.geometry && !m.geometry.userData?.shared) m.geometry.dispose();
-    if(m.material){ Array.isArray(m.material)?m.material.forEach(x=>x.dispose()):m.material.dispose(); }
-  }catch(e){}
+function freeMesh(m){            // (07-16f) звільняємо ЛИШЕ позначене ownRes — жодних спільних ресурсів
+  const one=ch=>{ if(!ch || !ch.userData || !ch.userData.ownRes) return;
+    if(ch.geometry && !ch.geometry.userData?.shared) ch.geometry.dispose();
+    if(ch.material){ Array.isArray(ch.material)?ch.material.forEach(x=>x.dispose()):ch.material.dispose(); } };
+  try{ if(m.traverse) m.traverse(one); else one(m); }catch(e){}
 }
 function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   if(microBlocks.length>=MAX_MICRO){ showBanner('⊞ МЕЖА МІКРОБЛОКІВ ('+MAX_MICRO+')','#ef4444'); return null; }
@@ -3418,6 +3422,7 @@ function addMicro(gx,gy,n,sx,sy,sz,type,tint,alpha,shape,rotY,y0,hgt){
   if(shape==='post'){ w=m*0.34; d=m*0.34; }
   else if(shape==='panel'){ d=m*0.2; }
   const mesh=new THREE.Mesh(sharedBox(w,hgt*0.96,d), mat);   // спільна геометрія
+  mesh.userData.ownRes=true;   // матеріал цього вокселя — унікальний, можна dispose
   mesh.frustumCulled=false;
   mesh.position.set(worldX(gx)-CELL/2+(sx+0.5)*m, -0.45+y0+hgt*0.5, worldZ(gy)-CELL/2+(sz+0.5)*m);
   if(rotY) mesh.rotation.y=rotY;
@@ -3650,7 +3655,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16e · ДІМ-СВЯЩЕННИЙ(завжди-чистий:знімки-дому-не-відновлюються-не-публікуються) · фікс-замурованого-спавну';
+const BUILD_TAG='2026-07-16f · ЧОРНА-СКРИНЬКА(💥помилки-в-LOG) · freeMesh-обережний(лише-ownRes) · ДІМ-СВЯЩЕННИЙ';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4779,6 +4784,7 @@ function spawnChunk(pos,color,size){
   if(CHUNKS.length>36){ const c=CHUNKS.shift(); scene.remove(c.mesh); freeMesh(c.mesh); }
   const sz=size||(0.06+Math.random()*0.09);
   const mesh=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color}));
+  mesh.userData.ownRes=true;
   mesh.scale.setScalar(sz);
   mesh.position.copy(pos); mesh.frustumCulled=false; scene.add(mesh);
   CHUNKS.push({mesh, vx:(Math.random()-0.5)*2.6, vy:1.5+Math.random()*1.8, vz:(Math.random()-0.5)*2.6,
@@ -4801,6 +4807,7 @@ const SCARS=[];
 function addScar(tip){
   if(SCARS.length>50){ const old=SCARS.shift(); scene.remove(old); freeMesh(old); }
   const g=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color:0x140e06}));
+  g.userData.ownRes=true;
   g.scale.set(0.1+Math.random()*0.16, 0.02+Math.random()*0.05, 0.025);
   g.position.set(tip.x,tip.y,tip.z);
   g.rotation.y=(sensor.yawFused||0)*Math.PI/180;
