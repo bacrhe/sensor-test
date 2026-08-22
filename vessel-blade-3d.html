@@ -274,7 +274,10 @@ function logE(msg){
 // (07-16f) ЧОРНА СКРИНЬКА: перші 3 помилки летять у LOG — діагностика застигань без консолі
 let _errN=0;
 window.addEventListener('error', ev=>{ if(_errN>=3) return; _errN++;
-  try{ logE('💥 ПОМИЛКА: '+(ev.message||'?')+' @ '+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||'?')); }catch(e){} });
+  try{ const msg='💥 '+(ev.message||'?')+' @ :'+(ev.lineno||'?');
+    logE('💥 ПОМИЛКА: '+(ev.message||'?')+' @ '+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||'?'));
+    if(_errN===1 && typeof showBanner==='function') showBanner(msg.slice(0,110),'#ef4444');
+  }catch(e){} });
 window.addEventListener('unhandledrejection', ev=>{ if(_errN>=3) return; _errN++;
   try{ logE('💥 PROMISE: '+String(ev.reason&&ev.reason.message||ev.reason).slice(0,180)); }catch(e){} });
   if(LOG.length>LOGMAX) LOG.shift();
@@ -3655,7 +3658,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16f · ЧОРНА-СКРИНЬКА(💥помилки-в-LOG) · freeMesh-обережний(лише-ownRes) · ДІМ-СВЯЩЕННИЙ';
+const BUILD_TAG='2026-07-16g · СТАБІЛІЗАЦІЯ(фільтр-кімнат-через-stale·мітла-дому·💥-банером) · freeMesh-ownRes · ДІМ-СВЯЩЕННИЙ';
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4064,14 +4067,12 @@ function renderRemotes(now, dt){
     const r = NET.remotes[id];
     if(r.spec || !r.av) continue;
     const _rrx=(r.rx??(r.latest&&r.latest.rx)), _rry=(r.ry??(r.latest&&r.latest.ry));
-    const otherRoom = ADV.on && _rrx!=null && (_rrx!==ADV.rx || _rry!==ADV.ry);
-    if(otherRoom){ if(!r.roomHid){ r.roomHid=true; setRemoteVisible(r,false); } continue; }   // він деінде на мапі
-    else if(r.roomHid){ r.roomHid=false; setRemoteVisible(r,true); }
-    const stale = ((r.latest&&r.latest.t)||0) < nowMs-NET_PURGE_MS;
+    const otherRoom = ADV.on && _rrx!=null && (_rrx!==ADV.rx || _rry!==ADV.ry);   // він деінде на мапі
+    const stale = otherRoom || ((r.latest&&r.latest.t)||0) < nowMs-NET_PURGE_MS;
     if(stale){
       if(!r.hidden){ r.hidden=true; setRemoteVisible(r,false);
-        logE('привид гравця '+id.slice(0,4)+' приховано, чищу вузол у БД');
-        NET.cleanupPlayer(id); }
+        if(!otherRoom){ logE('привид гравця '+id.slice(0,4)+' приховано, чищу вузол у БД');
+          NET.cleanupPlayer(id); } }                // сусіда по мапі НЕ чистимо з БД — він живий
       continue;                                    // скрытого не рендерим и не трогаем
     }
     if(r.hidden){ r.hidden=false; setRemoteVisible(r,true); logE('гравець '+id.slice(0,4)+' вернулся'); }
@@ -4695,6 +4696,12 @@ setInterval(()=>{
       } }
   }
   tickTrader(0.16);
+  try{ if(ADV.on && advHome() && mode==='fighter'){          // (07-16g) МІТЛА: дім без привидів
+    const GHOST=new Set(['wall','crawl','base','amber','rubble']);
+    for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i];
+      if(GHOST.has(o.mtype||'amber')){ if(o.mesh) scene.remove(o.mesh); obstacles.splice(i,1);
+        logE('мітла дому: приблудний блок ('+o.gx+','+o.gy+') прибрано'); } }
+  } }catch(e){}
   _snapT+=0.16;
   if(_snapPend && _snapT>=1.2){ _snapT=0; _snapPend=false; try{ snapshotRoom(); }catch(e){} }
   try{ if(NET._rePendKey && Date.now()-((NET._reAt&&NET._reAt[NET._rePendKey])||0)>=2500)
