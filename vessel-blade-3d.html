@@ -1359,7 +1359,10 @@ function updateStanceAndCamera(dt){
   if(prevStance!==stance) logE('СТІЙКА → '+(beacon?'МАЯК (1-ша особа)':'БЛИСКАВКА'));
   if(player.jamT>0) player.jamT-=dt;
   if(player.jamCd>0) player.jamCd-=dt;
-  player.hitActive = !player.disarmed && !player.dead && !(player.jamT>0);   // клинок живий, крім заклину
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){
+    player.hitActive=false;                                                  // (07-17c) рука не завдає шкоди сама
+    try{ if(player.mesh) player.mesh.visible=false; }catch(e){}
+  } else player.hitActive = !player.disarmed && !player.dead && !(player.jamT>0);   // клинок живий, крім заклину
 
   // заряд давления копится в 1-м лице; возврат → выброс (рывок-замах).
   // Выброс засчитывается ТОЛЬКО если заряд держали ≥0.25с (charge>1.25) — короткое
@@ -1500,6 +1503,7 @@ function bladeContestCell(av){   // клетка-кончик клинка
 }
 
 function startClinch(foe){
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;      // (07-17c) руки не входять у клінч
   if(clinch.active) return;
   clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
   addExhaustion(player, 18);   // вход в клинч — энергозатратно (Часть 4.2)
@@ -2047,6 +2051,7 @@ function remoteFighterAt(cx,cy){
 let burnCd = 0;            // кулдаун прожига (с)
 function resolveBurn(dt){
   if(burnCd>0) burnCd-=dt;
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;      // (07-17c) меч-пристрій сам не рубає
   if(!player.hitActive || player.disarmed || player.dead || MORPH.form!=='human') return;   // слизь безоружна
   if(playerWpn==='whip' && player.strikeT<=0) return;   // хлыст вредит только в момент ЩЕЛЧКА — вися, он безвреден
   // ЕДИНАЯ ЗОНА ОРУЖИЯ: та же геометрия, что и у клинча/заклина — weaponCells.
@@ -3685,7 +3690,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17b · ФІКС-ПРОЛОГУ(утримання-таймером+кнопка) · МЕЧ-БАЧИТЬ-СВІТ(дзеркало тіла) · зустріч-гравців · глядач-бачить-усіх';
+const BUILD_TAG='2026-07-17c · МЕЧ-НЕ-ОКРЕМИЙ-ГРАВЕЦЬ(без клінчу з тілом) · ДВА-МЕЧІ(ліва+права рука) · фікс-прологу';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4038,6 +4043,10 @@ const NET = {
     this.sendT-=dt;
     if(this.sendT>0) return;
     this.sendT=0.08;                                     // ~12 Гц
+    if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){          // (07-17c) рука, не боєць
+      remove(ref(this.db,`blade/${this.room}/players/${this.myId}`)).catch(()=>{});
+      return;
+    }
     if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
     if(this.roomDirty && Date.now()-(this._rePub||0)>900){          // общий мир: публикуем снимок комнаты
       this.roomDirty=false; this._rePub=Date.now();
@@ -4289,6 +4298,7 @@ function frame(now){
 
     updateStanceAndCamera(dt);
     if(!clinch.active){ clinch.cd=Math.max(0,clinch.cd-dt); resolveClinch(); if(!clinch.active) resolveBurn(dt); }
+    try{ leftBladeTick(dt); }catch(e){}   // (07-17c) друга рука — окремий клинок
     updateClinch(dt);
     handleDeath(player, dt);
 
@@ -4776,9 +4786,11 @@ function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не час
    sword — «МЕЧ»: нічого не малює, лише стрімить свій гіроскоп у Firebase
            (blade/link/{code}/sword ~14 Гц). У тіла приціл клинка, точка
            пропалу і стійка щита ведуться мечем. Тиша 1.5с → відкат на свої. */
-const LINK={ role:null, code:null, remote:{t:0}, warned:false, timer:null };
+const LINK={ role:null, code:null, remote:{t:0}, remoteL:{t:0}, warned:false, timer:null, bodyTimer:null };
 window.LINK=LINK;
 function linkFresh(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remote.t||0))<1500; }
+function linkFreshL(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remoteL.t||0))<1500; }
+function aimYawL(){ return LINK.remoteL.yaw||0; }
 function aimYawEff(){ return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused; }
 function aimPitchEff(){ return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch; }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
@@ -5614,6 +5626,51 @@ setTimeout(()=>{ try{
   });
   $('mNew').parentNode.insertBefore(box, $('mNew'));
 }catch(e){ console.warn('vol sliders', e); } }, 800);
+/* ════ ЛІВИЙ КЛИНОК (07-17c): друга рука того самого тіла ═══════════════════
+   Керується окремим пристроєм (роль swordL). Має власний азимут, власні
+   клітинки ураження і власну візуальну лінію. Мечі можуть схрещуватись —
+   це просто два промені одного тіла, вони не б'ються між собою.            */
+const LBLADE={ seg:[], burnCd:0 };
+function leftBladeClear(){ for(const m of LBLADE.seg){ try{ scene.remove(m); freeMesh(m); }catch(e){} } LBLADE.seg.length=0; }
+function leftBladeTick(dt){
+  if(!linkFreshL() || player.dead || mode!=='fighter'){ if(LBLADE.seg.length) leftBladeClear(); return; }
+  const yaw=aimYawL(), [dx,dz]=dirXZ(yaw);
+  const len=Math.max(1, Math.round(1+(player.mods.reach||0)*0.5));
+  // візуал: сегменти вздовж променя лівої руки
+  while(LBLADE.seg.length<len){
+    const m=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color:0xffd9a0}));
+    m.userData.ownRes=true; m.frustumCulled=false; m.scale.set(0.16,0.16,0.9); scene.add(m); LBLADE.seg.push(m);
+  }
+  while(LBLADE.seg.length>len){ const m=LBLADE.seg.pop(); try{ scene.remove(m); freeMesh(m); }catch(e){} }
+  const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
+  const sideX=-dz*0.34, sideZ=dx*0.34;                        // зсув у ЛІВУ руку
+  const pitchL=LINK.remoteL.pitch||0;
+  for(let i=0;i<LBLADE.seg.length;i++){
+    const t=(i+0.7)*CELL*0.9;
+    const m=LBLADE.seg[i];
+    m.position.set(px+sideX+dx*t, TIER_H*(0.55+player.tier*0.55)+pitchL*1.2, pz+sideZ+dz*t);
+    m.rotation.y=Math.atan2(dx,dz);
+    m.material.color.setHex(LINK.remoteL.beacon?0x8ab4ff:0xffd9a0);   // боком = холодний щит
+  }
+  // ураження лівим клинком
+  LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
+  if(LBLADE.burnCd>0 || LINK.remoteL.beacon) return;           // у стійці щита ліва рука не рубає
+  const cells=weaponCells(player.gx,player.gy,yawToDirIdx(yaw),1,'sword',false,player.mods.reach||0,yaw);
+  for(const c of cells){
+    const [cx,cy]=String(c).split(',').map(Number);
+    if(cx<0||cx>12||cy<0||cy>12) continue;
+    const o=obstacleAt(cx,cy);
+    if(o && !o.solid){
+      const tip={x:worldX(cx), y:TIER_H*(0.5+player.tier*0.6), z:worldZ(cy)};
+      if(voxelizeObstacle(o)) burnVoxelsAt(cx,cy,tip);
+      LBLADE.burnCd=0.3; buzz(25); break;
+    }
+    const ph=phantomAtCell(cx,cy);
+    if(ph){ damageTier(ph,1,Math.round(10*player.mods.dmg)); ph.hitGlow=0.3;
+      doFlash('#ffd9a0'); buzz(35); LBLADE.burnCd=0.35; break; }
+  }
+}
+
 /* ════ ДВОРУЧЧЯ · інтерфейс і транспорт (07-17) ════ */
 const linkChip=document.createElement('div');
 linkChip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display:none;padding:6px 10px;'+
@@ -5639,6 +5696,12 @@ function linkBecomeHost(){
       LINK.remote={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
       if(LINK.warned){ LINK.warned=false; showBanner('🗡 МЕЧ ПІДКЛЮЧЕНО','#a78bfa'); }
     });
+    onValue(ref(NET.db, 'blade/link/'+code+'/swordL'), snap=>{     // (07-17c) друга рука
+      const v=snap.val(); if(!v) return;
+      const first=!LINK.remoteL.t;
+      LINK.remoteL={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
+      if(first) showBanner('🗡🗡 ДРУГИЙ МЕЧ У ЛІВІЙ РУЦІ','#fbbf24');
+    });
   }catch(e){ logE('LINK host: '+e.message); }
   linkChip.style.display='block';
   if(LINK.bodyTimer) clearInterval(LINK.bodyTimer);
@@ -5658,12 +5721,14 @@ function linkBecomeHost(){
     [{t:'ЧЕКАЮ МЕЧ ▷',c:'#a78bfa'}]);
 }
 
-function linkBecomeSword(){
+function linkBecomeSword(hand){
   if(!NET.db){ showBanner('🔗 потрібне мережеве з\'єднання','#ef4444'); return; }
   const code=(prompt('Код тіла (4 символи з першого телефона):')||'').trim().toUpperCase();
   if(code.length<3){ showBanner('🔗 код не введено','#94a3b8'); return; }
-  LINK.role='sword'; LINK.code=code;
-  swordOverlay.innerHTML='<div style="font-size:14px;letter-spacing:.16em;color:#a78bfa">🗡 РЕЖИМ МЕЧА · '+code+'</div>'+
+  const left=(hand==='L');
+  LINK.role=left?'swordL':'sword'; LINK.code=code; LINK.hand=left?'L':'R';
+  swordOverlay.innerHTML='<div style="font-size:14px;letter-spacing:.16em;color:'+(left?'#fbbf24':'#a78bfa')+'">🗡 '+
+    (left?'ЛІВА РУКА':'ПРАВА РУКА')+' · '+code+'</div>'+
     '<div style="font-size:11px;color:#64748b;max-width:320px">Твій гіроскоп веде клинок тіла. '+
     'Боком = щит і заряд, вертикально = бій. Світ дзеркалиться з тіла.</div>';
   const stop=document.createElement('button');
@@ -5688,7 +5753,7 @@ function linkBecomeSword(){
   if(LINK.timer) clearInterval(LINK.timer);
   LINK.timer=setInterval(()=>{ try{
     if(LINK.role!=='sword' || !NET.db) return;
-    set(ref(NET.db, linkPath(code)), {
+    set(ref(NET.db, left ? ('blade/link/'+code+'/swordL') : linkPath(code)), {
       yaw:+(sensor.yawFused||0).toFixed(1),
       pitch:+(sensor.pitch||0).toFixed(3),
       beacon: Math.abs(sensor.roll||0)>45,
@@ -5703,7 +5768,7 @@ function linkBecomeSword(){
 setInterval(()=>{ try{
   if(LINK.role!=='host'){ linkChip.style.display='none'; return; }
   linkChip.style.display='block';
-  if(linkFresh()){ linkChip.textContent='🗡 меч підключено · '+LINK.code;
+  if(linkFresh()){ linkChip.textContent=(linkFreshL()?'🗡🗡 два мечі · ':'🗡 меч · ')+LINK.code;
     linkChip.style.borderColor='#7c3aed'; linkChip.style.color='#c4b5fd'; }
   else{ linkChip.textContent='🗡 меч мовчить ('+LINK.code+') — клинок на своєму гіроскопі';
     linkChip.style.borderColor='#f59e0b'; linkChip.style.color='#fcd34d';
@@ -5734,10 +5799,12 @@ setTimeout(()=>{ try{
     tutModal('🔗 ДВА ПРИСТРОЇ · ОДНЕ ТІЛО',
       'Два телефони працюють як один боєць:<br><br>'+
       '🖐 <b>ТІЛО/ОЧІ</b> — ліва рука. Камера, кроки, HP, рахунок. Тримаєш боком, як видошукач.<br>'+
-      '🗡 <b>МЕЧ</b> — права рука. Його гіроскоп веде клинок: куди повернеш — туди пропалює; боком = щит і заряд.<br><br>'+
+      '🗡 <b>МЕЧ (права)</b> — веде основний клинок: куди повернеш — туди пропалює; боком = щит і заряд.<br>'+
+      '🗡 <b>МЕЧ (ліва)</b> — третій телефон: другий клинок у лівій руці того самого тіла. Мечі можуть схрещуватись, але один одного не ранять.<br><br>'+
       'Обидва мають бути в <b>одній кімнаті</b> (зараз: '+NET.room+'). Обери роль <b>цього</b> телефона:',
       [{t:'🖐 ЦЕ — ТІЛО/ОЧІ',c:'#22c55e',f:linkBecomeHost},
-       {t:'🗡 ЦЕ — МЕЧ',c:'#a78bfa',f:linkBecomeSword},
+       {t:'🗡 МЕЧ — ПРАВА РУКА',c:'#a78bfa',f:()=>linkBecomeSword('R')},
+       {t:'🗡 МЕЧ — ЛІВА РУКА',c:'#fbbf24',f:()=>linkBecomeSword('L')},
        {t:'СКАСУВАТИ',c:'#64748b'}]);
   };
 }catch(e){ console.warn('link ui',e); } }, 900);
