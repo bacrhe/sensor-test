@@ -2036,7 +2036,8 @@ function applyIncomingHit(h){
    Пакеты несут t=Date.now() → всё старше 6с игнорируем, старше 12с — сносим. */
 const NET_FRESH_MS = 6000, NET_PURGE_MS = 12000;
 function remoteFresh(r){ return !!r && (((r.latest&&r.latest.t)||0) > Date.now()-NET_FRESH_MS); }
-function sameAdvRoom(r){ if(!ADV.on) return true;
+function sameAdvRoom(r){ if(mode==='spectator'||mode==='follow'||mode==='action') return true;   // (07-17b) глядач бачить усіх
+  if(!ADV.on) return true;
   const rx=(r.rx??(r.latest&&r.latest.rx)); if(rx==null) return true;
   return rx===ADV.rx && (r.ry??(r.latest&&r.latest.ry))===ADV.ry; }
 function remoteFighterAt(cx,cy){
@@ -3684,7 +3685,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17a · ДВОРУЧЧЯ(тіло+меч на двох телефонах) · скид-збережень · корінь-страчено(16j)';
+const BUILD_TAG='2026-07-17b · ФІКС-ПРОЛОГУ(утримання-таймером+кнопка) · МЕЧ-БАЧИТЬ-СВІТ(дзеркало тіла) · зустріч-гравців · глядач-бачить-усіх';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4547,6 +4548,17 @@ window.TUT={
       [{t:'🎧 ЕКІПІРОВАНО ▷',f:()=>TUT.prologue3()}]);
   },
   prologue3(){ this.prologue=3;
+    try{ tutModalEl.style.userSelect='none'; tutModalEl.style.webkitUserSelect='none';
+      tutModalEl.style.webkitTouchCallout='none'; tutModalEl.style.touchAction='manipulation'; }catch(e){}
+    setTimeout(()=>{ try{                                   // страховка: 9с — і з'явиться кнопка
+      if(window.TUT&&TUT.active&&TUT.prologue===3){
+        const card=tutModalEl.querySelector('#tutCard'); if(!card||card.querySelector('#voidSkip')) return;
+        const b=document.createElement('button'); b.id='voidSkip'; b.textContent='▷ ПРОПУСТИТИ ІНІЦІАЦІЮ';
+        b.style.cssText='display:block;width:100%;margin-top:14px;padding:12px;font:inherit;font-size:12px;'+
+          'letter-spacing:.1em;border-radius:8px;background:#0a1a30;border:1px dashed #475569;color:#94a3b8';
+        b.onclick=()=>TUT.prologueTriumph();
+        card.appendChild(b);
+      } }catch(e){} }, 9000);
     /* Вузол Третій: Ініціація Зліпка — БЕЗ КНОПОК. Лише довге утримання. */
     tutModal('▣ ІНІЦІАЦІЯ ЗЛІПКА','«Твій пристрій — це твій клинок. Але щоб твій поступ не згинув, потрібен '+
       '<b>Зліпок Свідомості</b>. Жодної метушні. <b>Подвійні дотики — під найсуворішою забороною.</b> '+
@@ -5028,6 +5040,12 @@ function miniMapDraw(){
     if(!wht && ring<=1){ g.fillStyle=seen?'#b03040':'#3a1620'; g.fillRect(1+rx*7+2, 1+ry*7+2, 2, 2); }  // край: боси
   }
   g.fillStyle='#38bdf8'; g.fillRect(1+6*7+2, 1+6*7+2, 2, 2);          // дім
+  try{ for(const id in NET.remotes){ const r=NET.remotes[id];          // (07-17b) де інші гравці
+    if(!r || r.spec) continue;
+    const orx=(r.rx??(r.latest&&r.latest.rx)), ory=(r.ry??(r.latest&&r.latest.ry));
+    if(!Number.isInteger(orx)) continue;
+    g.fillStyle='#4ade80'; g.fillRect(1+orx*7+1, 1+ory*7+1, 4, 4);
+  } }catch(e){}
   g.strokeStyle='#fbbf24'; g.lineWidth=1.5;
   g.strokeRect(0.5+ADV.rx*7, 0.5+ADV.ry*7, 7, 7);                     // я
 }
@@ -5268,7 +5286,7 @@ setInterval(()=>{
   resHUD(); miniMapDraw();
 },160);
 /* ════ ПУСТОТА: статика першого контакту + довге утримання (Заповіт Машини) ════ */
-const VOID={noise:null, holdT0:0, holdX:0, holdY:0};
+const VOID={noise:null, holdT0:0, holdX:0, holdY:0, holdTimer:null};
 function voidStatic(on){ try{
   if(!AC) return;
   if(on && !VOID.noise){
@@ -5285,18 +5303,31 @@ function voidStatic(on){ try{
     VOID.noise=null;
   }
 }catch(e){} }
-window.addEventListener('touchstart',e=>{ try{
+// (07-17b) Зарахування ТАЙМЕРОМ у момент утримання: не залежить від touchend,
+// який на iOS може не прийти (система перехоплює довгий тап). Працює і мишею.
+function voidHoldStart(x,y){
   if(!(window.TUT&&TUT.active&&TUT.prologue===3)) return;
-  const t=e.touches[0]; VOID.holdT0=performance.now(); VOID.holdX=t.clientX; VOID.holdY=t.clientY;
-}catch(e){} },{passive:true});
-window.addEventListener('touchend',e=>{ try{
-  if(!(window.TUT&&TUT.active&&TUT.prologue===3) || !VOID.holdT0) return;
-  const t=e.changedTouches&&e.changedTouches[0];
-  const dur=performance.now()-VOID.holdT0; VOID.holdT0=0;
-  if(t && Math.hypot(t.clientX-VOID.holdX, t.clientY-VOID.holdY)>26) return;   // свайп — ігноруємо
-  if(dur>=1200) TUT.prologueTriumph();                                         // ДОВГЕ УТРИМАННЯ ✓
-  else { blip(180,0.05,'square',0.08); }                                       // короткий тап — сухий щиглик статики
-}catch(e){} },{passive:true});
+  VOID.holdX=x; VOID.holdY=y; VOID.holdT0=performance.now();
+  if(VOID.holdTimer) clearTimeout(VOID.holdTimer);
+  VOID.holdTimer=setTimeout(()=>{ VOID.holdTimer=null;
+    if(window.TUT&&TUT.active&&TUT.prologue===3) TUT.prologueTriumph();
+  }, 1100);
+}
+function voidHoldEnd(){
+  if(VOID.holdTimer){ clearTimeout(VOID.holdTimer); VOID.holdTimer=null;
+    if(window.TUT&&TUT.active&&TUT.prologue===3) blip(180,0.05,'square',0.08); }
+  VOID.holdT0=0;
+}
+function voidHoldMove(x,y){
+  if(!VOID.holdTimer) return;
+  if(Math.hypot(x-VOID.holdX, y-VOID.holdY)>60) voidHoldEnd();   // поїхав пальцем — скасувати
+}
+window.addEventListener('touchstart',e=>{ try{ const t=e.touches[0]; if(t) voidHoldStart(t.clientX,t.clientY); }catch(e){} },{passive:true});
+window.addEventListener('touchmove', e=>{ try{ const t=e.touches[0]; if(t) voidHoldMove(t.clientX,t.clientY); }catch(e){} },{passive:true});
+window.addEventListener('touchend',   ()=>{ try{ voidHoldEnd(); }catch(e){} },{passive:true});
+window.addEventListener('touchcancel',()=>{ try{ voidHoldEnd(); }catch(e){} },{passive:true});
+window.addEventListener('mousedown', e=>{ try{ voidHoldStart(e.clientX,e.clientY); }catch(e){} });
+window.addEventListener('mouseup',   ()=>{ try{ voidHoldEnd(); }catch(e){} });
 
 /* ════ ГОЛОС НАСТАВНИКА (Web Speech API, укр. голос якщо є в системі) ════ */
 const TTS={ on:(()=>{ try{ return (localStorage.getItem('vb3d_tts')??'1')==='1'; }catch(e){ return true; } })(), v:null };
@@ -5591,9 +5622,9 @@ linkChip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display
 document.body.appendChild(linkChip);
 
 const swordOverlay=document.createElement('div');
-swordOverlay.style.cssText='position:fixed;inset:0;z-index:95;display:none;flex-direction:column;'+
-  'align-items:center;justify-content:center;gap:14px;background:#02060f;color:#c4b5fd;'+
-  'font:inherit;text-align:center;padding:24px';
+swordOverlay.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:95;display:none;flex-direction:column;'+
+  'align-items:center;gap:8px;background:linear-gradient(rgba(2,6,15,0),rgba(2,6,15,.92) 40%);'+
+  'color:#c4b5fd;font:inherit;text-align:center;padding:14px 16px 18px';
 document.body.appendChild(swordOverlay);
 
 function linkPath(code){ return 'blade/link/'+code+'/sword'; }
@@ -5610,6 +5641,14 @@ function linkBecomeHost(){
     });
   }catch(e){ logE('LINK host: '+e.message); }
   linkChip.style.display='block';
+  if(LINK.bodyTimer) clearInterval(LINK.bodyTimer);
+  LINK.bodyTimer=setInterval(()=>{ try{                       // (07-17b) тіло транслює світ мечу
+    if(LINK.role!=='host' || !NET.db) return;
+    set(ref(NET.db,'blade/link/'+LINK.code+'/body'), {
+      rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),
+      gx:player.gx, gy:player.gy, hp:Math.round(player.hp||0), t:Date.now()
+    }).catch(()=>{});
+  }catch(e){} }, 220);
   logE('ДВОРУЧЧЯ: тіло чекає меч, код '+code);
   tutModal('🖐 ТІЛО/ОЧІ · КОД '+code,
     'Цей телефон — <b>твоє тіло й очі</b>: камера, кроки, HP.<br><br>'+
@@ -5624,11 +5663,9 @@ function linkBecomeSword(){
   const code=(prompt('Код тіла (4 символи з першого телефона):')||'').trim().toUpperCase();
   if(code.length<3){ showBanner('🔗 код не введено','#94a3b8'); return; }
   LINK.role='sword'; LINK.code=code;
-  swordOverlay.innerHTML='<div style="font-size:52px">🗡</div>'+
-    '<div style="font-size:17px;letter-spacing:.18em;color:#a78bfa">РЕЖИМ МЕЧА</div>'+
-    '<div style="font-size:13px;color:#64748b">код <b style="color:#c4b5fd">'+code+'</b> · тримай як руків\'я клинка</div>'+
-    '<div style="font-size:12px;color:#475569;max-width:300px">Екран не потрібен: цей телефон — лише клинок. '+
-    'Боком = щит і заряд, вертикально = бій. Дивись на перший телефон.</div>';
+  swordOverlay.innerHTML='<div style="font-size:14px;letter-spacing:.16em;color:#a78bfa">🗡 РЕЖИМ МЕЧА · '+code+'</div>'+
+    '<div style="font-size:11px;color:#64748b;max-width:320px">Твій гіроскоп веде клинок тіла. '+
+    'Боком = щит і заряд, вертикально = бій. Світ дзеркалиться з тіла.</div>';
   const stop=document.createElement('button');
   stop.textContent='◀ ВІД\'ЄДНАТИ';
   stop.style.cssText='margin-top:10px;padding:12px 20px;font:inherit;font-size:13px;letter-spacing:.1em;'+
@@ -5637,6 +5674,17 @@ function linkBecomeSword(){
     swordOverlay.style.display='none'; showBanner('🗡 меч від\'єднано','#94a3b8'); };
   swordOverlay.appendChild(stop);
   swordOverlay.style.display='flex';
+  try{                                                       // (07-17b) МЕЧ БАЧИТЬ ТЕ САМЕ: дзеркало тіла
+    onValue(ref(NET.db, 'blade/link/'+code+'/body'), snap=>{
+      const v=snap.val(); if(!v || LINK.role!=='sword') return;
+      LINK.body=v;
+      try{
+        if(Number.isInteger(v.rx) && ADV.on && (ADV.rx!==v.rx || ADV.ry!==v.ry)) applyAdvRoom(v.rx, v.ry);
+        if(Number.isInteger(v.gx)){ player.gx=v.gx; player.gy=v.gy; }
+        if(v.hp!=null) player.hp=v.hp;
+      }catch(e){}
+    });
+  }catch(e){ logE('LINK sword body: '+e.message); }
   if(LINK.timer) clearInterval(LINK.timer);
   LINK.timer=setInterval(()=>{ try{
     if(LINK.role!=='sword' || !NET.db) return;
@@ -5664,6 +5712,22 @@ setInterval(()=>{ try{
 
 // кнопка в меню паузи
 setTimeout(()=>{ try{
+  const j=document.createElement('button'); j.id='mJoin'; j.textContent='🤝 ПЕРЕЙТИ ДО ГРАВЦЯ';
+  $('mNew').parentNode.insertBefore(j, $('mNew'));
+  j.onclick=()=>{
+    const list=[];
+    for(const id in NET.remotes){ const r=NET.remotes[id];
+      const rx=(r&&(r.rx??(r.latest&&r.latest.rx))), ry=(r&&(r.ry??(r.latest&&r.latest.ry)));
+      if(Number.isInteger(rx)) list.push({id,rx,ry}); }
+    if(!list.length){ closeMenu(); showBanner('🤝 поруч нікого — усі в інших кімнатах мережі','#94a3b8'); return; }
+    const btns=list.slice(0,4).map(p=>({t:'→ '+p.id.slice(0,4)+'  ('+p.rx+','+p.ry+')',c:'#4ade80',
+      f:()=>{ if(!ADV.on){ try{$('mAdv').click();}catch(e){} }
+        setTimeout(()=>{ applyAdvRoom(p.rx,p.ry); NET.advPub();
+          showBanner('🤝 ти у кімнаті гравця '+p.id.slice(0,4),'#4ade80'); }, 300); }}));
+    btns.push({t:'СКАСУВАТИ',c:'#64748b'});
+    closeMenu();
+    tutModal('🤝 ХТО ДЕ НА МАПІ','Гравці зараз у цих кімнатах мета-світу. Обери, до кого перейти — і опинишся в одній кімнаті з ним (зелені точки на мінімапі).',btns);
+  };
   const b=document.createElement('button'); b.id='mLink'; b.textContent='🔗 ДВА ПРИСТРОЇ (тіло + меч)';
   $('mNew').parentNode.insertBefore(b, $('mNew'));
   b.onclick=()=>{ closeMenu();
