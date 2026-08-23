@@ -204,6 +204,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВИМК</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
+  <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
   <button id="mCache">♻ СКИД КЕШУ + ПЕРЕЗАВАНТАЖЕННЯ</button>
   <button id="mScan">🏠 СКАН 46м² (елементи)</button>
   <button id="mCreate">🔨 ТВОРЕЦЬ (будувати)</button>
@@ -570,7 +571,9 @@ const AUDIO={
   motionTick(dt){                                       // (07-15) МАХ/ЗАРЯД/ВИПАД дихають у музиці
     try{
       const R=this.ritual; if(!R||!R.moLP||!AC) return;
-      const sp=clamp((sensor.speed||0)/18,0,1);                          // чутливіше до маху
+      const _spRaw=(typeof linkFresh==='function' && linkFresh())
+        ? Math.max(sensor.speed||0, LINK.remote.speed||0) : (sensor.speed||0);   // (07-17) махає меч-пристрій
+      const sp=clamp(_spRaw/18,0,1);                                      // чутливіше до маху
       this._mo=lerp(this._mo??0, sp, clamp(dt*11,0,1));
       R.moLP.frequency.setTargetAtTime(lerp(18000, 700, this._mo), AC.currentTime, 0.04);    // мах «топить» спектр глибше
       R.moLP.Q.setTargetAtTime(lerp(0.7, 6, this._mo), AC.currentTime, 0.05);                // резонанс — «вжик» співає
@@ -1334,7 +1337,9 @@ function updateStanceAndCamera(dt){
   const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
-  const fpRaw = (mode==='creator') ? 1
+  const _lkBeacon = linkFresh() ? (LINK.remote.beacon?1:0) : null;   // (07-17) стійку диктує МЕЧ-пристрій
+  const fpRaw = (_lkBeacon!=null) ? _lkBeacon
+    : (mode==='creator') ? 1
     : CAM.view==='fp' ? 1
     : (CAM.view==='third'||CAM.view==='top') ? 0
     : clamp((Math.abs(sensor.roll)-40)/30, 0, 1);   // АВТО: наклон в альбомную = 1-е лицо
@@ -1982,7 +1987,7 @@ function renderClinchGuideAndAstral(){
   astral.blade.material.opacity=0.85;
   astral.grip.visible=true; astral.grip.position.set(H.hx,H.hy,H.hz);
   // рука-тень от груди к рукояти
-  const [ldx,ldz]=dirXZ(sensor.yawFused);
+  const [ldx,ldz]=dirXZ(aimYawEff());
   const cx=worldX(player.gx)-ldx*0.1, cy=TIER_H*1.4, cz=worldZ(player.gy)-ldz*0.1;
   astral.arm.visible=true; setLimb(astral.arm, cx,cy,cz, H.hx,H.hy,H.hz);
 }
@@ -2912,7 +2917,7 @@ function updateRacks(dt){
 }
 
 function bladeCells(av){
-  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, sensor.yawFused);
+  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, aimYawEff());
   if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
   return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0, av.reachMod||0,
     av.boss?null:av.aimYaw);   // босс лишається неповоротким (снап + слабке місце ззаду)
@@ -3679,7 +3684,13 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-16j · КОРІНЬ-СТРАЧЕНО(QST.hud читав RES_ICON до народження — при активному квесті рвало модуль) · promise→панель';
+const BUILD_TAG='2026-07-17a · ДВОРУЧЧЯ(тіло+меч на двох телефонах) · скид-збережень · корінь-страчено(16j)';
+$('mWipe').onclick=()=>{
+  if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
+  try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
+  showBanner('🧹 ЗБЕРЕЖЕННЯ СТЕРТО — перезавантаження…','#22c55e');
+  setTimeout(()=>location.reload(), 500);
+};
 $('mCache').onclick=async()=>{
   showBanner('♻ Кеш очищено — перезавантаження…','#22c55e');
   try{
@@ -4246,7 +4257,7 @@ function frame(now){
   if(mode==='creator'){
     const pTgt=clamp(sensor.pitchRaw*(invertPitch?-1:1),-1,1);
     sensor.pitch=lerp(sensor.pitch,pTgt,clamp(dt*10,0,1));
-    player.dirIdx=yawToDirIdx(sensor.yawFused); player.tier=1;
+    player.dirIdx=yawToDirIdx(aimYawEff()); player.tier=1;
     player.pitch=sensor.pitch; player.roll=sensor.roll;
     player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
     updateStanceAndCamera(dt);
@@ -4262,7 +4273,7 @@ function frame(now){
 
     if(!clinch.active){
       // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
-      player.dirIdx = yawToDirIdx(sensor.yawFused);
+      player.dirIdx = yawToDirIdx(aimYawEff());
       player.tier = pitchTier(sensor.pitch, player.tier);   // вниз→ноги, вверх→голова (с гистерезисом)
       player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1));
       player.pitch = sensor.pitch; player.roll = sensor.roll;
@@ -4748,12 +4759,22 @@ const VOXREG=new Map();   // 'gx,gy,mtype' → {total,left,noRes}
 window.__ck_VOX=1;   // контрольна точка виконання
 let _snapT=0, _snapPend=false;
 function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не частіше 1.2с — Firebase дихає
+/* ════ ДВОРУЧЧЯ (07-17): два пристрої = одне тіло ═══════════════════════════
+   host  — «ТІЛО/ОЧІ»: камера, кроки, HP, рахунок від власного гіроскопа.
+   sword — «МЕЧ»: нічого не малює, лише стрімить свій гіроскоп у Firebase
+           (blade/link/{code}/sword ~14 Гц). У тіла приціл клинка, точка
+           пропалу і стійка щита ведуться мечем. Тиша 1.5с → відкат на свої. */
+const LINK={ role:null, code:null, remote:{t:0}, warned:false, timer:null };
+window.LINK=LINK;
+function linkFresh(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remote.t||0))<1500; }
+function aimYawEff(){ return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused; }
+function aimPitchEff(){ return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch; }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
-  const v=dirXZ(sensor.yawFused||0);
+  const v=dirXZ(aimYawEff()||0);
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
   const cw=worldX(cx), cz=worldZ(cy);
   const d=Math.hypot(cw-px,cz-pz), t=Math.max(0.15,d-CELL*0.42);
-  const y=clamp(TIER_H*(0.55+player.tier*0.6)+(sensor.pitch||0)*1.4, 0.02, TIER_H*2.4);
+  const y=clamp(TIER_H*(0.55+player.tier*0.6)+(aimPitchEff()||0)*1.4, 0.02, TIER_H*2.4);
   return {x:px+v[0]*t, y, z:pz+v[1]*t};
 }
 function voxelizeObstacle(o){
@@ -5436,6 +5457,7 @@ document.body.appendChild(morseHud);
 function morseShow(){ const txt=(MI.word?MI.word+' ':'')+MI.sym;
   if(txt){ morseHud.textContent='⚡ '+txt; morseHud.style.display='block'; } else morseHud.style.display='none'; }
 function morseUiBlocked(){
+  if(window.LINK && LINK.role==='sword') return true;   // (07-17) меч-пристрій: тапи не чаклують
   return !started || mode!=='fighter' || paused || player.dead
     || tutModalEl.style.display!=='none' || (window.TUT&&TUT.active&&TUT.stage>=0&&TUT.stage<=2);
 }
@@ -5483,7 +5505,7 @@ function castSpell(word){
     try{ QST.progress('cast','plasma',1); }catch(e){}
     return;
   }
-  const v=dirXZ(sensor.yawFused||0);
+  const v=dirXZ(aimYawEff()||0);
   for(let i=1;i<=4;i++){
     const cx=Math.round(player.gx+v[0]*i), cy=Math.round(player.gy+v[1]*i);
     if(cx<1||cx>11||cy<1||cy>11) break;
@@ -5561,6 +5583,100 @@ setTimeout(()=>{ try{
   });
   $('mNew').parentNode.insertBefore(box, $('mNew'));
 }catch(e){ console.warn('vol sliders', e); } }, 800);
+/* ════ ДВОРУЧЧЯ · інтерфейс і транспорт (07-17) ════ */
+const linkChip=document.createElement('div');
+linkChip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display:none;padding:6px 10px;'+
+  'background:rgba(2,12,26,.82);border:1px solid #7c3aed;border-radius:8px;color:#c4b5fd;'+
+  'font:inherit;font-size:11px;letter-spacing:.06em;pointer-events:none';
+document.body.appendChild(linkChip);
+
+const swordOverlay=document.createElement('div');
+swordOverlay.style.cssText='position:fixed;inset:0;z-index:95;display:none;flex-direction:column;'+
+  'align-items:center;justify-content:center;gap:14px;background:#02060f;color:#c4b5fd;'+
+  'font:inherit;text-align:center;padding:24px';
+document.body.appendChild(swordOverlay);
+
+function linkPath(code){ return 'blade/link/'+code+'/sword'; }
+
+function linkBecomeHost(){
+  if(!NET.db){ showBanner('🔗 потрібне мережеве з\'єднання','#ef4444'); return; }
+  const code=Math.random().toString(36).slice(2,6).toUpperCase();
+  LINK.role='host'; LINK.code=code; LINK.remote={t:0}; LINK.warned=false;
+  try{
+    onValue(ref(NET.db, linkPath(code)), snap=>{
+      const v=snap.val(); if(!v) return;
+      LINK.remote={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
+      if(LINK.warned){ LINK.warned=false; showBanner('🗡 МЕЧ ПІДКЛЮЧЕНО','#a78bfa'); }
+    });
+  }catch(e){ logE('LINK host: '+e.message); }
+  linkChip.style.display='block';
+  logE('ДВОРУЧЧЯ: тіло чекає меч, код '+code);
+  tutModal('🖐 ТІЛО/ОЧІ · КОД '+code,
+    'Цей телефон — <b>твоє тіло й очі</b>: камера, кроки, HP.<br><br>'+
+    'На <b>другому телефоні</b> відкрий гру, вибери <b>🗡 МЕЧ</b> і введи код:<br><br>'+
+    '<div style="font-size:30px;letter-spacing:.3em;color:#c4b5fd">'+code+'</div><br>'+
+    'Далі тримай це тіло у лівій руці (боком, як видошукач), а другий телефон — як руків\'я клинка у правій.',
+    [{t:'ЧЕКАЮ МЕЧ ▷',c:'#a78bfa'}]);
+}
+
+function linkBecomeSword(){
+  if(!NET.db){ showBanner('🔗 потрібне мережеве з\'єднання','#ef4444'); return; }
+  const code=(prompt('Код тіла (4 символи з першого телефона):')||'').trim().toUpperCase();
+  if(code.length<3){ showBanner('🔗 код не введено','#94a3b8'); return; }
+  LINK.role='sword'; LINK.code=code;
+  swordOverlay.innerHTML='<div style="font-size:52px">🗡</div>'+
+    '<div style="font-size:17px;letter-spacing:.18em;color:#a78bfa">РЕЖИМ МЕЧА</div>'+
+    '<div style="font-size:13px;color:#64748b">код <b style="color:#c4b5fd">'+code+'</b> · тримай як руків\'я клинка</div>'+
+    '<div style="font-size:12px;color:#475569;max-width:300px">Екран не потрібен: цей телефон — лише клинок. '+
+    'Боком = щит і заряд, вертикально = бій. Дивись на перший телефон.</div>';
+  const stop=document.createElement('button');
+  stop.textContent='◀ ВІД\'ЄДНАТИ';
+  stop.style.cssText='margin-top:10px;padding:12px 20px;font:inherit;font-size:13px;letter-spacing:.1em;'+
+    'background:#0a1a30;border:1px solid #7c3aed;border-radius:8px;color:#c4b5fd';
+  stop.onclick=()=>{ if(LINK.timer) clearInterval(LINK.timer); LINK.timer=null; LINK.role=null;
+    swordOverlay.style.display='none'; showBanner('🗡 меч від\'єднано','#94a3b8'); };
+  swordOverlay.appendChild(stop);
+  swordOverlay.style.display='flex';
+  if(LINK.timer) clearInterval(LINK.timer);
+  LINK.timer=setInterval(()=>{ try{
+    if(LINK.role!=='sword' || !NET.db) return;
+    set(ref(NET.db, linkPath(code)), {
+      yaw:+(sensor.yawFused||0).toFixed(1),
+      pitch:+(sensor.pitch||0).toFixed(3),
+      beacon: Math.abs(sensor.roll||0)>45,
+      speed:+(sensor.speed||0).toFixed(2),
+      t:Date.now()
+    }).catch(()=>{});
+  }catch(e){} }, 70);
+  logE('ДВОРУЧЧЯ: цей пристрій — МЕЧ, код '+code);
+}
+
+// чіп статусу в тіла
+setInterval(()=>{ try{
+  if(LINK.role!=='host'){ linkChip.style.display='none'; return; }
+  linkChip.style.display='block';
+  if(linkFresh()){ linkChip.textContent='🗡 меч підключено · '+LINK.code;
+    linkChip.style.borderColor='#7c3aed'; linkChip.style.color='#c4b5fd'; }
+  else{ linkChip.textContent='🗡 меч мовчить ('+LINK.code+') — клинок на своєму гіроскопі';
+    linkChip.style.borderColor='#f59e0b'; linkChip.style.color='#fcd34d';
+    if(!LINK.warned && LINK.remote.t){ LINK.warned=true; showBanner('🗡 зв\'язок із мечем втрачено','#f59e0b'); } }
+}catch(e){} }, 500);
+
+// кнопка в меню паузи
+setTimeout(()=>{ try{
+  const b=document.createElement('button'); b.id='mLink'; b.textContent='🔗 ДВА ПРИСТРОЇ (тіло + меч)';
+  $('mNew').parentNode.insertBefore(b, $('mNew'));
+  b.onclick=()=>{ closeMenu();
+    tutModal('🔗 ДВА ПРИСТРОЇ · ОДНЕ ТІЛО',
+      'Два телефони працюють як один боєць:<br><br>'+
+      '🖐 <b>ТІЛО/ОЧІ</b> — ліва рука. Камера, кроки, HP, рахунок. Тримаєш боком, як видошукач.<br>'+
+      '🗡 <b>МЕЧ</b> — права рука. Його гіроскоп веде клинок: куди повернеш — туди пропалює; боком = щит і заряд.<br><br>'+
+      'Обидва мають бути в <b>одній кімнаті</b> (зараз: '+NET.room+'). Обери роль <b>цього</b> телефона:',
+      [{t:'🖐 ЦЕ — ТІЛО/ОЧІ',c:'#22c55e',f:linkBecomeHost},
+       {t:'🗡 ЦЕ — МЕЧ',c:'#a78bfa',f:linkBecomeSword},
+       {t:'СКАСУВАТИ',c:'#64748b'}]);
+  };
+}catch(e){ console.warn('link ui',e); } }, 900);
 </script>
 </body>
 </html>
