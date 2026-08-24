@@ -1011,8 +1011,10 @@ function makeAvatar(baseHue){
   const bladeMat=new THREE.MeshBasicMaterial({transparent:true, blending:THREE.AdditiveBlending, depthWrite:false});
   const blade=new THREE.InstancedMesh(bladeGeo,bladeMat,6);
   blade.frustumCulled=false; blade.count=0; scene.add(blade);
+  const blade2=new THREE.InstancedMesh(bladeGeo, bladeMat.clone(), 6);   // (07-17j) друга рука
+  blade2.frustumCulled=false; blade2.count=0; scene.add(blade2);
   return {
-    mesh:g, parts, blade, baseHue,
+    mesh:g, parts, blade, blade2, baseHue,
     gx:CX, gy:CY, dirIdx:0, visYaw:0, tier:1, crouch:0,
     pitch:0, roll:0, speedPulse:0, bladeHue:0.95,
     hp:100, stamina:100, swordLen:1, charging:false, charge:1,
@@ -1340,6 +1342,57 @@ const WEAPON_FX={
   flail:{hideBeam:true}, nunchaku:{hideBeam:true}, whip:{hideBeam:true}, blaster:{thick:0.45},
   bossaxe:{thick:2.2},
 };
+// (07-17j) геометрія ЛІВОЇ руки: та сама математика, що й у правої, але
+// кисть винесена в ліве плече і повернута за азимутом ЛІВОГО меча.
+function handInfoLeft(){
+  const av=player;
+  const yawL=aimYawL(), pitL=aimPitchL();
+  const [dx,dz]=dirXZ(yawL);
+  const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);
+  const cr=av.crouch||0;
+  const bYaw=(av.visYaw||0)*Math.PI/180, cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
+  const dyL=((yawL-(av.visYaw||0))*Math.PI/180);
+  const arm=0.52+(LBLADE.burnCd>0?0.16:0);                       // на ударі рука витягується
+  const lhx=-0.30+Math.sin(dyL)*arm, lhz=0.10+Math.cos(dyL)*arm; // локальні координати кисті
+  const hx=px + (lhx*cosB + lhz*sinB);
+  const hz=pz + (-lhx*sinB + lhz*cosB);
+  const hy=TIER_H*(1.06-cr*0.42) + pitL*0.5;
+  const len=clamp(1+Math.round((av.mods&&av.mods.reach)||0), 1, 6);
+  const reach=len*CELL*0.92;
+  const rise=clamp(pitL,-1,1);
+  return { hx,hy,hz,
+    tipX:hx+dx*reach, tipY:hy+rise*reach*0.55, tipZ:hz+dz*reach,
+    atk:(LBLADE.burnCd>0?1:0) };
+}
+function updateBlade2(){
+  const av=player;
+  if(!av.blade2) return;
+  if(!linkFreshL() || av.dead || av.disarmed || mode!=='fighter'){ av.blade2.count=0; return; }
+  const H=handInfoLeft();
+  const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;
+  const blen=Math.hypot(bx,by,bz)||1;
+  const segs=clamp(Math.round(blen/(CELL*0.9)),1,6);
+  av.blade2.count=segs;
+  const hot=H.atk>0 || ENCH.tL>0;
+  const segLen=blen/segs;
+  const hue=(ENCH.tL>0)?0.06:0.12;                                // плазма — жар; звичайний — тепле золото
+  for(let i=0;i<segs;i++){
+    const f=(i+0.5)/segs;
+    _d.position.set(lerp(H.hx,H.tipX,f), lerp(H.hy,H.tipY,f), lerp(H.hz,H.tipZ,f));
+    _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);
+    const dmgF=1+clamp(((av.mods&&av.mods.dmg)||1)-1,0,2)*0.55;
+    const th=(beaconL()?0.7:1.0)*dmgF;                            // у стійці щита клинок тонший
+    _d.scale.set(th, th, segLen/(CELL*0.95));
+    _d.updateMatrix(); av.blade2.setMatrixAt(i,_d.matrix);
+    const lum=clamp((hot?0.74:0.56)+f*0.22,0,0.97);
+    _c.setHSL(hue, hot?0.7:0.9, lum);
+    av.blade2.setColorAt(i,_c);
+  }
+  _d.scale.set(1,1,1);
+  av.blade2.instanceMatrix.needsUpdate=true;
+  av.blade2.instanceColor.needsUpdate=true;
+  av.blade2.material.opacity=hot?1.0:0.9;
+}
 function updateBlade(av){
   if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
   const wname = av===player ? playerWpn : av.wpn;
@@ -3750,7 +3803,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17i · ЛІВИЙ-КЛИНОК-У-КИСТІ(+власний промінь і лог) · РУКА=ДЗЕРКАЛО(світ тіла без затримки) · дім-теж-спільний';
+const BUILD_TAG='2026-07-17j · ДРУГИЙ-КЛИНОК-СПРАВЖНІЙ(той самий рушій сегментів) · рука-тримається-кімнати-тіла';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4372,6 +4425,7 @@ function frame(now){
     updateStanceAndCamera(dt);
     if(!clinch.active){ clinch.cd=Math.max(0,clinch.cd-dt); resolveClinch(); if(!clinch.active) resolveBurn(dt); }
     try{ leftBladeTick(dt); }catch(e){}   // (07-17c) друга рука — окремий клинок
+    try{ updateBlade2(); }catch(e){}      // (07-17j) її світловий клинок
     updateClinch(dt);
     handleDeath(player, dt);
 
@@ -5827,33 +5881,9 @@ function leftBladeClear(){ for(const m of LBLADE.seg){ try{ scene.remove(m); fre
 function leftBladeTick(dt){
   if(!linkFreshL() || player.dead || mode!=='fighter'){ if(LBLADE.seg.length) leftBladeClear(); return; }
   const yaw=aimYawL(), [dx,dz]=dirXZ(yaw);
-  const lBeacon=beaconL(), lPitch=aimPitchL();
-  const len=Math.max(1, Math.round(1+(player.mods.reach||0)*0.5));
-  // візуал: сегменти вздовж променя лівої руки
-  while(LBLADE.seg.length<len){
-    const m=new THREE.Mesh(sharedBox(1,1,1), new THREE.MeshBasicMaterial({color:0xffd9a0}));
-    m.userData.ownRes=true; m.frustumCulled=false; m.scale.set(0.16,0.16,0.9); scene.add(m); LBLADE.seg.push(m);
-  }
-  while(LBLADE.seg.length>len){ const m=LBLADE.seg.pop(); try{ scene.remove(m); freeMesh(m); }catch(e){} }
-  const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
-  // (07-17i) СВІТОВА ПОЗИЦІЯ ЛІВОЇ КИСТІ — тими самими формулами, що й анімація руки:
-  // локальні координати кисті повертаємо на visYaw корпусу і додаємо до тіла.
-  const bYaw=((player.visYaw||0))*Math.PI/180;
-  const dyL=((yaw-(player.visYaw||0))*Math.PI/180);
-  const armL=0.52, lhx=-0.30+Math.sin(dyL)*armL, lhz=0.10+Math.cos(dyL)*armL;
-  const cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
-  const sideX= lhx*cosB + lhz*sinB;                 // локальне → світове
-  const sideZ=-lhx*sinB + lhz*cosB;
-  const pitchL=lPitch;
-  const handY=TIER_H*(1.0-((player.crouch||0)*0.42))+pitchL*0.5;   // висота кисті
-  for(let i=0;i<LBLADE.seg.length;i++){
-    const t=(i+0.55)*CELL*0.85;
-    const m=LBLADE.seg[i];
-    m.position.set(px+sideX+dx*t, handY+pitchL*t*0.45, pz+sideZ+dz*t);  // лезо йде за нахилом меча
-    m.rotation.y=Math.atan2(dx,dz);
-    m.rotation.x=-Math.atan(pitchL*0.9);
-    m.material.color.setHex(ENCH.tL>0 ? 0xff8a3c : (lBeacon?0x8ab4ff:0xffd9a0));   // плазма/щит/звичайний
-  }
+  const lBeacon=beaconL();
+  const len=clamp(1+Math.round(player.mods.reach||0),1,6);
+  if(LBLADE.seg.length) leftBladeClear();          // (07-17j) старі палиці більше не потрібні
   // ураження лівим клинком (рахує ТІЛО — власник світу)
   if(window.LINK && LINK.role==='swordL') return;
   LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
@@ -6010,6 +6040,17 @@ function linkBecomeSword(hand, codeIn){
     if(LINK.role && !LINK.body) showBanner('🔗 тіло '+code+' мовчить — перевір, чи воно ще у грі','#f59e0b');
   }catch(e){} }, 5000);
 }
+
+// (07-17j) рука щосекунди звіряє кімнату з тілом — жодних розбіжних світів
+setInterval(()=>{ try{
+  if(!window.LINK || LINK.role!=='swordL' || !LINK.body) return;
+  const b=LINK.body;
+  if(Number.isInteger(b.rx) && ADV.on && (ADV.rx!==b.rx || ADV.ry!==b.ry)){
+    applyAdvRoom(b.rx,b.ry);
+    logE('рука: перейшла за тілом у ('+b.rx+','+b.ry+')');
+  }
+  if(Number.isInteger(b.gx) && (player.gx!==b.gx || player.gy!==b.gy)){ player.gx=b.gx; player.gy=b.gy; }
+}catch(e){} }, 900);
 
 // чіп статусу в тіла
 setInterval(()=>{ try{
