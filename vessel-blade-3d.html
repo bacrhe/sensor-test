@@ -2735,7 +2735,8 @@ function applyAdvRoom(rx,ry){
   // ПЕРСИСТ (фікс 07-13): ЗНІМОК ГОЛОВНІШИЙ ЗА СІД. Раніше сід-генерація бігла першою
   // щоразу, а знімок лише накривав її зверху — кімнати «регенерували». Тепер:
   // є знімок → відновлюємо ТІЛЬКИ його; нема → генеруємо і одразу знімаємо (advRoomExtras).
-  if(home){                                   // (07-16e) ДІМ СВЯЩЕННИЙ: чужі/старі забудови
+  const _hand = window.LINK && (LINK.role==='sword'||LINK.role==='swordL');
+  if(home && !_hand){                         // (07-16e) ДІМ СВЯЩЕННИЙ: чужі/старі забудови
     roomEdits.delete(rx+','+ry);              // не можуть замурувати спавн — завжди чисто
     spawnObstaclesSeededSafe(rx,ry,home);
   } else if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
@@ -3803,7 +3804,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17j · ДРУГИЙ-КЛИНОК-СПРАВЖНІЙ(той самий рушій сегментів) · рука-тримається-кімнати-тіла';
+const BUILD_TAG='2026-07-17k · ФІКС-РОЗСИНХРОНУ(рука не була у пригоді — тому не йшла за кімнатою) · чіп-за-віком-пакета · ⟳синхронізація';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6002,6 +6003,18 @@ function linkBecomeSword(hand, codeIn){
     (left?'ЛІВА РУКА':'ПРАВА РУКА')+' · '+code+'</div>'+
     '<div style="font-size:11px;color:#64748b;max-width:320px">Твій гіроскоп веде <b>цей</b> клинок і <b>цю</b> камеру. '+
     'Боком = щит і заряд · вертикально = бій · тапи = своя Морзе. Тіло спільне з іншим телефоном.</div>';
+  const rs=document.createElement('button');
+  rs.textContent='⟳ СИНХРОНІЗУВАТИСЬ';
+  rs.style.cssText='margin-top:6px;padding:10px 18px;font:inherit;font-size:12px;letter-spacing:.08em;'+
+    'background:#0a1a30;border:1px solid #22c55e;border-radius:8px;color:#86efac';
+  rs.onclick=()=>{ try{ const b=LINK.body;
+    if(!b){ showBanner('🔗 тіло ще мовчить','#f59e0b'); return; }
+    if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }
+    setTimeout(()=>{ try{ if(Number.isInteger(b.rx)) applyAdvRoom(b.rx,b.ry);
+      if(Number.isInteger(b.gx)){ player.gx=b.gx; player.gy=b.gy; }
+      showBanner('⟳ синхронізовано з тілом','#22c55e'); }catch(e){} }, 350);
+  }catch(e){} };
+  swordOverlay.appendChild(rs);
   const stop=document.createElement('button');
   stop.textContent='◀ ВІД\'ЄДНАТИ';
   stop.style.cssText='margin-top:10px;padding:12px 20px;font:inherit;font-size:13px;letter-spacing:.1em;'+
@@ -6016,6 +6029,9 @@ function linkBecomeSword(hand, codeIn){
       LINK.body=v;
       try{
         if(Number.isInteger(v.rx) && ADV.on && (ADV.rx!==v.rx || ADV.ry!==v.ry)) applyAdvRoom(v.rx, v.ry);
+        if(Number.isInteger(v.rx) && !ADV.on && !LINK._advTried){ LINK._advTried=true;   // (07-17k) одноразово
+          try{ $('mAdv').click(); }catch(e){}
+          setTimeout(()=>{ try{ if(ADV.on) applyAdvRoom(v.rx,v.ry); }catch(e){} }, 400); }
         if(Number.isInteger(v.gx)){ player.gx=v.gx; player.gy=v.gy; }
         if(v.hp!=null) player.hp=v.hp;
         if(v.wpn && v.wpn!==playerWpn){ playerWpn=v.wpn; try{ buildWeaponFX(playerWpn); }catch(e){} }
@@ -6045,9 +6061,14 @@ function linkBecomeSword(hand, codeIn){
 setInterval(()=>{ try{
   if(!window.LINK || LINK.role!=='swordL' || !LINK.body) return;
   const b=LINK.body;
-  if(Number.isInteger(b.rx) && ADV.on && (ADV.rx!==b.rx || ADV.ry!==b.ry)){
-    applyAdvRoom(b.rx,b.ry);
-    logE('рука: перейшла за тілом у ('+b.rx+','+b.ry+')');
+  if(Number.isInteger(b.rx)){
+    if(!ADV.on){                                     // (07-17k) тіло у пригоді — рука теж мусить бути
+      try{ $('mAdv').click(); logE('рука: вмикаю пригоду за тілом'); }catch(e){}
+      setTimeout(()=>{ try{ applyAdvRoom(b.rx,b.ry); }catch(e){} }, 300);
+    } else if(ADV.rx!==b.rx || ADV.ry!==b.ry){
+      applyAdvRoom(b.rx,b.ry);
+      logE('рука: перейшла за тілом у ('+b.rx+','+b.ry+')');
+    }
   }
   if(Number.isInteger(b.gx) && (player.gx!==b.gx || player.gy!==b.gy)){ player.gx=b.gx; player.gy=b.gy; }
 }catch(e){} }, 900);
@@ -6056,7 +6077,9 @@ setInterval(()=>{ try{
 setInterval(()=>{ try{
   if(LINK.role!=='host'){ linkChip.style.display='none'; return; }
   linkChip.style.display='block';
-  if(linkFreshL()){ linkChip.textContent='🗡🗡 ДВІ РУКИ · тіло '+LINK.code;
+  const age=Date.now()-(LINK.remoteL.t||0);
+  if(LINK.remoteL.t && age<2500){
+    linkChip.textContent='🗡🗡 ДВІ РУКИ · тіло '+LINK.code+' · '+(age/1000).toFixed(1)+'с';
     linkChip.style.borderColor='#7c3aed'; linkChip.style.color='#c4b5fd'; }
   else{ linkChip.textContent='🖐 ТІЛО '+LINK.code+' · чекаю другу руку';
     linkChip.style.borderColor='#f59e0b'; linkChip.style.color='#fcd34d';
