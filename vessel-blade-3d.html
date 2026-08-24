@@ -571,9 +571,19 @@ const AUDIO={
   motionTick(dt){                                       // (07-15) МАХ/ЗАРЯД/ВИПАД дихають у музиці
     try{
       const R=this.ritual; if(!R||!R.moLP||!AC) return;
-      const _spRaw=(typeof linkFresh==='function' && linkFresh())
-        ? Math.max(sensor.speed||0, LINK.remote.speed||0) : (sensor.speed||0);   // (07-17) махає меч-пристрій
-      const sp=clamp(_spRaw/18,0,1);                                      // чутливіше до маху
+      let _spRaw=(sensor.speed||0);
+      try{ if(window.LINK && LINK.role==='host' && linkFreshL()) _spRaw=Math.max(_spRaw, LINK.remoteL.speed||0); }catch(e){}
+      let sp=clamp(_spRaw/18,0,1);
+      try{                                                                // (07-17f) рух СУСІДІВ теж хитає музику
+        let others=0;
+        for(const id in NET.remotes){ const r=NET.remotes[id];
+          if(!r || r.spec || typeof sameAdvRoom==='function' && !sameAdvRoom(r)) continue;
+          const m=(r.mo??(r.latest&&r.latest.mo))||0;
+          const d=Math.abs((r.gx??6)-player.gx)+Math.abs((r.gy??6)-player.gy);
+          others=Math.max(others, m*clamp(1-d/10,0,1));                   // ближче — чутніше
+        }
+        sp=clamp(Math.max(sp, others*0.8),0,1);
+      }catch(e){}
       this._mo=lerp(this._mo??0, sp, clamp(dt*11,0,1));
       R.moLP.frequency.setTargetAtTime(lerp(18000, 700, this._mo), AC.currentTime, 0.04);    // мах «топить» спектр глибше
       R.moLP.Q.setTargetAtTime(lerp(0.7, 6, this._mo), AC.currentTime, 0.05);                // резонанс — «вжик» співає
@@ -627,11 +637,15 @@ const AUDIO={
       const b=await this.load(u);
       this.buildRitual();                                 // граф Ритма собирается при первом треке
       const src=AC.createBufferSource(); src.buffer=b; src.loop=true;
-      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('music')); src.start();
+      const g=AC.createGain(); g.gain.value=0; src.connect(g); g.connect(this.bus('music'));
+      const dur=b.duration||1;
+      const off=((Date.now()/1000) % dur + dur) % dur;     // (07-17f) спільна фаза для всіх у світі
+      src.start(0, off);
       const t=AC.currentTime;
       g.gain.linearRampToValueAtTime(1, t+fade);
       if(this.cur){ const old=this.cur; old.g.gain.linearRampToValueAtTime(0, t+fade); setTimeout(()=>{try{old.src.stop();}catch(e){}}, fade*1000+80); }
-      this.cur={src,g}; this.curName=name; logE('АУДІО: музика → '+name);
+      this.cur={src,g}; this.curName=name;
+      logE('АУДІО: музика → '+name+' (фаза '+off.toFixed(1)+'с — спільна для кімнати)');
       if(ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, 0.8);   // синтез-дрон уступает живому треку
     }catch(e){}
   },
@@ -3718,7 +3732,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17e · СИМЕТРИЧНІ-ДВІ-РУКИ(свій-клинок+своя-камера у кожного) · хват-розпадається · без-ФЕХТ-спаму';
+const BUILD_TAG='2026-07-17f · ВИБІР-ТІЛА-СПИСКОМ(без набору коду) · СПІЛЬНА-МУЗИКА(одна фаза на кімнату) · рух-сусідів-чути';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -3880,6 +3894,7 @@ const NET = {
     }
     return { x:av.gx, y:av.gy,
       rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),               // (07-16) моя кімната мета-світу
+      mo:+Math.min(1,(sensor.speed||0)/18).toFixed(2),                // (07-17f) енергія руху — для спільного звуку
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
@@ -5809,10 +5824,31 @@ function linkBecomeHost(){
     [{t:'ЧЕКАЮ МЕЧ ▷',c:'#a78bfa'}]);
 }
 
-function linkBecomeSword(hand){
+function linkPickBody(hand){          // (07-17f) список живих тіл — обираєш кнопкою, не набираєш
   if(!NET.db){ showBanner('🔗 потрібне мережеве з\'єднання','#ef4444'); return; }
-  const code=(prompt('Код тіла (4 символи з першого телефона):')||'').trim().toUpperCase();
-  if(code.length<3){ showBanner('🔗 код не введено','#94a3b8'); return; }
+  showBanner('🔗 шукаю тіла поруч…','#94a3b8');
+  try{
+    onValue(ref(NET.db,'blade/link'), snap=>{
+      const v=snap.val()||{}; const now=Date.now(), live=[];
+      for(const code in v){ const b=v[code] && v[code].body;
+        if(b && b.t && now-b.t<8000) live.push({code, t:b.t}); }
+      live.sort((a,b)=>b.t-a.t);
+      if(!live.length){
+        tutModal('🔗 ТІЛ НЕ ЗНАЙДЕНО','На першому телефоні спершу обери <b>🗡 ПРАВА РУКА (тримає світ)</b> — він створить тіло і покаже код. Потім повернись сюди.',
+          [{t:'ЗРОЗУМІЛО',c:'#64748b'}]);
+        return;
+      }
+      const btns=live.slice(0,4).map(b=>({t:'🖐 ТІЛО '+b.code,c:'#22c55e',f:()=>linkBecomeSword(hand,b.code)}));
+      btns.push({t:'СКАСУВАТИ',c:'#64748b'});
+      tutModal('🔗 ДО ЯКОГО ТІЛА ПРИЄДНАТИСЬ?','Ось тіла, що зараз у мережі. Обери своє — і станеш його <b>'+
+        (hand==='L'?'лівою':'правою')+' рукою</b>.',btns);
+    }, {onlyOnce:true});
+  }catch(e){ showBanner('🔗 помилка пошуку: '+e.message,'#ef4444'); }
+}
+function linkBecomeSword(hand, codeIn){
+  if(!NET.db){ showBanner('🔗 потрібне мережеве з\'єднання','#ef4444'); return; }
+  const code=(codeIn||'').trim().toUpperCase();
+  if(code.length<3){ showBanner('🔗 код не обрано','#94a3b8'); return; }
   const left=(hand==='L');
   LINK.role=left?'swordL':'sword'; LINK.code=code; LINK.hand=left?'L':'R';
   swordOverlay.innerHTML='<div style="font-size:14px;letter-spacing:.16em;color:'+(left?'#fbbf24':'#a78bfa')+'">🗡 '+
@@ -5850,16 +5886,19 @@ function linkBecomeSword(hand){
       t:Date.now()
     }).catch(()=>{});
   }catch(e){} }, 70);
-  logE('ДВОРУЧЧЯ: цей пристрій — МЕЧ, код '+code);
+  logE('ДВОРУЧЧЯ: цей пристрій — '+(left?'ЛІВА':'ПРАВА')+' рука, тіло '+code);
+  setTimeout(()=>{ try{
+    if(LINK.role && !LINK.body) showBanner('🔗 тіло '+code+' мовчить — перевір, чи воно ще у грі','#f59e0b');
+  }catch(e){} }, 5000);
 }
 
 // чіп статусу в тіла
 setInterval(()=>{ try{
   if(LINK.role!=='host'){ linkChip.style.display='none'; return; }
   linkChip.style.display='block';
-  if(linkFresh()){ linkChip.textContent=(linkFreshL()?'🗡🗡 два мечі · ':'🗡 меч · ')+LINK.code;
+  if(linkFreshL()){ linkChip.textContent='🗡🗡 ДВІ РУКИ · тіло '+LINK.code;
     linkChip.style.borderColor='#7c3aed'; linkChip.style.color='#c4b5fd'; }
-  else{ linkChip.textContent='🗡 меч мовчить ('+LINK.code+') — клинок на своєму гіроскопі';
+  else{ linkChip.textContent='🖐 ТІЛО '+LINK.code+' · чекаю другу руку';
     linkChip.style.borderColor='#f59e0b'; linkChip.style.color='#fcd34d';
     if(!LINK.warned && LINK.remote.t){ LINK.warned=true; showBanner('🗡 зв\'язок із мечем втрачено','#f59e0b'); } }
 }catch(e){} }, 500);
@@ -5894,7 +5933,7 @@ setTimeout(()=>{ try{
       '🗡 <b>ЛІВА РУКА</b> — другий телефон: лівий клинок, свій нахил, своя абетка Морзе (плазма окремо на кожен меч).<br><br>'+
       'Обидва мають бути в <b>одній кімнаті</b> (зараз: '+NET.room+'). Обери роль <b>цього</b> телефона:',
       [{t:'🗡 ПРАВА РУКА (тримає світ)',c:'#22c55e',f:linkBecomeHost},
-       {t:'🗡 ЛІВА РУКА (другий меч)',c:'#fbbf24',f:()=>linkBecomeSword('L')},
+       {t:'🗡 ЛІВА РУКА (другий меч)',c:'#fbbf24',f:()=>linkPickBody('L')},
        {t:'СКАСУВАТИ',c:'#64748b'}]);
   };
 }catch(e){ console.warn('link ui',e); } }, 900);
