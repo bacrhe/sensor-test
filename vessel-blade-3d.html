@@ -1301,15 +1301,28 @@ function updateAvatarMesh(av, t){
   try{
     if(av===player && typeof linkFreshL==='function' && linkFreshL()){
       twoHands=true;
-      const reach=0.60, base=TIER_H*(1.06-cr*0.42);
+      // (07-17h) ДВОРУЧНА СТІЙКА: кисть іде дугою навколо плеча (а не по прямій),
+      // лікоть виноситься назовні, а рука, що не б'є, злегка відводиться назад —
+      // тіло читається як один боєць із двома клинками, а не як розчепірена лялька.
+      const base=TIER_H*(1.02-cr*0.42);
+      const swingR=clamp(lunge,0,1), swingL=clamp((ENCH.tL>0?0.1:0)+(LBLADE.burnCd>0?0.6:0),0,1);
+      const armL=0.52+swingL*0.18, armR=0.52+swingR*0.22;         // витягується на ударі
       const dyL=((aimYawL()-(av.visYaw||0))*Math.PI/180);
-      Lhx=-0.34+Math.sin(dyL)*reach; Lhz=0.16+Math.cos(dyL)*reach;
-      Lhy=base+(aimPitchL()||0)*0.55;
-      Lex=lerp(Slx,Lhx,0.5)-0.16; Ley=lerp(sy,Lhy,0.5)-0.08; Lez=lerp(sz,Lhz,0.5)+0.02;
       const dyR=((aimYawEff()-(av.visYaw||0))*Math.PI/180);
-      Rhx= 0.34+Math.sin(dyR)*reach; Rhz=0.16+Math.cos(dyR)*reach;
-      Rhy=base+(aimPitchEff()||0)*0.55+lunge*0.2;
-      Rex=lerp(Srx,Rhx,0.5)+0.16; Rey=lerp(sy,Rhy,0.5)-0.08; Rez=lerp(sz,Rhz,0.5)+0.02;
+      const shL=-0.30, shR=0.30;                                   // плечі ширше в бойовій стійці
+      Lhx=shL+Math.sin(dyL)*armL; Lhz=0.10+Math.cos(dyL)*armL;
+      Lhy=base+(aimPitchL()||0)*0.5 - swingR*0.10;                 // права б'є → ліва трохи вниз/назад
+      Rhx=shR+Math.sin(dyR)*armR; Rhz=0.10+Math.cos(dyR)*armR;
+      Rhy=base+(aimPitchEff()||0)*0.5 + swingR*0.16 - swingL*0.08;
+      // лікті — назовні від лінії плече→кисть (природний згин)
+      const elb=(sx0,sz0,hx,hz,side)=>{
+        const mx=(sx0+hx)*0.5, mz=(sz0+hz)*0.5;
+        const vx=hx-sx0, vz=hz-sz0, L=Math.hypot(vx,vz)||1;
+        return [mx + (-vz/L)*0.14*side, mz + (vx/L)*0.14*side];
+      };
+      const eL=elb(Slx,sz,Lhx,Lhz,-1), eR=elb(Srx,sz,Rhx,Rhz,1);
+      Lex=eL[0]; Ley=lerp(sy,Lhy,0.55)-0.06; Lez=eL[1];
+      Rex=eR[0]; Rey=lerp(sy,Rhy,0.55)-0.06; Rez=eR[1];
     }
   }catch(e){}
   setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
@@ -2691,6 +2704,7 @@ function applyAdvRoom(rx,ry){
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
   }
   try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
+  try{ if(window.LINK && LINK.role==='host') snapshotSoon(); }catch(e){}  // (07-17h) віддати руці свіжу кімнату
   try{ AUDIO.music(home?'home':(chessWhite(rx,ry)?'white':(boss?'boss':'black'))); }catch(e){}   // тема кімнати з маніфесту
   logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
 }
@@ -3733,7 +3747,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17g · ФІКС-ЛІВОЇ-РУКИ(роль swordL мовчала!) · СПІЛЬНІ-ПРЕДМЕТИ(підняв один — зникло в усіх) · швидша-синхронізація';
+const BUILD_TAG='2026-07-17h · БЕЗ-НАКЛАДАННЯ-ТІЛ(рука ховає своє тіло) · БОЙОВА-СТІЙКА(лікті+протихід) · вибір-режиму-на-воротах · навчання-для-двох';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4152,6 +4166,10 @@ function renderRemotes(now, dt){
   for(const id in NET.remotes){
     const r = NET.remotes[id];
     if(r.spec || !r.av) continue;
+    if(window.LINK && LINK.body && LINK.body.id===id){          // (07-17h) це МОЄ тіло — я і є воно
+      if(!r.hidden){ r.hidden=true; setRemoteVisible(r,false); }
+      continue;
+    }
     const _rrx=(r.rx??(r.latest&&r.latest.rx)), _rry=(r.ry??(r.latest&&r.latest.ry));
     const otherRoom = ADV.on && _rrx!=null && (_rrx!==ADV.rx || _rry!==ADV.ry);   // він деінде на мапі
     const stale = otherRoom || ((r.latest&&r.latest.t)||0) < nowMs-NET_PURGE_MS;
@@ -4509,6 +4527,14 @@ $('btnReq').addEventListener('click', async ()=>{
     applyMode();
     try{
       if(window.TUT && TUT.requested) TUT.begin();
+      else if(window.__devMode==='host'){               // (07-17h) одразу створити тіло для двох рук
+        equalizerOn=false; try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
+        if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
+        setTimeout(()=>{ try{ linkBecomeHost(); }catch(e){} }, 1200);
+      }
+      else if(window.__devMode==='handL'){              // (07-17h) одразу шукати тіло
+        setTimeout(()=>{ try{ linkPickBody('L'); }catch(e){} }, 1200);
+      }
       else if(mode==='fighter'){                       // «ГРАТИ ОДРАЗУ» (07-15): пригода стартує сама, рівновага геть
         equalizerOn=false;
         try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
@@ -4581,6 +4607,18 @@ window.TUT={
   trial:false, wave:0, wavesCleared:0,          // крок 7: випробування
   deaths:0, t0:0,
   begin(){ this.requested=false; this.active=true; this.stage=0; this.deaths=0; this.t0=performance.now();
+    if(window.LINK && LINK.role){                                // (07-17h) навчання для ДВОХ пристроїв
+      this.active=false;
+      tutModal('🗡🗡 ДВІ РУКИ · КОРОТКЕ НАВЧАННЯ',
+        'Ви керуєте <b>одним тілом</b> удвох (або двома телефонами в своїх руках).<br><br>'+
+        '• <b>Кожен телефон = свій клинок</b>: куди повернеш — туди він пропалює.<br>'+
+        '• <b>Боком, як фотоапарат</b> = щит і заряд для СВОЄЇ руки.<br>'+
+        '• <b>Тапи по екрану</b> = своя абетка Морзе (·  −). Слово <b>PL</b> запалює плазму саме на твоєму клинку.<br>'+
+        '• Кроки, HP і кімната — <b>спільні</b>. Права рука тримає світ.<br><br>'+
+        'Спробуйте: розведіть телефони в різні боки — клинки розійдуться, а тіло лишиться одне.',
+        [{t:'ДО БОЮ ▷',c:'#22c55e'}]);
+      return;
+    }
     this.eqSave=equalizerOn; equalizerOn=false;  // рівновага (телепорт при вбивстві) — пауза на час навчання
     if(ADV.on) $('mAdv').click();               // туторіал — поза пригодою
     spawnPhantoms(phantomCount=0); botDiff=0;
@@ -5221,6 +5259,8 @@ setTimeout(()=>{
   try{
     const box=document.createElement('div');
     box.innerHTML='<div style="color:#334155;font-size:9px;letter-spacing:.06em;margin-bottom:8px;word-break:break-all">BUILD '+BUILD_TAG+'</div>'+
+      '<label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">СКІЛЬКИ ПРИСТРОЇВ</label>'+
+      '<div id="devPick" style="display:flex;gap:6px;margin-bottom:10px"></div>'+
       '<label style="display:block;color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:5px">ЯК ПОЧАТИ</label>';
     const mk=(txt,col,fn)=>{ const b=document.createElement('button');
       b.textContent=txt; b.className='btn';
@@ -5248,6 +5288,21 @@ setTimeout(()=>{
     const anchorEl=$('errMsg')||$('btnReq');
     anchorEl.parentNode.insertBefore(box, anchorEl);
     logE('ворота: блок «ЯК ПОЧАТИ» додано');
+    try{                                                        // (07-17h) один телефон / дві руки — обираємо тут
+      const dp=box.querySelector('#devPick');
+      const mk=(txt,val,col)=>{ const b=document.createElement('button');
+        b.textContent=txt; b.dataset.v=val;
+        b.style.cssText='flex:1;padding:10px 4px;font:inherit;font-size:10px;letter-spacing:.04em;border-radius:8px;'+
+          'background:#0a1524;border:1px solid '+col+';color:'+col;
+        b.onclick=()=>{ window.__devMode=val;
+          [...dp.children].forEach(c=>{ c.style.background='#0a1524'; c.style.opacity='0.55'; });
+          b.style.background='#132238'; b.style.opacity='1'; };
+        dp.appendChild(b); return b; };
+      const b1=mk('📱 ОДИН','solo','#60a5fa');
+      mk('🗡🗡 ПРАВА РУКА','host','#22c55e');
+      mk('🗡 ЛІВА РУКА','handL','#fbbf24');
+      b1.onclick(); window.__devMode='solo';
+    }catch(e){ console.warn('devPick',e); }
     // кнопка повтору навчання в меню паузи
     const mb=document.createElement('button');
     mb.id='mTut'; mb.textContent='📚 ТУТОРІАЛ (навчання)';
@@ -5842,6 +5897,7 @@ function linkBecomeHost(){
     set(ref(NET.db,'blade/link/'+LINK.code+'/body'), {
       rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),
       gx:player.gx, gy:player.gy, hp:Math.round(player.hp||0),
+      id:NET.myId,                                             // (07-17h) щоб рука не малювала тіло двічі
       yaw:+(sensor.yawFused||0).toFixed(1),                    // (07-17e) правий клинок тіла
       pitch:+(sensor.pitch||0).toFixed(3),
       wpn:playerWpn, dead:!!player.dead, t:Date.now()
