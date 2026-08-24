@@ -1818,7 +1818,8 @@ function spawnPickup(gx,gy,kind){
   m.frustumCulled=false; m.position.set(worldX(c.gx), 0.35, worldZ(c.gy)); scene.add(m);
   PICKUPS.push({gx:c.gx, gy:c.gy, kind, mesh:m});
 }
-function removePickup(pk){
+function removePickup(pk, mine){
+  if(mine){ try{ publishPicked(pk.gx, pk.gy); }catch(e){} }   // (07-17g) сказати всім: цього вже нема
   const i=PICKUPS.indexOf(pk); if(i>=0) PICKUPS.splice(i,1);
   try{ pk.mesh.geometry.dispose(); pk.mesh.material.dispose(); }catch(e){}
   scene.remove(pk.mesh);
@@ -1840,7 +1841,7 @@ function updatePickupCollect(){
       blip(880,0.1,'sine',0.16); blip(1180,0.08,'sine',0.12); buzz([0,30]);
       logE('апгрейд: '+d.label+'  [шкода ×'+player.mods.dmg.toFixed(2)
         +' заряд ×'+player.mods.charge.toFixed(2)+' +'+player.mods.reach+'дос]');
-      removePickup(pk);
+      removePickup(pk, true);      // (07-17g) підібрав Я — синхронізуємо
       return;
     }
   }
@@ -2636,7 +2637,7 @@ function applyRemoteRoomIfNewer(key){
   // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
   const now=Date.now();
   NET._reAt = NET._reAt||{};
-  if(now - (NET._reAt[key]||0) < 2500){ NET._rePendKey=key; return false; }
+  if(now - (NET._reAt[key]||0) < 1200){ NET._rePendKey=key; return false; }   // (07-17g) чужі зміни видно швидше
   NET._reAt[key]=now; if(NET._rePendKey===key) NET._rePendKey=null;
   NET._reApplied[key]=v.t||0;
   rebuildFromSnapshot(v);
@@ -3732,7 +3733,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17f · ВИБІР-ТІЛА-СПИСКОМ(без набору коду) · СПІЛЬНА-МУЗИКА(одна фаза на кімнату) · рух-сусідів-чути';
+const BUILD_TAG='2026-07-17g · ФІКС-ЛІВОЇ-РУКИ(роль swordL мовчала!) · СПІЛЬНІ-ПРЕДМЕТИ(підняв один — зникло в усіх) · швидша-синхронізація';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4091,7 +4092,7 @@ const NET = {
       return;
     }
     if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
-    if(this.roomDirty && Date.now()-(this._rePub||0)>900){          // общий мир: публикуем снимок комнаты
+    if(this.roomDirty && Date.now()-(this._rePub||0)>500){          // общий мир: публикуем снимок комнаты
       this.roomDirty=false; this._rePub=Date.now();
       const key=curRoomKey(), ed=roomEdits.get(key);
       if(ed){ const t=Date.now(); this._reApplied[key]=t;
@@ -4801,8 +4802,8 @@ setInterval(()=>{
         logE('мітла дому: приблудний блок ('+o.gx+','+o.gy+') прибрано'); } }
   } }catch(e){}
   _snapT+=0.16;
-  if(_snapPend && _snapT>=1.2){ _snapT=0; _snapPend=false; try{ snapshotRoom(); }catch(e){} }
-  try{ if(NET._rePendKey && Date.now()-((NET._reAt&&NET._reAt[NET._rePendKey])||0)>=2500)
+  if(_snapPend && _snapT>=0.6){ _snapT=0; _snapPend=false; try{ snapshotRoom(); }catch(e){} }   // (07-17g) вдвічі жвавіше
+  try{ if(NET._rePendKey && Date.now()-((NET._reAt&&NET._reAt[NET._rePendKey])||0)>=1200)
     applyRemoteRoomIfNewer(NET._rePendKey); }catch(e){}
   try{ if(QPLATE.mesh && ADV.on && mode==='fighter' && !player.dead){
     QPLATE.mesh.material.opacity=0.35+0.25*Math.sin(performance.now()*0.005);
@@ -5140,6 +5141,7 @@ function advRoomExtras(rx,ry,st){
   MM.seen.add(rx+','+ry); miniMapDraw();   // мінімапа: кімнату відвідано
   clearScars(); VOXREG.clear();            // сліди косметичні; воксель-реєстр — покімнатний
   clearTrader(); clearQuestPlate();
+  setTimeout(()=>{ try{ watchPicked(); }catch(e){} }, 250);   // (07-17g) хто що вже підібрав у цій кімнаті
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
   // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
@@ -5720,6 +5722,36 @@ function handSpell(word,hand){
   }
 }
 
+/* ════ СПІЛЬНІ ПРЕДМЕТИ (07-17g): підняв один — зникло в усіх ═════════════
+   Пікапи народжуються з сіду однаково в кожного, тож досить синхронізувати
+   ФАКТ підбирання: ключ blade/{room}/picked/{кімната}/{клітинка}. Хто зайшов
+   пізніше — одразу прибирає вже підібране.                                */
+const PICKED={ key:null, seen:new Set() };
+function pickedPath(){ return 'blade/'+NET.room+'/picked/'+(ADV.on?(ADV.rx+'_'+ADV.ry):'hall'); }
+function publishPicked(gx,gy){
+  try{ if(!NET.db) return; set(ref(NET.db, pickedPath()+'/'+gx+'_'+gy), Date.now()).catch(()=>{}); }catch(e){}
+}
+function applyPicked(map){
+  try{
+    for(const k in (map||{})){
+      if(PICKED.seen.has(k)) continue;
+      PICKED.seen.add(k);
+      const [gx,gy]=k.split('_').map(Number);
+      for(let i=PICKUPS.length-1;i>=0;i--){ const p=PICKUPS[i];
+        if(p.gx===gx && p.gy===gy){ try{ scene.remove(p.mesh); freeMesh(p.mesh); }catch(e){} PICKUPS.splice(i,1); } }
+    }
+  }catch(e){}
+}
+function watchPicked(){
+  try{
+    if(!NET.db) return;
+    const key=pickedPath();
+    if(PICKED.key===key) return;
+    PICKED.key=key; PICKED.seen.clear();
+    onValue(ref(NET.db, key), snap=>{ applyPicked(snap.val()); });
+  }catch(e){}
+}
+
 /* ════ ЛІВИЙ КЛИНОК (07-17c): друга рука того самого тіла ═══════════════════
    Керується окремим пристроєм (роль swordL). Має власний азимут, власні
    клітинки ураження і власну візуальну лінію. Мечі можуть схрещуватись —
@@ -5865,18 +5897,20 @@ function linkBecomeSword(hand, codeIn){
   swordOverlay.style.display='flex';
   try{                                                       // (07-17b) МЕЧ БАЧИТЬ ТЕ САМЕ: дзеркало тіла
     onValue(ref(NET.db, 'blade/link/'+code+'/body'), snap=>{
-      const v=snap.val(); if(!v || LINK.role!=='sword') return;
+      const v=snap.val(); if(!v || !(LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17g) і ліва рука теж
       LINK.body=v;
       try{
         if(Number.isInteger(v.rx) && ADV.on && (ADV.rx!==v.rx || ADV.ry!==v.ry)) applyAdvRoom(v.rx, v.ry);
         if(Number.isInteger(v.gx)){ player.gx=v.gx; player.gy=v.gy; }
         if(v.hp!=null) player.hp=v.hp;
+        if(v.wpn && v.wpn!==playerWpn){ playerWpn=v.wpn; try{ buildWeaponFX(playerWpn); }catch(e){} }
+        player.dead=!!v.dead;                                   // (07-17g) одне тіло — одна смерть
       }catch(e){}
     });
   }catch(e){ logE('LINK sword body: '+e.message); }
   if(LINK.timer) clearInterval(LINK.timer);
   LINK.timer=setInterval(()=>{ try{
-    if(LINK.role!=='sword' || !NET.db) return;
+    if(!(LINK.role==='sword'||LINK.role==='swordL') || !NET.db) return;   // (07-17g) ліва рука публікує свій гіроскоп
     set(ref(NET.db, left ? ('blade/link/'+code+'/swordL') : linkPath(code)), {
       yaw:+(sensor.yawFused||0).toFixed(1),
       pitch:+(sensor.pitch||0).toFixed(3),
