@@ -1278,23 +1278,29 @@ function updateAvatarMesh(av, t){
   const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
   // (07-17d) ДВА КЛИНКИ: ліва рука відв'язується від спільного хвата і веде
   // власне руків'я, повернуте за азимутом лівого меча відносно корпусу.
+  // (07-17e) ДВА МЕЧІ — ДВІ РУКИ: щойно активна ліва рука, дворучний хват
+  // розпадається. Кожна кисть іде за СВОЇМ клинком: азимут відносно корпусу
+  // розводить руки в різні боки, нахил меча піднімає/опускає кисть.
   let Lhx=hlx, Lhy=hly, Lhz=hlz, Lex=Elx, Ley=Ely, Lez=Elz;
+  let Rhx=hlx, Rhy=hly, Rhz=hlz, Rex=Erx, Rey=Ely, Rez=Elz;
   let twoHands=false;
   try{
     if(av===player && typeof linkFreshL==='function' && linkFreshL()){
       twoHands=true;
-      const dy=((aimYawL()-(av.visYaw||0))*Math.PI/180);
-      const reach=0.62, lp=(LINK.remoteL.pitch||0);
-      Lhx=-0.36+Math.sin(dy)*reach;                       // руків'я ліворуч + поворот за мечем
-      Lhz=0.18+Math.cos(dy)*reach;
-      Lhy=TIER_H*(1.05-cr*0.42)+lp*0.5;                   // нахил лівого меча піднімає кисть
+      const reach=0.60, base=TIER_H*(1.06-cr*0.42);
+      const dyL=((aimYawL()-(av.visYaw||0))*Math.PI/180);
+      Lhx=-0.34+Math.sin(dyL)*reach; Lhz=0.16+Math.cos(dyL)*reach;
+      Lhy=base+(aimPitchL()||0)*0.55;
       Lex=lerp(Slx,Lhx,0.5)-0.16; Ley=lerp(sy,Lhy,0.5)-0.08; Lez=lerp(sz,Lhz,0.5)+0.02;
+      const dyR=((aimYawEff()-(av.visYaw||0))*Math.PI/180);
+      Rhx= 0.34+Math.sin(dyR)*reach; Rhz=0.16+Math.cos(dyR)*reach;
+      Rhy=base+(aimPitchEff()||0)*0.55+lunge*0.2;
+      Rex=lerp(Srx,Rhx,0.5)+0.16; Rey=lerp(sy,Rhy,0.5)-0.08; Rez=lerp(sz,Rhz,0.5)+0.02;
     }
   }catch(e){}
   setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
-  setLimb(P.armRU, Srx,sy,sz, Erx,Ely,Elz); setLimb(P.armRF, Erx,Ely,Elz, hlx,hly,hlz);
-  P.grip.position.set(hlx,hly,hlz);
-  if(twoHands){ try{ P.gripL=P.gripL||null; }catch(e){} }
+  setLimb(P.armRU, Srx,sy,sz, Rex,Rey,Rez); setLimb(P.armRF, Rex,Rey,Rez, Rhx,Rhy,Rhz);
+  P.grip.position.set(Rhx,Rhy,Rhz);
   col(P.armLU,base*0.85); col(P.armLF,base*0.85); col(P.armRU,base*0.85); col(P.armRF,base*0.85);
   col(P.grip,base*0.5,0.3);
 }
@@ -2973,6 +2979,7 @@ function resolveClinch(){
   if(friendlyFire) for(const id in NET.remotes){
     const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
     const ec=new Set(remoteBladeCells(r));
+    if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) continue;   // (07-17e) рука не фехтує з власним тілом
     if(pc.some(c=>ec.has(c))){ startClinch({remote:true, id}); logE('ФЕХТ з гравцем '+id.slice(0,4)); return; }
   }
 }
@@ -3711,7 +3718,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17d · ДВІ-РУКИ-БЕЗ-ОЧЕЙ · анімація-лівої-руки(власне-руків\'я) · Морзе-на-кожну-руку(плазма окремо) · рука-не-плодить-фантомів';
+const BUILD_TAG='2026-07-17e · СИМЕТРИЧНІ-ДВІ-РУКИ(свій-клинок+своя-камера у кожного) · хват-розпадається · без-ФЕХТ-спаму';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4810,10 +4817,24 @@ function snapshotSoon(){ _snapPend=true; }   // (07-15) знімок не час
 const LINK={ role:null, code:null, remote:{t:0}, remoteL:{t:0}, warned:false, timer:null, bodyTimer:null };
 window.LINK=LINK;
 function linkFresh(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remote.t||0))<1500; }
-function linkFreshL(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remoteL.t||0))<1500; }
-function aimYawL(){ return LINK.remoteL.yaw||0; }
-function aimYawEff(){ return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused; }
-function aimPitchEff(){ return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch; }
+// ПРАВИЙ клинок: у лівої руки він приходить від тіла, в усіх інших — власний гіроскоп
+function aimYawEff(){
+  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.yaw)||0;
+  return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
+}
+function aimPitchEff(){
+  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.pitch)||0;
+  return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch;
+}
+// ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
+function linkFreshL(){
+  if(!window.LINK) return false;
+  if(LINK.role==='swordL') return true;
+  return LINK.role==='host' && (Date.now()-(LINK.remoteL.t||0))<1500;
+}
+function aimYawL(){ return (window.LINK&&LINK.role==='swordL') ? sensor.yawFused : (LINK.remoteL.yaw||0); }
+function aimPitchL(){ return (window.LINK&&LINK.role==='swordL') ? sensor.pitch : (LINK.remoteL.pitch||0); }
+function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
   const v=dirXZ(aimYawEff()||0);
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
@@ -5693,6 +5714,7 @@ function leftBladeClear(){ for(const m of LBLADE.seg){ try{ scene.remove(m); fre
 function leftBladeTick(dt){
   if(!linkFreshL() || player.dead || mode!=='fighter'){ if(LBLADE.seg.length) leftBladeClear(); return; }
   const yaw=aimYawL(), [dx,dz]=dirXZ(yaw);
+  const lBeacon=beaconL(), lPitch=aimPitchL();
   const len=Math.max(1, Math.round(1+(player.mods.reach||0)*0.5));
   // візуал: сегменти вздовж променя лівої руки
   while(LBLADE.seg.length<len){
@@ -5704,17 +5726,18 @@ function leftBladeTick(dt){
   // старт від кисті лівої руки: зсув ліворуч від КОРПУСУ + виніс уперед за мечем
   const bYaw=((player.visYaw||0))*Math.PI/180;
   const sideX=-Math.cos(bYaw)*0.36 + dx*0.30, sideZ=Math.sin(bYaw)*0.36 + dz*0.30;
-  const pitchL=LINK.remoteL.pitch||0;
+  const pitchL=lPitch;
   for(let i=0;i<LBLADE.seg.length;i++){
     const t=(i+0.7)*CELL*0.9;
     const m=LBLADE.seg[i];
     m.position.set(px+sideX+dx*t, TIER_H*(0.55+player.tier*0.55)+pitchL*1.2, pz+sideZ+dz*t);
     m.rotation.y=Math.atan2(dx,dz);
-    m.material.color.setHex(ENCH.tL>0 ? 0xff8a3c : (LINK.remoteL.beacon?0x8ab4ff:0xffd9a0));   // плазма/щит/звичайний
+    m.material.color.setHex(ENCH.tL>0 ? 0xff8a3c : (lBeacon?0x8ab4ff:0xffd9a0));   // плазма/щит/звичайний
   }
-  // ураження лівим клинком
+  // ураження лівим клинком (рахує ТІЛО — власник світу)
+  if(window.LINK && LINK.role==='swordL') return;
   LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
-  if(LBLADE.burnCd>0 || LINK.remoteL.beacon) return;           // у стійці щита ліва рука не рубає
+  if(LBLADE.burnCd>0 || lBeacon) return;                       // у стійці щита ліва рука не рубає
   const cells=weaponCells(player.gx,player.gy,yawToDirIdx(yaw),1,'sword',false,player.mods.reach||0,yaw);
   for(const c of cells){
     const [cx,cy]=String(c).split(',').map(Number);
@@ -5771,7 +5794,10 @@ function linkBecomeHost(){
     if(LINK.role!=='host' || !NET.db) return;
     set(ref(NET.db,'blade/link/'+LINK.code+'/body'), {
       rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),
-      gx:player.gx, gy:player.gy, hp:Math.round(player.hp||0), t:Date.now()
+      gx:player.gx, gy:player.gy, hp:Math.round(player.hp||0),
+      yaw:+(sensor.yawFused||0).toFixed(1),                    // (07-17e) правий клинок тіла
+      pitch:+(sensor.pitch||0).toFixed(3),
+      wpn:playerWpn, dead:!!player.dead, t:Date.now()
     }).catch(()=>{});
   }catch(e){} }, 220);
   logE('ДВОРУЧЧЯ: тіло чекає меч, код '+code);
@@ -5791,8 +5817,8 @@ function linkBecomeSword(hand){
   LINK.role=left?'swordL':'sword'; LINK.code=code; LINK.hand=left?'L':'R';
   swordOverlay.innerHTML='<div style="font-size:14px;letter-spacing:.16em;color:'+(left?'#fbbf24':'#a78bfa')+'">🗡 '+
     (left?'ЛІВА РУКА':'ПРАВА РУКА')+' · '+code+'</div>'+
-    '<div style="font-size:11px;color:#64748b;max-width:320px">Твій гіроскоп веде клинок тіла. '+
-    'Боком = щит і заряд, вертикально = бій. Світ дзеркалиться з тіла.</div>';
+    '<div style="font-size:11px;color:#64748b;max-width:320px">Твій гіроскоп веде <b>цей</b> клинок і <b>цю</b> камеру. '+
+    'Боком = щит і заряд · вертикально = бій · тапи = своя Морзе. Тіло спільне з іншим телефоном.</div>';
   const stop=document.createElement('button');
   stop.textContent='◀ ВІД\'ЄДНАТИ';
   stop.style.cssText='margin-top:10px;padding:12px 20px;font:inherit;font-size:13px;letter-spacing:.1em;'+
@@ -5862,14 +5888,13 @@ setTimeout(()=>{ try{
     tutModal('🔗 ДВА ПРИСТРОЇ · ОДНЕ ТІЛО',
       'Два телефони працюють як один боєць:<br><br>'+
       '🖐 <b>ТІЛО/ОЧІ</b> — ліва рука. Камера, кроки, HP, рахунок. Тримаєш боком, як видошукач.<br>'+
-      '🗡 <b>ПРАВА РУКА + СВІТ</b> — цей телефон і б\'ється правим клинком, і тримає світ (фантоми, кімнати). Тобі не потрібні окремі «очі».<br>'+
-      '🗡 <b>ЛІВА РУКА</b> — другий телефон: власний клинок, власний нахил, власна абетка Морзе. Мечі схрещуються, але один одного не ранять.<br>'+
-      '👁 <b>ОЧІ</b> — необов\'язковий третій екран: віддає свій гіроскоп правому клинку і показує тіло збоку.<br><br>'+
-      'Найпростіше для двох телефонів: тут — <b>ПРАВА РУКА + СВІТ</b>, там — <b>ЛІВА РУКА</b>.<br><br>'+
+      'Одне тіло — <b>два клинки</b>. Кожен телефон веде свій меч своїм гіроскопом і має власну камеру: '+
+      'можеш дивитися і махати в різні боки, але тіло, HP і кімната — спільні.<br><br>'+
+      '🗡 <b>ПРАВА РУКА</b> — цей телефон тримає світ (фантоми, кімнати, кроки) і б\'ється правим клинком.<br>'+
+      '🗡 <b>ЛІВА РУКА</b> — другий телефон: лівий клинок, свій нахил, своя абетка Морзе (плазма окремо на кожен меч).<br><br>'+
       'Обидва мають бути в <b>одній кімнаті</b> (зараз: '+NET.room+'). Обери роль <b>цього</b> телефона:',
-      [{t:'🗡 ПРАВА РУКА + СВІТ (тримає гру)',c:'#22c55e',f:linkBecomeHost},
+      [{t:'🗡 ПРАВА РУКА (тримає світ)',c:'#22c55e',f:linkBecomeHost},
        {t:'🗡 ЛІВА РУКА (другий меч)',c:'#fbbf24',f:()=>linkBecomeSword('L')},
-       {t:'👁 ОЧІ — окремий екран',c:'#a78bfa',f:()=>linkBecomeSword('R')},
        {t:'СКАСУВАТИ',c:'#64748b'}]);
   };
 }catch(e){ console.warn('link ui',e); } }, 900);
