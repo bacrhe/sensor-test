@@ -1276,9 +1276,25 @@ function updateAvatarMesh(av, t){
   const sy=1.48*sq, sz=0.05, Slx=-0.34, Srx=0.34;
   const Ely=lerp(sy,hly,0.5)-0.1, Elz=lerp(sz,hlz,0.5)+0.04;
   const Elx=lerp(Slx,hlx,0.5)-0.1, Erx=lerp(Srx,hlx,0.5)+0.1;
-  setLimb(P.armLU, Slx,sy,sz, Elx,Ely,Elz); setLimb(P.armLF, Elx,Ely,Elz, hlx,hly,hlz);
+  // (07-17d) ДВА КЛИНКИ: ліва рука відв'язується від спільного хвата і веде
+  // власне руків'я, повернуте за азимутом лівого меча відносно корпусу.
+  let Lhx=hlx, Lhy=hly, Lhz=hlz, Lex=Elx, Ley=Ely, Lez=Elz;
+  let twoHands=false;
+  try{
+    if(av===player && typeof linkFreshL==='function' && linkFreshL()){
+      twoHands=true;
+      const dy=((aimYawL()-(av.visYaw||0))*Math.PI/180);
+      const reach=0.62, lp=(LINK.remoteL.pitch||0);
+      Lhx=-0.36+Math.sin(dy)*reach;                       // руків'я ліворуч + поворот за мечем
+      Lhz=0.18+Math.cos(dy)*reach;
+      Lhy=TIER_H*(1.05-cr*0.42)+lp*0.5;                   // нахил лівого меча піднімає кисть
+      Lex=lerp(Slx,Lhx,0.5)-0.16; Ley=lerp(sy,Lhy,0.5)-0.08; Lez=lerp(sz,Lhz,0.5)+0.02;
+    }
+  }catch(e){}
+  setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
   setLimb(P.armRU, Srx,sy,sz, Erx,Ely,Elz); setLimb(P.armRF, Erx,Ely,Elz, hlx,hly,hlz);
   P.grip.position.set(hlx,hly,hlz);
+  if(twoHands){ try{ P.gripL=P.gripL||null; }catch(e){} }
   col(P.armLU,base*0.85); col(P.armLF,base*0.85); col(P.armRU,base*0.85); col(P.armRF,base*0.85);
   col(P.grip,base*0.5,0.3);
 }
@@ -2109,7 +2125,7 @@ function resolveBurn(dt){
     if(ph){
       if(burnCd>0) continue;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
-      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg*((window.ENCH&&ENCH.t>0)?1.3:1));   // 🔥 плазмовий клинок
+      let dmg=Math.round(16*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg*((window.ENCH&&ENCH.t>0)?1.3:1));   // 🔥 плазмовий клинок (права)
       if(ph.kind==='boss'){
         const [fdx,fdy]=DIRV[ph.dirIdx];
         const rx2=player.gx-(ph.gx+((ph.size||1)-1)*0.5), ry2=player.gy-(ph.gy+((ph.size||1)-1)*0.5);
@@ -3107,6 +3123,11 @@ function bfsStep(sx,sy,tx,ty,self){
   return null;   // цель полностью замурована — стоим
 }
 function updatePhantoms(dt){
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){          // (07-17d) рука не симулює світ
+    if(phantoms.length){ for(const ph of phantoms){ try{ if(ph.mesh) scene.remove(ph.mesh); }catch(e){} }
+      phantoms.length=0; logE('рука: власних фантомів прибрано — світ веде тіло'); }
+    return;
+  }
   for(const ph of phantoms){
     if(ph.dead || ph.disarmed){ continue; }
     const ai=ph.ai;
@@ -3690,7 +3711,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17c · МЕЧ-НЕ-ОКРЕМИЙ-ГРАВЕЦЬ(без клінчу з тілом) · ДВА-МЕЧІ(ліва+права рука) · фікс-прологу';
+const BUILD_TAG='2026-07-17d · ДВІ-РУКИ-БЕЗ-ОЧЕЙ · анімація-лівої-руки(власне-руків\'я) · Морзе-на-кожну-руку(плазма окремо) · рука-не-плодить-фантомів';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5489,7 +5510,7 @@ const RESERVED_ELEM={ P:'ФОСФОР', S:'СІРКА', N:'АЗОТ', K:'КАЛ�
   PB:'СВИНЕЦЬ', MG:'МАГНІЙ', CA:'КАЛЬЦІЙ', HE:'ГЕЛІЙ', NE:'НЕОН', AR:'АРГОН', LI:'ЛІТІЙ', TI:'ТИТАН' };
 const SPELL_UA={ H:'ВОДЕНЬ', C:'ВУГЛЕЦЬ', O:'КИСЕНЬ', Na:'НАТРІЙ', Si:'КРЕМНІЙ', Cl:'ХЛОР', Fe:'ЗАЛІЗО',
   plasma:'ПЛАЗМА', liquid:'ВОДА', gas:'ГАЗ' };
-const ENCH={t:0};
+const ENCH={t:0, tL:0};   // (07-17d) t — правий клинок, tL — лівий
 window.ENCH=ENCH;
 const MI={sym:'', word:'', t0:0, lastUp:0, active:false};
 const morseHud=document.createElement('div');
@@ -5500,7 +5521,8 @@ document.body.appendChild(morseHud);
 function morseShow(){ const txt=(MI.word?MI.word+' ':'')+MI.sym;
   if(txt){ morseHud.textContent='⚡ '+txt; morseHud.style.display='block'; } else morseHud.style.display='none'; }
 function morseUiBlocked(){
-  if(window.LINK && LINK.role==='sword') return true;   // (07-17) меч-пристрій: тапи не чаклують
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL'))            // (07-17d) у руки СВОЯ абетка
+    return !started || paused || tutModalEl.style.display!=='none';
   return !started || mode!=='fighter' || paused || player.dead
     || tutModalEl.style.display!=='none' || (window.TUT&&TUT.active&&TUT.stage>=0&&TUT.stage<=2);
 }
@@ -5535,6 +5557,11 @@ setInterval(()=>{ try{
   }
 }catch(e){} },120);
 function castSpell(word){
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){           // (07-17d) рука шле закляття тілу
+    LINK.spell={ w:word, t:Date.now() };
+    showBanner('⚡ «'+word+'» → '+(LINK.role==='swordL'?'ЛІВИЙ':'ПРАВИЙ')+' клинок','#c4b5fd');
+    return;
+  }
   const mt=SPELL_WORDS[word];
   if(!mt){
     if(RESERVED_ELEM[word]){ showBanner('⚗ '+word+' ('+RESERVED_ELEM[word]+') — елемент ще не відкритий у цьому світі','#94a3b8');
@@ -5588,7 +5615,9 @@ function castSpell(word){
 // відлік енчанту — у спільному ритмі
 setInterval(()=>{ try{
   if(ENCH.t>0){ ENCH.t-=0.16;
-    if(ENCH.t<=0){ ENCH.t=0; showBanner('🔥 плазма на клинку згасла','#94a3b8'); } }
+    if(ENCH.t<=0){ ENCH.t=0; showBanner('🔥 плазма на правому клинку згасла','#94a3b8'); } }
+  if(ENCH.tL>0){ ENCH.tL-=0.16;
+    if(ENCH.tL<=0){ ENCH.tL=0; showBanner('🔥 плазма на лівому клинку згасла','#94a3b8'); } }
 }catch(e){} },160);
 // довідник у меню паузи
 setTimeout(()=>{ try{
@@ -5626,6 +5655,35 @@ setTimeout(()=>{ try{
   });
   $('mNew').parentNode.insertBefore(box, $('mNew'));
 }catch(e){ console.warn('vol sliders', e); } }, 800);
+/* закляття, що прилетіло від руки: PL — плазма на ТОЙ клинок, решта — у клітинку погляду руки */
+function handSpell(word,hand){
+  const mt=SPELL_WORDS[word];
+  if(!mt){ showBanner('⚡ «'+word+'» — невідоме слово','#94a3b8'); return; }
+  if(mt==='plasma'){
+    if(hand==='L'){ ENCH.tL=25; showBanner('🔥 ЛІВИЙ КЛИНОК У ПЛАЗМІ · 25с','#fbbf24'); }
+    else          { ENCH.t =25; showBanner('🔥 ПРАВИЙ КЛИНОК У ПЛАЗМІ · 25с','#f97316'); }
+    doFlash('#f97316'); buzz([0,60,40,80]); logE('закляття руки '+hand+': плазмовий клинок');
+    try{ QST.progress('cast','plasma',1); }catch(e){}
+    return;
+  }
+  const yaw=(hand==='L')?aimYawL():aimYawEff();                    // матеріалізація перед ТІЄЮ рукою
+  const v=dirXZ(yaw||0);
+  for(let i=1;i<=3;i++){
+    const cx=Math.round(player.gx+v[0]*i), cy=Math.round(player.gy+v[1]*i);
+    if(cx<1||cx>11||cy<1||cy>11) break;
+    if(obstacleAt(cx,cy)) return;
+    if((player.score||0)<1){ showBanner('⚡ треба 1 душа','#94a3b8'); return; }
+    player.score-=1;
+    addObstacle(cx,cy,mt,new Set());
+    const o=obstacles[obstacles.length-1];
+    if(o && o.gx===cx && o.gy===cy) o.noRes=true;
+    snapshotSoon();
+    showBanner('⚡ '+(SPELL_UA[mt]||mt)+' ← '+(hand==='L'?'ліва':'права')+' рука','#c4b5fd');
+    doFlash('#7c3aed'); buzz([0,40]);
+    return;
+  }
+}
+
 /* ════ ЛІВИЙ КЛИНОК (07-17c): друга рука того самого тіла ═══════════════════
    Керується окремим пристроєм (роль swordL). Має власний азимут, власні
    клітинки ураження і власну візуальну лінію. Мечі можуть схрещуватись —
@@ -5643,14 +5701,16 @@ function leftBladeTick(dt){
   }
   while(LBLADE.seg.length>len){ const m=LBLADE.seg.pop(); try{ scene.remove(m); freeMesh(m); }catch(e){} }
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
-  const sideX=-dz*0.34, sideZ=dx*0.34;                        // зсув у ЛІВУ руку
+  // старт від кисті лівої руки: зсув ліворуч від КОРПУСУ + виніс уперед за мечем
+  const bYaw=((player.visYaw||0))*Math.PI/180;
+  const sideX=-Math.cos(bYaw)*0.36 + dx*0.30, sideZ=Math.sin(bYaw)*0.36 + dz*0.30;
   const pitchL=LINK.remoteL.pitch||0;
   for(let i=0;i<LBLADE.seg.length;i++){
     const t=(i+0.7)*CELL*0.9;
     const m=LBLADE.seg[i];
     m.position.set(px+sideX+dx*t, TIER_H*(0.55+player.tier*0.55)+pitchL*1.2, pz+sideZ+dz*t);
     m.rotation.y=Math.atan2(dx,dz);
-    m.material.color.setHex(LINK.remoteL.beacon?0x8ab4ff:0xffd9a0);   // боком = холодний щит
+    m.material.color.setHex(ENCH.tL>0 ? 0xff8a3c : (LINK.remoteL.beacon?0x8ab4ff:0xffd9a0));   // плазма/щит/звичайний
   }
   // ураження лівим клинком
   LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
@@ -5666,7 +5726,7 @@ function leftBladeTick(dt){
       LBLADE.burnCd=0.3; buzz(25); break;
     }
     const ph=phantomAtCell(cx,cy);
-    if(ph){ damageTier(ph,1,Math.round(10*player.mods.dmg)); ph.hitGlow=0.3;
+    if(ph){ damageTier(ph,1,Math.round(10*player.mods.dmg*(ENCH.tL>0?1.3:1))); ph.hitGlow=0.3;
       doFlash('#ffd9a0'); buzz(35); LBLADE.burnCd=0.35; break; }
   }
 }
@@ -5694,12 +5754,14 @@ function linkBecomeHost(){
     onValue(ref(NET.db, linkPath(code)), snap=>{
       const v=snap.val(); if(!v) return;
       LINK.remote={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
+      if(v.spell && v.spell.t && v.spell.t!==LINK.lastSpellR){ LINK.lastSpellR=v.spell.t; handSpell(v.spell.w,'R'); }
       if(LINK.warned){ LINK.warned=false; showBanner('🗡 МЕЧ ПІДКЛЮЧЕНО','#a78bfa'); }
     });
     onValue(ref(NET.db, 'blade/link/'+code+'/swordL'), snap=>{     // (07-17c) друга рука
       const v=snap.val(); if(!v) return;
       const first=!LINK.remoteL.t;
       LINK.remoteL={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
+      if(v.spell && v.spell.t && v.spell.t!==LINK.lastSpellL){ LINK.lastSpellL=v.spell.t; handSpell(v.spell.w,'L'); }
       if(first) showBanner('🗡🗡 ДРУГИЙ МЕЧ У ЛІВІЙ РУЦІ','#fbbf24');
     });
   }catch(e){ logE('LINK host: '+e.message); }
@@ -5713,11 +5775,11 @@ function linkBecomeHost(){
     }).catch(()=>{});
   }catch(e){} }, 220);
   logE('ДВОРУЧЧЯ: тіло чекає меч, код '+code);
-  tutModal('🖐 ТІЛО/ОЧІ · КОД '+code,
-    'Цей телефон — <b>твоє тіло й очі</b>: камера, кроки, HP.<br><br>'+
+  tutModal('🗡 ПРАВА РУКА + СВІТ · КОД '+code,
+    'Цей телефон веде <b>правий клинок</b> і тримає світ (фантоми, кімнати, кроки).<br><br>'+
     'На <b>другому телефоні</b> відкрий гру, вибери <b>🗡 МЕЧ</b> і введи код:<br><br>'+
     '<div style="font-size:30px;letter-spacing:.3em;color:#c4b5fd">'+code+'</div><br>'+
-    'Далі тримай це тіло у лівій руці (боком, як видошукач), а другий телефон — як руків\'я клинка у правій.',
+    'Другий телефон стане <b>лівою рукою</b> — і ти б\'єшся двома клинками одразу.',
     [{t:'ЧЕКАЮ МЕЧ ▷',c:'#a78bfa'}]);
 }
 
@@ -5758,6 +5820,7 @@ function linkBecomeSword(hand){
       pitch:+(sensor.pitch||0).toFixed(3),
       beacon: Math.abs(sensor.roll||0)>45,
       speed:+(sensor.speed||0).toFixed(2),
+      spell: LINK.spell||null,                                    // (07-17d) закляття цієї руки
       t:Date.now()
     }).catch(()=>{});
   }catch(e){} }, 70);
@@ -5799,12 +5862,14 @@ setTimeout(()=>{ try{
     tutModal('🔗 ДВА ПРИСТРОЇ · ОДНЕ ТІЛО',
       'Два телефони працюють як один боєць:<br><br>'+
       '🖐 <b>ТІЛО/ОЧІ</b> — ліва рука. Камера, кроки, HP, рахунок. Тримаєш боком, як видошукач.<br>'+
-      '🗡 <b>МЕЧ (права)</b> — веде основний клинок: куди повернеш — туди пропалює; боком = щит і заряд.<br>'+
-      '🗡 <b>МЕЧ (ліва)</b> — третій телефон: другий клинок у лівій руці того самого тіла. Мечі можуть схрещуватись, але один одного не ранять.<br><br>'+
+      '🗡 <b>ПРАВА РУКА + СВІТ</b> — цей телефон і б\'ється правим клинком, і тримає світ (фантоми, кімнати). Тобі не потрібні окремі «очі».<br>'+
+      '🗡 <b>ЛІВА РУКА</b> — другий телефон: власний клинок, власний нахил, власна абетка Морзе. Мечі схрещуються, але один одного не ранять.<br>'+
+      '👁 <b>ОЧІ</b> — необов\'язковий третій екран: віддає свій гіроскоп правому клинку і показує тіло збоку.<br><br>'+
+      'Найпростіше для двох телефонів: тут — <b>ПРАВА РУКА + СВІТ</b>, там — <b>ЛІВА РУКА</b>.<br><br>'+
       'Обидва мають бути в <b>одній кімнаті</b> (зараз: '+NET.room+'). Обери роль <b>цього</b> телефона:',
-      [{t:'🖐 ЦЕ — ТІЛО/ОЧІ',c:'#22c55e',f:linkBecomeHost},
-       {t:'🗡 МЕЧ — ПРАВА РУКА',c:'#a78bfa',f:()=>linkBecomeSword('R')},
-       {t:'🗡 МЕЧ — ЛІВА РУКА',c:'#fbbf24',f:()=>linkBecomeSword('L')},
+      [{t:'🗡 ПРАВА РУКА + СВІТ (тримає гру)',c:'#22c55e',f:linkBecomeHost},
+       {t:'🗡 ЛІВА РУКА (другий меч)',c:'#fbbf24',f:()=>linkBecomeSword('L')},
+       {t:'👁 ОЧІ — окремий екран',c:'#a78bfa',f:()=>linkBecomeSword('R')},
        {t:'СКАСУВАТИ',c:'#64748b'}]);
   };
 }catch(e){ console.warn('link ui',e); } }, 900);
