@@ -2630,6 +2630,7 @@ function advHome(){ return ADV.rx===6 && ADV.ry===6; }
 const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (полный снимок препятствий комнаты)
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
 function snapshotRoom(){
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17i) рука не пише світ
   if(ADV.on && ADV.rx===6 && ADV.ry===6) return;   // (07-16e) дім не знімається і не шириться
   NET.roomDirty=true; roomEdits.set(curRoomKey(), {
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
@@ -2643,14 +2644,16 @@ function rebuildFromSnapshot(v){
   for(const m of Object.values(v.micro||{})) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
 }
 function applyRemoteRoomIfNewer(key){
-  if(key==='6,6') return false;                    // (07-16e) дім священний — чужі забудови повз
+  const _isHand = window.LINK && (LINK.role==='sword'||LINK.role==='swordL');
+  if(key==='6,6' && !_isHand) return false;        // (07-16e) дім священний — але рука приймає й дім тіла
   const v=NET.roomRemote && NET.roomRemote[key];
   if(!v || v.by===NET.myId) return false;
   if((NET._reApplied[key]||0) >= (v.t||0)) return false;
   // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
   const now=Date.now();
   NET._reAt = NET._reAt||{};
-  if(now - (NET._reAt[key]||0) < 1200){ NET._rePendKey=key; return false; }   // (07-17g) чужі зміни видно швидше
+  const _gap=_isHand ? 0 : 1200;                   // (07-17i) руці — БЕЗ тротлу: вона лише дзеркало
+  if(now - (NET._reAt[key]||0) < _gap){ NET._rePendKey=key; return false; }
   NET._reAt[key]=now; if(NET._rePendKey===key) NET._rePendKey=null;
   NET._reApplied[key]=v.t||0;
   rebuildFromSnapshot(v);
@@ -3747,7 +3750,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17h · БЕЗ-НАКЛАДАННЯ-ТІЛ(рука ховає своє тіло) · БОЙОВА-СТІЙКА(лікті+протихід) · вибір-режиму-на-воротах · навчання-для-двох';
+const BUILD_TAG='2026-07-17i · ЛІВИЙ-КЛИНОК-У-КИСТІ(+власний промінь і лог) · РУКА=ДЗЕРКАЛО(світ тіла без затримки) · дім-теж-спільний';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4106,6 +4109,14 @@ const NET = {
       return;
     }
     if(mode==='fighter' || mode==='spectator') set(ref(this.db,`blade/${this.room}/players/${this.myId}`), this.packet(player)).catch(()=>{});
+    if(window.LINK && LINK.role==='host' && ADV.on && ADV.rx===6 && ADV.ry===6){
+      try{ const t=Date.now();                                     // (07-17i) дім теж віддаємо руці
+        const ed={ blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
+                   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) };
+        if(Date.now()-(this._homePub||0)>700){ this._homePub=Date.now();
+          set(ref(this.db,`blade/${this.room}/roomEdits/6,6`), {t, by:this.myId, blocks:ed.blocks, micro:ed.micro}).catch(()=>{}); }
+      }catch(e){}
+    }
     if(this.roomDirty && Date.now()-(this._rePub||0)>500){          // общий мир: публикуем снимок комнаты
       this.roomDirty=false; this._rePub=Date.now();
       const key=curRoomKey(), ed=roomEdits.get(key);
@@ -5825,34 +5836,52 @@ function leftBladeTick(dt){
   }
   while(LBLADE.seg.length>len){ const m=LBLADE.seg.pop(); try{ scene.remove(m); freeMesh(m); }catch(e){} }
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
-  // старт від кисті лівої руки: зсув ліворуч від КОРПУСУ + виніс уперед за мечем
+  // (07-17i) СВІТОВА ПОЗИЦІЯ ЛІВОЇ КИСТІ — тими самими формулами, що й анімація руки:
+  // локальні координати кисті повертаємо на visYaw корпусу і додаємо до тіла.
   const bYaw=((player.visYaw||0))*Math.PI/180;
-  const sideX=-Math.cos(bYaw)*0.36 + dx*0.30, sideZ=Math.sin(bYaw)*0.36 + dz*0.30;
+  const dyL=((yaw-(player.visYaw||0))*Math.PI/180);
+  const armL=0.52, lhx=-0.30+Math.sin(dyL)*armL, lhz=0.10+Math.cos(dyL)*armL;
+  const cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
+  const sideX= lhx*cosB + lhz*sinB;                 // локальне → світове
+  const sideZ=-lhx*sinB + lhz*cosB;
   const pitchL=lPitch;
+  const handY=TIER_H*(1.0-((player.crouch||0)*0.42))+pitchL*0.5;   // висота кисті
   for(let i=0;i<LBLADE.seg.length;i++){
-    const t=(i+0.7)*CELL*0.9;
+    const t=(i+0.55)*CELL*0.85;
     const m=LBLADE.seg[i];
-    m.position.set(px+sideX+dx*t, TIER_H*(0.55+player.tier*0.55)+pitchL*1.2, pz+sideZ+dz*t);
+    m.position.set(px+sideX+dx*t, handY+pitchL*t*0.45, pz+sideZ+dz*t);  // лезо йде за нахилом меча
     m.rotation.y=Math.atan2(dx,dz);
+    m.rotation.x=-Math.atan(pitchL*0.9);
     m.material.color.setHex(ENCH.tL>0 ? 0xff8a3c : (lBeacon?0x8ab4ff:0xffd9a0));   // плазма/щит/звичайний
   }
   // ураження лівим клинком (рахує ТІЛО — власник світу)
   if(window.LINK && LINK.role==='swordL') return;
   LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
   if(LBLADE.burnCd>0 || lBeacon) return;                       // у стійці щита ліва рука не рубає
-  const cells=weaponCells(player.gx,player.gy,yawToDirIdx(yaw),1,'sword',false,player.mods.reach||0,yaw);
+  // (07-17i) власний промінь лівої руки — той самий рушій, що й у правого клинка
+  const cells=[], seen=new Set();
+  contRayCells(player.gx, player.gy, yaw, len+0.4, cells, seen);
   for(const c of cells){
     const [cx,cy]=String(c).split(',').map(Number);
     if(cx<0||cx>12||cy<0||cy>12) continue;
+    const ph=phantomAtCell(cx,cy);
+    if(ph){ damageTier(ph,1,Math.round(12*player.mods.dmg*(ENCH.tL>0?1.3:1))); ph.hitGlow=0.35;
+      try{ const tp={x:worldX(cx),y:TIER_H,z:worldZ(cy)}; spawnChunk(tp, fleshColor(ph)); }catch(e){}
+      doFlash('#ffd9a0'); buzz(35); LBLADE.burnCd=0.35;
+      logE('ЛІВИЙ клинок ріже ('+cx+','+cy+')'); break; }
     const o=obstacleAt(cx,cy);
-    if(o && !o.solid){
+    if(o){
+      if(o.solid){ LBLADE.burnCd=0.25; break; }                       // міцне — лязг
       const tip={x:worldX(cx), y:TIER_H*(0.5+player.tier*0.6), z:worldZ(cy)};
       if(voxelizeObstacle(o)) burnVoxelsAt(cx,cy,tip);
-      LBLADE.burnCd=0.3; buzz(25); break;
+      else damageObstacle(o,14);
+      LBLADE.burnCd=0.3; buzz(25);
+      logE('ЛІВИЙ клинок пропалює ('+cx+','+cy+')');
+      break;
     }
-    const ph=phantomAtCell(cx,cy);
-    if(ph){ damageTier(ph,1,Math.round(10*player.mods.dmg*(ENCH.tL>0?1.3:1))); ph.hitGlow=0.3;
-      doFlash('#ffd9a0'); buzz(35); LBLADE.burnCd=0.35; break; }
+    if(burnVoxelsAt(cx,cy,{x:worldX(cx),y:TIER_H*(0.5+player.tier*0.6),z:worldZ(cy)})){
+      LBLADE.burnCd=0.3; buzz(20); break;                             // добиває вже вокселізоване
+    }
   }
 }
 
