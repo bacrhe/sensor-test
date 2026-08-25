@@ -1204,7 +1204,10 @@ function aggressionHue(a){ // a:0 (норма) колодный синий → 1
    хитбокс считается по клеткам (bladeContestCell) и не зависит от анимации. */
 const STRIKE_DUR = 0.32;               // длительность видимого взмаха
 function handInfo(av){
-  const [dx,dz] = dirXZ(av.visYaw);
+  // (07-17q) ДВОРУЧЧЯ: правий клинок веде СВІЙ телефон і росте з правої кисті,
+  // а не з дворучного хвата перед грудьми — звідси й був «меч окремо від руки».
+  const _two = (av===player && typeof linkFreshL==='function' && linkFreshL());
+  const [dx,dz] = dirXZ(_two ? aimYawEff() : av.visYaw);
   const rx = -dz, rz = dx;                        // «вправо» от направления
   const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);   // якір руки = візуальне тіло (плавний крок)
   const cr = av.crouch||0;
@@ -1218,9 +1221,10 @@ function handInfo(av){
   const lenBoost= atk*0.7;                         // на выпаде луч чуть длиннее
 
   // якорь кисти: перед грудью (двуручный хват), небольшой сдвиг по стойке
-  const hx = px + dx*(0.26+lunge) - rx*guard*0.5;
-  const hz = pz + dz*(0.26+lunge) - rz*guard*0.5;
-  const hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
+  let hx = px + dx*(0.26+lunge) - rx*guard*0.5;
+  let hz = pz + dz*(0.26+lunge) - rz*guard*0.5;
+  let hy = TIER_H*(1.12 - cr*0.42) + guard*guard*0.14;
+  if(_two && av._handR){ hx=av._handR.x; hy=av._handR.y; hz=av._handR.z; }   // з кисті, не з грудей
 
   const len = clamp(Math.round(av.swordLen),1,6);
   // ВИЗУАЛ = ФИЗИКЕ: длина луча в клетках считается КАК в weaponCells (maxLen оружия + лут-«досяжність»).
@@ -1231,7 +1235,7 @@ function handInfo(av){
   if(Wv.rel==='shot') extraL = 0;   // у бластера дуло не растёт — досяжність идёт в веер пуль
   const cellsL = clamp(Math.round(av.swordLen*Wv.maxLen/6)+extraL, 1, Wv.maxLen+2);
   // угол возвышения луча: прицел наклоном + рубящая дуга атаки
-  const elev = clamp(pitch*0.9 - dipAtk, -1.15, 1.15);
+  const elev = clamp((_two?(aimPitchEff()||0):pitch)*0.9 - dipAtk, -1.15, 1.15);
   const ce=Math.cos(elev), se=Math.sin(elev);
   const reach = CELL*(cellsL+lenBoost);
   const tipX = hx + dx*ce*reach;
@@ -1351,10 +1355,14 @@ function updateAvatarMesh(av, t){
   }catch(e){}
   if(av===player && twoHands){                      // (07-17m) віддаємо клинку РЕАЛЬНУ кисть
     const byaw=(av.visYaw||0)*Math.PI/180, cb=Math.cos(byaw), sb=Math.sin(byaw);
+    const _hy=TIER_H*(1.12-(av.crouch||0)*0.42);        // (07-17q) рівень грудей — як у правої руки
     av._handL={ x:worldX(av.vgx??av.gx) + (Lhx*cb + Lhz*sb),
-                y:Lhy,
+                y:_hy + (aimPitchL()||0)*0.30,
                 z:worldZ(av.vgy??av.gy) + (-Lhx*sb + Lhz*cb) };
-  } else if(av===player) av._handL=null;
+    av._handR={ x:worldX(av.vgx??av.gx) + (Rhx*cb + Rhz*sb),
+                y:_hy + (aimPitchEff()||0)*0.30,
+                z:worldZ(av.vgy??av.gy) + (-Rhx*sb + Rhz*cb) };
+  } else if(av===player){ av._handL=null; av._handR=null; }
   setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
   setLimb(P.armRU, Srx,sy,sz, Rex,Rey,Rez); setLimb(P.armRF, Rex,Rey,Rez, Rhx,Rhy,Rhz);
   P.grip.position.set(Rhx,Rhy,Rhz);
@@ -3855,7 +3863,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17p · ЛІВА-РУКА-ВЕДЕНА(калібрування компасів!) · висота-кисті · спавн-подалі-від-інших';
+const BUILD_TAG='2026-07-17q · ОБИДВА-КЛИНКИ-З-КИСТЕЙ(правий більше не з грудей) · КАЛІБРУВАННЯ-компасів · спавн-подалі';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4999,9 +5007,25 @@ function linkFreshL(){
 }
 function aimYawL(){
   if(window.LINK && LINK.role==='swordL') return sensor.yawFused;
-  const tgt=LINK.remoteL.yaw||0;                        // (07-17m) плавне доведення чужого клинка
+  const raw=LINK.remoteL.yaw||0;
+  // (07-17q) ВЕДЕНА РУКА: різні компаси двох телефонів гасить зсув калібрування
+  if(LINK.calib==null && LINK.remoteL.t) LINK.calib=angDiff(sensor.yawFused||0, raw);
+  const tgt=wrap360(raw + (LINK.calib||0));
   LINK._smL = (LINK._smL==null) ? tgt : smoothAngle(LINK._smL, tgt, 0.35);
   return LINK._smL;
+}
+function linkCalibrate(){                       // звести нулі обох клинків просто зараз
+  try{
+    if(!window.LINK) return;
+    if(LINK.role==='host' && LINK.remoteL.t){
+      LINK.calib=angDiff(sensor.yawFused||0, LINK.remoteL.yaw||0); LINK._smL=null;
+      showBanner('⟳ КЛИНКИ ЗВЕДЕНО — тримай телефони паралельно','#22c55e');
+      logE('дворуччя: калібрування, зсув='+Math.round(LINK.calib)+'°');
+    } else if(LINK.role==='swordL' && NET.db){
+      set(ref(NET.db,'blade/link/'+LINK.code+'/calib'), Date.now()).catch(()=>{});
+      showBanner('⟳ прошу тіло звести клинки','#86efac');
+    }
+  }catch(e){}
 }
 function aimPitchL(){ return (window.LINK&&LINK.role==='swordL') ? sensor.pitch : (LINK.remoteL.pitch||0); }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
@@ -5992,12 +6016,16 @@ function linkBecomeHost(){
       if(v.spell && v.spell.t && v.spell.t!==LINK.lastSpellR){ LINK.lastSpellR=v.spell.t; handSpell(v.spell.w,'R'); }
       if(LINK.warned){ LINK.warned=false; showBanner('🗡 МЕЧ ПІДКЛЮЧЕНО','#a78bfa'); }
     });
+    onValue(ref(NET.db, 'blade/link/'+code+'/calib'), snap=>{      // (07-17q) рука просить звести нулі
+      if(snap.val()) setTimeout(()=>{ try{ linkCalibrate(); }catch(e){} }, 50);
+    });
     onValue(ref(NET.db, 'blade/link/'+code+'/swordL'), snap=>{     // (07-17c) друга рука
       const v=snap.val(); if(!v) return;
       const first=!LINK.remoteL.t;
       LINK.remoteL={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
       if(v.spell && v.spell.t && v.spell.t!==LINK.lastSpellL){ LINK.lastSpellL=v.spell.t; handSpell(v.spell.w,'L'); }
-      if(first) showBanner('🗡🗡 ДРУГИЙ МЕЧ У ЛІВІЙ РУЦІ','#fbbf24');
+      if(first){ showBanner('🗡🗡 ДРУГИЙ МЕЧ У ЛІВІЙ РУЦІ · зводжу клинки','#fbbf24');
+        setTimeout(()=>{ try{ linkCalibrate(); }catch(e){} }, 600); }
     });
   }catch(e){ logE('LINK host: '+e.message); }
   linkChip.style.display='block';
@@ -6068,7 +6096,8 @@ function linkBecomeSword(hand, codeIn){
   rs.textContent='⟳ СИНХР';
   rs.style.cssText='padding:6px 10px;font:inherit;font-size:11px;letter-spacing:.06em;'+
     'background:#0a1a30;border:1px solid #22c55e;border-radius:7px;color:#86efac';
-  rs.onclick=()=>{ try{ const b=LINK.body;
+  rs.onclick=()=>{ try{ linkCalibrate(); }catch(e){}
+    try{ const b=LINK.body;
     if(!b){ showBanner('🔗 тіло ще мовчить','#f59e0b'); return; }
     if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }
     setTimeout(()=>{ try{ if(Number.isInteger(b.rx)) applyAdvRoom(b.rx,b.ry);
