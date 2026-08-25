@@ -1321,7 +1321,9 @@ function updateAvatarMesh(av, t){
       const windR=clamp(TWO.vR/260,0,1), windL=clamp(TWO.vL/260,0,1);       // 0 спокій · 1 різкий мах
       const hitR=clamp(lunge,0,1), hitL=clamp(LBLADE.burnCd>0?1:0,0,1);
       const base=TIER_H*(1.02-cr*0.42);
-      const dyL=((yawLL-(av.visYaw||0))*rad), dyR=((yawR-(av.visYaw||0))*rad);
+      // (07-17n) кисть тримається СВОГО борту: ліва не тягнеться за праве плече
+      const rawL=angDiff(yawLL,(av.visYaw||0)), rawR=angDiff(yawR,(av.visYaw||0));
+      const dyL=clamp(rawL,-170,95)*rad, dyR=clamp(rawR,-95,170)*rad;
       // плече ЙДЕ ЗА своїм мечем: корпус підкручується, як у фехтувальника
       const twist=clamp(Math.sin(dyR)*0.16 - Math.sin(dyL)*0.16, -0.22, 0.22);
       const shL=-0.30 - twist*0.5, shR=0.30 - twist*0.5;
@@ -1378,7 +1380,7 @@ function handInfoLeft(){
   const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);
   const cr=av.crouch||0;
   const bYaw=(av.visYaw||0)*Math.PI/180, cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
-  const dyL=((yawL-(av.visYaw||0))*Math.PI/180);
+  const dyL=clamp(angDiff(yawL,(av.visYaw||0)),-170,95)*Math.PI/180;   // (07-17n) свій борт
   let hx,hy,hz;
   if(av._handL){ hx=av._handL.x; hy=av._handL.y; hz=av._handL.z; }   // (07-17m) точно з анімації
   else{
@@ -1389,7 +1391,7 @@ function handInfoLeft(){
     hy=TIER_H*(1.06-cr*0.42) + pitL*0.5;
   }
   const len=clamp(1+Math.round((av.mods&&av.mods.reach)||0), 1, 6);
-  const reach=len*CELL*0.92;
+  const reach=len*CELL*0.92 + 0.18;                    // (07-17n) кінчик виходить за габарит тіла
   const rise=clamp(pitL,-1,1);
   return { hx,hy,hz,
     tipX:hx+dx*reach, tipY:hy+rise*reach*0.55, tipZ:hz+dz*reach,
@@ -3837,7 +3839,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17m · ДІМ-СПІЛЬНИЙ(фікс різних світів у 6,6) · клинок-з-реальної-кисті · панель-згортна · вихід-у-тіло';
+const BUILD_TAG='2026-07-17n · КАМЕРА-НА-ПЛЕЧІ(права/ліва як кермо) · руки-не-крізь-тіло · тіло-по-центру-між-осями';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
