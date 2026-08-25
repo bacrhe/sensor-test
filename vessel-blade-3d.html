@@ -3174,6 +3174,8 @@ function respawn(av){
     try{ av.mesh.visible=false; av.blade.visible=false; }catch(e){}
     return;
   }
+  try{ if(av===player && !ADV.on){ const c=farSpawnCell(); av.gx=c[0]; av.gy=c[1];
+    logE('відродження: подалі від інших ('+c[0]+','+c[1]+')'); } }catch(e){}
   av.dead=false; av.hp=100; av.stamina=100; av.swordLen=1; av.charge=1;
   av.painT=0; av.disarmed=false; av.hitActive=false; av.strikeT=0;
   try{ if(av.parts) for(const k in av.parts){ const p=av.parts[k];
@@ -3216,6 +3218,20 @@ function isCellOccupied(gx,gy,ignore){
   if(ignore!==player && mode==='fighter' && !player.dead && player.gx===gx && player.gy===gy) return {layer0:true, kind:'player', av:player};
   for(const id in NET.remotes){ const r=NET.remotes[id]; if(r && !r.spec && (r.hp??100)>0 && remoteFresh(r) && r.gx===gx && r.gy===gy) return {layer0:true, kind:'rplayer'}; }
   return null;
+}
+function farSpawnCell(){                     // (07-17p) подалі від інших гравців
+  let best=null, bestD=-1;
+  for(let t=0;t<26;t++){
+    const gx=1+Math.floor(Math.random()*11), gy=1+Math.floor(Math.random()*11);
+    if(obstacleAt(gx,gy)) continue;
+    let d=99;
+    try{ for(const id in NET.remotes){ const r=NET.remotes[id];
+      if(!r || r.spec || !remoteFresh(r)) continue;
+      d=Math.min(d, Math.abs((r.gx??6)-gx)+Math.abs((r.gy??6)-gy)); } }catch(e){}
+    if(d>bestD){ bestD=d; best=[gx,gy]; }
+    if(d>=5) break;
+  }
+  return best||[6,6];
 }
 function freeSpawnCell(gx,gy,ignore){
   gx=clamp(gx,0,12); gy=clamp(gy,0,12);
@@ -3839,7 +3855,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17n · КАМЕРА-НА-ПЛЕЧІ(права/ліва як кермо) · руки-не-крізь-тіло · тіло-по-центру-між-осями';
+const BUILD_TAG='2026-07-17p · ЛІВА-РУКА-ВЕДЕНА(калібрування компасів!) · висота-кисті · спавн-подалі-від-інших';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
