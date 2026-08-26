@@ -1370,7 +1370,10 @@ function updateAvatarMesh(av, t){
     // (07-17r) РУКА І МЕЧ — ОДИН ЛАНЦЮГ: віддаємо клинкам світові кисть і лікоть,
     // напрямок леза = продовження передпліччя, тому меч ніколи не «висить окремо».
     const wx=worldX(av.vgx??av.gx), wz=worldZ(av.vgy??av.gy);
-    const L2W=(lx,ly,lz)=>({ x:wx + (lx*cb + lz*sb), y:ly, z:wz + (-lx*sb + lz*cb) });
+    // (07-17s) точно та сама матриця, що й у меша: g.rotation.y = π − visYaw
+    const mrot=Math.PI - (av.visYaw||0)*Math.PI/180;
+    const cm=Math.cos(mrot), sm=Math.sin(mrot);
+    const L2W=(lx,ly,lz)=>({ x:wx + (lx*cm + lz*sm), y:ly, z:wz + (-lx*sm + lz*cm) });
     av._handL=L2W(Lhx,Lhy,Lhz);  av._elbL=L2W(Lex,Ley,Lez);
     av._handR=L2W(Rhx,Rhy,Rhz);  av._elbR=L2W(Rex,Rey,Rez);
   } else if(av===player){ av._handL=null; av._handR=null; av._elbL=null; av._elbR=null; }
@@ -3884,7 +3887,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17r · МЕЧ=ПРОДОВЖЕННЯ РУКИ(плече→лікоть→кисть→лезо) · калібрування · спавн-подалі';
+const BUILD_TAG='2026-07-17s · ФІКС-ІНВЕРСІЇ(кисті рахувались дзеркально до меша) · меч=продовження-руки';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
