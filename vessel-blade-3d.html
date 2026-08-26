@@ -1238,9 +1238,14 @@ function handInfo(av){
   const elev = clamp((_two?(aimPitchEff()||0):pitch)*0.9 - dipAtk, -1.15, 1.15);
   const ce=Math.cos(elev), se=Math.sin(elev);
   const reach = CELL*(cellsL+lenBoost);
-  const tipX = hx + dx*ce*reach;
-  const tipY = clamp(hy + se*reach, -0.06, TIER_H*2.4);
-  const tipZ = hz + dz*ce*reach;
+  let tipX = hx + dx*ce*reach;
+  let tipY = clamp(hy + se*reach, -0.06, TIER_H*2.4);
+  let tipZ = hz + dz*ce*reach;
+  if(_two && av._elbR){                       // (07-17r) лезо — продовження передпліччя
+    const ax=hx-av._elbR.x, ay=hy-av._elbR.y, az=hz-av._elbR.z;
+    const aL=Math.hypot(ax,ay,az)||1;
+    tipX=hx+(ax/aL)*reach; tipY=clamp(hy+(ay/aL)*reach,-0.06,TIER_H*2.4); tipZ=hz+(az/aL)*reach;
+  }
   return {dx,dz,px,pz,hx,hy,hz,tipX,tipY,tipZ,len,cr,atk,guard};
 }
 
@@ -1347,22 +1352,28 @@ function updateAvatarMesh(av, t){
         return [mxE + (-vz/L)*out*side, mzE + (vx/L)*out*side];
       };
       const eL=elb(shL,shLz,Lhx,Lhz,-1,windL), eR=elb(shR,shRz,Rhx,Rhz,1,windR);
-      Lex=eL[0]; Ley=lerp(sy,Lhy,0.52)-0.09; Lez=eL[1];
-      Rex=eR[0]; Rey=lerp(sy,Rhy,0.52)-0.09; Rez=eR[1];
+      // (07-17r) лікоть підтягуємо ДО ЛІНІЇ меча: кисть попереду ліктя рівно за азимутом
+      // свого телефона — тоді продовження передпліччя і є напрямок клинка.
+      const pullL=0.55, pullR=0.55;
+      Lex=lerp(eL[0], Lhx-Math.sin(dyL)*0.34, pullL);
+      Lez=lerp(eL[1], Lhz-Math.cos(dyL)*0.34, pullL);
+      Ley=lerp(sy,Lhy,0.52)-0.09 - (aimPitchL()||0)*0.20;
+      Rex=lerp(eR[0], Rhx-Math.sin(dyR)*0.34, pullR);
+      Rez=lerp(eR[1], Rhz-Math.cos(dyR)*0.34, pullR);
+      Rey=lerp(sy,Rhy,0.52)-0.09 - (aimPitchEff()||0)*0.20;
       // (ноги лишаються рідною анімацією кроку — не чіпаємо)
 
     }
   }catch(e){}
   if(av===player && twoHands){                      // (07-17m) віддаємо клинку РЕАЛЬНУ кисть
     const byaw=(av.visYaw||0)*Math.PI/180, cb=Math.cos(byaw), sb=Math.sin(byaw);
-    const _hy=TIER_H*(1.12-(av.crouch||0)*0.42);        // (07-17q) рівень грудей — як у правої руки
-    av._handL={ x:worldX(av.vgx??av.gx) + (Lhx*cb + Lhz*sb),
-                y:_hy + (aimPitchL()||0)*0.30,
-                z:worldZ(av.vgy??av.gy) + (-Lhx*sb + Lhz*cb) };
-    av._handR={ x:worldX(av.vgx??av.gx) + (Rhx*cb + Rhz*sb),
-                y:_hy + (aimPitchEff()||0)*0.30,
-                z:worldZ(av.vgy??av.gy) + (-Rhx*sb + Rhz*cb) };
-  } else if(av===player){ av._handL=null; av._handR=null; }
+    // (07-17r) РУКА І МЕЧ — ОДИН ЛАНЦЮГ: віддаємо клинкам світові кисть і лікоть,
+    // напрямок леза = продовження передпліччя, тому меч ніколи не «висить окремо».
+    const wx=worldX(av.vgx??av.gx), wz=worldZ(av.vgy??av.gy);
+    const L2W=(lx,ly,lz)=>({ x:wx + (lx*cb + lz*sb), y:ly, z:wz + (-lx*sb + lz*cb) });
+    av._handL=L2W(Lhx,Lhy,Lhz);  av._elbL=L2W(Lex,Ley,Lez);
+    av._handR=L2W(Rhx,Rhy,Rhz);  av._elbR=L2W(Rex,Rey,Rez);
+  } else if(av===player){ av._handL=null; av._handR=null; av._elbL=null; av._elbR=null; }
   setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
   setLimb(P.armRU, Srx,sy,sz, Rex,Rey,Rez); setLimb(P.armRF, Rex,Rey,Rez, Rhx,Rhy,Rhz);
   P.grip.position.set(Rhx,Rhy,Rhz);
@@ -1390,7 +1401,17 @@ function handInfoLeft(){
   const bYaw=(av.visYaw||0)*Math.PI/180, cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
   const dyL=clamp(angDiff(yawL,(av.visYaw||0)),-170,95)*Math.PI/180;   // (07-17n) свій борт
   let hx,hy,hz;
-  if(av._handL){ hx=av._handL.x; hy=av._handL.y; hz=av._handL.z; }   // (07-17m) точно з анімації
+  if(av._handL && av._elbL){                                     // (07-17r) ланцюг руки
+    hx=av._handL.x; hy=av._handL.y; hz=av._handL.z;
+    const ax=hx-av._elbL.x, ay=hy-av._elbL.y, az=hz-av._elbL.z;
+    const aL=Math.hypot(ax,ay,az)||1;
+    const len2=clamp(1+Math.round((av.mods&&av.mods.reach)||0),1,6);
+    const reach2=len2*CELL*0.92+0.18;
+    return { hx,hy,hz,                                            // лезо йде рівно за передпліччям
+      tipX:hx+(ax/aL)*reach2, tipY:hy+(ay/aL)*reach2, tipZ:hz+(az/aL)*reach2,
+      atk:(LBLADE.burnCd>0?1:0) };
+  }
+  if(av._handL){ hx=av._handL.x; hy=av._handL.y; hz=av._handL.z; }
   else{
     const arm=0.52+(LBLADE.burnCd>0?0.16:0);
     const lhx=-0.30+Math.sin(dyL)*arm, lhz=0.10+Math.cos(dyL)*arm;
@@ -3863,7 +3884,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17q · ОБИДВА-КЛИНКИ-З-КИСТЕЙ(правий більше не з грудей) · КАЛІБРУВАННЯ-компасів · спавн-подалі';
+const BUILD_TAG='2026-07-17r · МЕЧ=ПРОДОВЖЕННЯ РУКИ(плече→лікоть→кисть→лезо) · калібрування · спавн-подалі';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
