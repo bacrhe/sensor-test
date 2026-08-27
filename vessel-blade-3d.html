@@ -1335,7 +1335,10 @@ function updateAvatarMesh(av, t){
       const dyL=clamp(rawL,-170,95)*rad, dyR=clamp(rawR,-95,170)*rad;
       // плече ЙДЕ ЗА своїм мечем: корпус підкручується, як у фехтувальника
       const twist=clamp(Math.sin(dyR)*0.16 - Math.sin(dyL)*0.16, -0.22, 0.22);
-      const shL=-0.30 - twist*0.5, shR=0.30 - twist*0.5;
+      // (07-17t) борти у ЛОКАЛЬНІЙ системі моделі дзеркальні до світу:
+      // ліва рука сидить на +X, права на −X — інакше нахил правого телефона
+      // з'являвся на лівій руці.
+      const shL= 0.30 + twist*0.5, shR=-0.30 + twist*0.5;
       const shLz=0.02 + twist*0.28, shRz=0.02 - twist*0.28;                 // одне плече вперед
       // довжина руки: замах коротшає (лікоть до тіла), удар — витягується
       const armL=0.50 - windL*0.14 + hitL*0.22;
@@ -1351,7 +1354,7 @@ function updateAvatarMesh(av, t){
         const out=0.13+wind*0.10;
         return [mxE + (-vz/L)*out*side, mzE + (vx/L)*out*side];
       };
-      const eL=elb(shL,shLz,Lhx,Lhz,-1,windL), eR=elb(shR,shRz,Rhx,Rhz,1,windR);
+      const eL=elb(shL,shLz,Lhx,Lhz,1,windL), eR=elb(shR,shRz,Rhx,Rhz,-1,windR);   // лікті теж дзеркально
       // (07-17r) лікоть підтягуємо ДО ЛІНІЇ меча: кисть попереду ліктя рівно за азимутом
       // свого телефона — тоді продовження передпліччя і є напрямок клинка.
       const pullL=0.55, pullR=0.55;
@@ -1417,7 +1420,7 @@ function handInfoLeft(){
   if(av._handL){ hx=av._handL.x; hy=av._handL.y; hz=av._handL.z; }
   else{
     const arm=0.52+(LBLADE.burnCd>0?0.16:0);
-    const lhx=-0.30+Math.sin(dyL)*arm, lhz=0.10+Math.cos(dyL)*arm;
+    const lhx=0.30+Math.sin(dyL)*arm, lhz=0.10+Math.cos(dyL)*arm;   // (07-17t) дзеркально
     hx=px + (lhx*cosB + lhz*sinB);
     hz=pz + (-lhx*sinB + lhz*cosB);
     hy=TIER_H*(1.06-cr*0.42) + pitL*0.5;
@@ -1616,6 +1619,14 @@ function updateStanceAndCamera(dt){
   const tpx=px-dx*(topV?0.8:1.6)*Zc, tpy=TIER_H*(topV?8.0:4.8)*Zc, tpz=pz-dz*(topV?0.8:1.6)*Zc;
   const fpx=px+dx*0.1, fpy=TIER_H*1.95, fpz=pz+dz*0.1;     // 1-е лицо
   camPos.set(lerp(tpx,fpx,fp), lerp(tpy,fpy,fp), lerp(tpz,fpz,fp));
+  try{ if(window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL()){
+    // (07-17t) камера сидить на СВОЄМУ плечі — як кермо в авто
+    const side=(LINK.role==='swordL') ? 1 : -1;
+    const yawC=(sensor.yawFused||0)*Math.PI/180;
+    const offX=Math.cos(yawC)*0.5*side, offZ=-Math.sin(yawC)*0.5*side;
+    camPos.x+=offX; camPos.z+=offZ;
+    camTarget.x+=offX*0.4; camTarget.z+=offZ*0.4;
+  } }catch(e){}
   const ttx=px+dx*(topV?1.4:3.2), tty=TIER_H*(topV?0.0:0.2), ttz=pz+dz*(topV?1.4:3.2);     // прицел вперёд-вниз
   // ВИДОШУКАЧ (07-15): у МАЯКУ дивишся туди, куди «знімає» задня кришка телефону —
   // нахили телефон як камеру вгору/вниз, і погляд піде за нею (а не за віссю «пульта»).
@@ -3887,7 +3898,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17s · ФІКС-ІНВЕРСІЇ(кисті рахувались дзеркально до меша) · меч=продовження-руки';
+const BUILD_TAG='2026-07-17t · РУКИ-НА-СВОЇХ-БОРТАХ(нахил правого телефона — права рука) · камера-на-плечі · меч=продовження-руки';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
