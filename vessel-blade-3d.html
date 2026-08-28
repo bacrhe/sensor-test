@@ -1333,14 +1333,15 @@ function updateAvatarMesh(av, t){
       // (07-17n) кисть тримається СВОГО борту: ліва не тягнеться за праве плече
       // (07-17u) локальна система моделі дзеркальна і за КУТОМ: рух телефона
       // вправо має вести свою руку вправо, тож азимут інвертуємо перед clamp.
-      const rawL=-angDiff(yawLL,(av.visYaw||0)), rawR=-angDiff(yawR,(av.visYaw||0));
-      const dyL=clamp(rawL,-95,170)*rad, dyR=clamp(rawR,-170,95)*rad;
+      const rawL=angDiff(yawLL,(av.visYaw||0)), rawR=angDiff(yawR,(av.visYaw||0));
+      const dyL=clamp(rawL,-170,95)*rad, dyR=clamp(rawR,-95,170)*rad;
       // плече ЙДЕ ЗА своїм мечем: корпус підкручується, як у фехтувальника
       const twist=clamp(Math.sin(dyR)*0.16 - Math.sin(dyL)*0.16, -0.22, 0.22);
       // (07-17t) борти у ЛОКАЛЬНІЙ системі моделі дзеркальні до світу:
       // ліва рука сидить на +X, права на −X — інакше нахил правого телефона
       // з'являвся на лівій руці.
-      const shL= 0.30 + twist*0.5, shR=-0.30 + twist*0.5;
+      // (07-17v) борти беремо з САМОЇ МОДЕЛІ (Slx/Srx) — вони апріорі правильні
+      const shL= Slx*1.05 - twist*0.5, shR= Srx*1.05 - twist*0.5;
       const shLz=0.02 + twist*0.28, shRz=0.02 - twist*0.28;                 // одне плече вперед
       // довжина руки: замах коротшає (лікоть до тіла), удар — витягується
       const armL=0.50 - windL*0.14 + hitL*0.22;
@@ -1356,7 +1357,7 @@ function updateAvatarMesh(av, t){
         const out=0.13+wind*0.10;
         return [mxE + (-vz/L)*out*side, mzE + (vx/L)*out*side];
       };
-      const eL=elb(shL,shLz,Lhx,Lhz,1,windL), eR=elb(shR,shRz,Rhx,Rhz,-1,windR);   // лікті теж дзеркально
+      const eL=elb(shL,shLz,Lhx,Lhz,-1,windL), eR=elb(shR,shRz,Rhx,Rhz,1,windR);
       // (07-17r) лікоть підтягуємо ДО ЛІНІЇ меча: кисть попереду ліктя рівно за азимутом
       // свого телефона — тоді продовження передпліччя і є напрямок клинка.
       const pullL=0.55, pullR=0.55;
@@ -1374,11 +1375,8 @@ function updateAvatarMesh(av, t){
     const byaw=(av.visYaw||0)*Math.PI/180, cb=Math.cos(byaw), sb=Math.sin(byaw);
     // (07-17r) РУКА І МЕЧ — ОДИН ЛАНЦЮГ: віддаємо клинкам світові кисть і лікоть,
     // напрямок леза = продовження передпліччя, тому меч ніколи не «висить окремо».
-    const wx=worldX(av.vgx??av.gx), wz=worldZ(av.vgy??av.gy);
-    // (07-17s) точно та сама матриця, що й у меша: g.rotation.y = π − visYaw
-    const mrot=Math.PI - (av.visYaw||0)*Math.PI/180;
-    const cm=Math.cos(mrot), sm=Math.sin(mrot);
-    const L2W=(lx,ly,lz)=>({ x:wx + (lx*cm + lz*sm), y:ly, z:wz + (-lx*sm + lz*cm) });
+    // (07-17v) світові координати бере САМА СЦЕНА — жодних ручних матриць і знаків
+    const L2W=(lx,ly,lz)=>{ _w3.set(lx,ly,lz); g.localToWorld(_w3); return {x:_w3.x,y:_w3.y,z:_w3.z}; };
     av._handL=L2W(Lhx,Lhy,Lhz);  av._elbL=L2W(Lex,Ley,Lez);
     av._handR=L2W(Rhx,Rhy,Rhz);  av._elbR=L2W(Rex,Rey,Rez);
   } else if(av===player){ av._handL=null; av._handR=null; av._elbL=null; av._elbR=null; }
@@ -1391,6 +1389,7 @@ function updateAvatarMesh(av, t){
 
 /* ── обновление клинка: ровный луч-сегменты от кисти к кончику ── */
 const _bladeDir = new THREE.Vector3();
+const _w3 = new THREE.Vector3();   // (07-17v) для localToWorld кистей
 const TWO={vR:0,vL:0,pR:null,pL:null};                 // (07-17L) стан замахів двох клинків
 /* стиль луча-зоны по оружию: толщина, «скрыть луч» (у цепа/хлыста место луча занимает физ-модель) */
 const WEAPON_FX={
@@ -1407,7 +1406,7 @@ function handInfoLeft(){
   const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);
   const cr=av.crouch||0;
   const bYaw=(av.visYaw||0)*Math.PI/180, cosB=Math.cos(bYaw), sinB=Math.sin(bYaw);
-  const dyL=clamp(-angDiff(yawL,(av.visYaw||0)),-95,170)*Math.PI/180;   // (07-17u) дзеркально
+  const dyL=clamp(angDiff(yawL,(av.visYaw||0)),-170,95)*Math.PI/180;
   let hx,hy,hz;
   if(av._handL && av._elbL){                                     // (07-17r) ланцюг руки
     hx=av._handL.x; hy=av._handL.y; hz=av._handL.z;
@@ -2762,6 +2761,7 @@ const roomEdits = new Map();   // key 'rx,ry' → {blocks:[{gx,gy,type}]} (по�
 function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','+ADV.ry) : 'single'; }
 function snapshotRoom(){
   if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17i) рука не пише світ
+  if(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map') return;   // (07-17v) глядач лише дивиться
   NET.roomDirty=true; roomEdits.set(curRoomKey(), {
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
@@ -2781,7 +2781,8 @@ function applyRemoteRoomIfNewer(key){
   // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
   const now=Date.now();
   NET._reAt = NET._reAt||{};
-  const _gap=_isHand ? 0 : 1200;                   // (07-17i) руці — БЕЗ тротлу: вона лише дзеркало
+  const _watch = (mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');
+  const _gap=(_isHand||_watch) ? 0 : 1200;         // (07-17v) глядач теж бачить світ миттєво
   if(now - (NET._reAt[key]||0) < _gap){ NET._rePendKey=key; return false; }
   NET._reAt[key]=now; if(NET._rePendKey===key) NET._rePendKey=null;
   if((NET._reApplied[key]||0) === (v.t||0)) return false;          // (07-17L) той самий знімок — не чіпаємо
@@ -3900,7 +3901,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17u · ДЗЕРКАЛО-КУТА(рух вправо — права рука вправо) · борти-і-нахил-правильні';
+const BUILD_TAG='2026-07-17v · РУКИ-З-МОДЕЛІ(світові координати через сцену) · глядач-бачить-світ-і-другий-меч · без-візорів';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4351,6 +4352,7 @@ function renderRemotes(now, dt){
     updateBlade(av);
     // «нос» — куда смотрит
     const d = dirXZ(av.visYaw);
+    r.nose.visible = !(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');   // (07-17v)
     r.nose.position.set(worldX(r.gx)+d[0]*0.5, TIER_H*2.25, worldZ(r.gy)+d[1]*0.5);
   }
 }
@@ -4987,6 +4989,17 @@ setInterval(()=>{
         } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
       } }
   }
+  try{ if((mode==='spectator'||mode==='follow'||mode==='action') && ADV.on){   // (07-17v) глядач тримається кімнати гравців
+    let tgt=null, best=1e9;
+    for(const id in NET.remotes){ const r=NET.remotes[id];
+      if(!r || r.spec || !remoteFresh(r)) continue;
+      const rx=(r.rx??(r.latest&&r.latest.rx)); if(!Number.isInteger(rx)) continue;
+      const age=Date.now()-((r.latest&&r.latest.t)||0);
+      if(age<best){ best=age; tgt=r; } }
+    if(tgt){ const rx=(tgt.rx??tgt.latest.rx), ry=(tgt.ry??tgt.latest.ry);
+      if(Number.isInteger(rx) && (ADV.rx!==rx||ADV.ry!==ry)){ applyAdvRoom(rx,ry);
+        logE('глядач: перейшов у кімнату гравця ('+rx+','+ry+')'); } }
+  } }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
   try{ if(ADV.on && advHome() && mode==='fighter'){          // (07-16g) МІТЛА: дім без привидів
     const GHOST=new Set(['wall','crawl','base','amber','rubble']);
