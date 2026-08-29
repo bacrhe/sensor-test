@@ -3901,7 +3901,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17v · РУКИ-З-МОДЕЛІ(світові координати через сцену) · глядач-бачить-світ-і-другий-меч · без-візорів';
+const BUILD_TAG='2026-07-17w · ЛІВА-РУКА: нахил-без-реверсу + ВЛАСНИЙ ЯРУС(б\'є низ/середину/верх) · глядач-бачить-світ';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5077,7 +5077,10 @@ function linkCalibrate(){                       // звести нулі обо�
     }
   }catch(e){}
 }
-function aimPitchL(){ return (window.LINK&&LINK.role==='swordL') ? sensor.pitch : (LINK.remoteL.pitch||0); }
+function aimPitchL(){   // (07-17w) знак нахилу лівої руки був перевернутий — вирівнюємо
+  const p=(window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
+  return -p;
+}
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
   const v=dirXZ(aimYawEff()||0);
@@ -6016,25 +6019,29 @@ function leftBladeTick(dt){
   // (07-17i) власний промінь лівої руки — той самий рушій, що й у правого клинка
   const cells=[], seen=new Set();
   contRayCells(player.gx, player.gy, yaw, len+0.4, cells, seen);
+  // (07-17w) ВЛАСНИЙ ЯРУС лівої руки: нахил лівого телефона вирішує, чи б'є вона
+  // низ (під ноги), середину чи верх — раніше вона завжди лупила в ярус тіла.
+  const tierL=pitchTier(aimPitchL(), LBLADE.tier??1); LBLADE.tier=tierL;
+  const tipYL=TIER_H*(0.30+tierL*0.62);
   for(const c of cells){
     const [cx,cy]=String(c).split(',').map(Number);
     if(cx<0||cx>12||cy<0||cy>12) continue;
     const ph=phantomAtCell(cx,cy);
-    if(ph){ damageTier(ph,1,Math.round(12*player.mods.dmg*(ENCH.tL>0?1.3:1))); ph.hitGlow=0.35;
+    if(ph){ damageTier(ph,tierL,Math.round(12*player.mods.dmg*(ENCH.tL>0?1.3:1))); ph.hitGlow=0.35;
       try{ const tp={x:worldX(cx),y:TIER_H,z:worldZ(cy)}; spawnChunk(tp, fleshColor(ph)); }catch(e){}
       doFlash('#ffd9a0'); buzz(35); LBLADE.burnCd=0.35;
       logE('ЛІВИЙ клинок ріже ('+cx+','+cy+')'); break; }
     const o=obstacleAt(cx,cy);
     if(o){
       if(o.solid){ LBLADE.burnCd=0.25; break; }                       // міцне — лязг
-      const tip={x:worldX(cx), y:TIER_H*(0.5+player.tier*0.6), z:worldZ(cy)};
+      const tip={x:worldX(cx), y:tipYL, z:worldZ(cy)};      // (07-17w) висота — від свого нахилу
       if(voxelizeObstacle(o)) burnVoxelsAt(cx,cy,tip);
       else damageObstacle(o,14);
       LBLADE.burnCd=0.3; buzz(25);
       logE('ЛІВИЙ клинок пропалює ('+cx+','+cy+')');
       break;
     }
-    if(burnVoxelsAt(cx,cy,{x:worldX(cx),y:TIER_H*(0.5+player.tier*0.6),z:worldZ(cy)})){
+    if(burnVoxelsAt(cx,cy,{x:worldX(cx),y:tipYL,z:worldZ(cy)})){
       LBLADE.burnCd=0.3; buzz(20); break;                             // добиває вже вокселізоване
     }
   }
