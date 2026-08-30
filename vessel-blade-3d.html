@@ -1333,7 +1333,7 @@ function updateAvatarMesh(av, t){
       // (07-17n) кисть тримається СВОГО борту: ліва не тягнеться за праве плече
       // (07-17u) локальна система моделі дзеркальна і за КУТОМ: рух телефона
       // вправо має вести свою руку вправо, тож азимут інвертуємо перед clamp.
-      const rawL=angDiff(yawLL,(av.visYaw||0)), rawR=angDiff(yawR,(av.visYaw||0));
+      const rawL=AX.yL*angDiff(yawLL,(av.visYaw||0)), rawR=AX.yR*angDiff(yawR,(av.visYaw||0));
       const dyL=clamp(rawL,-170,95)*rad, dyR=clamp(rawR,-95,170)*rad;
       // плече ЙДЕ ЗА своїм мечем: корпус підкручується, як у фехтувальника
       const twist=clamp(Math.sin(dyR)*0.16 - Math.sin(dyL)*0.16, -0.22, 0.22);
@@ -3518,6 +3518,11 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
     }
     return;                                                     // в занятую клетку не шагаем
   }
+  if(mode!=='creator' && voxelRubbleAt(nx,ny)>2){               // (07-18) завал із уламків
+    buzz([0,25]); blip(180,0.05,'square',0.07);
+    showBanner('⛏ завал: лишилось '+voxelRubbleAt(nx,ny)+' уламків — дорубай','#f59e0b');
+    return;
+  }
   player.gx=nx; player.gy=ny;
   if(mode!=='creator'){ const dc=obstacleAt(nx,ny); if(dc && dc.pass==='liquid') player.moveLockT=0.4; }   // жидкость: вдвое медленнее (кроме творца)
   if(MORPH.form!=='human') player.moveLockT=Math.max(player.moveLockT||0,0.32);   // слизь ползёт медленно
@@ -3908,7 +3913,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17x · БЕЗ-ГЛОБАЛЬНИХ-ІНВЕРСІЙ(перемикач ⇅ у меню) · рука-чекає-світ-тіла · власний-ярус-лівої';
+const BUILD_TAG='2026-07-18a · МАЙСТЕР-ОСЕЙ(гра сама визначає знаки) · осі-в-меню · завал>2-вокселів-не-пройти';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4779,8 +4784,9 @@ window.TUT={
         '• <b>Боком, як фотоапарат</b> = щит і заряд для СВОЄЇ руки.<br>'+
         '• <b>Тапи по екрану</b> = своя абетка Морзе (·  −). Слово <b>PL</b> запалює плазму саме на твоєму клинку.<br>'+
         '• Кроки, HP і кімната — <b>спільні</b>. Права рука тримає світ.<br><br>'+
-        'Спробуйте: розведіть телефони в різні боки — клинки розійдуться, а тіло лишиться одне.',
-        [{t:'ДО БОЮ ▷',c:'#22c55e'}]);
+        'Спершу налаштуємо осі: майстер попросить порухати кожним телефоном окремо, а потім обома разом.',
+        [{t:'▶ НАЛАШТУВАТИ ОСІ',c:'#22c55e',f:()=>{ setTimeout(()=>{ try{ axWizStart(); }catch(e){} }, 400); }},
+         {t:'ДО БОЮ ▷',c:'#64748b'}]);
       return;
     }
     this.eqSave=equalizerOn; equalizerOn=false;  // рівновага (телепорт при вбивстві) — пауза на час навчання
@@ -5007,6 +5013,7 @@ setInterval(()=>{
       if(Number.isInteger(rx) && (ADV.rx!==rx||ADV.ry!==ry)){ applyAdvRoom(rx,ry);
         logE('глядач: перейшов у кімнату гравця ('+rx+','+ry+')'); } }
   } }catch(e){}
+  try{ axWizTick(); }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
   try{ if(ADV.on && advHome() && mode==='fighter'){          // (07-16g) МІТЛА: дім без привидів
     const GHOST=new Set(['wall','crawl','base','amber','rubble']);
@@ -5053,8 +5060,8 @@ function aimYawEff(){
   return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
 }
 function aimPitchEff(){
-  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.pitch)||0;
-  return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch;
+  if(window.LINK && LINK.role==='swordL') return AX.pR*((LINK.body&&LINK.body.pitch)||0);
+  return AX.pR*(linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch);
 }
 // ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
 function linkFreshL(){
@@ -5084,11 +5091,23 @@ function linkCalibrate(){                       // звести нулі обо�
     }
   }catch(e){}
 }
-function aimPitchL(){   // (07-17x) знак — керований перемикачем, без глобальних інверсій
+/* ════ ОСІ РУК (07-18): знаки живуть у налаштуваннях, а не в коді ══════════
+   AX.pR/yR — нахил і поворот ПРАВОЇ руки, AX.pL/yL — ЛІВОЇ. 1 або −1.
+   Майстер калібрування нижче виставляє їх сам, меню дозволяє правити вручну. */
+const AX={pR:1,yR:1,pL:1,yL:1};
+try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes')||'null');
+  if(sv) Object.assign(AX,sv); }catch(e){}
+function saveAxes(){ try{ localStorage.setItem('vb3d_axes', JSON.stringify(AX)); }catch(e){} }
+function aimPitchL(){
   const p=(window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
-  return (LINK.invL? -1 : 1) * p;
+  return AX.pL * p;
 }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
+function voxelRubbleAt(gx,gy){          // (07-18) скільки мікровокселів ще стоїть у клітинці
+  let n=0;
+  try{ for(const m of microBlocks) if(m.gx===gx && m.gy===gy) n++; }catch(e){}
+  return n;
+}
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
   const v=dirXZ(aimYawEff()||0);
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
@@ -6054,6 +6073,67 @@ function leftBladeTick(dt){
   }
 }
 
+/* ════ МАЙСТЕР ОСЕЙ (07-18) ═══════════════════════════════════════════════
+   Гравець рухає по черзі кожним телефоном, гра сама визначає знаки осей.
+   Це і калібрування, і навчання для двох пристроїв в одному потоці.      */
+const AXW={ on:false, step:0, t0:0, base:0, peak:0, hint:null };
+function axWizHint(txt,sub){
+  if(!AXW.hint){ AXW.hint=document.createElement('div');
+    AXW.hint.style.cssText='position:fixed;left:12px;right:12px;top:96px;z-index:97;padding:14px 16px;'+
+      'background:rgba(2,10,24,.94);border:1px solid #22c55e;border-radius:12px;color:#e2e8f0;'+
+      'font:inherit;text-align:center;line-height:1.5';
+    document.body.appendChild(AXW.hint); }
+  AXW.hint.style.display='block';
+  AXW.hint.innerHTML='<div style="font-size:15px;letter-spacing:.08em;color:#86efac">'+txt+'</div>'+
+    '<div style="font-size:11px;color:#94a3b8;margin-top:6px">'+(sub||'')+'</div>';
+}
+function axWizEnd(msg){
+  AXW.on=false; if(AXW.hint) AXW.hint.style.display='none';
+  saveAxes();
+  showBanner(msg||'🎛 осі налаштовано','#22c55e');
+  logE('осі: правий нахил '+AX.pR+' поворот '+AX.yR+' · лівий нахил '+AX.pL+' поворот '+AX.yL);
+}
+const AXW_STEPS=[
+  {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR', src:()=>sensor.pitch||0, want:-1},
+  {t:'🗡 ПРАВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'лівий не чіпай', axis:'yR', src:()=>angDiff(sensor.yawFused||0, AXW.base0||0), want:1},
+  {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL', src:()=>(LINK.remoteL.pitch||0), want:-1},
+  {t:'🗡 ЛІВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'правий тримай нерухомо', axis:'yL', src:()=>angDiff(LINK.remoteL.yaw||0, AXW.base0||0), want:1},
+  {t:'🗡🗡 ТЕПЕР ОБИДВА РАЗОМ', s:'поверни обидва телефони в один бік — клинки мають іти разом', axis:null},
+];
+function axWizStart(){
+  if(!window.LINK || LINK.role!=='host'){ showBanner('🎛 майстер запускається на пристрої ПРАВОЇ руки','#f59e0b'); return; }
+  if(!linkFreshL()){ showBanner('🎛 спершу підключи ліву руку','#f59e0b'); return; }
+  AXW.on=true; AXW.step=0; axWizNext();
+}
+function axWizNext(){
+  const st=AXW_STEPS[AXW.step];
+  if(!st){ axWizEnd('🎛 ГОТОВО — обидві руки налаштовано'); return; }
+  AXW.t0=performance.now(); AXW.peak=0;
+  AXW.base0=(AXW.step===1)?(sensor.yawFused||0):(AXW.step===3?(LINK.remoteL.yaw||0):0);
+  AXW.base=st.axis?st.src():0;
+  axWizHint(st.t, st.s);
+}
+function axWizTick(){
+  if(!AXW.on) return;
+  const st=AXW_STEPS[AXW.step]; if(!st) { axWizEnd(); return; }
+  if(!st.axis){                                   // фінальний крок — просто показуємо 4 секунди
+    if(performance.now()-AXW.t0>4000){ AXW.step++; axWizNext(); }
+    return;
+  }
+  const v=st.src()-AXW.base;
+  if(Math.abs(v)>Math.abs(AXW.peak)) AXW.peak=v;
+  const enough=(st.axis==='pR'||st.axis==='pL') ? Math.abs(AXW.peak)>0.35 : Math.abs(AXW.peak)>25;
+  if(enough && performance.now()-AXW.t0>700){
+    // знак підбираємо так, щоб (сирий рух × AX) дав очікуваний бік:
+    // нахил ВНИЗ має давати від'ємний pitch, поворот ВПРАВО — додатний кут
+    AX[st.axis] = (Math.sign(AXW.peak)===st.want) ? 1 : -1;
+    saveAxes();
+    blip(760,0.08,'sine',0.14); buzz([0,40]);
+    showBanner('✓ '+st.axis+' = '+AX[st.axis],'#22c55e');
+    AXW.step++; axWizNext();
+  }
+}
+
 /* ════ ДВОРУЧЧЯ · інтерфейс і транспорт (07-17) ════ */
 const linkChip=document.createElement('div');
 linkChip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display:none;padding:6px 10px;'+
@@ -6268,6 +6348,21 @@ setTimeout(()=>{ try{
     closeMenu();
     tutModal('🤝 ХТО ДЕ НА МАПІ','Гравці зараз у цих кімнатах мета-світу. Обери, до кого перейти — і опинишся в одній кімнаті з ним (зелені точки на мінімапі).',btns);
   };
+  const ax=document.createElement('button'); ax.id='mAxes'; ax.textContent='🎛 ОСІ РУК (калібрування)';
+  $('mNew').parentNode.insertBefore(ax, $('mNew'));
+  ax.onclick=()=>{ closeMenu();
+    const btn=(k,label)=>({t:label+': '+(AX[k]>0?'ЗВИЧАЙНА':'ПЕРЕВЕРНУТА'), c:AX[k]>0?'#4ade80':'#fbbf24',
+      f:()=>{ AX[k]*=-1; saveAxes(); showBanner('🎛 '+label+' → '+(AX[k]>0?'звичайна':'перевернута'),'#fbbf24');
+        setTimeout(()=>{ try{ $('mAxes').onclick(); }catch(e){} }, 250); }});
+    tutModal('🎛 ОСІ РУК',
+      'Якщо рука рухається у протилежний бік — перемкни відповідну вісь. '+
+      'Або запусти майстер: гра сама визначить знаки, поки ти рухаєш телефонами.',
+      [{t:'▶ МАЙСТЕР КАЛІБРУВАННЯ',c:'#22c55e',f:()=>{ setTimeout(()=>{ try{ axWizStart(); }catch(e){} }, 200); }},
+       btn('pR','правий нахил'), btn('yR','правий поворот'),
+       btn('pL','лівий нахил'),  btn('yL','лівий поворот'),
+       {t:'ЗАКРИТИ',c:'#64748b'}]);
+  };
+  setInterval(()=>{ try{ ax.style.display=(window.LINK&&LINK.role)?'block':'none'; }catch(e){} }, 700);
   const ib=document.createElement('button'); ib.id='mInvL'; ib.textContent='⇅ ІНВЕРСІЯ ЛІВОЇ РУКИ: ВИМК';
   $('mNew').parentNode.insertBefore(ib, $('mNew'));
   try{ LINK.invL = localStorage.getItem('vb3d_invL')==='1'; }catch(e){}
