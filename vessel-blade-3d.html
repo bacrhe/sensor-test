@@ -2813,7 +2813,12 @@ function applyAdvRoom(rx,ry){
   // ПЕРСИСТ (фікс 07-13): ЗНІМОК ГОЛОВНІШИЙ ЗА СІД. Раніше сід-генерація бігла першою
   // щоразу, а знімок лише накривав її зверху — кімнати «регенерували». Тепер:
   // є знімок → відновлюємо ТІЛЬКИ його; нема → генеруємо і одразу знімаємо (advRoomExtras).
-  if(!restoreRoomEdits(rx,ry)) spawnObstaclesSeededSafe(rx,ry,home);
+  const _handRole = window.LINK && (LINK.role==='sword'||LINK.role==='swordL');
+  if(!restoreRoomEdits(rx,ry)){
+    if(_handRole){                            // (07-17x) рука не вигадує світ — чекає знімок тіла
+      logE('рука: чекаю знімок кімнати від тіла');
+    } else spawnObstaclesSeededSafe(rx,ry,home);
+  }
   if(home){                                   // (07-17m) дім спільний, але спавн ЗАВЖДИ вільний
     for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i];
       const d=Math.abs(o.gx-6)+Math.abs(o.gy-6);
@@ -2842,7 +2847,9 @@ function applyAdvRoom(rx,ry){
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
   }
   try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
-  try{ if(window.LINK && LINK.role==='host') snapshotSoon(); }catch(e){}  // (07-17h) віддати руці свіжу кімнату
+  try{ if(window.LINK && LINK.role==='host'){ snapshotSoon();
+    setTimeout(()=>{ try{ snapshotRoom(); }catch(e){} }, 120);            // (07-17x) миттєво, без черги
+  } }catch(e){}
   try{ AUDIO.music(home?'home':(chessWhite(rx,ry)?'white':(boss?'boss':'black'))); }catch(e){}   // тема кімнати з маніфесту
   logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
 }
@@ -3901,7 +3908,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-17w · ЛІВА-РУКА: нахил-без-реверсу + ВЛАСНИЙ ЯРУС(б\'є низ/середину/верх) · глядач-бачить-світ';
+const BUILD_TAG='2026-07-17x · БЕЗ-ГЛОБАЛЬНИХ-ІНВЕРСІЙ(перемикач ⇅ у меню) · рука-чекає-світ-тіла · власний-ярус-лівої';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5077,9 +5084,9 @@ function linkCalibrate(){                       // звести нулі обо�
     }
   }catch(e){}
 }
-function aimPitchL(){   // (07-17w) знак нахилу лівої руки був перевернутий — вирівнюємо
+function aimPitchL(){   // (07-17x) знак — керований перемикачем, без глобальних інверсій
   const p=(window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
-  return -p;
+  return (LINK.invL? -1 : 1) * p;
 }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
@@ -6261,6 +6268,15 @@ setTimeout(()=>{ try{
     closeMenu();
     tutModal('🤝 ХТО ДЕ НА МАПІ','Гравці зараз у цих кімнатах мета-світу. Обери, до кого перейти — і опинишся в одній кімнаті з ним (зелені точки на мінімапі).',btns);
   };
+  const ib=document.createElement('button'); ib.id='mInvL'; ib.textContent='⇅ ІНВЕРСІЯ ЛІВОЇ РУКИ: ВИМК';
+  $('mNew').parentNode.insertBefore(ib, $('mNew'));
+  try{ LINK.invL = localStorage.getItem('vb3d_invL')==='1'; }catch(e){}
+  const paintInv=()=>{ ib.textContent='⇅ ІНВЕРСІЯ ЛІВОЇ РУКИ: '+(LINK.invL?'УВІМК':'ВИМК'); };
+  paintInv();
+  ib.onclick=()=>{ LINK.invL=!LINK.invL;
+    try{ localStorage.setItem('vb3d_invL', LINK.invL?'1':'0'); }catch(e){}
+    paintInv(); showBanner('⇅ нахил лівої руки '+(LINK.invL?'перевернуто':'звичайний'),'#fbbf24'); };
+  setInterval(()=>{ try{ ib.style.display=(window.LINK&&LINK.role)?'block':'none'; }catch(e){} }, 700);
   const rb=document.createElement('button'); rb.id='mBody'; rb.textContent='🖐 ПОВЕРНУТИСЬ У ВЛАСНЕ ТІЛО';
   $('mNew').parentNode.insertBefore(rb, $('mNew'));
   rb.onclick=()=>{ closeMenu(); try{ linkReturnToBody(); }catch(e){} };
