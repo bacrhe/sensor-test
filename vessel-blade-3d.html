@@ -3119,7 +3119,14 @@ function updateRacks(dt){
 }
 
 function bladeCells(av){
-  if(av===player) return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, aimYawEff());
+  if(av===player){
+    if(typeof linkFreshL==='function' && linkFreshL() && av._handR){     // (07-18c) дворуччя: по лезу
+      const H=handInfo(av);
+      const cs=cellsAlongBlade(H.hx,H.hz,H.tipX,H.tipZ);
+      if(cs.length) return cs;
+    }
+    return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,playerWpn, player.strikeT>0, player.mods.reach||0, aimYawEff());
+  }
   if(av.noBlade) return [];   // повзун/літун/стрілець клинка не имеют → и клинча тоже
   return weaponCells(av.gx,av.gy,av.dirIdx,av.swordLen,av.wpn||'sword', av.strikeT>0, av.reachMod||0,
     av.boss?null:av.aimYaw);   // босс лишається неповоротким (снап + слабке місце ззаду)
@@ -3913,7 +3920,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18b · НАХИЛИ-НА-СВОЇ-РУКИ(⇄ обмін джерел) · майстер-осей · завал>2-вокселів';
+const BUILD_TAG='2026-07-18c · ХІТБОКС-ПО-ЛЕЗУ(де видно клинок — там і ріже) · нахили-на-своїх-руках';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5105,6 +5112,23 @@ function _rawPitchLeft(){
 }
 function aimPitchL(){ return AX.pL * (AX.swapP ? _rawPitchRight() : _rawPitchLeft()); }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
+// (07-18c) клітинки вздовж реального відрізка леза (світові координати → сітка)
+function cellsAlongBlade(hx,hz,tx,tz,out){
+  out=out||[];
+  const gx1=hx/CELL+CX, gy1=hz/CELL+CY, gx2=tx/CELL+CX, gy2=tz/CELL+CY;
+  const dx=gx2-gx1, dy=gy2-gy1, L=Math.hypot(dx,dy)||1;
+  const steps=Math.max(3, Math.ceil(L/0.22));
+  const seen=new Set();
+  for(let i=1;i<=steps;i++){
+    const f=i/steps;
+    const cx=Math.round(gx1+dx*f), cy=Math.round(gy1+dy*f);
+    if(cx<0||cx>12||cy<0||cy>12) break;
+    const k=cx+','+cy;
+    if(seen.has(k)) continue;
+    seen.add(k); out.push(k);
+  }
+  return out;
+}
 function voxelRubbleAt(gx,gy){          // (07-18) скільки мікровокселів ще стоїть у клітинці
   let n=0;
   try{ for(const m of microBlocks) if(m.gx===gx && m.gy===gy) n++; }catch(e){}
@@ -6045,8 +6069,8 @@ function leftBladeTick(dt){
   LBLADE.burnCd=Math.max(0,LBLADE.burnCd-dt);
   if(LBLADE.burnCd>0 || lBeacon) return;                       // у стійці щита ліва рука не рубає
   // (07-17i) власний промінь лівої руки — той самий рушій, що й у правого клинка
-  const cells=[], seen=new Set();
-  contRayCells(player.gx, player.gy, yaw, len+0.4, cells, seen);
+  const H=handInfoLeft();                                   // (07-18c) рахуємо по самому лезу
+  const cells=cellsAlongBlade(H.hx,H.hz,H.tipX,H.tipZ);
   // (07-17w) ВЛАСНИЙ ЯРУС лівої руки: нахил лівого телефона вирішує, чи б'є вона
   // низ (під ноги), середину чи верх — раніше вона завжди лупила в ярус тіла.
   const tierL=pitchTier(aimPitchL(), LBLADE.tier??1); LBLADE.tier=tierL;
