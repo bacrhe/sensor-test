@@ -3913,7 +3913,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18a · МАЙСТЕР-ОСЕЙ(гра сама визначає знаки) · осі-в-меню · завал>2-вокселів-не-пройти';
+const BUILD_TAG='2026-07-18b · НАХИЛИ-НА-СВОЇ-РУКИ(⇄ обмін джерел) · майстер-осей · завал>2-вокселів';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5059,10 +5059,7 @@ function aimYawEff(){
   if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.yaw)||0;
   return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
 }
-function aimPitchEff(){
-  if(window.LINK && LINK.role==='swordL') return AX.pR*((LINK.body&&LINK.body.pitch)||0);
-  return AX.pR*(linkFresh() ? (LINK.remote.pitch??sensor.pitch) : sensor.pitch);
-}
+function aimPitchEff(){ return AX.pR * (AX.swapP ? _rawPitchLeft() : _rawPitchRight()); }
 // ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
 function linkFreshL(){
   if(!window.LINK) return false;
@@ -5094,14 +5091,19 @@ function linkCalibrate(){                       // звести нулі обо�
 /* ════ ОСІ РУК (07-18): знаки живуть у налаштуваннях, а не в коді ══════════
    AX.pR/yR — нахил і поворот ПРАВОЇ руки, AX.pL/yL — ЛІВОЇ. 1 або −1.
    Майстер калібрування нижче виставляє їх сам, меню дозволяє правити вручну. */
-const AX={pR:1,yR:1,pL:1,yL:1};
+const AX={pR:1,yR:1,pL:1,yL:1,swapP:true};   // swapP — нахили двох пристроїв приходять навхрест
 try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes')||'null');
   if(sv) Object.assign(AX,sv); }catch(e){}
 function saveAxes(){ try{ localStorage.setItem('vb3d_axes', JSON.stringify(AX)); }catch(e){} }
-function aimPitchL(){
-  const p=(window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
-  return AX.pL * p;
+// (07-18b) сирі нахили двох пристроїв — і прапорець обміну, бо вони приходили навхрест
+function _rawPitchRight(){
+  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.pitch)||0;
+  return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : (sensor.pitch||0);
 }
+function _rawPitchLeft(){
+  return (window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
+}
+function aimPitchL(){ return AX.pL * (AX.swapP ? _rawPitchRight() : _rawPitchLeft()); }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 function voxelRubbleAt(gx,gy){          // (07-18) скільки мікровокселів ще стоїть у клітинці
   let n=0;
@@ -6094,9 +6096,9 @@ function axWizEnd(msg){
   logE('осі: правий нахил '+AX.pR+' поворот '+AX.yR+' · лівий нахил '+AX.pL+' поворот '+AX.yL);
 }
 const AXW_STEPS=[
-  {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR', src:()=>sensor.pitch||0, want:-1},
+  {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR', src:()=>aimPitchEff(), want:-1},
   {t:'🗡 ПРАВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'лівий не чіпай', axis:'yR', src:()=>angDiff(sensor.yawFused||0, AXW.base0||0), want:1},
-  {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL', src:()=>(LINK.remoteL.pitch||0), want:-1},
+  {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL', src:()=>aimPitchL(), want:-1},
   {t:'🗡 ЛІВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'правий тримай нерухомо', axis:'yL', src:()=>angDiff(LINK.remoteL.yaw||0, AXW.base0||0), want:1},
   {t:'🗡🗡 ТЕПЕР ОБИДВА РАЗОМ', s:'поверни обидва телефони в один бік — клинки мають іти разом', axis:null},
 ];
@@ -6360,6 +6362,10 @@ setTimeout(()=>{ try{
       [{t:'▶ МАЙСТЕР КАЛІБРУВАННЯ',c:'#22c55e',f:()=>{ setTimeout(()=>{ try{ axWizStart(); }catch(e){} }, 200); }},
        btn('pR','правий нахил'), btn('yR','правий поворот'),
        btn('pL','лівий нахил'),  btn('yL','лівий поворот'),
+       {t:'⇄ НАХИЛИ МІСЦЯМИ: '+(AX.swapP?'УВІМК':'ВИМК'), c:AX.swapP?'#a78bfa':'#64748b',
+        f:()=>{ AX.swapP=!AX.swapP; saveAxes();
+          showBanner('⇄ нахили '+(AX.swapP?'помінялись місцями':'кожен своєму'),'#a78bfa');
+          setTimeout(()=>{ try{ $('mAxes').onclick(); }catch(e){} }, 250); }},
        {t:'ЗАКРИТИ',c:'#64748b'}]);
   };
   setInterval(()=>{ try{ ax.style.display=(window.LINK&&LINK.role)?'block':'none'; }catch(e){} }, 700);
