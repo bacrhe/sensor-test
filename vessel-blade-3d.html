@@ -1320,9 +1320,10 @@ function updateAvatarMesh(av, t){
       const yawR=aimYawEff(), yawLL=aimYawL();
       // кутове середнє двох клинків — це і є фронт корпусу
       const rad=Math.PI/180;
-      const mx2=Math.cos(yawR*rad)+Math.cos(yawLL*rad), mz2=Math.sin(yawR*rad)+Math.sin(yawLL*rad);
-      const midYaw=(Math.hypot(mx2,mz2)>0.05) ? Math.atan2(mz2,mx2)/rad : (av.visYaw||0);
-      av.visYaw = smoothAngle(av.visYaw||0, midYaw, clamp(dt2*7,0,1));     // корпус повертається плавно
+      // (07-18d) корпус веде ПРАВА рука (вона без мережевої затримки), ліва лише
+      // трохи доводить його — тому оберт на 360° йде рівно, без ривків.
+      const midYaw = yawR + clamp(angDiff(yawLL, yawR), -70, 70)*0.30;
+      av.visYaw = smoothAngle(av.visYaw||0, midYaw, clamp(dt2*9,0,1));
       // фази замаху: кутова швидкість кожного клинка
       TWO.vR=lerp(TWO.vR||0, Math.abs(angDiff(yawR, TWO.pR??yawR))/Math.max(dt2,0.001), 0.25);
       TWO.vL=lerp(TWO.vL||0, Math.abs(angDiff(yawLL,TWO.pL??yawLL))/Math.max(dt2,0.001), 0.25);
@@ -3920,7 +3921,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18c · ХІТБОКС-ПО-ЛЕЗУ(де видно клинок — там і ріже) · нахили-на-своїх-руках';
+const BUILD_TAG='2026-07-18d · ОБЕРТ-ВЕДЕ-ПРАВА(рівно, без ривків) · ТОЧКА-ПРОПАЛУ-НА-ЛЕЗІ · товщина-променя';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5121,11 +5122,15 @@ function cellsAlongBlade(hx,hz,tx,tz,out){
   const seen=new Set();
   for(let i=1;i<=steps;i++){
     const f=i/steps;
-    const cx=Math.round(gx1+dx*f), cy=Math.round(gy1+dy*f);
+    const fx=gx1+dx*f, fy=gy1+dy*f;
+    const cx=Math.round(fx), cy=Math.round(fy);
     if(cx<0||cx>12||cy<0||cy>12) break;
-    const k=cx+','+cy;
-    if(seen.has(k)) continue;
-    seen.add(k); out.push(k);
+    const push=(a,b)=>{ if(a<0||a>12||b<0||b>12) return;
+      const kk=a+','+b; if(!seen.has(kk)){ seen.add(kk); out.push(kk); } };
+    push(cx,cy);
+    // (07-18d) лезо має товщину: коли лінія йде краєм клітинки, беремо й сусідню
+    if(Math.abs(fx-cx)>0.34) push(cx+Math.sign(fx-cx), cy);
+    if(Math.abs(fy-cy)>0.34) push(cx, cy+Math.sign(fy-cy));
   }
   return out;
 }
@@ -5135,6 +5140,13 @@ function voxelRubbleAt(gx,gy){          // (07-18) скільки мікрово
   return n;
 }
 function burnTip(cx,cy){  // точка дотику: на промені перед клітиною, висота за ярусом+нахилом
+  try{ if(typeof linkFreshL==='function' && linkFreshL() && player._handR){   // (07-18d) дворуччя: по лезу
+    const H=handInfo(player);
+    const cw=worldX(cx), cz=worldZ(cy);
+    const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz, bl=Math.hypot(bx,by,bz)||1;
+    const t=clamp(((cw-H.hx)*bx + (cz-H.hz)*bz)/(bl*bl), 0, 1);   // проєкція клітинки на лезо
+    return { x:H.hx+bx*t, y:clamp(H.hy+by*t,0.02,TIER_H*2.4), z:H.hz+bz*t };
+  } }catch(e){}
   const v=dirXZ(aimYawEff()||0);
   const px=worldX(player.vgx??player.gx), pz=worldZ(player.vgy??player.gy);
   const cw=worldX(cx), cz=worldZ(cy);
@@ -6086,14 +6098,16 @@ function leftBladeTick(dt){
     const o=obstacleAt(cx,cy);
     if(o){
       if(o.solid){ LBLADE.burnCd=0.25; break; }                       // міцне — лязг
-      const tip={x:worldX(cx), y:tipYL, z:worldZ(cy)};      // (07-17w) висота — від свого нахилу
+      const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz, bl=Math.hypot(bx,by,bz)||1;
+      const tt=clamp(((worldX(cx)-H.hx)*bx + (worldZ(cy)-H.hz)*bz)/(bl*bl), 0, 1);
+      const tip={x:H.hx+bx*tt, y:clamp(H.hy+by*tt,0.02,TIER_H*2.4), z:H.hz+bz*tt};   // (07-18d) на самому лезі
       if(voxelizeObstacle(o)) burnVoxelsAt(cx,cy,tip);
       else damageObstacle(o,14);
       LBLADE.burnCd=0.3; buzz(25);
       logE('ЛІВИЙ клинок пропалює ('+cx+','+cy+')');
       break;
     }
-    if(burnVoxelsAt(cx,cy,{x:worldX(cx),y:tipYL,z:worldZ(cy)})){
+    if(burnVoxelsAt(cx,cy,{x:worldX(cx),y:clamp(H.hy+(H.tipY-H.hy)*0.6,0.02,TIER_H*2.4),z:worldZ(cy)})){
       LBLADE.burnCd=0.3; buzz(20); break;                             // добиває вже вокселізоване
     }
   }
