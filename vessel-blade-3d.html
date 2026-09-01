@@ -1126,6 +1126,7 @@ function makePhantom(i, kind){
   return ph;
 }
 function spawnPhantoms(n, kinds){
+  if(typeof watcherMode==='function' && watcherMode()) n=0;   // (07-18g) глядач нікого не спавнить
   phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
   phantoms = [];
   for(let i=0;i<n;i++) phantoms.push(makePhantom(i, kinds&&kinds[i]));
@@ -2978,6 +2979,7 @@ function loadScannedRoom(){
   snapshotRoom();   // сохранить как постоянную постройку текущей комнаты
   const c=freeSpawnCell(CX,CY,player); player.gx=c[0]; player.gy=c[1];   // безопасный старт
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
+  if(typeof watcherMode==='function' && watcherMode()) phantomCount=0;   // (07-18g)
   spawnPhantoms(phantomCount); clearClinch(); applyMode(); closeMenu();
 }
 function buildRoomStructures(rng, weight, tintHex){
@@ -3909,7 +3911,9 @@ function cycleFollow(){
   showBanner('◎ стежу за '+followTarget.slice(0,4),'#a5f3fc');
 }
 $('followBtn').onclick=cycleFollow;
-$('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4; spawnPhantoms(phantomCount); applyMode();
+$('mPhan').onclick=()=>{ phantomCount=(phantomCount+1)%4;
+  if(typeof watcherMode==='function' && watcherMode()) phantomCount=0;
+  spawnPhantoms(phantomCount); applyMode();
   $('mPhan').textContent='☠ ФАНТОМІВ: '+phantomCount; };
 $('mDiff').onclick=()=>{ botDiff=(botDiff+1)%3;
   $('mDiff').textContent='🎯 СКЛАДНІСТЬ: '+DIFF[botDiff].name; logE('botDiff='+DIFF[botDiff].name); };
@@ -3927,7 +3931,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18f · КОЖНА-ВІСЬ-ВІД-СВОГО-ПРИСТРОЮ(перехрещення прибрано) · глядач-не-плодить-ворогів · друга-рука-не-фехтує-до-зʼєднання';
+const BUILD_TAG='2026-07-18g · ПЕРЕКАЛІБРУВАННЯ-ПІСЛЯ-ОБРИВУ · глядач:0-фантомів · глядач-тягне-світ-і-другий-меч';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5058,6 +5062,13 @@ setInterval(()=>{
         } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
       } }
   }
+  try{ if((mode==='spectator'||mode==='follow'||mode==='action') && !ADV.on){   // (07-18g) глядач мусить бути у пригоді, щоб бачити кімнати
+    let anyRx=false;
+    for(const id in NET.remotes){ const r=NET.remotes[id];
+      const rx=(r&&(r.rx??(r.latest&&r.latest.rx))); if(Number.isInteger(rx)){ anyRx=true; break; } }
+    if(anyRx && !NET._watchAdv){ NET._watchAdv=true;
+      try{ $('mAdv').click(); logE('глядач: вмикаю пригоду, щоб бачити кімнати гравців'); }catch(e){} }
+  } }catch(e){}
   try{ if((mode==='spectator'||mode==='follow'||mode==='action') && ADV.on){   // (07-17v) глядач тримається кімнати гравців
     let tgt=null, best=1e9;
     for(const id in NET.remotes){ const r=NET.remotes[id];
@@ -6264,7 +6275,13 @@ function linkBecomeHost(){
     onValue(ref(NET.db, 'blade/link/'+code+'/swordL'), snap=>{     // (07-17c) друга рука
       const v=snap.val(); if(!v) return;
       const first=!LINK.remoteL.t;
+      const gapMs = LINK.remoteL.t ? (Date.now()-LINK.remoteL.t) : 0;
       LINK.remoteL={ yaw:+v.yaw||0, pitch:+v.pitch||0, beacon:!!v.beacon, speed:+v.speed||0, t:+v.t||Date.now() };
+      if(gapMs>3000){                                  // (07-18g) зв'язок повернувся — зводимо нулі заново
+        LINK.calib=null; LINK._smL=null;
+        setTimeout(()=>{ try{ linkCalibrate(); }catch(e){} }, 400);
+        logE('дворуччя: зв\'язок відновлено після '+(gapMs/1000).toFixed(1)+'с — перекалібровую');
+      }
       if(v.spell && v.spell.t && v.spell.t!==LINK.lastSpellL){ LINK.lastSpellL=v.spell.t; handSpell(v.spell.w,'L'); }
       if(first){ showBanner('🗡🗡 ДРУГИЙ МЕЧ У ЛІВІЙ РУЦІ · зводжу клинки','#fbbf24');
         setTimeout(()=>{ try{ linkCalibrate(); }catch(e){} }, 600); }
@@ -6369,6 +6386,7 @@ function linkBecomeSword(hand, codeIn){
   try{                                                       // (07-17b) МЕЧ БАЧИТЬ ТЕ САМЕ: дзеркало тіла
     onValue(ref(NET.db, 'blade/link/'+code+'/body'), snap=>{
       const v=snap.val(); if(!v || !(LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17g) і ліва рука теж
+      if(LINK.body && LINK.body.t && (Date.now()-LINK.body.t)>3000){ LINK._smL=null; LINK.calib=null; }
       LINK.body=v;
       try{
         if(Number.isInteger(v.rx) && ADV.on && (ADV.rx!==v.rx || ADV.ry!==v.ry)) applyAdvRoom(v.rx, v.ry);
