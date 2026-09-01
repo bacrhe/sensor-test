@@ -1518,7 +1518,11 @@ const camLook = new THREE.Vector3();   // сглаженная точка взг
 function updateStanceAndCamera(dt){
   if(mode==='creator'){ setCreatorCamera(); return; }   // творец: камера = задняя камера смартфона
   if(clinch.active){ player.mesh.visible=false; updatePressMeter(); setClinchCamera(); return; }  // клинч — 1-е лицо + метр тиску
-  const [dx,dz] = dirXZ(sensor.yawFused);   // камера — мгновенно
+  // (07-18i) у дворуччі камера стоїть за спиною ТІЛА — однаково на обох
+  // пристроях; своє плече дає лише бічний зсув, анатомія не дзеркалиться.
+  const _camYaw = (window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL())
+    ? (player.visYaw||0) : sensor.yawFused;
+  const [dx,dz] = dirXZ(_camYaw);   // камера — мгновенно
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
   const _lkBeacon = linkFresh() ? (LINK.remote.beacon?1:0) : null;   // (07-17) стійку диктує МЕЧ-пристрій
@@ -2992,6 +2996,12 @@ function loadScannedRoom(){
   if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; }
   if(typeof watcherMode==='function' && watcherMode()) phantomCount=0;   // (07-18g)
   spawnPhantoms(phantomCount); clearClinch(); applyMode(); closeMenu();
+  try{ if(watcherMode()){                                   // (07-18i) одразу тягнемо чужий світ
+    NET._reApplied={}; NET._reAt={};
+    setTimeout(()=>{ try{ applyRemoteRoomIfNewer(ADV.on?(ADV.rx+','+ADV.ry):'hall');
+      logE('глядач: тягну світ гравців'); }catch(e){} }, 350);
+    setTimeout(()=>{ try{ applyRemoteRoomIfNewer(ADV.on?(ADV.rx+','+ADV.ry):'hall'); }catch(e){} }, 1400);
+  } }catch(e){}
 }
 function buildRoomStructures(rng, weight, tintHex){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
@@ -3942,7 +3952,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18h · 🪞ДЗЕРКАЛО-РУК-ДЛЯ-ЕКРАНА · калібрування-раз-на-розрив(без спаму) · глядач-бачить-світ';
+const BUILD_TAG='2026-07-18i · КАМЕРА-ЗА-СПИНОЮ-ТІЛА(анатомія однакова на двох екранах) · другий-клинок-по-прапорцю · глядач-тягне-світ-одразу';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4107,6 +4117,7 @@ const NET = {
       mo:+Math.min(1,(sensor.speed||0)/18).toFixed(2),                // (07-17f) енергія руху — для спільного звуку
       yawL:(typeof linkFreshL==='function' && linkFreshL()) ? Math.round(aimYawL()) : null,   // (07-18e) друга рука
       pitL:(typeof linkFreshL==='function' && linkFreshL()) ? +(aimPitchL()||0).toFixed(2) : null,
+      two:(typeof linkFreshL==='function' && linkFreshL()) ? 1 : 0,   // (07-18i) прапорець дворуччя
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
@@ -4421,7 +4432,7 @@ function disposeAvatar(av){
 // (07-18e) другий клинок віддаленого гравця — щоб дворучний боєць виглядав
 // однаково на всіх пристроях: у тіла, в руки, у глядача і в інших гравців.
 function remoteBlade2(r, av, p){
-  const has = (p && p.yawL!=null);
+  const has = (p && (p.yawL!=null || p.two));   // (07-18i) навіть якщо кут ще не дійшов
   if(!has){ if(r.blade2){ r.blade2.count=0; } return; }
   if(!r.blade2){
     r.blade2=new THREE.InstancedMesh(bladeGeo, bladeMat.clone(), 6);
@@ -5179,7 +5190,7 @@ function linkCalibrate(){                       // звести нулі обо�
 /* ════ ОСІ РУК (07-18): знаки живуть у налаштуваннях, а не в коді ══════════
    AX.pR/yR — нахил і поворот ПРАВОЇ руки, AX.pL/yL — ЛІВОЇ. 1 або −1.
    Майстер калібрування нижче виставляє їх сам, меню дозволяє правити вручну. */
-const AX={pR:1,yR:1,pL:1,yL:1,swapP:false,mirror:false};  // mirror — дзеркало рук НА ЦЬОМУ екрані
+const AX={pR:1,yR:1,pL:1,yL:1,swapP:false,mirror:false};  // mirror — аварійне дзеркало (камера тепер за спиною)
 try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes_v2')||'null');   // (07-18e) новий ключ — старе зіпсоване скинуто
   if(sv) Object.assign(AX,sv); }catch(e){}
 function saveAxes(){ try{ localStorage.setItem('vb3d_axes_v2', JSON.stringify(AX)); }catch(e){} }
