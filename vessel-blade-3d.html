@@ -1661,6 +1661,7 @@ const clinch = {
 let friendlyFire = true;        // наносить/получать урон между игроками
 let botDiff = 1;                 // сложность ботов: 0 легко / 1 норма / 2 сложно
 const DIFF = [{cd:0.6,dmg:6,name:'ЛЕГКО'},{cd:0.42,dmg:9,name:'НОРМА'},{cd:0.28,dmg:12,name:'СКЛАДНО'}];
+const CLZ={green:9, yellow:22};    // (07-19b) межі зон клінчу у градусах
 const CLINCH_DELTA_CRIT = 70;   // критическая дельта (°) → разоружение
 const CLINCH_TIME_CRIT = 4.0;   // критическое время рассинхрона (с)
 const CLINCH_RETURN_T = 6.0;    // без клинка столько секунд → телекинез возвращает меч в руку
@@ -1695,6 +1696,7 @@ function bladeContestCell(av){   // клетка-кончик клинка
 function startClinch(foe){
   if((window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) || window.__awaitHand) return;   // (07-18f)
   if(clinch.active) return;
+  clinch.energy=0; clinch.zone='green'; clinch._zPrev=null;   // (07-19b)
   clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
   addExhaustion(player, 18);   // вход в клинч — энергозатратно (Часть 4.2)
   clinch.participants = foe ? [player, foe] : [player];   // Часть 2: участники клинча
@@ -1794,6 +1796,7 @@ function updateClinch(dt){
   setSwordSound(clinch.lockX, clinch.lockY, clinch.lockZ, 0.28, 110);
   // ВИБРАЦИЯ = насколько телефон ушёл от точки меча. Близко (Δ мал) — тихие редкие
   // импульсы; далеко (Δ велик) — частые и долгие. Это «компас рассинхрона».
+  try{ clinchZoneHud(); }catch(e){}
   clinch.vibT -= dt;
   if(clinch.vibT<=0){
     const n = clamp(clinch.delta/CLINCH_DELTA_CRIT, 0, 1);   // 0..1
@@ -1852,6 +1855,34 @@ function updateClinch(dt){
     }
     const X = clamp((clinch.myImp - clinch.foeImp)/2.2, -1, 1);
     clinch.pressX = X;
+
+    // ── ЗОНИ ТИСКУ ──────────────────────────────────────────────────────
+    // Межі зон «пливуть»: сильніший тиск ворога звужує твою зелену зону і
+    // підсовує жовту ближче — саме це відчувається як «мене зміщують».
+    const shift = clamp(-X, -1, 1)*7;                 // ворог сильніший → межі ближче
+    const gEdge = clamp(CLZ.green - shift, 3, 16);
+    const yEdge = clamp(CLZ.yellow - shift*1.4, gEdge+4, 34);
+    const zone = (clinch.delta<=gEdge) ? 'green' : (clinch.delta<=yEdge ? 'yellow' : 'red');
+    clinch.zone=zone; clinch.gEdge=gEdge; clinch.yEdge=yEdge;
+
+    if(zone==='green'){
+      clinch.energy = clamp((clinch.energy||0) + dt*(0.55+0.45*hold), 0, 2.4);   // копиш
+      player.stamina = clamp(player.stamina + dt*1.2, 0, 100);                    // дихаєш
+      if(!clinch._zPrev || clinch._zPrev!=='green'){ blip(560,0.06,'sine',0.10); buzz(18); }
+    } else if(zone==='yellow'){
+      const spend = Math.min(clinch.energy||0, dt*0.9);
+      clinch.energy = (clinch.energy||0) - spend;
+      clinch.myImp += spend*1.6;                                                  // віддаєш накопичене в тиск
+      player.stamina = clamp(player.stamina - dt*3.5, 0, 100);
+      if(clinch._zPrev==='green'){ blip(420,0.07,'square',0.10); buzz([0,30]); }
+    } else {
+      player.stamina = clamp(player.stamina - dt*13, 0, 100);                     // червона — тане
+      clinch.energy = clamp((clinch.energy||0) - dt*0.6, 0, 2.4);
+      if(clinch._zPrev!=='red'){ blip(190,0.10,'sawtooth',0.13); buzz([0,60,40,60]);
+        showBanner('🟥 ТЕБЕ ПРОДАВЛЮЮТЬ — відведи клинок назад','#ef4444'); }
+      if(player.stamina<=0){ endClinch('disarm'); logE('клінч: витривалість вичерпано — клинок вибито'); return; }
+    }
+    clinch._zPrev=zone;
     // искры на точке скрещения ползут К ПРОИГРЫВАЮЩЕМУ — давление видно в мире, не только в HUD
     clinch.sparkT=(clinch.sparkT||0)-dt;
     if(clinch.sparkT<=0 && Math.abs(X)>0.15){
@@ -2102,6 +2133,24 @@ function setAvatarAlpha(av, a){
   for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
 }
 // камера клинча — плавный вид от 1-го лица на скрещение клинков
+function clinchZoneHud(){                                 // (07-19b) зона + запас енергії
+  try{
+    let el=document.getElementById('clzHud');
+    if(!el){ el=document.createElement('div'); el.id='clzHud';
+      el.style.cssText='position:fixed;left:50%;transform:translateX(-50%);top:112px;z-index:64;'+
+        'padding:6px 12px;border-radius:9px;font:inherit;font-size:12px;letter-spacing:.08em;'+
+        'border:1px solid #334155;background:rgba(2,10,24,.86);white-space:nowrap';
+      document.body.appendChild(el); }
+    if(!clinch.active){ el.style.display='none'; return; }
+    el.style.display='block';
+    const z=clinch.zone||'green';
+    const col=z==='green'?'#22c55e':z==='yellow'?'#eab308':'#ef4444';
+    const name=z==='green'?'🟩 ТОЧКА · копиш':z==='yellow'?'🟨 ТИСК · віддаєш':'🟥 ПРОДАВЛЕНО';
+    const bars='▮'.repeat(Math.round(clamp((clinch.energy||0)/2.4,0,1)*8)).padEnd(8,'▯');
+    el.style.borderColor=col; el.style.color=col;
+    el.textContent=name+'   Δ'+Math.round(clinch.delta)+'°   ⚡'+bars;
+  }catch(e){}
+}
 function updatePressMeter(){                              // тиск НАГЛЯДНО: заливка от центра к победе/поражению
   const pm=$('pressMeter'); if(!pm) return;
   pm.style.display='block';
@@ -3946,7 +3995,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-19a · РЕВІЗІЯ(пряме правило: ліва↔лівий, права↔правий) · 🔬діагностика-рук · камера-за-спиною';
+const BUILD_TAG='2026-07-19b · КЛІНЧ-ЗОНИ(🟩точка-копиш · 🟨тиск-віддаєш · 🟥продавлено→вибиття) · ревізія-дворуччя';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
