@@ -1350,12 +1350,11 @@ function updateAvatarMesh(av, t){
       const armR=0.50 - windR*0.14 + hitR*0.24;
       // (07-18h) дзеркало екрана: на одному з пристроїв руки видно навпаки —
       // перемикач у меню міняє, яка кінцівка отримує які дані.
-      const _pA = AX.mirror ? (aimPitchEff()||0) : (aimPitchL()||0);
-      const _pB = AX.mirror ? (aimPitchL()||0)   : (aimPitchEff()||0);
-      const _dA = AX.mirror ? dyR : dyL, _dB = AX.mirror ? dyL : dyR;
-      const _aA = AX.mirror ? armR : armL, _aB = AX.mirror ? armL : armR;
+      // (07-19) ПРЯМЕ ПРАВИЛО: ліва рука — від лівого пристрою, права — від правого
+      const _pA=(aimPitchL()||0), _pB=(aimPitchEff()||0);
+      const _dA=dyL, _dB=dyR, _aA=armL, _aB=armR;
       Lhx=shL+Math.sin(_dA)*_aA; Lhz=shLz+Math.cos(_dA)*_aA;
-      Lhy=base+_pA*0.5 + windL*0.12 - hitR*0.08;               // замах піднімає кисть
+      Lhy=base+_pA*0.5 + windL*0.12 - hitR*0.08;
       Rhx=shR+Math.sin(_dB)*_aB; Rhz=shRz+Math.cos(_dB)*_aB;
       Rhy=base+_pB*0.5 + windR*0.12 + hitR*0.10 - hitL*0.06;
       // лікті — назовні й трохи вниз (жива дуга руки)
@@ -1385,13 +1384,8 @@ function updateAvatarMesh(av, t){
     // напрямок леза = продовження передпліччя, тому меч ніколи не «висить окремо».
     // (07-17v) світові координати бере САМА СЦЕНА — жодних ручних матриць і знаків
     const L2W=(lx,ly,lz)=>{ _w3.set(lx,ly,lz); g.localToWorld(_w3); return {x:_w3.x,y:_w3.y,z:_w3.z}; };
-    if(AX.mirror){                                   // (07-18h) клинки йдуть за своїми руками
-      av._handR=L2W(Lhx,Lhy,Lhz);  av._elbR=L2W(Lex,Ley,Lez);
-      av._handL=L2W(Rhx,Rhy,Rhz);  av._elbL=L2W(Rex,Rey,Rez);
-    } else {
-      av._handL=L2W(Lhx,Lhy,Lhz);  av._elbL=L2W(Lex,Ley,Lez);
-      av._handR=L2W(Rhx,Rhy,Rhz);  av._elbR=L2W(Rex,Rey,Rez);
-    }
+    av._handL=L2W(Lhx,Lhy,Lhz);  av._elbL=L2W(Lex,Ley,Lez);   // (07-19) без дзеркал
+    av._handR=L2W(Rhx,Rhy,Rhz);  av._elbR=L2W(Rex,Rey,Rez);
   } else if(av===player){ av._handL=null; av._handR=null; av._elbL=null; av._elbR=null; }
   setLimb(P.armLU, Slx,sy,sz, Lex,Ley,Lez); setLimb(P.armLF, Lex,Ley,Lez, Lhx,Lhy,Lhz);
   setLimb(P.armRU, Srx,sy,sz, Rex,Rey,Rez); setLimb(P.armRF, Rex,Rey,Rez, Rhx,Rhy,Rhz);
@@ -3952,7 +3946,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18i · КАМЕРА-ЗА-СПИНОЮ-ТІЛА(анатомія однакова на двох екранах) · другий-клинок-по-прапорцю · глядач-тягне-світ-одразу';
+const BUILD_TAG='2026-07-19a · РЕВІЗІЯ(пряме правило: ліва↔лівий, права↔правий) · 🔬діагностика-рук · камера-за-спиною';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5156,7 +5150,7 @@ function aimYawEff(){
   if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.yaw)||0;
   return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
 }
-function aimPitchEff(){ return AX.pR * (AX.swapP ? _rawPitchLeft() : _rawPitchRight()); }
+function aimPitchEff(){ return AX.pR * _rawPitchRight(); }   // (07-19) правий пристрій — права рука
 // ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
 function linkFreshL(){
   if(!window.LINK) return false;
@@ -5202,7 +5196,7 @@ function _rawPitchRight(){
 function _rawPitchLeft(){
   return (window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
 }
-function aimPitchL(){ return AX.pL * (AX.swapP ? _rawPitchRight() : _rawPitchLeft()); }
+function aimPitchL(){ return AX.pL * _rawPitchLeft(); }      // (07-19) лівий пристрій — ліва рука
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 // (07-18c) клітинки вздовж реального відрізка леза (світові координати → сітка)
 function cellsAlongBlade(hx,hz,tx,tz,out){
@@ -6204,6 +6198,26 @@ function leftBladeTick(dt){
   }
 }
 
+/* ════ ДІАГНОСТИКА РУК (07-19): живі числа просто на екрані ══════════════ */
+let _axDiagEl=null;
+setInterval(()=>{ try{
+  if(!window.__axDiag){ if(_axDiagEl) _axDiagEl.style.display='none'; return; }
+  if(!_axDiagEl){ _axDiagEl=document.createElement('div');
+    _axDiagEl.style.cssText='position:fixed;left:6px;top:150px;z-index:70;padding:6px 8px;'+
+      'background:rgba(2,10,24,.9);border:1px solid #38bdf8;border-radius:8px;color:#bae6fd;'+
+      'font:11px monospace;white-space:pre;line-height:1.45;pointer-events:none';
+    document.body.appendChild(_axDiagEl); }
+  _axDiagEl.style.display='block';
+  const role=(window.LINK&&LINK.role)||'соло';
+  const f=(v)=>(v>=0?'+':'')+(+v).toFixed(2);
+  _axDiagEl.textContent =
+    'роль: '+role+'   дворуччя: '+((typeof linkFreshL==='function'&&linkFreshL())?'так':'ні')+'\n'+
+    'ПРАВА  yaw '+Math.round(aimYawEff())+'°  pitch '+f(aimPitchEff())+'\n'+
+    'ЛІВА   yaw '+Math.round(aimYawL())+'°  pitch '+f(aimPitchL())+'\n'+
+    'корпус '+Math.round(player.visYaw||0)+'°   зсув '+Math.round(LINK.calib||0)+'°\n'+
+    'осі pR'+AX.pR+' yR'+AX.yR+' pL'+AX.pL+' yL'+AX.yL;
+}catch(e){} }, 200);
+
 /* ════ МАЙСТЕР ОСЕЙ (07-18) ═══════════════════════════════════════════════
    Гравець рухає по черзі кожним телефоном, гра сама визначає знаки осей.
    Це і калібрування, і навчання для двох пристроїв в одному потоці.      */
@@ -6226,10 +6240,10 @@ function axWizEnd(msg){
 }
 const AXW_STEPS=[
   {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR',
-   src:()=>(AX.swapP?_rawPitchLeft():_rawPitchRight()), want:-1},
+   src:()=>_rawPitchRight(), want:-1},
   {t:'🗡 ПРАВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'лівий не чіпай', axis:'yR', src:()=>angDiff(sensor.yawFused||0, AXW.base0||0), want:1},
   {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL',
-   src:()=>(AX.swapP?_rawPitchRight():_rawPitchLeft()), want:-1},
+   src:()=>_rawPitchLeft(), want:-1},
   {t:'🗡 ЛІВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'правий тримай нерухомо', axis:'yL', src:()=>angDiff(LINK.remoteL.yaw||0, AXW.base0||0), want:1},
   {t:'🗡🗡 ТЕПЕР ОБИДВА РАЗОМ', s:'поверни обидва телефони в один бік — клинки мають іти разом', axis:null},
 ];
@@ -6502,13 +6516,9 @@ setTimeout(()=>{ try{
       [{t:'▶ МАЙСТЕР КАЛІБРУВАННЯ',c:'#22c55e',f:()=>{ setTimeout(()=>{ try{ axWizStart(); }catch(e){} }, 200); }},
        btn('pR','правий нахил'), btn('yR','правий поворот'),
        btn('pL','лівий нахил'),  btn('yL','лівий поворот'),
-       {t:'🪞 РУКИ НА ЦЬОМУ ЕКРАНІ: '+(AX.mirror?'ДЗЕРКАЛЬНО':'ПРЯМО'), c:AX.mirror?'#38bdf8':'#64748b',
-        f:()=>{ AX.mirror=!AX.mirror; saveAxes();
-          showBanner('🪞 руки на цьому екрані '+(AX.mirror?'дзеркально':'прямо'),'#38bdf8');
-          setTimeout(()=>{ try{ $('mAxes').onclick(); }catch(e){} }, 250); }},
-       {t:'⇄ НАХИЛИ МІСЦЯМИ: '+(AX.swapP?'УВІМК':'ВИМК'), c:AX.swapP?'#a78bfa':'#64748b',
-        f:()=>{ AX.swapP=!AX.swapP; saveAxes();
-          showBanner('⇄ нахили '+(AX.swapP?'помінялись місцями':'кожен своєму'),'#a78bfa');
+       {t:'🔬 ДІАГНОСТИКА РУК: '+(window.__axDiag?'УВІМК':'ВИМК'), c:window.__axDiag?'#38bdf8':'#64748b',
+        f:()=>{ window.__axDiag=!window.__axDiag;
+          showBanner('🔬 діагностика '+(window.__axDiag?'увімкнена':'вимкнена'),'#38bdf8');
           setTimeout(()=>{ try{ $('mAxes').onclick(); }catch(e){} }, 250); }},
        {t:'ЗАКРИТИ',c:'#64748b'}]);
   };
