@@ -3921,7 +3921,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-18d · ОБЕРТ-ВЕДЕ-ПРАВА(рівно, без ривків) · ТОЧКА-ПРОПАЛУ-НА-ЛЕЗІ · товщина-променя';
+const BUILD_TAG='2026-07-18e · МАЙСТЕР-БЕЗ-РЕКУРСІЇ(осі скинуто) · ДРУГИЙ-КЛИНОК-ВИДНО-ВСІМ · один світ для всіх';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4084,6 +4084,8 @@ const NET = {
     return { x:av.gx, y:av.gy,
       rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),               // (07-16) моя кімната мета-світу
       mo:+Math.min(1,(sensor.speed||0)/18).toFixed(2),                // (07-17f) енергія руху — для спільного звуку
+      yawL:(typeof linkFreshL==='function' && linkFreshL()) ? Math.round(aimYawL()) : null,   // (07-18e) друга рука
+      pitL:(typeof linkFreshL==='function' && linkFreshL()) ? +(aimPitchL()||0).toFixed(2) : null,
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
@@ -4328,6 +4330,7 @@ function upsertRemote(id, p){
 }
 function setRemoteVisible(r,vis){
   if(r.av){ r.av.mesh.visible=vis; r.av.blade.visible=vis; }
+  if(r.blade2) r.blade2.visible=vis;
   if(r.nose) r.nose.visible=vis;
 }
 function renderRemotes(now, dt){
@@ -4370,6 +4373,7 @@ function renderRemotes(now, dt){
     av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
     updateAvatarMesh(av, now);
     updateBlade(av);
+    try{ remoteBlade2(r, av, p); }catch(e){}      // (07-18e) другий клинок чужого бійця
     // «нос» — куда смотрит
     const d = dirXZ(av.visYaw);
     r.nose.visible = !(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');   // (07-17v)
@@ -4393,11 +4397,48 @@ function disposeAvatar(av){
     scene.remove(av.blade);
   }
 }
+// (07-18e) другий клинок віддаленого гравця — щоб дворучний боєць виглядав
+// однаково на всіх пристроях: у тіла, в руки, у глядача і в інших гравців.
+function remoteBlade2(r, av, p){
+  const has = (p && p.yawL!=null);
+  if(!has){ if(r.blade2){ r.blade2.count=0; } return; }
+  if(!r.blade2){
+    r.blade2=new THREE.InstancedMesh(bladeGeo, bladeMat.clone(), 6);
+    r.blade2.frustumCulled=false; r.blade2.count=0; scene.add(r.blade2);
+  }
+  const yawL=+p.yawL||0, pitL=+p.pitL||0;
+  const [dx,dz]=dirXZ(yawL);
+  const bYaw=(av.visYaw||0)*Math.PI/180;
+  const dyL=((yawL-(av.visYaw||0))*Math.PI/180);
+  const arm=0.52, lhx=-0.30+Math.sin(dyL)*arm, lhz=0.10+Math.cos(dyL)*arm;
+  const mrot=Math.PI-bYaw, cm=Math.cos(mrot), sm=Math.sin(mrot);
+  const hx=worldX(av.vgx??av.gx)+(lhx*cm+lhz*sm);
+  const hz=worldZ(av.vgy??av.gy)+(-lhx*sm+lhz*cm);
+  const hy=TIER_H*(1.12-(av.crouch||0)*0.42)+pitL*0.30;
+  const reach=(1+Math.round(av.reachMod||0))*CELL*0.92+0.18;
+  const tipX=hx+dx*reach, tipY=clamp(hy+clamp(pitL,-1,1)*reach*0.55,0.02,TIER_H*2.4), tipZ=hz+dz*reach;
+  const bx=tipX-hx, by=tipY-hy, bz=tipZ-hz, bl=Math.hypot(bx,by,bz)||1;
+  const segs=clamp(Math.round(bl/(CELL*0.9)),1,6);
+  r.blade2.count=segs;
+  for(let i=0;i<segs;i++){
+    const f=(i+0.5)/segs;
+    _d.position.set(lerp(hx,tipX,f), lerp(hy,tipY,f), lerp(hz,tipZ,f));
+    _d.lookAt(_d.position.x+bx, _d.position.y+by, _d.position.z+bz);
+    _d.scale.set(0.9,0.9,(bl/segs)/(CELL*0.95));
+    _d.updateMatrix(); r.blade2.setMatrixAt(i,_d.matrix);
+    _c.setHSL(0.12,0.9,clamp(0.56+f*0.22,0,0.97));
+    r.blade2.setColorAt(i,_c);
+  }
+  _d.scale.set(1,1,1);
+  r.blade2.instanceMatrix.needsUpdate=true;
+  r.blade2.instanceColor.needsUpdate=true;
+}
 function removeRemote(id){
   const r=NET.remotes[id];
   if(r){
     if(r.group){ r.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); scene.remove(r.group); }
     disposeAvatar(r.av);
+    if(r.blade2){ try{ if(r.blade2.material) r.blade2.material.dispose(); scene.remove(r.blade2); }catch(e){} }
     if(r.nose){ if(r.nose.geometry) r.nose.geometry.dispose(); if(r.nose.material) r.nose.material.dispose(); scene.remove(r.nose); }
     delete NET.remotes[id];
   }
@@ -5100,9 +5141,9 @@ function linkCalibrate(){                       // звести нулі обо�
    AX.pR/yR — нахил і поворот ПРАВОЇ руки, AX.pL/yL — ЛІВОЇ. 1 або −1.
    Майстер калібрування нижче виставляє їх сам, меню дозволяє правити вручну. */
 const AX={pR:1,yR:1,pL:1,yL:1,swapP:true};   // swapP — нахили двох пристроїв приходять навхрест
-try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes')||'null');
+try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes_v2')||'null');   // (07-18e) новий ключ — старе зіпсоване скинуто
   if(sv) Object.assign(AX,sv); }catch(e){}
-function saveAxes(){ try{ localStorage.setItem('vb3d_axes', JSON.stringify(AX)); }catch(e){} }
+function saveAxes(){ try{ localStorage.setItem('vb3d_axes_v2', JSON.stringify(AX)); }catch(e){} }
 // (07-18b) сирі нахили двох пристроїв — і прапорець обміну, бо вони приходили навхрест
 function _rawPitchRight(){
   if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.pitch)||0;
@@ -6134,9 +6175,11 @@ function axWizEnd(msg){
   logE('осі: правий нахил '+AX.pR+' поворот '+AX.yR+' · лівий нахил '+AX.pL+' поворот '+AX.yL);
 }
 const AXW_STEPS=[
-  {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR', src:()=>aimPitchEff(), want:-1},
+  {t:'🗡 ПРАВИЙ телефон — НАХИЛИ ВНИЗ', s:'лівий не чіпай · тримай 1 секунду', axis:'pR',
+   src:()=>(AX.swapP?_rawPitchLeft():_rawPitchRight()), want:-1},
   {t:'🗡 ПРАВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'лівий не чіпай', axis:'yR', src:()=>angDiff(sensor.yawFused||0, AXW.base0||0), want:1},
-  {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL', src:()=>aimPitchL(), want:-1},
+  {t:'🗡 ЛІВИЙ телефон — НАХИЛИ ВНИЗ', s:'правий тримай нерухомо', axis:'pL',
+   src:()=>(AX.swapP?_rawPitchRight():_rawPitchLeft()), want:-1},
   {t:'🗡 ЛІВИЙ телефон — ПОВЕРНИ ВПРАВО', s:'правий тримай нерухомо', axis:'yL', src:()=>angDiff(LINK.remoteL.yaw||0, AXW.base0||0), want:1},
   {t:'🗡🗡 ТЕПЕР ОБИДВА РАЗОМ', s:'поверни обидва телефони в один бік — клинки мають іти разом', axis:null},
 ];
