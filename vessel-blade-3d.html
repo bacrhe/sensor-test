@@ -1696,6 +1696,7 @@ function bladeContestCell(av){   // клетка-кончик клинка
 
 function startClinch(foe){
   if((window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) || window.__awaitHand) return;   // (07-18f)
+  if(foe && foe.remote && typeof PAIR!=='undefined' && PAIR.with===foe.id) return;   // (07-20c) напарник
   if(clinch.active) return;
   clinch.energy=0; clinch.zone='green'; clinch._zPrev=null;   // (07-19b)
   clinch.active=true; clinch.foe=foe||null; clinch.t=0; clinch.parryWindow=0; clinch.vibT=0; clinch.broke=false;
@@ -2340,6 +2341,7 @@ function resolveBurn(dt){
     }
     const rf = remoteFighterAt(cx,cy);          // ← реальный соперник по сети
     if(rf){
+      if(typeof PAIR!=='undefined' && PAIR.with===rf.id) continue;   // (07-20c) напарник — крізь нього
       if(!friendlyFire) continue;               // урон по игрокам выключен — луч проходит сквозь
       if(burnCd<=0){ NET.sendHit(rf.id, player.tier, Math.round(14*WEAPONS[playerWpn].dmg*(player.spinBonus||1)*player.mods.dmg)); burnCd=0.35;
         doFlash('#22c55e'); buzz(35); rf.r.hp=Math.max(0,(rf.r.hp||100)-14);
@@ -4000,7 +4002,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-20b · ЗЧЕПЛЕННЯ-ПРАЦЮЄ(слухач чекає мережу) · СОЛО-БЕЗ-ОСЕЙ(реверс не діє наодинці) · ↺скид-осей';
+const BUILD_TAG='2026-07-20c · НАПАРНИК-НЕДОТОРКАННИЙ · осиротіла-роль-руки-знімається(фікс соло-реверсу) · зчеплення';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4189,7 +4191,9 @@ const NET = {
       onValue(hitsRef, snap=>{
         const hits=snap.val()||{};
         for(const key in hits){
-          if(hits[key] && !player.dead && mode==='fighter') applyIncomingHit(hits[key]);
+          const _h=hits[key];
+          const _fromPartner = _h && typeof PAIR!=='undefined' && PAIR.with===_h.from;   // (07-20c)
+          if(_h && !_fromPartner && !player.dead && mode==='fighter') applyIncomingHit(_h);
           remove(ref(this.db,`blade/${this.room}/hits/${this.myId}/${key}`)).catch(()=>{});
         }
       });
@@ -5202,7 +5206,8 @@ window.LINK=LINK;
 function linkFresh(){ return window.LINK && LINK.role==='host' && (Date.now()-(LINK.remote.t||0))<1500; }
 // ПРАВИЙ клинок: у лівої руки він приходить від тіла, в усіх інших — власний гіроскоп
 function aimYawEff(){
-  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.yaw)||0;
+  if(window.LINK && LINK.role==='swordL' && LINK.body && (Date.now()-(LINK.body.t||0))<4000)
+    return LINK.body.yaw||0;                          // (07-20c) мовчить тіло — веду сам
   return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
 }
 function twoDev(){ return !!(window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL()); }
@@ -5246,7 +5251,8 @@ try{ const sv=JSON.parse(localStorage.getItem('vb3d_axes_v2')||'null');   // (07
 function saveAxes(){ try{ localStorage.setItem('vb3d_axes_v2', JSON.stringify(AX)); }catch(e){} }
 // (07-18b) сирі нахили двох пристроїв — і прапорець обміну, бо вони приходили навхрест
 function _rawPitchRight(){
-  if(window.LINK && LINK.role==='swordL') return (LINK.body&&LINK.body.pitch)||0;
+  if(window.LINK && LINK.role==='swordL' && LINK.body && (Date.now()-(LINK.body.t||0))<4000)
+    return LINK.body.pitch||0;                       // (07-20c) лише поки тіло справді говорить
   return linkFresh() ? (LINK.remote.pitch??sensor.pitch) : (sensor.pitch||0);
 }
 function _rawPitchLeft(){
@@ -6316,6 +6322,13 @@ function pairFollow(){
 }
 // чіп стану
 setInterval(()=>{ try{ if(PAIR.with) pairPublish(); }catch(e){} }, 3000);   // (07-20b) тримаємо запит живим
+setInterval(()=>{ try{                                   // (07-20c) осиротіла роль руки сама знімається
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){
+    const age=Date.now()-((LINK.body&&LINK.body.t)||0);
+    if(age>15000){ logE('дворуччя: тіло мовчить '+Math.round(age/1000)+'с — повертаюсь у власне тіло');
+      linkReturnToBody(); }
+  }
+}catch(e){} }, 4000);
 setInterval(()=>{ try{
   if(!PAIR.chip){ PAIR.chip=document.createElement('div');
     PAIR.chip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display:none;padding:6px 10px;'+
