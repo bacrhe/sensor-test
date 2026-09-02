@@ -3229,6 +3229,7 @@ function resolveClinch(){
     const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
     const ec=new Set(remoteBladeCells(r));
     if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) continue;   // (07-17e) рука не фехтує з власним тілом
+    if(typeof pairActive==='function' && PAIR.with===id) continue;          // (07-20) напарник — не суперник
     if(pc.some(c=>ec.has(c))){ startClinch({remote:true, id}); logE('ФЕХТ з гравцем '+id.slice(0,4)); return; }
   }
 }
@@ -3597,6 +3598,9 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
       buzz([0,50]); logE('поштовх у ('+nx+','+ny+') −'+PUSH_COST+' витрив.');
     }
     return;                                                     // в занятую клетку не шагаем
+  }
+  if(typeof pairActive==='function' && pairActive() && !PAIR.lead){
+    showBanner('🤝 веде напарник — рухайся разом','#94a3b8'); return;   // (07-20) ведений не крокує сам
   }
   if(mode!=='creator' && voxelRubbleAt(nx,ny)>2){               // (07-18) завал із уламків
     buzz([0,25]); blip(180,0.05,'square',0.07);
@@ -3995,7 +3999,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-19b · КЛІНЧ-ЗОНИ(🟩точка-копиш · 🟨тиск-віддаєш · 🟥продавлено→вибиття) · ревізія-дворуччя';
+const BUILD_TAG='2026-07-20a · ЗЧЕПЛЕННЯ(два гравці — одна клітинка, кожен зі своїм клинком) · клінч-зони';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5153,6 +5157,7 @@ setInterval(()=>{
     NET._watchPull=true;
     setTimeout(()=>{ try{ applyRemoteRoomIfNewer(ADV.rx+','+ADV.ry); NET._watchPull=false; }catch(e){ NET._watchPull=false; } }, 300);
   } }catch(e){}
+  try{ pairFollow(); }catch(e){}
   try{ axWizTick(); }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
   try{ if(ADV.on && advHome() && mode==='fighter'){          // (07-16g) МІТЛА: дім без привидів
@@ -5678,6 +5683,7 @@ setTimeout(()=>{
       n.textContent=t; }
     const anchorEl=$('errMsg')||$('btnReq');
     anchorEl.parentNode.insertBefore(box, anchorEl);
+    setTimeout(()=>{ try{ pairWatch(); }catch(e){} }, 2500);   // (07-20) слухаємо запити зчеплення
     logE('ворота: блок «ЯК ПОЧАТИ» додано');
     try{                                                        // (07-17h) один телефон / дві руки — обираємо тут
       const dp=box.querySelector('#devPick');
@@ -6247,6 +6253,75 @@ function leftBladeTick(dt){
   }
 }
 
+/* ════ ЗЧЕПЛЕННЯ ГРАВЦІВ (07-20) ═════════════════════════════════════════ */
+const PAIR={ with:null, lead:false, since:0, chip:null };
+function pairPath(id){ return 'blade/'+NET.room+'/pair/'+id; }
+function pairActive(){ return !!PAIR.with; }
+function pairPublish(){
+  try{ if(!NET.db) return;
+    if(PAIR.with) set(ref(NET.db, pairPath(NET.myId)), {with:PAIR.with, lead:!!PAIR.lead, t:Date.now()}).catch(()=>{});
+    else remove(ref(NET.db, pairPath(NET.myId))).catch(()=>{});
+  }catch(e){}
+}
+function pairBind(otherId, lead){
+  PAIR.with=otherId; PAIR.lead=!!lead; PAIR.since=Date.now();
+  pairPublish();
+  showBanner(lead?'🤝 ЗЧЕПЛЕНО — ти ВЕДЕШ':'🤝 ЗЧЕПЛЕНО — ти прилип до напарника','#4ade80');
+  logE('зчеплення з '+otherId.slice(0,4)+(lead?' (веду)':' (прилип)'));
+  blip(660,0.10,'sine',0.14); buzz([0,40,40,40]);
+}
+function pairBreak(quiet){
+  if(!PAIR.with) return;
+  const who=PAIR.with; PAIR.with=null; PAIR.lead=false; pairPublish();
+  if(!quiet){ showBanner('🤝 роз\'єднано','#94a3b8'); logE('зчеплення розірвано з '+who.slice(0,4)); }
+}
+// слухаємо, чи хтось зчепився зі мною
+function pairWatch(){
+  try{ if(!NET.db) return;
+    onValue(ref(NET.db, 'blade/'+NET.room+'/pair'), snap=>{
+      const v=snap.val()||{};
+      for(const id in v){
+        const p=v[id];
+        if(!p || p.with!==NET.myId) continue;
+        if(Date.now()-(p.t||0)>15000) continue;
+        if(PAIR.with!==id){ pairBind(id, !p.lead); }   // напарник обрав роль — беру протилежну
+      }
+      if(PAIR.with && (!v[PAIR.with] || v[PAIR.with].with!==NET.myId)){
+        if(Date.now()-PAIR.since>3000) pairBreak();     // він від'єднався
+      }
+    });
+  }catch(e){}
+}
+// ведений прилипає до клітинки ведучого
+function pairFollow(){
+  try{
+    if(!PAIR.with || PAIR.lead) return;
+    const r=NET.remotes[PAIR.with];
+    if(!r || !remoteFresh(r)) return;
+    if(Number.isInteger(r.gx) && (player.gx!==r.gx || player.gy!==r.gy)){ player.gx=r.gx; player.gy=r.gy; }
+    const rx=(r.rx??(r.latest&&r.latest.rx)), ry=(r.ry??(r.latest&&r.latest.ry));
+    if(Number.isInteger(rx)){
+      if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }
+      else if(ADV.rx!==rx || ADV.ry!==ry){ applyAdvRoom(rx,ry); logE('зчеплення: йду за напарником у ('+rx+','+ry+')'); }
+    }
+  }catch(e){}
+}
+// чіп стану
+setInterval(()=>{ try{
+  if(!PAIR.chip){ PAIR.chip=document.createElement('div');
+    PAIR.chip.style.cssText='position:fixed;left:10px;bottom:104px;z-index:23;display:none;padding:6px 10px;'+
+      'background:rgba(2,12,26,.85);border:1px solid #4ade80;border-radius:8px;color:#86efac;'+
+      'font:inherit;font-size:11px;letter-spacing:.06em;pointer-events:none';
+    document.body.appendChild(PAIR.chip); }
+  if(!PAIR.with){ PAIR.chip.style.display='none'; return; }
+  const r=NET.remotes[PAIR.with];
+  const ok=r&&remoteFresh(r);
+  PAIR.chip.style.display='block';
+  PAIR.chip.style.borderColor=ok?'#4ade80':'#f59e0b';
+  PAIR.chip.style.color=ok?'#86efac':'#fcd34d';
+  PAIR.chip.textContent=(ok?'🤝 зчеплено · ':'🤝 напарник мовчить · ')+PAIR.with.slice(0,4)+(PAIR.lead?' · ВЕДУ':' · прилип');
+}catch(e){} }, 500);
+
 /* ════ ДІАГНОСТИКА РУК (07-19): живі числа просто на екрані ══════════════ */
 let _axDiagEl=null;
 setInterval(()=>{ try{
@@ -6552,6 +6627,35 @@ setTimeout(()=>{ try{
     btns.push({t:'СКАСУВАТИ',c:'#64748b'});
     closeMenu();
     tutModal('🤝 ХТО ДЕ НА МАПІ','Гравці зараз у цих кімнатах мета-світу. Обери, до кого перейти — і опинишся в одній кімнаті з ним (зелені точки на мінімапі).',btns);
+  };
+  const pb=document.createElement('button'); pb.id='mPair'; pb.textContent='🤝 ЗЧЕПИТИСЬ З ГРАВЦЕМ';
+  $('mNew').parentNode.insertBefore(pb, $('mNew'));
+  pb.onclick=()=>{
+    closeMenu();
+    if(PAIR.with){
+      tutModal('🤝 ЗЧЕПЛЕННЯ','Ти зчеплений з <b>'+PAIR.with.slice(0,4)+'</b> ('+(PAIR.lead?'ти ведеш':'ти прилип')+').<br><br>'+
+        'Ви стоїте на одній клітинці: кожен крутить свій клинок як хоче, а полем веде один.',
+        [{t:'⛓ РОЗ\'ЄДНАТИСЬ',c:'#f59e0b',f:()=>pairBreak()},
+         {t:PAIR.lead?'↔ ХАЙ ВЕДЕ НАПАРНИК':'↔ ВЕСТИ САМОМУ',c:'#38bdf8',
+          f:()=>{ PAIR.lead=!PAIR.lead; pairPublish();
+            showBanner(PAIR.lead?'🤝 тепер ведеш ти':'🤝 тепер веде напарник','#38bdf8'); }},
+         {t:'ЗАКРИТИ',c:'#64748b'}]);
+      return;
+    }
+    const list=[];
+    for(const id in NET.remotes){ const r=NET.remotes[id];
+      if(!r || r.spec || !remoteFresh(r)) continue;
+      const d=Math.abs((r.gx??6)-player.gx)+Math.abs((r.gy??6)-player.gy);
+      list.push({id, d}); }
+    list.sort((a,b)=>a.d-b.d);
+    if(!list.length){ showBanner('🤝 поруч нікого немає','#94a3b8'); return; }
+    const btns=list.slice(0,4).map(p=>({t:'🤝 '+p.id.slice(0,4)+'  (за '+p.d+' кл.)', c:'#4ade80',
+      f:()=>{ pairBind(p.id, true); }}));
+    btns.push({t:'СКАСУВАТИ',c:'#64748b'});
+    tutModal('🤝 ЗЧЕПИТИСЬ З ГРАВЦЕМ',
+      'Ви станете на <b>одну клітинку</b> і будете рухатись разом: ти ведеш полем, '+
+      'напарник прилипає. Кожен крутить свій клинок сам — виходить боєць із двома мечами.<br><br>'+
+      'Ви не завдаєте одне одному шкоди й не входите в клінч між собою.', btns);
   };
   const ax=document.createElement('button'); ax.id='mAxes'; ax.textContent='🎛 ОСІ РУК (калібрування)';
   $('mNew').parentNode.insertBefore(ax, $('mNew'));
