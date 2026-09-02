@@ -1335,8 +1335,7 @@ function updateAvatarMesh(av, t){
       // (07-17n) кисть тримається СВОГО борту: ліва не тягнеться за праве плече
       // (07-17u) локальна система моделі дзеркальна і за КУТОМ: рух телефона
       // вправо має вести свою руку вправо, тож азимут інвертуємо перед clamp.
-      const _axOn=twoDev();
-      const rawL=(_axOn?AX.yL:1)*angDiff(yawLL,(av.visYaw||0)), rawR=(_axOn?AX.yR:1)*angDiff(yawR,(av.visYaw||0));
+      const rawL=AX.yL*angDiff(yawLL,(av.visYaw||0)), rawR=AX.yR*angDiff(yawR,(av.visYaw||0));
       const dyL=clamp(rawL,-170,95)*rad, dyR=clamp(rawR,-95,170)*rad;
       // плече ЙДЕ ЗА своїм мечем: корпус підкручується, як у фехтувальника
       const twist=clamp(Math.sin(dyR)*0.16 - Math.sin(dyL)*0.16, -0.22, 0.22);
@@ -4002,7 +4001,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-20c · НАПАРНИК-НЕДОТОРКАННИЙ · осиротіла-роль-руки-знімається(фікс соло-реверсу) · зчеплення';
+const BUILD_TAG='2026-07-20d · ОСІ-ПРИСТРОЮ-ЗАВЖДИ(фікс соло-реверсу) · ведений-крокує-миттєво · одне-тіло-два-клинки';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4458,6 +4457,14 @@ function renderRemotes(now, dt){
     updateAvatarMesh(av, now);
     updateBlade(av);
     try{ remoteBlade2(r, av, p); }catch(e){}      // (07-18e) другий клинок чужого бійця
+    try{                                          // (07-20d) ЗЧЕПЛЕНІ = ОДНЕ ТІЛО З ДВОМА КЛИНКАМИ
+      if(typeof PAIR!=='undefined' && PAIR.with===id){
+        const same = (av.gx===player.gx && av.gy===player.gy);
+        av.mesh.visible = !same;                  // на спільній клітинці тіло напарника не малюємо
+        if(r.nose) r.nose.visible=false;
+        av.blade.visible = true;                  // а його клинок — лишається
+      }
+    }catch(e){}
     // «нос» — куда смотрит
     const d = dirXZ(av.visYaw);
     r.nose.visible = !(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');   // (07-17v)
@@ -4647,7 +4654,7 @@ function frame(now){
     if(!clinch.active){
       // ── ПОЗА игрока из сенсоров (в клинче заморожена — правит только астрал) ──
       player.dirIdx = yawToDirIdx(aimYawEff());
-      player.tier = pitchTier(sensor.pitch, player.tier);   // вниз→ноги, вверх→голова (с гистерезисом)
+      player.tier = pitchTier(AX.pR*sensor.pitch, player.tier);   // (07-20d) з віссю пристрою
       player.crouch = lerp(player.crouch, clamp(-sensor.pitch,0,1), clamp(dt*6,0,1));
       player.pitch = sensor.pitch; player.roll = sensor.roll;
       player.speedPulse = clamp(sensor.speed/16,0,0.4);
@@ -5211,7 +5218,7 @@ function aimYawEff(){
   return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
 }
 function twoDev(){ return !!(window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL()); }
-function aimPitchEff(){ return (twoDev()?AX.pR:1) * _rawPitchRight(); }   // (07-20b) у соло — без множників
+function aimPitchEff(){ return AX.pR * _rawPitchRight(); }   // (07-20d) вісь пристрою діє завжди
 // ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
 function linkFreshL(){
   if(!window.LINK) return false;
@@ -5258,7 +5265,7 @@ function _rawPitchRight(){
 function _rawPitchLeft(){
   return (window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
 }
-function aimPitchL(){ return (twoDev()?AX.pL:1) * _rawPitchLeft(); }
+function aimPitchL(){ return AX.pL * _rawPitchLeft(); }
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 // (07-18c) клітинки вздовж реального відрізка леза (світові координати → сітка)
 function cellsAlongBlade(hx,hz,tx,tz,out){
@@ -6267,7 +6274,9 @@ function pairPath(id){ return 'blade/'+NET.room+'/pair/'+id; }
 function pairActive(){ return !!PAIR.with; }
 function pairPublish(){
   try{ if(!NET.db) return;
-    if(PAIR.with) set(ref(NET.db, pairPath(NET.myId)), {with:PAIR.with, lead:!!PAIR.lead, t:Date.now()}).catch(()=>{});
+    if(PAIR.with) set(ref(NET.db, pairPath(NET.myId)), {with:PAIR.with, lead:!!PAIR.lead,
+      gx:player.gx, gy:player.gy, rx:(ADV.on?ADV.rx:null), ry:(ADV.on?ADV.ry:null),   // (07-20d) крок одразу
+      t:Date.now()}).catch(()=>{});
     else remove(ref(NET.db, pairPath(NET.myId))).catch(()=>{});
   }catch(e){}
 }
@@ -6299,6 +6308,16 @@ function pairWatch(){
         if(!p || p.with!==NET.myId) continue;
         if(Date.now()-(p.t||0)>15000) continue;
         if(PAIR.with!==id){ pairBind(id, !p.lead); }   // напарник обрав роль — беру протилежну
+        if(PAIR.with===id && !PAIR.lead && Number.isInteger(p.gx)){    // (07-20d) миттєвий крок за ведучим
+          if(player.gx!==p.gx || player.gy!==p.gy){
+            player.gx=p.gx; player.gy=p.gy;
+            player.vgx=p.gx; player.vgy=p.gy;                          // без плавного відставання
+          }
+          if(Number.isInteger(p.rx)){
+            if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }
+            else if(ADV.rx!==p.rx || ADV.ry!==p.ry) applyAdvRoom(p.rx,p.ry);
+          }
+        }
       }
       if(PAIR.with && (!v[PAIR.with] || v[PAIR.with].with!==NET.myId)){
         if(Date.now()-PAIR.since>3000) pairBreak();     // він від'єднався
@@ -6312,7 +6331,10 @@ function pairFollow(){
     if(!PAIR.with || PAIR.lead) return;
     const r=NET.remotes[PAIR.with];
     if(!r || !remoteFresh(r)) return;
-    if(Number.isInteger(r.gx) && (player.gx!==r.gx || player.gy!==r.gy)){ player.gx=r.gx; player.gy=r.gy; }
+    if(Number.isInteger(r.gx) && (player.gx!==r.gx || player.gy!==r.gy)){
+      player.gx=r.gx; player.gy=r.gy;
+      player.vgx=r.gx; player.vgy=r.gy;            // (07-20d) без відставання
+    }
     const rx=(r.rx??(r.latest&&r.latest.rx)), ry=(r.ry??(r.latest&&r.latest.ry));
     if(Number.isInteger(rx)){
       if(!ADV.on){ try{ $('mAdv').click(); }catch(e){} }
@@ -6321,7 +6343,7 @@ function pairFollow(){
   }catch(e){}
 }
 // чіп стану
-setInterval(()=>{ try{ if(PAIR.with) pairPublish(); }catch(e){} }, 3000);   // (07-20b) тримаємо запит живим
+setInterval(()=>{ try{ if(PAIR.with) pairPublish(); }catch(e){} }, 700);   // (07-20d) крок ведучого летить швидко
 setInterval(()=>{ try{                                   // (07-20c) осиротіла роль руки сама знімається
   if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')){
     const age=Date.now()-((LINK.body&&LINK.body.t)||0);
@@ -6699,7 +6721,7 @@ setTimeout(()=>{ try{
           showBanner('↺ осі скинуто до нормальних','#f59e0b'); }},
        {t:'ЗАКРИТИ',c:'#64748b'}]);
   };
-  setInterval(()=>{ try{ ax.style.display=(window.LINK&&LINK.role)?'block':'none'; }catch(e){} }, 700);
+  // (07-20d) осі — налаштування пристрою, потрібні й наодинці
   const ib=document.createElement('button'); ib.id='mInvL'; ib.textContent='⇅ ІНВЕРСІЯ ЛІВОЇ РУКИ: ВИМК';
   $('mNew').parentNode.insertBefore(ib, $('mNew'));
   try{ LINK.invL = localStorage.getItem('vb3d_invL')==='1'; }catch(e){}
