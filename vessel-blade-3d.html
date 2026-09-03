@@ -358,6 +358,33 @@ const sensor = {
   chx: null, chz: null,   // сглаженный компас как вектор (нет рывка на 359°→0°)
 };
 let invertPitch = false;   // перемикач у меню (страховка)
+/* (07-20e) АВТОВІСЬ НАХИЛУ: телефон нахилили — гравітація каже, куди саме.
+   Якщо гра показує нахил у протилежний бік, накопичена кореляція стає
+   від'ємною і вісь перевертається сама, з повідомленням гравцеві. */
+const AUTOAX={ acc:0, n:0, done:false, lastP:null, lastG:null };
+function autoPitchAxis(gg){
+  if(AUTOAX.done || typeof AX==='undefined') return;
+  const gy = (gg && gg.y!=null) ? gg.y : null; if(gy==null) return;
+  const gPitch = clamp(GRAV_SIGN*gy/9.4, -1, 1);           // «правда» від гравітації
+  const sPitch = (typeof sensor!=='undefined') ? (sensor.pitch||0) : 0;
+  if(AUTOAX.lastP!=null){
+    const dP=sPitch-AUTOAX.lastP, dG=gPitch-AUTOAX.lastG;
+    if(Math.abs(dG)>0.01 && Math.abs(dP)>0.004){           // рух є — беремо в залік
+      AUTOAX.acc += Math.sign(dP*dG); AUTOAX.n++;
+    }
+  }
+  AUTOAX.lastP=sPitch; AUTOAX.lastG=gPitch;
+  if(AUTOAX.n>=90){                                        // ~2-3 секунди руху
+    AUTOAX.done=true;
+    if(AUTOAX.acc < -AUTOAX.n*0.35){                       // стабільна протифаза
+      AX.pR=-1; AX.pL=-1; try{ saveAxes(); }catch(e){}
+      try{ showBanner('🎛 нахил цього телефона перевернуто — виправлено автоматично','#22c55e');
+        logE('автовісь: нахил інвертовано (кореляція '+AUTOAX.acc+'/'+AUTOAX.n+')'); }catch(e){}
+    } else {
+      try{ logE('автовісь: нахил нормальний (кореляція '+AUTOAX.acc+'/'+AUTOAX.n+')'); }catch(e){}
+    }
+  }
+}
 let mode = 'fighter';      // 'fighter' | 'spectator' | 'follow' | 'map'
 // iOS отдаёт accelerationIncludingGravity с ПРОТИВОПОЛОЖНЫМ знаком → наклон инвертирован.
 // Определяем платформу и правим знак автоматически (без ручного тумблера).
@@ -432,6 +459,7 @@ function onMotion(e){
   const gg = e.accelerationIncludingGravity;
   if(gg){
     if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
+    try{ autoPitchAxis(gg); }catch(err){}          // (07-20e) сам визначає перевернуту вісь
     // ВИДОШУКАЧ (07-15): елевація ЗАДНЬОЇ КРИШКИ (-Z пристрою). Екран догори → кришка
     // дивиться в підлогу → -1; телефон вертикально (будь-яка орієнтація!) → 0 (горизонт);
     // «фотографуєш небо» → +1. Це і є метафора справжньої камери — працює і боком.
@@ -4001,7 +4029,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-20d · ОСІ-ПРИСТРОЮ-ЗАВЖДИ(фікс соло-реверсу) · ведений-крокує-миттєво · одне-тіло-два-клинки';
+const BUILD_TAG='2026-07-20e · АВТОВІСЬ-НАХИЛУ(сама виправляє реверс) · клинок-напарника-в-руці · 🧭зведення-компасів-пари';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4462,7 +4490,8 @@ function renderRemotes(now, dt){
         const same = (av.gx===player.gx && av.gy===player.gy);
         av.mesh.visible = !same;                  // на спільній клітинці тіло напарника не малюємо
         if(r.nose) r.nose.visible=false;
-        av.blade.visible = true;                  // а його клинок — лишається
+        av.blade.visible = !same;                 // (07-20e) його клинок малює МОЯ ліва рука
+        if(same && r.blade2) r.blade2.count=0;
       }
     }catch(e){}
     // «нос» — куда смотрит
@@ -5220,12 +5249,29 @@ function aimYawEff(){
 function twoDev(){ return !!(window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL()); }
 function aimPitchEff(){ return AX.pR * _rawPitchRight(); }   // (07-20d) вісь пристрою діє завжди
 // ЛІВИЙ клинок: у лівої руки — власний гіроскоп; у тіла — пакет лівої руки
+function pairBladeFresh(){          // (07-20e) напарник на моїй клітинці = моя друга рука
+  try{
+    if(typeof PAIR==='undefined' || !PAIR.with) return false;
+    const r=NET.remotes[PAIR.with];
+    if(!r || !remoteFresh(r)) return false;
+    return (r.gx===player.gx && r.gy===player.gy);
+  }catch(e){ return false; }
+}
+function pairBladeYaw(){
+  try{ const r=NET.remotes[PAIR.with]; const raw=(r&&r.latest&&r.latest.yaw)||0;
+    return wrap360(raw + (PAIR.calib||0)); }catch(e){ return 0; }
+}
+function pairBladePitch(){
+  try{ const r=NET.remotes[PAIR.with]; return (r&&r.latest&&r.latest.pitch)||0; }catch(e){ return 0; }
+}
 function linkFreshL(){
+  if(pairBladeFresh()) return true;                    // (07-20e) зчеплення = друга рука
   if(!window.LINK) return false;
   if(LINK.role==='swordL') return true;
   return LINK.role==='host' && (Date.now()-(LINK.remoteL.t||0))<1500;
 }
 function aimYawL(){
+  if(pairBladeFresh()) return pairBladeYaw();          // (07-20e) клинок напарника
   if(window.LINK && LINK.role==='swordL') return sensor.yawFused;
   const raw=LINK.remoteL.yaw||0;
   // (07-17q) ВЕДЕНА РУКА: різні компаси двох телефонів гасить зсув калібрування
@@ -5265,7 +5311,10 @@ function _rawPitchRight(){
 function _rawPitchLeft(){
   return (window.LINK&&LINK.role==='swordL') ? (sensor.pitch||0) : (LINK.remoteL.pitch||0);
 }
-function aimPitchL(){ return AX.pL * _rawPitchLeft(); }
+function aimPitchL(){
+  if(pairBladeFresh()) return pairBladePitch();        // (07-20e) нахил клинка напарника
+  return AX.pL * _rawPitchLeft();
+}
 function beaconL(){ return (window.LINK&&LINK.role==='swordL') ? (Math.abs(sensor.roll||0)>45) : !!LINK.remoteL.beacon; }
 // (07-18c) клітинки вздовж реального відрізка леза (світові координати → сітка)
 function cellsAlongBlade(hx,hz,tx,tz,out){
@@ -6269,7 +6318,8 @@ function leftBladeTick(dt){
 }
 
 /* ════ ЗЧЕПЛЕННЯ ГРАВЦІВ (07-20) ═════════════════════════════════════════ */
-const PAIR={ with:null, lead:false, since:0, chip:null };
+const PAIR={ with:null, lead:false, since:0, chip:null, calib:0 };
+try{ PAIR.calib=+(localStorage.getItem('vb3d_paircal')||0)||0; }catch(e){}
 function pairPath(id){ return 'blade/'+NET.room+'/pair/'+id; }
 function pairActive(){ return !!PAIR.with; }
 function pairPublish(){
@@ -6679,7 +6729,15 @@ setTimeout(()=>{ try{
     if(PAIR.with){
       tutModal('🤝 ЗЧЕПЛЕННЯ','Ти зчеплений з <b>'+PAIR.with.slice(0,4)+'</b> ('+(PAIR.lead?'ти ведеш':'ти прилип')+').<br><br>'+
         'Ви стоїте на одній клітинці: кожен крутить свій клинок як хоче, а полем веде один.',
-        [{t:'⛓ РОЗ\'ЄДНАТИСЬ',c:'#f59e0b',f:()=>pairBreak()},
+        [{t:'🧭 ЗВЕСТИ КОМПАСИ (тримайте телефони паралельно)',c:'#22c55e',
+          f:()=>{ try{ const r=NET.remotes[PAIR.with];
+            const his=(r&&r.latest&&r.latest.yaw)||0;
+            PAIR.calib=angDiff(sensor.yawFused||0, his);
+            try{ localStorage.setItem('vb3d_paircal', String(PAIR.calib)); }catch(e){}
+            showBanner('🧭 компаси зведено (зсув '+Math.round(PAIR.calib)+'°)','#22c55e');
+            logE('пара: компаси зведено, зсув='+Math.round(PAIR.calib)+'°');
+          }catch(e){} }},
+         {t:'⛓ РОЗ\'ЄДНАТИСЬ',c:'#f59e0b',f:()=>pairBreak()},
          {t:PAIR.lead?'↔ ХАЙ ВЕДЕ НАПАРНИК':'↔ ВЕСТИ САМОМУ',c:'#38bdf8',
           f:()=>{ PAIR.lead=!PAIR.lead; pairPublish();
             showBanner(PAIR.lead?'🤝 тепер ведеш ти':'🤝 тепер веде напарник','#38bdf8'); }},
