@@ -4082,7 +4082,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-22c · СОЮЗНИК-ПЕРЕЖИВАЄ-ХВИЛІ(не зникає в бою) · вихід-відкривається · туторіал-голосом-учителя';
+const BUILD_TAG='2026-07-23a · ТУТОРІАЛ ВЕДЕ ВЧИТЕЛЬ(репліки+показ прикладу+голос) · супутник-не-зникає';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4995,6 +4995,22 @@ function tutModalTeacher(title, html, btns){          // (07-22b) вчитель
   return false;
 }
 function tutModal(title,html,buttons){         // buttons: [{t:текст, c:колір, f:колбек}]
+  // (07-23) ВЧИТЕЛЬ ЗАМІСТЬ ВІКНА: поки супутник живий і при глузді, все навчання
+  // йде його реплікою над головою, а дія продовжується сама.
+  try{
+    if(window.TUT && (TUT.active||TUT.requested) &&
+       typeof ALLY!=='undefined' && ALLY.ph && !ALLY.ph.dead && !ALLY.ph.allyMad){
+      const clean=(x)=>String(x||'').replace(/<br[^>]*>/gi,' ').replace(/<[^>]+>/g,'').replace(/[ \t\n]+/g,' ').trim();
+      const t=clean(title), h=clean(html);
+      if(t||h){
+        allySayNow((t?t+'. ':'')+h);
+        try{ allyDemo(t+' '+h); }catch(e){}                 // показує приклад рухом
+        const go=(buttons||[]).find(b=>b&&b.f);
+        if(go) setTimeout(()=>{ try{ go.f(); }catch(e){} }, Math.min(9000, 1200+h.length*70));
+        return;
+      }
+    }
+  }catch(e){}
   const card=tutModalEl.querySelector('#tutCard');
   let h='<div style="color:#60a5fa;font-size:16px;letter-spacing:.1em;margin-bottom:12px">'+title+'</div>'+
         '<div style="margin-bottom:16px">'+html+'</div>';
@@ -5302,6 +5318,8 @@ setInterval(()=>{
   try{ wavesTick(0.16); }catch(e){}
   try{ allyTick(0.16); }catch(e){}
   try{ sayTick(0.16); }catch(e){}
+  try{ allyDemoTick(0.16); }catch(e){}
+  try{ ensureTeacher(); }catch(e){}
   try{ pairFollow(); }catch(e){}
   try{ axWizTick(); }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
@@ -6022,6 +6040,7 @@ window.addEventListener('mouseup',   ()=>{ try{ voidHoldEnd(); }catch(e){} });
 
 /* ════ ГОЛОС НАСТАВНИКА (Web Speech API, укр. голос якщо є в системі) ════ */
 const TTS={ on:(()=>{ try{ return (localStorage.getItem('vb3d_tts')??'1')==='1'; }catch(e){ return true; } })(), v:null };
+try{ if(localStorage.getItem('vb3d_tts')==null) localStorage.setItem('vb3d_tts','1'); }catch(e){}   // (07-23) голос учителя — типово УВІМК
 function ttsPick(){ try{ const vs=speechSynthesis.getVoices();
   TTS.v = vs.find(v=>/^uk/i.test(v.lang)) || vs.find(v=>/ukrain/i.test(v.name)) || null; }catch(e){} }
 if('speechSynthesis' in window){ ttsPick(); try{ speechSynthesis.onvoiceschanged=ttsPick; }catch(e){} }
@@ -6432,6 +6451,13 @@ function roomR(rx,ry){
 const RNAME={1:'Пробудження',2:'Маяк',3:'Ехо',4:'Душа',5:'Ритм',6:'Молнія',7:'Шум'};
 const WAVES={ left:0, total:0, R:1, betweenT:0 };
 
+function ensureTeacher(){                        // (07-23) під час навчання вчитель обов'язковий
+  try{
+    if(!(window.TUT && (TUT.active||TUT.requested))) return;
+    if(ALLY.ph && !ALLY.ph.dead) return;
+    allySpawn(1);
+  }catch(e){}
+}
 function wavesBegin(){
   if(ADV.on && typeof chessWhite==='function' && chessWhite(ADV.rx,ADV.ry)){   // (07-22) білі — мирні
     WAVES.left=0; WAVES.total=0; WAVES.R=roomR();
@@ -6481,7 +6507,7 @@ function allyBubble(){
 function allySay(text, hold){                    // одна репліка (черга — речення за реченням)
   if(!text) return;
   const parts=String(text).split(/(?<=[.!?…])\s+/).filter(Boolean);
-  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.2, p.length*0.055)});
+  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.6, p.length*0.075)});   // (07-23) темп мови
 }
 function allySayNow(text){ SAY.queue.length=0; SAY.cur=null; SAY.t=0; allySay(text); }
 function sayTick(dt){
@@ -6491,7 +6517,7 @@ function sayTick(dt){
     if(!SAY.queue.length || !a || a.dead){ el.style.display='none'; return; }
     SAY.cur=SAY.queue.shift(); SAY.t=SAY.cur.hold;
     el.textContent=SAY.cur.t; el.style.display='block';
-    try{ if(window.TTS && TTS.on) TTS.say(SAY.cur.t); }catch(e){}
+    try{ if(typeof speakTut==='function') speakTut(SAY.cur.t); }catch(e){}   // (07-23) вчитель говорить
     try{ blip(520,0.05,'sine',0.07); }catch(e){}
   }
   SAY.t-=dt;
@@ -6507,6 +6533,42 @@ function sayTick(dt){
     el.style.top =clamp(y, 70, window.innerHeight-140)+'px';
     el.style.borderColor = (a.mode==='mad')?'#ef4444':'#86efac';
   }catch(e){}
+}
+
+/* ── ПОКАЗ ПРИКЛАДУ: вчитель робить рух, який просить повторити ──────── */
+const DEMO={ t:0, kind:null };
+function allyDemo(text){
+  const s=String(text||'').toLowerCase();
+  let kind=null;
+  if(/бок|фотоапарат|маяк|заряд/.test(s)) kind='beacon';
+  else if(/вертикал|удар|випад|блиск|руб/.test(s)) kind='strike';
+  else if(/свайп|крок|ухил|рух/.test(s)) kind='step';
+  else if(/клінч|зчепл|тиск|продав/.test(s)) kind='clinch';
+  if(!kind) return;
+  DEMO.kind=kind; DEMO.t=3.2;
+  const a=ALLY.ph; if(a) a.demoT=3.2;
+}
+function allyDemoTick(dt){
+  if(DEMO.t<=0) return;
+  DEMO.t-=dt;
+  const a=ALLY.ph; if(!a||a.dead) return;
+  const ph=1-clamp(DEMO.t/3.2,0,1);
+  try{
+    if(DEMO.kind==='beacon'){                 // піднімає клинок і тримає — «копи заряд»
+      a.pitch=-0.15; a.strikeT=0; a.charge=ph;
+      if(a.blade) a.blade.rotation && (a.blade.rotation.z=0);
+    } else if(DEMO.kind==='strike'){          // замах і різкий удар вниз
+      const k=Math.sin(ph*Math.PI*2);
+      a.pitch=0.5*k; a.strikeT=(k<-0.5)?0.3:0;
+    } else if(DEMO.kind==='step'){            // крок убік і назад
+      if(!a._demoHome){ a._demoHome=[a.gx,a.gy]; }
+      const d=(ph<0.5)?1:0;
+      a.gx=clamp(a._demoHome[0]+d,0,12);
+    } else if(DEMO.kind==='clinch'){          // дрібне тремтіння — тиск
+      a.pitch=0.12*Math.sin(ph*Math.PI*8);
+    }
+  }catch(e){}
+  if(DEMO.t<=0){ DEMO.kind=null; try{ if(ALLY.ph) ALLY.ph._demoHome=null; }catch(e){} }
 }
 
 /* ── СУПУТНИК ─────────────────────────────────────────────────────────── */
