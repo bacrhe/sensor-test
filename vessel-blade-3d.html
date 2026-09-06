@@ -129,7 +129,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="card">
     <p>Телефон — це <b>руків’я світлового клинка</b>. Гіроскоп веде лезо,
        компас тримає Північ, поворот корпуса (<b>γ</b>) змінює стійку.</p>
-    <p style="color:#2a4a6f">Боком, як фотоапарат (|γ|&gt;45°) — <b>Піхви/Маяк</b>: накопичення тиску, вид від 1-ї особи.<br>
+    <p style="color:#2a4a6f">Поверни <b>набік</b>, як фотоапарат (|γ|&gt;45°) — <b>Піхви/Маяк</b>: накопичення тиску, вид від 1-ї особи.<br>
+    <span style="color:#1e3a5f;font-size:10px">Дивишся ти не крізь екран, а крізь <b>задню кришку</b> — туди, куди дивиться основна камера (біля спалаху).</span><br>
        Вертикально (|γ|&lt;45°) — <b>Атака/Блискавка</b>: виброс клинка, вид від 3-ї особи.<br>
        Свайп по екрану — крок по сітці 13×13.</p>
     <div id="errMsg"></div>
@@ -3444,6 +3445,7 @@ function updatePhantoms(dt){
   }
   for(const ph of phantoms){
     if(ph.dead || ph.disarmed){ continue; }
+    if(ph.ally && !ph.allyMad) continue;            // (07-21b) союзником керує лише allyTick
     const ai=ph.ai;
     ai.moveT -= dt; ai.swingT -= dt;
     ai.burnCd = Math.max(0, (ai.burnCd||0)-dt);
@@ -4035,7 +4037,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-21a · ГРАДІЕНТ R1..R7(хвиль = R) · СУПУТНИК(мудрий→обуза→безумний бос) · недоторканність-поки-є-моби';
+const BUILD_TAG='2026-07-21b · СУПУТНИК-УЧИТЕЛЬ(хмарка мови, аура, свій AI) · туторіал-голосом-учителя · текст-про-задню-камеру';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4940,7 +4942,16 @@ function tutModal(title,html,buttons){         // buttons: [{t:текст, c:к�
   } }catch(e){}
   tutModalEl.style.display='flex';
 }
-function tutHint(txt){ if(txt){ tutHintEl.textContent=txt; tutHintEl.style.display='block'; } else tutHintEl.style.display='none'; }
+function tutHint_orig(txt){ if(txt){ tutHintEl.textContent=txt; tutHintEl.style.display='block'; } else tutHintEl.style.display='none'; }
+function tutHint(txt){                                  // (07-21b) вчитель промовляє замість вікна
+  try{
+    if(!txt){ tutHint_orig(null); return; }
+    if(typeof ALLY!=='undefined' && ALLY.ph && !ALLY.ph.dead && !ALLY.ph.allyMad){
+      allySayNow(txt); tutHint_orig(null); return;      // хмарка над учителем
+    }
+  }catch(e){}
+  tutHint_orig(txt);
+}
 
 // ── СТАН ТУТОРІАЛУ ──
 window.TUT={
@@ -4957,7 +4968,7 @@ window.TUT={
       tutModal('🗡🗡 ДВІ РУКИ · КОРОТКЕ НАВЧАННЯ',
         'Ви керуєте <b>одним тілом</b> удвох (або двома телефонами в своїх руках).<br><br>'+
         '• <b>Кожен телефон = свій клинок</b>: куди повернеш — туди він пропалює.<br>'+
-        '• <b>Боком, як фотоапарат</b> = щит і заряд для СВОЄЇ руки.<br>'+
+        '• <b>Набік, як фотоапарат</b> = щит і заряд для СВОЄЇ руки (світ бачиш крізь задню кришку, куди дивиться основна камера).<br>'+
         '• <b>Тапи по екрану</b> = своя абетка Морзе (·  −). Слово <b>PL</b> запалює плазму саме на твоєму клинку.<br>'+
         '• Кроки, HP і кімната — <b>спільні</b>. Права рука тримає світ.<br><br>'+
         'Спершу налаштуємо осі: майстер попросить порухати кожним телефоном окремо, а потім обома разом.',
@@ -5206,6 +5217,7 @@ setInterval(()=>{
   } }catch(e){}
   try{ wavesTick(0.16); }catch(e){}
   try{ allyTick(0.16); }catch(e){}
+  try{ sayTick(0.16); }catch(e){}
   try{ pairFollow(); }catch(e){}
   try{ axWizTick(); }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
@@ -6365,6 +6377,50 @@ function wavesTick(dt){
   logE('хвиля '+(WAVES.total-WAVES.left+1)+'/'+WAVES.total+' — ворогів '+n);
 }
 
+/* ── ГОЛОС СУПУТНИКА: хмарка з коміксу, що йде за ним ─────────────────── */
+const SAY={ el:null, queue:[], t:0, cur:null };
+function allyBubble(){
+  if(!SAY.el){
+    SAY.el=document.createElement('div');
+    SAY.el.style.cssText='position:fixed;z-index:66;display:none;max-width:64vw;padding:9px 12px;'+
+      'background:rgba(8,20,36,.94);border:1px solid #86efac;border-radius:12px;color:#e2e8f0;'+
+      'font:inherit;font-size:12px;line-height:1.45;pointer-events:none;'+
+      'box-shadow:0 4px 18px rgba(0,0,0,.5);transform:translate(-50%,-100%)';
+    document.body.appendChild(SAY.el);
+  }
+  return SAY.el;
+}
+function allySay(text, hold){                    // одна репліка (черга — речення за реченням)
+  if(!text) return;
+  const parts=String(text).split(/(?<=[.!?…])\s+/).filter(Boolean);
+  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.2, p.length*0.055)});
+}
+function allySayNow(text){ SAY.queue.length=0; SAY.cur=null; SAY.t=0; allySay(text); }
+function sayTick(dt){
+  const el=allyBubble();
+  const a=ALLY.ph;
+  if(!SAY.cur){
+    if(!SAY.queue.length || !a || a.dead){ el.style.display='none'; return; }
+    SAY.cur=SAY.queue.shift(); SAY.t=SAY.cur.hold;
+    el.textContent=SAY.cur.t; el.style.display='block';
+    try{ if(window.TTS && TTS.on) TTS.say(SAY.cur.t); }catch(e){}
+    try{ blip(520,0.05,'sine',0.07); }catch(e){}
+  }
+  SAY.t-=dt;
+  if(SAY.t<=0){ SAY.cur=null; if(!SAY.queue.length) el.style.display='none'; return; }
+  // хмарка тримається над головою вчителя
+  try{
+    if(!a || !a.mesh){ el.style.display='none'; return; }
+    _w3.set(0, TIER_H*2.6, 0); a.mesh.localToWorld(_w3); _w3.project(camera);
+    const x=(_w3.x*0.5+0.5)*window.innerWidth, y=(-_w3.y*0.5+0.5)*window.innerHeight;
+    const vis = _w3.z<1 && x>-100 && x<window.innerWidth+100;
+    el.style.display = vis?'block':'none';
+    el.style.left=clamp(x, 90, window.innerWidth-90)+'px';
+    el.style.top =clamp(y, 70, window.innerHeight-140)+'px';
+    el.style.borderColor = (a.mode==='mad')?'#ef4444':'#86efac';
+  }catch(e){}
+}
+
 /* ── СУПУТНИК ─────────────────────────────────────────────────────────── */
 const ALLY={ ph:null, mode:'wise', atkT:0, sayT:0 };
 function allyMode(R){
@@ -6380,7 +6436,13 @@ function allySpawn(R){
     const ph=makePhantom(1,'fighter');
     ph.ally=true; ph.allyMad=false;
     ph.mode=allyMode(R);
-    ph.baseHue=0.42;                                   // зелений — свій
+    ph.baseHue = ph.mode==='wise'?0.34 : ph.mode==='weak'?0.16 : ph.mode==='dumb'?0.09 : 0.02;
+    try{                                               // (07-21b) кільце-аура під ногами
+      const ring=new THREE.Mesh(new THREE.RingGeometry(0.40,0.52,20),
+        new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.5, side:THREE.DoubleSide}));
+      ring.rotation.x=-Math.PI/2; ring.position.y=-0.43; ring.userData.ownRes=true;
+      ph.mesh.add(ring); ph.auraRing=ring;
+    }catch(e){}
     ph.hp = ph.mode==='wise'?220 : ph.mode==='weak'?120 : ph.mode==='dumb'?70 : 300;
     ph.gx=clamp(player.gx+1,0,12); ph.gy=player.gy;
     phantoms.push(ph); ALLY.ph=ph; ALLY.mode=ph.mode;
@@ -6389,6 +6451,12 @@ function allySpawn(R){
              dumb:'🟠 СУПУТНИК: дурніє — його треба берегти',
              mad:'🔴 СУПУТНИК: на межі безумства — стережись'}[ph.mode];
     showBanner(t,'#a78bfa'); logE('супутник: режим '+ph.mode+' (R'+R+')');
+    const greet={
+      wise:'Я поруч. Тримайся за мною — я візьму перших на себе.',
+      weak:'Тут моя ясність тьмяніє… Битимусь, але вже не так певно.',
+      dumb:'Голова гуде. Не відходь далеко, добре? Я можу заплутатись.',
+      mad:'Чуєш цей шум? Він гучніший за мене. Стережись мене на цьому краю.'}[ph.mode];
+    allySayNow(greet);
   }catch(e){ logE('супутник: помилка '+e.message); }
 }
 function allyClear(){
@@ -6401,11 +6469,18 @@ function allyGoMad(){
   a.allyMad=true; a.ally=false;                        // тепер це звичайний ворог — і бос
   a.mode='mad'; a.hp=Math.max(a.hp,320); a.baseHue=0.02;
   showBanner('🔥 СУПУТНИК ЗБОЖЕВОЛІВ — він тепер ворог','#ef4444');
+  allySayNow('Шум забрав мене. Тепер бий — інакше поляжеш.');
   logE('супутник: перетворився на боса краю');
   blip(120,0.3,'sawtooth',0.16); buzz([0,90,60,90]);
 }
 function allyTick(dt){
   const a=ALLY.ph; if(!a || a.dead) return;
+  try{ if(a.auraRing){                                  // аура дихає і міняє колір з режимом
+    const c={wise:0x86efac, weak:0xfde047, dumb:0xfb923c, mad:0xef4444}[a.mode]||0x86efac;
+    a.auraRing.material.color.setHex(c);
+    a.auraRing.material.opacity=0.35+0.2*Math.sin(performance.now()/(a.mode==='mad'?110:420));
+    a.auraRing.rotation.z += dt*(a.mode==='mad'?3.2:0.7);
+  } }catch(e){}
   a.atkT=(a.atkT||0)-dt;
   const foes=phantoms.filter(p=>p!==a && !p.dead && !p.ally);
   // ціль за режимом
