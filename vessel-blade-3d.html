@@ -1265,7 +1265,7 @@ function handInfo(av){
   if(Wv.rel==='shot') extraL = 0;   // у бластера дуло не растёт — досяжність идёт в веер пуль
   const cellsL = clamp(Math.round(av.swordLen*Wv.maxLen/6)+extraL, 1, Wv.maxLen+2);
   // угол возвышения луча: прицел наклоном + рубящая дуга атаки
-  const elev = clamp((_two?(aimPitchEff()||0):pitch)*0.9 - dipAtk, -1.15, 1.15);
+  const elev = clamp((aimPitchEff()||0)*0.9 - dipAtk, -1.15, 1.15);   // (07-22) як і ярус — з віссю пристрою
   const ce=Math.cos(elev), se=Math.sin(elev);
   const reach = CELL*(cellsL+lenBoost);
   let tipX = hx + dx*ce*reach;
@@ -1294,7 +1294,12 @@ function updateAvatarMesh(av, t){
   // ПЛАВНИЙ КРОК (07-13): логіка — миттєво по клітинах, ВІЗУАЛ ковзає (~0.15с) з підскоком.
   // Телепорти (респавн/перехід кімнати, >2.5 кл.) не «їдуть» через мапу — снап.
   if(av.vgx==null || Math.abs(av.vgx-av.gx)>2.5 || Math.abs(av.vgy-av.gy)>2.5){ av.vgx=av.gx; av.vgy=av.gy; }
-  av.vgx += (av.gx-av.vgx)*0.26; av.vgy += (av.gy-av.vgy)*0.26;
+  // (07-22) згладжування, стале за часом: не залежить від FPS і стрибків пінгу
+  {
+    const kBase = av.remote ? 9.5 : 14;              // чужих ведемо трохи м'якше
+    const k = 1-Math.pow(0.001, Math.max(dt2,0.001)*kBase/6);
+    av.vgx += (av.gx-av.vgx)*k; av.vgy += (av.gy-av.vgy)*k;
+  }
   const _trans=Math.min(Math.abs(av.gx-av.vgx)+Math.abs(av.gy-av.vgy),1);
   const _hop=Math.sin(_trans*Math.PI)*0.14;   // маленький підскок під час кроку
   g.position.set(worldX(av.vgx+_fo), (av.hover||0)+_hop, worldZ(av.vgy+_fo));
@@ -1827,6 +1832,7 @@ function updateClinch(dt){
   // ВИБРАЦИЯ = насколько телефон ушёл от точки меча. Близко (Δ мал) — тихие редкие
   // импульсы; далеко (Δ велик) — частые и долгие. Это «компас рассинхрона».
   try{ clinchZoneHud(); }catch(e){}
+  try{ sideBars(); }catch(e){}
   clinch.vibT -= dt;
   if(clinch.vibT<=0){
     const n = clamp(clinch.delta/CLINCH_DELTA_CRIT, 0, 1);   // 0..1
@@ -2163,11 +2169,41 @@ function setAvatarAlpha(av, a){
   for(const k in av.parts){ const m=av.parts[k].material; m.transparent=t; m.opacity=a; m.depthWrite=!t; }
 }
 // камера клинча — плавный вид от 1-го лица на скрещение клинков
+function sideBars(){                                     // (07-22) шкали по боках, не зверху
+  try{
+    let L=document.getElementById('barL'), R=document.getElementById('barR');
+    const mk=(id,side)=>{ const e=document.createElement('div'); e.id=id;
+      e.style.cssText='position:fixed;'+side+':4px;top:22%;height:56%;width:12px;z-index:62;'+
+        'border:1px solid #1e3a5f;border-radius:7px;background:rgba(2,10,24,.55);display:none;overflow:hidden';
+      const fill=document.createElement('div'); fill.className='fill';
+      fill.style.cssText='position:absolute;left:0;right:0;bottom:0;height:0%;border-radius:6px';
+      e.appendChild(fill); document.body.appendChild(e); return e; };
+    if(!L) L=mk('barL','left');
+    if(!R) R=mk('barR','right');
+    // ЛІВА — витривалість, ПРАВА — заряд/тиск клінчу
+    L.style.display='block';
+    const lf=L.querySelector('.fill');
+    lf.style.height=clamp(player.stamina,0,100)+'%';
+    lf.style.background = player.stamina<25 ? '#ef4444' : player.stamina<55 ? '#f59e0b' : '#22c55e';
+    const rf=R.querySelector('.fill');
+    if(clinch.active){
+      R.style.display='block';
+      const e=clamp((clinch.energy||0)/2.4,0,1)*100;
+      rf.style.height=e+'%';
+      rf.style.background = clinch.zone==='green' ? '#22c55e' : clinch.zone==='yellow' ? '#eab308' : '#ef4444';
+      R.style.borderColor = clinch.zone==='red' ? '#ef4444' : '#1e3a5f';
+    } else {
+      R.style.display='block';
+      rf.style.height=clamp((player.charge||0)*100,0,100)+'%';
+      rf.style.background='#38bdf8'; R.style.borderColor='#1e3a5f';
+    }
+  }catch(e){}
+}
 function clinchZoneHud(){                                 // (07-19b) зона + запас енергії
   try{
     let el=document.getElementById('clzHud');
     if(!el){ el=document.createElement('div'); el.id='clzHud';
-      el.style.cssText='position:fixed;left:50%;transform:translateX(-50%);top:112px;z-index:64;'+
+      el.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:140px;z-index:64;'+
         'padding:6px 12px;border-radius:9px;font:inherit;font-size:12px;letter-spacing:.08em;'+
         'border:1px solid #334155;background:rgba(2,10,24,.86);white-space:nowrap';
       document.body.appendChild(el); }
@@ -2268,7 +2304,7 @@ function renderClinchGuideAndAstral(){
 
 /* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
 function damageTier(av, tier, amount){
-  if(av && av.invuln && !av.allyMad){                  // (07-21) поки живий моб — супутник невразливий
+  if(av && av.ally && !av.allyMad){                    // (07-22) друга не б'ють — до самого безумства
     try{ if(!av._invMsg || Date.now()-av._invMsg>2500){ av._invMsg=Date.now();
       showBanner('🛡 супутника не здолати, поки живий хоч один ворог','#94a3b8'); } }catch(e){}
     return;
@@ -2381,7 +2417,9 @@ function resolveBurn(dt){
         logE('УДАР по сопернику '+rf.id.slice(0,4)); }
       return;
     }
-    const ph = phantomAtCell(cx,cy);
+    const _phc = phantomAtCell(cx,cy);
+    if(_phc && _phc.ally && !_phc.allyMad) continue;      // (07-22) клинок проходить крізь друга
+    const ph = _phc;
     if(ph){
       if(burnCd>0) continue;
       const tier = player.tier;   // бьём в тот ярус, что показан на HUD (гистерезис уже применён)
@@ -4037,7 +4075,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-21b · СУПУТНИК-УЧИТЕЛЬ(хмарка мови, аура, свій AI) · туторіал-голосом-учителя · текст-про-задню-камеру';
+const BUILD_TAG='2026-07-22a · СОЮЗНИК(невразливий, тримає дистанцію, видимий) · білі-кімнати-мирні · шкали-збоку · аудіо-в-жесті · інтерполяція-мережі';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4482,6 +4520,14 @@ function renderRemotes(now, dt){
     av.visYaw = smoothAngle(av.visYaw, p.yaw||0, clamp(dt*8,0,1));
     av.dirIdx = yawToDirIdx(p.yaw||0);
     av.pitch = +(p.pitch||0); av.roll = +(p.roll||0);
+    try{                                           // (07-22) екстраполяція при затримці пакета
+      const age=(Date.now()-((r.latest&&r.latest.t)||0))/1000;
+      if(age>0.18 && age<0.9 && r._pgx!=null){
+        const vx=Math.sign(av.gx-r._pgx), vy=Math.sign(av.gy-r._pgy);
+        if(vx||vy){ av.vgx += vx*Math.min(age-0.18,0.35)*1.1; av.vgy += vy*Math.min(age-0.18,0.35)*1.1; }
+      }
+      if(r._pt!==((r.latest&&r.latest.t)||0)){ r._pgx=av.gx; r._pgy=av.gy; r._pt=(r.latest&&r.latest.t)||0; }
+    }catch(e){}
     av.crouch = lerp(av.crouch, clamp(-av.pitch,0,1), clamp(dt*6,0,1));
     av.swordLen = p.swordLength||1; av.reachMod = +(p.reach||0);   // визуал чужого клинка с его досяжністю
     if(p.hue!=null) av.baseHue=+p.hue;                       // чужая раскраска тела
@@ -4490,6 +4536,7 @@ function renderRemotes(now, dt){
     av.strikeT = (!p.isCharging && (p.swordLength||1)>1.2) ? 0.3 : 0;
     av.dead = (r.hp<=0);
     av.wpn = p.wpn||'sword';   // стиль луча чужого оружия
+    av.remote=true;                                // (07-22) для м'якої інтерполяції
     updateAvatarMesh(av, now);
     updateBlade(av);
     try{ remoteBlade2(r, av, p); }catch(e){}      // (07-18e) другий клинок чужого бійця
@@ -4810,7 +4857,7 @@ function frame(now){
   if(sampleT<=0){
     sampleT = 2.0;
     if(mode==='fighter'){
-      const ph = phantoms.filter(p=>!p.dead).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
+      const ph = phantoms.filter(p=>!p.dead && !p.ally).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
       const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомів немає';
       logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
            `dir${DSYM[player.dirIdx]} ярус${player.tier} стійка:${stance===STANCE.BEACON?'маяк':'блиск'} pitch${sensor.pitch.toFixed(2)}`);
@@ -4830,7 +4877,7 @@ function frame(now){
   $('dbg').textContent =
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
-    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
+    `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead && !p.ally).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
     `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}`;
 
   // баннер/вспышка таймеры
@@ -4848,7 +4895,21 @@ function frame(now){
 requestAnimationFrame(frame);
 
 /* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
+function hardUnlockAudio(){                      // (07-22) синхронно в жесті — інакше iOS/Chrome мовчать
+  try{
+    if(!window.AC){ const C=window.AudioContext||window.webkitAudioContext; if(C) window.AC=new C(); }
+    if(AC){
+      if(AC.state!=='running') AC.resume();
+      const b=AC.createBuffer(1,1,22050), s=AC.createBufferSource();
+      s.buffer=b; s.connect(AC.destination); s.start(0);   // «німий» тон піднімає граф
+      logE('АУДІО: контекст розблоковано ('+AC.state+')');
+    }
+  }catch(e){ try{ logE('АУДІО: '+e.message); }catch(_){} }
+}
+$('btnReq').addEventListener('touchend', hardUnlockAudio, {passive:true});
+$('btnReq').addEventListener('click', hardUnlockAudio);
 $('btnReq').addEventListener('click', async ()=>{
+  hardUnlockAudio();
   $('btnReq').textContent='⏳ запит...'; $('btnReq').disabled=true; $('errMsg').style.display='none';
   try{
     if(needsPerm){
@@ -6349,6 +6410,12 @@ const RNAME={1:'Пробудження',2:'Маяк',3:'Ехо',4:'Душа',5:'
 const WAVES={ left:0, total:0, R:1, betweenT:0 };
 
 function wavesBegin(){
+  if(ADV.on && typeof chessWhite==='function' && chessWhite(ADV.rx,ADV.ry)){   // (07-22) білі — мирні
+    WAVES.left=0; WAVES.total=0; WAVES.R=roomR();
+    logE('біла кімната — хвиль немає (торговці, квести, ресурси)');
+    allySpawn(WAVES.R);
+    return;
+  }
   const R=roomR();
   WAVES.R=R; WAVES.total=R; WAVES.left=R; WAVES.betweenT=0;
   logE('градієнт: R='+R+' ('+RNAME[R]+') · хвиль '+R);
@@ -6475,6 +6542,8 @@ function allyGoMad(){
 }
 function allyTick(dt){
   const a=ALLY.ph; if(!a || a.dead) return;
+  try{ updateAvatarMesh(a, performance.now()); updateBlade(a);   // (07-22) свій рендер — не зникає в бою
+    a.mesh.visible=true; a.blade.visible=true; }catch(e){}
   try{ if(a.auraRing){                                  // аура дихає і міняє колір з режимом
     const c={wise:0x86efac, weak:0xfde047, dumb:0xfb923c, mad:0xef4444}[a.mode]||0x86efac;
     a.auraRing.material.color.setHex(c);
@@ -6495,8 +6564,14 @@ function allyTick(dt){
   if(a.moveT<=0){
     a.moveT = a.mode==='wise'?0.34 : a.mode==='weak'?0.55 : a.mode==='dumb'?0.75 : 0.28;
     let dx=Math.sign((tgt.gx||6)-a.gx), dy=Math.sign((tgt.gy||6)-a.gy);
+    const dPl=Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy);
+    if(tgt===player){                                    // (07-22) НЕ лізе на клітинку гравця
+      if(dPl<=1){ a.moveT=0.5; return; }                 // достатньо близько — стоїмо
+      if(dPl<=2 && a.mode!=='mad'){ a.moveT=0.4; return; }
+    }
     if(a.mode==='dumb' && Math.random()<0.45){ dx=Math.round(Math.random()*2-1); dy=Math.round(Math.random()*2-1); }
     const nx=clamp(a.gx+dx,0,12), ny=clamp(a.gy+dy,0,12);
+    if(nx===player.gx && ny===player.gy) return;         // клітинка гравця — свята
     if(!obstacleAt(nx,ny)){ a.gx=nx; a.gy=ny; }
   }
   // атака
