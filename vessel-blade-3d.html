@@ -1156,8 +1156,11 @@ function makePhantom(i, kind){
 }
 function spawnPhantoms(n, kinds){
   if(typeof watcherMode==='function' && watcherMode()) n=0;   // (07-18g) глядач нікого не спавнить
-  phantoms.forEach(p=>disposeAvatar(p));   // полная утилизация (не только remove) — иначе течёт при каждой «новой игре»
-  phantoms = [];
+  // (07-22c) СОЮЗНИК ПЕРЕЖИВАЄ ХВИЛІ: його модель не утилізуємо, інакше він
+  // лишався у списку без меша — тобто ставав невидимим саме в бою.
+  const keepAlly = phantoms.filter(p=>p && p.ally && !p.allyMad);
+  phantoms.forEach(p=>{ if(!(p && p.ally && !p.allyMad)) disposeAvatar(p); });
+  phantoms = keepAlly.slice();
   for(let i=0;i<n;i++) phantoms.push(makePhantom(i, kinds&&kinds[i]));
   logE('ворогів: '+n+(kinds&&kinds.length?' ['+kinds.join(',')+']':''));
 }
@@ -4079,7 +4082,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-22b · СОЮЗНИК-НЕ-ВОРОГ(вихід відкривається) · він-завжди-видимий · туторіал-голосом-учителя · без-щита-в-текстах';
+const BUILD_TAG='2026-07-22c · СОЮЗНИК-ПЕРЕЖИВАЄ-ХВИЛІ(не зникає в бою) · вихід-відкривається · туторіал-голосом-учителя';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6457,9 +6460,7 @@ function wavesTick(dt){
   }
   const n=1+Math.floor(Math.random()*2);
   const kinds=[]; for(let i=0;i<n;i++) kinds.push(['fighter','crawler','flyer'][Math.floor(Math.random()*3)]);
-  const keep=phantoms.filter(p=>p.ally);
-  spawnPhantoms(n, kinds);
-  for(const a of keep) phantoms.push(a);               // супутник переживає хвилі
+  spawnPhantoms(n, kinds);                             // (07-22c) союзник зберігається всередині
   showBanner('🌊 ХВИЛЯ '+(WAVES.total-WAVES.left+1)+' / '+WAVES.total,'#f59e0b');
   logE('хвиля '+(WAVES.total-WAVES.left+1)+'/'+WAVES.total+' — ворогів '+n);
 }
@@ -6546,6 +6547,7 @@ function allySpawn(R){
     allySayNow(greet);
   }catch(e){ logE('супутник: помилка '+e.message); }
 }
+function allyAlive(){ try{ return !!(ALLY.ph && phantoms.indexOf(ALLY.ph)>=0); }catch(e){ return false; } }
 function allyClear(){
   try{ if(ALLY.ph){ const i=phantoms.indexOf(ALLY.ph); if(i>=0) phantoms.splice(i,1);
     disposeAvatar(ALLY.ph); } }catch(e){}
@@ -6562,6 +6564,7 @@ function allyGoMad(){
 }
 function allyTick(dt){
   const a=ALLY.ph; if(!a || a.dead) return;
+  try{ if(phantoms.indexOf(a)<0) phantoms.push(a); }catch(e){}   // (07-22c) не загубитись у списку
   try{                                                     // (07-22b) власний рендер щокадру
     a.dead=false; a.respawnT=0; a.hp=Math.max(1,a.hp||1);
     updateAvatarMesh(a, performance.now()); updateBlade(a);
