@@ -2267,6 +2267,11 @@ function renderClinchGuideAndAstral(){
 
 /* ════════════════════ УРОН (анатомия по ярусам) ══════════════ */
 function damageTier(av, tier, amount){
+  if(av && av.invuln && !av.allyMad){                  // (07-21) поки живий моб — супутник невразливий
+    try{ if(!av._invMsg || Date.now()-av._invMsg>2500){ av._invMsg=Date.now();
+      showBanner('🛡 супутника не здолати, поки живий хоч один ворог','#94a3b8'); } }catch(e){}
+    return;
+  }
   if(av.dead) return;
   if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
   if(tier===0){
@@ -2938,6 +2943,7 @@ function applyAdvRoom(rx,ry){
     showBanner(st.sym+' '+st.name+' · опасность '+Math.round(st.weight*100)+'%'+(boss?' · БОС':''), st.accent);
   }
   try{ advRoomExtras(rx,ry,st); }catch(e){ console.warn('extras',e); }   // лут/торговець білих кімнат (низ файлу)
+  try{ setTimeout(()=>{ try{ wavesBegin(); }catch(e){} }, 400); }catch(e){}   // (07-21) хвилі за радіусом
   try{ if(window.LINK && LINK.role==='host'){ snapshotSoon();
     setTimeout(()=>{ try{ snapshotRoom(); }catch(e){} }, 120);            // (07-17x) миттєво, без черги
   } }catch(e){}
@@ -4029,7 +4035,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-20e · АВТОВІСЬ-НАХИЛУ(сама виправляє реверс) · клинок-напарника-в-руці · 🧭зведення-компасів-пари';
+const BUILD_TAG='2026-07-21a · ГРАДІЕНТ R1..R7(хвиль = R) · СУПУТНИК(мудрий→обуза→безумний бос) · недоторканність-поки-є-моби';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5198,6 +5204,8 @@ setInterval(()=>{
     NET._watchPull=true;
     setTimeout(()=>{ try{ applyRemoteRoomIfNewer(ADV.rx+','+ADV.ry); NET._watchPull=false; }catch(e){ NET._watchPull=false; } }, 300);
   } }catch(e){}
+  try{ wavesTick(0.16); }catch(e){}
+  try{ allyTick(0.16); }catch(e){}
   try{ pairFollow(); }catch(e){}
   try{ axWizTick(); }catch(e){}
   try{ tickTrader(0.16); }catch(e){}
@@ -6315,6 +6323,125 @@ function leftBladeTick(dt){
       LBLADE.burnCd=0.3; buzz(20); break;                             // добиває вже вокселізоване
     }
   }
+}
+
+/* ════ РАДІАЛЬНИЙ ГРАДІЕНТ · ХВИЛІ · СУПУТНИК (07-21) ════════════════════
+   R = 1 у центрі (6,6) і 7 на краю мета-мапи. Сила окремого моба стала;
+   зростає ЧИСЛО хвиль: R хвиль на кімнату. Супутник змінює природу з
+   радіусом: мудрий помічник → обуза → тягар → безумний ворог на краю.   */
+function roomR(rx,ry){
+  const x=(rx==null?(ADV.on?ADV.rx:6):rx), y=(ry==null?(ADV.on?ADV.ry:6):ry);
+  return clamp(1+Math.max(Math.abs(x-6),Math.abs(y-6)), 1, 7);
+}
+const RNAME={1:'Пробудження',2:'Маяк',3:'Ехо',4:'Душа',5:'Ритм',6:'Молнія',7:'Шум'};
+const WAVES={ left:0, total:0, R:1, betweenT:0 };
+
+function wavesBegin(){
+  const R=roomR();
+  WAVES.R=R; WAVES.total=R; WAVES.left=R; WAVES.betweenT=0;
+  logE('градієнт: R='+R+' ('+RNAME[R]+') · хвиль '+R);
+  if(R>1) showBanner('R'+R+' · '+RNAME[R]+' — хвиль: '+R,'#a78bfa');
+  allySpawn(R);
+}
+function wavesTick(dt){
+  if(!ADV.on || mode!=='fighter') return;
+  if(WAVES.left<=0) return;
+  const alive=phantoms.filter(p=>!p.dead && !p.ally).length;
+  if(alive>0){ WAVES.betweenT=0; return; }
+  WAVES.betweenT+=dt;
+  if(WAVES.betweenT<1.6) return;
+  WAVES.betweenT=0; WAVES.left--;
+  if(WAVES.left<=0){
+    logE('хвилі: кімнату зачищено (R'+WAVES.R+')');
+    if(WAVES.R>=7) allyGoMad();                       // край: супутник стає босом
+    return;
+  }
+  const n=1+Math.floor(Math.random()*2);
+  const kinds=[]; for(let i=0;i<n;i++) kinds.push(['fighter','crawler','flyer'][Math.floor(Math.random()*3)]);
+  const keep=phantoms.filter(p=>p.ally);
+  spawnPhantoms(n, kinds);
+  for(const a of keep) phantoms.push(a);               // супутник переживає хвилі
+  showBanner('🌊 ХВИЛЯ '+(WAVES.total-WAVES.left+1)+' / '+WAVES.total,'#f59e0b');
+  logE('хвиля '+(WAVES.total-WAVES.left+1)+'/'+WAVES.total+' — ворогів '+n);
+}
+
+/* ── СУПУТНИК ─────────────────────────────────────────────────────────── */
+const ALLY={ ph:null, mode:'wise', atkT:0, sayT:0 };
+function allyMode(R){
+  if(R<=2) return 'wise';        // мудрий: б'є мобів, тримає удар
+  if(R<=4) return 'weak';        // слабне: майже не шкодить
+  if(R<=6) return 'dumb';        // дурніє: вразливий, треба берегти
+  return 'mad';                  // край: сплеск сили і безумство
+}
+function allySpawn(R){
+  try{
+    allyClear();
+    if(!ADV.on || mode!=='fighter') return;
+    const ph=makePhantom(1,'fighter');
+    ph.ally=true; ph.allyMad=false;
+    ph.mode=allyMode(R);
+    ph.baseHue=0.42;                                   // зелений — свій
+    ph.hp = ph.mode==='wise'?220 : ph.mode==='weak'?120 : ph.mode==='dumb'?70 : 300;
+    ph.gx=clamp(player.gx+1,0,12); ph.gy=player.gy;
+    phantoms.push(ph); ALLY.ph=ph; ALLY.mode=ph.mode;
+    const t={wise:'🟢 СУПУТНИК: розумний — прикриє тебе',
+             weak:'🟡 СУПУТНИК: слабне — користі мало',
+             dumb:'🟠 СУПУТНИК: дурніє — його треба берегти',
+             mad:'🔴 СУПУТНИК: на межі безумства — стережись'}[ph.mode];
+    showBanner(t,'#a78bfa'); logE('супутник: режим '+ph.mode+' (R'+R+')');
+  }catch(e){ logE('супутник: помилка '+e.message); }
+}
+function allyClear(){
+  try{ if(ALLY.ph){ const i=phantoms.indexOf(ALLY.ph); if(i>=0) phantoms.splice(i,1);
+    disposeAvatar(ALLY.ph); } }catch(e){}
+  ALLY.ph=null;
+}
+function allyGoMad(){
+  const a=ALLY.ph; if(!a || a.allyMad) return;
+  a.allyMad=true; a.ally=false;                        // тепер це звичайний ворог — і бос
+  a.mode='mad'; a.hp=Math.max(a.hp,320); a.baseHue=0.02;
+  showBanner('🔥 СУПУТНИК ЗБОЖЕВОЛІВ — він тепер ворог','#ef4444');
+  logE('супутник: перетворився на боса краю');
+  blip(120,0.3,'sawtooth',0.16); buzz([0,90,60,90]);
+}
+function allyTick(dt){
+  const a=ALLY.ph; if(!a || a.dead) return;
+  a.atkT=(a.atkT||0)-dt;
+  const foes=phantoms.filter(p=>p!==a && !p.dead && !p.ally);
+  // ціль за режимом
+  let tgt=null;
+  if(a.mode==='mad'){ tgt = (Math.random()<0.65) ? player : (foes[0]||player); }
+  else if(foes.length) tgt=foes.reduce((b,p)=>{
+    const d=Math.abs(p.gx-a.gx)+Math.abs(p.gy-a.gy);
+    return (!b || d<b.d) ? {p,d} : b; }, null).p;
+  else tgt=player;
+  // рух до цілі (дурний — плутається)
+  a.moveT=(a.moveT||0)-dt;
+  if(a.moveT<=0){
+    a.moveT = a.mode==='wise'?0.34 : a.mode==='weak'?0.55 : a.mode==='dumb'?0.75 : 0.28;
+    let dx=Math.sign((tgt.gx||6)-a.gx), dy=Math.sign((tgt.gy||6)-a.gy);
+    if(a.mode==='dumb' && Math.random()<0.45){ dx=Math.round(Math.random()*2-1); dy=Math.round(Math.random()*2-1); }
+    const nx=clamp(a.gx+dx,0,12), ny=clamp(a.gy+dy,0,12);
+    if(!obstacleAt(nx,ny)){ a.gx=nx; a.gy=ny; }
+  }
+  // атака
+  if(a.atkT<=0){
+    const d=Math.abs((tgt.gx||6)-a.gx)+Math.abs((tgt.gy||6)-a.gy);
+    if(d<=1){
+      a.atkT = a.mode==='mad'?0.5 : 0.8;
+      const dmg = a.mode==='wise'?26 : a.mode==='weak'?7 : a.mode==='dumb'?4 : 30;
+      if(tgt===player){
+        if(a.mode==='mad' || (a.mode==='dumb' && Math.random()<0.25)){
+          player.hp=Math.max(0,player.hp-(a.mode==='mad'?dmg:5));
+          doFlash('#ef4444'); buzz([0,50]);
+          logE(a.mode==='mad'?'супутник б\'є ТЕБЕ':'супутник зачепив тебе випадково');
+          if(player.hp<=0){ try{ killPlayer(); }catch(e){} }
+        }
+      } else { damageTier(tgt,1,dmg); }
+    }
+  }
+  // правило недоторканності: поки живий бодай один моб — супутника не вбити
+  a.invuln = foes.length>0 && !a.allyMad;
 }
 
 /* ════ ЗЧЕПЛЕННЯ ГРАВЦІВ (07-20) ═════════════════════════════════════════ */
