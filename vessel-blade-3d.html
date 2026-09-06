@@ -129,7 +129,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <div class="card">
     <p>Телефон — це <b>руків’я світлового клинка</b>. Гіроскоп веде лезо,
        компас тримає Північ, поворот корпуса (<b>γ</b>) змінює стійку.</p>
-    <p style="color:#2a4a6f">Поверни <b>набік</b>, як фотоапарат (|γ|&gt;45°) — <b>Піхви/Маяк</b>: накопичення тиску, вид від 1-ї особи.<br>
+    <p style="color:#2a4a6f">Поверни <b>набік</b>, як фотоапарат (|γ|&gt;45°) — <b>МАЯК</b>: накопичуєш заряд для удару, вид від 1-ї особи.<br>
     <span style="color:#1e3a5f;font-size:10px">Дивишся ти не крізь екран, а крізь <b>задню кришку</b> — туди, куди дивиться основна камера (біля спалаху).</span><br>
        Вертикально (|γ|&lt;45°) — <b>Атака/Блискавка</b>: виброс клинка, вид від 3-ї особи.<br>
        Свайп по екрану — крок по сітці 13×13.</p>
@@ -3183,7 +3183,11 @@ function spawnObstaclesSeededSafe(rx,ry,home){
 }
 function updateAdventure(dt){
   if(!ADV.on || player.dead || mode!=='fighter') return;
-  const cleared = advHome() || phantoms.every(p=>p.dead);
+  // (07-22b) СОЮЗНИК — НЕ ВОРОГ: кімната вважається зачищеною, навіть коли він живий.
+  // Також мають скінчитися хвилі — інакше вихід відкривався між хвилями.
+  const foesLeft = phantoms.some(p=>!p.dead && !p.ally);
+  const wavesLeft = (typeof WAVES!=='undefined' && WAVES.left>0);
+  const cleared = advHome() || (!foesLeft && !wavesLeft);
   const edgeOf=(x,y)=>{
     if((x===0||x===12)&&(y===0||y===12)) return null;      // углы неоднозначны — как в 2D-каноне
     if(y===0)return'N'; if(y===12)return'S'; if(x===0)return'W'; if(x===12)return'E'; return null;
@@ -4075,7 +4079,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-22a · СОЮЗНИК(невразливий, тримає дистанцію, видимий) · білі-кімнати-мирні · шкали-збоку · аудіо-в-жесті · інтерполяція-мережі';
+const BUILD_TAG='2026-07-22b · СОЮЗНИК-НЕ-ВОРОГ(вихід відкривається) · він-завжди-видимий · туторіал-голосом-учителя · без-щита-в-текстах';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4975,6 +4979,18 @@ tutModalEl.innerHTML='<div id="tutCard" style="max-width:420px;width:100%;backgr
   'letter-spacing:.04em;max-height:82vh;overflow-y:auto"></div>';
 document.body.appendChild(tutModalEl);
 window.__ck_TUT_UI=1;   // контрольна точка виконання
+function tutModalTeacher(title, html, btns){          // (07-22b) вчитель промовляє замість вікна
+  try{
+    const plain = String(html||'').replace(/<br[^>]*>/gi,' ').replace(/<[^>]+>/g,'').replace(/[ \t\n]+/g,' ').trim();
+    if(typeof ALLY!=='undefined' && ALLY.ph && !ALLY.ph.dead && !ALLY.ph.allyMad && plain.length){
+      allySayNow(String(title||'').replace(/<[^>]+>/g,'')+'. '+plain);
+      // кнопки лишаємо, але маленькою смугою знизу — щоб можна було рушити далі
+      if(btns && btns.length && btns[0] && btns[0].f) setTimeout(()=>{ try{ btns[0].f(); }catch(e){} }, 600);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
 function tutModal(title,html,buttons){         // buttons: [{t:текст, c:колір, f:колбек}]
   const card=tutModalEl.querySelector('#tutCard');
   let h='<div style="color:#60a5fa;font-size:16px;letter-spacing:.1em;margin-bottom:12px">'+title+'</div>'+
@@ -5029,7 +5045,7 @@ window.TUT={
       tutModal('🗡🗡 ДВІ РУКИ · КОРОТКЕ НАВЧАННЯ',
         'Ви керуєте <b>одним тілом</b> удвох (або двома телефонами в своїх руках).<br><br>'+
         '• <b>Кожен телефон = свій клинок</b>: куди повернеш — туди він пропалює.<br>'+
-        '• <b>Набік, як фотоапарат</b> = щит і заряд для СВОЄЇ руки (світ бачиш крізь задню кришку, куди дивиться основна камера).<br>'+
+        '• <b>Набік, як фотоапарат</b> = <b>МАЯК</b>: накопичуєш заряд і дивишся від першої особи (світ бачиш крізь задню кришку, куди дивиться основна камера).<br>'+
         '• <b>Тапи по екрану</b> = своя абетка Морзе (·  −). Слово <b>PL</b> запалює плазму саме на твоєму клинку.<br>'+
         '• Кроки, HP і кімната — <b>спільні</b>. Права рука тримає світ.<br><br>'+
         'Спершу налаштуємо осі: майстер попросить порухати кожним телефоном окремо, а потім обома разом.',
@@ -5105,10 +5121,14 @@ window.TUT={
         [{t:'ДО СПРАВИ ▷',f:()=>tutHint('⚡ Підійди впритул і наведи промінь · кристалів: 0 / 2')}]);
     }
     if(n===3){ this.sub=0;
-      tutModal('📷 КРОК 3/7 · ЩИТ І ЗАРЯД (МАЯК)','Зараз спробуємо на власні руки, по одному кроку:<br><br>'+
-        '<b>1.</b> Поверни телефон <b>боком, як фотоапарат</b> 📷 — камера стане очима героя.<br>'+
-        '<b>2.</b> Тримай так — угорі побачиш, як росте число <b>ЗАРЯД</b>. Поки тримаєш — це твій <b>щит</b>: '+
-        'у зчепленні клинків (клінчі) цей тиск продавлює ворога.<br>'+
+      (tutModalTeacher('📷 КРОК 3 · ЗАРЯД (МАЯК)',
+        'Поверни телефон боком, як фотоапарат. Тримай так — заряд росте. '+
+        'Коли скажу — різко поверни назад вертикально, і сила вирветься ударом.',
+        [{t:'ПРОБУЮ',f:()=>tutHint('📷 Поверни телефон БОКОМ, як фотоапарат — і тримай')}])) ? null :
+      tutModal('📷 КРОК 3/7 · ЗАРЯД (МАЯК)','Зараз спробуємо на власні руки, по одному кроку:<br><br>'+
+        '<b>1.</b> Поверни телефон <b>боком, як фотоапарат</b> 📷 — світ побачиш крізь задню кришку, туди ж дивиться основна камера.<br>'+
+        '<b>2.</b> Тримай так — угорі побачиш, як росте <b>ЗАРЯД</b>. Він годує наступний удар, '+
+        'а в зчепленні клинків дає тиск, яким продавлюють ворога.<br>'+
         '<b>3.</b> Коли я скажу — <b>різко поверни телефон назад вертикально</b>: накопичена сила сама вирветься ударом!<br><br>'+
         'Нічого не треба вгадувати — я підказуватиму вгорі на кожному кроці.',
         [{t:'ПРОБУЮ ▷',f:()=>tutHint('📷 Поверни телефон БОКОМ, як фотоапарат — і тримай')}]);
@@ -5116,7 +5136,7 @@ window.TUT={
     if(n===4){ this.armBattle(1,['fighter'],0,'⚔ КРОК 4/7 · ПЕРШИЙ БІЙ',
       'Час для справжнього супротивника — <b>один повільний фантом</b>.<br><br>'+
       '• Вертикально: <b>промінь пропалює</b> того, кого торкається — цілься<br>'+
-      '• Боком 📷 = щит і заряд → різко назад = <b>ВИПАД</b> (сильний удар)<br>'+
+      '• Боком 📷 = МАЯК, копиш заряд → різко назад = <b>ВИПАД</b> (сильний удар)<br>'+
       '• Свайп = ухилитися кроком<br><br>'+
       'Якщо загинеш — нічого страшного, відродишся і спробуєш ще.<br><br><b>Завдання: перемогти 1 фантома.</b>'); }
     if(n===5){ this.armBattle(2,['fighter','crawler'],0,'⚔ КРОК 5/7 · ДВОЄ',
@@ -6542,8 +6562,12 @@ function allyGoMad(){
 }
 function allyTick(dt){
   const a=ALLY.ph; if(!a || a.dead) return;
-  try{ updateAvatarMesh(a, performance.now()); updateBlade(a);   // (07-22) свій рендер — не зникає в бою
-    a.mesh.visible=true; a.blade.visible=true; }catch(e){}
+  try{                                                     // (07-22b) власний рендер щокадру
+    a.dead=false; a.respawnT=0; a.hp=Math.max(1,a.hp||1);
+    updateAvatarMesh(a, performance.now()); updateBlade(a);
+    if(a.mesh){ a.mesh.visible=true; a.mesh.traverse(o=>{ if(o.isMesh) o.visible=true; }); }
+    if(a.blade){ a.blade.visible=true; }
+  }catch(e){}
   try{ if(a.auraRing){                                  // аура дихає і міняє колір з режимом
     const c={wise:0x86efac, weak:0xfde047, dumb:0xfb923c, mad:0xef4444}[a.mode]||0x86efac;
     a.auraRing.material.color.setHex(c);
