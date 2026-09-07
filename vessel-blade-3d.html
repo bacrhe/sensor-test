@@ -4092,7 +4092,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-24a · MENTOR(окрема архітектура: стани+черга+події+перехоплення+один-власник) · ТЗ п.1-20';
+const BUILD_TAG='2026-07-24e · НАСТАВНИК: власний силует+анімація спокою(кристал·плащ·гребінь) · ТЗ п.64';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6671,6 +6671,15 @@ function allySpawn(R){
     ph.ally=true; ph.allyMad=false;
     ph.mode=allyMode(R);
     ph.baseHue = ph.mode==='wise'?0.34 : ph.mode==='weak'?0.16 : ph.mode==='dumb'?0.09 : 0.02;
+    try{                                               // (07-24d) власний силует — ТЗ п.64
+      const dec=new THREE.Group(); dec.frustumCulled=false; ph.mesh.add(dec); ph.mentorDecor=dec;
+      const crest=_kbox(dec,0.10,0.30,0.10,0xe2e8f0); crest.position.set(0,2.02,-0.02); crest.rotation.x=0.18;
+      const cloak=_kbox(dec,0.62,0.86,0.06,0x1e293b); cloak.position.set(0,1.05,-0.30);
+      const orb=new THREE.Mesh(new THREE.OctahedronGeometry(0.14),
+        new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.9}));
+      orb.frustumCulled=false; orb.position.set(0,2.35,0); dec.add(orb);
+      ph.mentorCrest=crest; ph.mentorCloak=cloak; ph.mentorOrb=orb;
+    }catch(e){}
     try{                                               // (07-21b) кільце-аура під ногами
       const ring=new THREE.Mesh(new THREE.RingGeometry(0.40,0.52,20),
         new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.5, side:THREE.DoubleSide}));
@@ -6728,6 +6737,20 @@ function allyTick(dt){
     a.auraRing.material.color.setHex(c);
     a.auraRing.material.opacity=0.35+0.2*Math.sin(performance.now()/(a.mode==='mad'?110:420));
     a.auraRing.rotation.z += dt*(a.mode==='mad'?3.2:0.7);
+    if(a.mentorOrb){                                    // (07-24e) власна анімація — не бойова
+      const jitter=a.mode==='mad'?1:0, sp=performance.now()/(a.mode==='mad'?260:900);
+      a.mentorOrb.position.y=2.35+Math.sin(sp)*0.10 + (jitter?(Math.random()-0.5)*0.08:0);
+      a.mentorOrb.rotation.y+=dt*(a.mode==='mad'?4.5:1.1);
+      a.mentorOrb.rotation.x+=dt*0.6;
+      a.mentorOrb.material.color.setHex(c);
+      a.mentorOrb.material.opacity=0.75+0.2*Math.sin(sp*2.3);
+      const sc=1+Math.sin(sp*1.7)*0.06; a.mentorOrb.scale.set(sc,sc,sc);
+    }
+    if(a.mentorCloak){                                  // повільне гойдання «на вітрі»
+      a.mentorCloak.rotation.x=Math.sin(performance.now()/1100)*0.05 - 0.03;
+      a.mentorCloak.rotation.z=Math.sin(performance.now()/1400+1)*0.04;
+    }
+    if(a.mentorCrest) a.mentorCrest.rotation.z=Math.sin(performance.now()/800)*0.06;
   } }catch(e){}
   a.atkT=(a.atkT||0)-dt;
   const foes=phantoms.filter(p=>p!==a && !p.dead && !p.ally);
