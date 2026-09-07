@@ -1619,6 +1619,7 @@ function updateStanceAndCamera(dt){
         blip(180,0.12,'sawtooth',0.18); logE('ВЫПАД, длина='+player.charge.toFixed(1));
       }
       addExhaustion(player, 14*W.w/5);
+      try{ mentorEmit('PLAYER_SWUNG'); }catch(e){}      // (07-24)
     }
     player.charge=1;
   }
@@ -1745,6 +1746,7 @@ function startClinch(foe){
   clinch.lockZ = worldZ(clamp(tip.y,0,12));
   showBanner('⚡ КЛІНЧ — ПОВЕРНИ ТЕЛЕФОН У ТОЧКУ МЕЧА','#a78bfa');
   logE('КЛІНЧ старт, lockYaw='+Math.round(clinch.lockYaw));
+  try{ mentorEmit('PLAYER_ENTERED_CLINCH'); }catch(e){}   // (07-24)
   doFlash('#a78bfa');
   emitSparks(clinch.lockX, clinch.lockY, clinch.lockZ, '#c4a8ff', 22, 4.2);
   // звонкий «лязг» столкновения клинков (две ноты)
@@ -1763,6 +1765,10 @@ function startClinch(foe){
 }
 function endClinch(reason){
   logE('КЛІНЧ кінець: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
+  try{                                                    // (07-24) win/lose — за ТЗ п.10
+    if(reason==='parry'||reason==='presswin') mentorEmit('PLAYER_WON_CLINCH');
+    else if(reason==='disarm'||reason==='pressed') mentorEmit('PLAYER_LOST_CLINCH');
+  }catch(e){}
   clinch.active=false; clinch.delta=0;
   clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
   if(clinch.pvpPair){ NET.pressEnd(clinch.pvpPair); clinch.pvpPair=null; }
@@ -3356,6 +3362,7 @@ function handleDeath(av, dt){
       rollMobLoot(av);                          // 50% его оружие / 50% апгрейд
       player.score=(player.score||0)+1;
       logE('ФАНТОМ убито, рахунок '+player.score);
+      try{ if(av!==ALLY.ph) mentorEmit('PLAYER_KILLED_ENEMY'); }catch(e){}   // (07-24)
       showBanner('◌ ФАНТОМ РОЗВТІЛЕНО  +'+player.score,'#22c55e');
       blip(520,0.25,'sine',0.2);
       try{ if(window.TUT && TUT.active) TUT.onKill(av); }catch(e){}
@@ -3643,9 +3650,12 @@ function updatePhantoms(dt){
     if(!clinch.active && ai.burnCd<=0 && bladeCovers(ph, tgt.gx, tgt.gy)){
       const D=DIFF[botDiff];
       if(tgt.local && !player.dead){   // ВСЕГДА уязвим: потеря оружия ≠ неуязвимость (щит !disarmed убран)
+        if(typeof mentorIntercept==='function' && mentorIntercept(ph, D.dmg)){ ai.burnCd=D.cd; }   // (07-24)
+        else{
         damageTier(player, ph.tier, D.dmg); ai.burnCd=D.cd; doFlash('#ef4444'); buzz(50);
         emitSparks(worldX(player.gx), TIER_H*(0.6+ph.tier*0.7), worldZ(player.gy), '#ff5a5a', 14, 3.2);
         logE('фантом ріже гравця ярус '+ph.tier+' → HP '+Math.round(player.hp));
+        }
       }else if(!tgt.local){
         NET.sendHit(tgt.id, ph.tier, D.dmg, 'phantom'); ai.burnCd=D.cd;
       }
@@ -4082,7 +4092,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-23a · ТУТОРІАЛ ВЕДЕ ВЧИТЕЛЬ(репліки+показ прикладу+голос) · супутник-не-зникає';
+const BUILD_TAG='2026-07-24a · MENTOR(окрема архітектура: стани+черга+події+перехоплення+один-власник) · ТЗ п.1-20';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6571,6 +6581,80 @@ function allyDemoTick(dt){
   if(DEMO.t<=0){ DEMO.kind=null; try{ if(ALLY.ph) ALLY.ph._demoHome=null; }catch(e){} }
 }
 
+/* ── MENTOR: стейт-машина наставника (ТЗ п.1-20) ──────────────────────── */
+const MENTOR={ state:'SPAWN', arc:'wise', hpPct:1, interventionLevel:2, isBoss:false, _metOnce:false };
+const MSTATES=['SPAWN','INTRO','FOLLOW','GUIDE','WAIT','DEMONSTRATE','ASSIST',
+  'PROTECT','COMBAT','RETREAT','INJURED','DIALOGUE','PANIC','MAD','BOSS'];
+function mentorSetState(s, why){
+  if(MSTATES.indexOf(s)<0 || MENTOR.state===s) return;
+  const prev=MENTOR.state; MENTOR.state=s;
+  try{ logE('наставник: '+prev+' → '+s+(why?' ('+why+')':'')); }catch(e){}
+}
+/* Черга реплік (ТЗ п.9): один голос, кулдаун 3-5с; критичні йдуть повз чергу. */
+const MDQ={ cd:0, counts:{} };
+function mentorSay(text, opts){
+  opts=opts||{};
+  if(!text) return;
+  if(opts.critical){ allySayNow(text); MDQ.cd=1.2; return; }
+  if(MDQ.cd>0) return;                                 // не критичне — чекає свого кулдауна
+  allySay(text); MDQ.cd=3+Math.random()*2;              // 3–5с, за ТЗ
+}
+function mentorQueueTick(dt){ if(MDQ.cd>0) MDQ.cd-=dt; }
+/* Шина подій (ТЗ п.10-11): короткі репліки за подіями, не за таймером.
+   Працює лише під час навчання — щоб вільна гра не була балакучою (п.42-44). */
+const MEV={};
+function mentorOn(name, fn){ (MEV[name]=MEV[name]||[]).push(fn); }
+function mentorEmit(name, data){
+  if(!(window.TUT && (TUT.active||TUT.requested))) return;
+  const hs=MEV[name]; if(!hs) return;
+  MDQ.counts[name]=(MDQ.counts[name]||0)+1;
+  for(const fn of hs){ try{ fn(data, MDQ.counts[name]); }catch(e){} }
+}
+/* Перехоплення (ТЗ п.17,19-20): наставник між гравцем і ворогом бере частину
+   удару на себе. Ймовірність і поріг здоров'я залежать від arc/HP. */
+function mentorIntercept(mob, dmg){
+  try{
+    const a=ALLY.ph;
+    if(!a || a.dead || a.allyMad || MENTOR.isBoss || MENTOR.hpPct<=0.15) return false;
+    if(Math.abs(mob.gx-a.gx)+Math.abs(mob.gy-a.gy)>1) return false;
+    if(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy)>2) return false;   // має стояти між
+    const chance={wise:0.75,weak:0.4,dumb:0.2,mad:0}[a.mode]||0;
+    if(Math.random()>chance) return false;
+    const take=Math.max(1,Math.round(dmg*0.7));
+    a.hp=Math.max(1,(a.hp||a.maxHp||100)-take);
+    MENTOR.hpPct=clamp(a.hp/(a.maxHp||a.hp||1),0,1);
+    doFlash('#86efac'); blip(260,0.08,'triangle',0.14);
+    logE('наставник перехопив удар ('+take+') — HP '+Math.round(MENTOR.hpPct*100)+'%');
+    mentorEmit('PLAYER_DAMAGED',{who:'mentor',pct:MENTOR.hpPct});
+    mentorHealthGate();
+    return true;
+  }catch(e){ return false; }
+}
+function mentorHealthGate(){                             // пороги здоров'я, ТЗ п.19
+  if(MENTOR.hpPct<=0.15){ mentorSetState('RETREAT','hp≤15%'); mentorSay('Досить із мене…',{critical:true}); }
+  else if(MENTOR.hpPct<=0.30){ mentorSetState('RETREAT','hp≤30%'); mentorSay('Відступаю трохи.'); }
+  else if(MENTOR.hpPct<=0.60){ if(MENTOR.state==='FOLLOW') mentorSetState('INJURED','hp≤60%'); mentorSay('Тримаю…'); }
+}
+/* Єдиний власник (ТЗ п.62-63): перетворення на боса — явна функція,
+   а не побічний ефект. allyTick і phantom-AI більше не змагаються за тіло. */
+function promoteToBoss(){
+  const a=ALLY.ph; if(!a || a.allyMad) return;
+  a.allyMad=true; a.ally=false; a.mode='mad';
+  a.hp=Math.max(a.hp,320); a.maxHp=Math.max(a.maxHp||0,320); a.baseHue=0.02;
+  MENTOR.isBoss=true; mentorSetState('BOSS','R7 — зачищено');
+  showBanner('🔥 СУПУТНИК ЗБОЖЕВОЛІВ — він тепер ворог','#ef4444');
+  mentorSay('Шум забрав мене. Тепер бий — інакше поляжеш.',{critical:true});
+  logE('наставник: promoteToBoss() — єдиний власник AI (звичайний бос)');
+  blip(120,0.3,'sawtooth',0.16); buzz([0,90,60,90]);
+}
+/* Короткі репліки за подіями (ТЗ п.8: дія, не лекція) — лише в навчанні. */
+mentorOn('PLAYER_SWUNG', (d,n)=>{ if(n<=2) mentorSay(n===1?'Ось так.':'Ще раз, вільніше.'); });
+mentorOn('PLAYER_KILLED_ENEMY', ()=>mentorSay('Ти впорався сам.',{critical:true}));
+mentorOn('PLAYER_ENTERED_CLINCH', (d,n)=>{ if(n===1) mentorSay('Тримай точку клинка.'); });
+mentorOn('PLAYER_WON_CLINCH', ()=>mentorSay('Продавив! Так і далі.'));
+mentorOn('PLAYER_LOST_CLINCH', ()=>mentorSay('Не страшно. Ще раз.'));
+mentorOn('PLAYER_IDLE_TOO_LONG', ()=>mentorSay('Спробуй крок.'));
+
 /* ── СУПУТНИК ─────────────────────────────────────────────────────────── */
 const ALLY={ ph:null, mode:'wise', atkT:0, sayT:0 };
 function allyMode(R){
@@ -6594,8 +6678,11 @@ function allySpawn(R){
       ph.mesh.add(ring); ph.auraRing=ring;
     }catch(e){}
     ph.hp = ph.mode==='wise'?220 : ph.mode==='weak'?120 : ph.mode==='dumb'?70 : 300;
+    ph.maxHp=ph.hp;                                    // (07-24) планка для % здоров'я наставника
     ph.gx=clamp(player.gx+1,0,12); ph.gy=player.gy;
     phantoms.push(ph); ALLY.ph=ph; ALLY.mode=ph.mode;
+    MENTOR.arc=ph.mode; MENTOR.hpPct=1; MENTOR.isBoss=false;
+    mentorSetState(MENTOR._metOnce?'FOLLOW':'INTRO', 'з\'явився R'+R); MENTOR._metOnce=true;
     const t={wise:'🟢 СУПУТНИК: розумний — прикриє тебе',
              weak:'🟡 СУПУТНИК: слабне — користі мало',
              dumb:'🟠 СУПУТНИК: дурніє — його треба берегти',
@@ -6615,16 +6702,19 @@ function allyClear(){
     disposeAvatar(ALLY.ph); } }catch(e){}
   ALLY.ph=null;
 }
-function allyGoMad(){
-  const a=ALLY.ph; if(!a || a.allyMad) return;
-  a.allyMad=true; a.ally=false;                        // тепер це звичайний ворог — і бос
-  a.mode='mad'; a.hp=Math.max(a.hp,320); a.baseHue=0.02;
-  showBanner('🔥 СУПУТНИК ЗБОЖЕВОЛІВ — він тепер ворог','#ef4444');
-  allySayNow('Шум забрав мене. Тепер бий — інакше поляжеш.');
-  logE('супутник: перетворився на боса краю');
-  blip(120,0.3,'sawtooth',0.16); buzz([0,90,60,90]);
-}
+function allyGoMad(){ promoteToBoss(); }   // (07-24) стара назва лишається для сумісності викликів
 function allyTick(dt){
+  mentorQueueTick(dt);                                  // (07-24) кулдаун черги реплік
+  try{                                                   // сторож простою — лише в навчанні (п.30)
+    if(window.TUT && (TUT.active||TUT.requested) && !clinch.active){
+      const foesNow=phantoms.some(p=>p!==ALLY.ph && !p.dead && !p.ally);
+      if(!MENTOR._idle) MENTOR._idle={gx:player.gx,gy:player.gy,t:0};
+      if(foesNow && MENTOR._idle.gx===player.gx && MENTOR._idle.gy===player.gy){
+        MENTOR._idle.t+=dt;
+        if(MENTOR._idle.t>6){ mentorEmit('PLAYER_IDLE_TOO_LONG'); MENTOR._idle.t=0; }
+      } else { MENTOR._idle.gx=player.gx; MENTOR._idle.gy=player.gy; MENTOR._idle.t=0; }
+    }
+  }catch(e){}
   const a=ALLY.ph; if(!a || a.dead) return;
   try{ if(phantoms.indexOf(a)<0) phantoms.push(a); }catch(e){}   // (07-22c) не загубитись у списку
   try{                                                     // (07-22b) власний рендер щокадру
@@ -6648,6 +6738,7 @@ function allyTick(dt){
     const d=Math.abs(p.gx-a.gx)+Math.abs(p.gy-a.gy);
     return (!b || d<b.d) ? {p,d} : b; }, null).p;
   else tgt=player;
+  if(MENTOR.state==='RETREAT' && a.mode!=='mad') tgt=player;   // (07-24) поранений — не лізе в бій
   // рух до цілі (дурний — плутається)
   a.moveT=(a.moveT||0)-dt;
   if(a.moveT<=0){
@@ -6676,11 +6767,13 @@ function allyTick(dt){
           logE(a.mode==='mad'?'супутник б\'є ТЕБЕ':'супутник зачепив тебе випадково');
           if(player.hp<=0){ try{ killPlayer(); }catch(e){} }
         }
-      } else { damageTier(tgt,1,dmg); }
+      } else if(MENTOR.state!=='RETREAT'){
+        // (07-24) п.18: наставник помагає, але не зачищає арену за гравця —
+        // під час навчання його удар лише притримує ворога, шкоди не завдає.
+        if(!(window.TUT && (TUT.active||TUT.requested))) damageTier(tgt,1,dmg);
+      }
     }
   }
-  // правило недоторканності: поки живий бодай один моб — супутника не вбити
-  a.invuln = foes.length>0 && !a.allyMad;
 }
 
 /* ════ ЗЧЕПЛЕННЯ ГРАВЦІВ (07-20) ═════════════════════════════════════════ */
