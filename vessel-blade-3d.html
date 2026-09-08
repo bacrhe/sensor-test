@@ -4092,7 +4092,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-24e · НАСТАВНИК: власний силует+анімація спокою(кристал·плащ·гребінь) · ТЗ п.64';
+const BUILD_TAG='2026-07-25a · ПРОЛОГ(чорний екран·тиша→гул·наставник з\'являється після) · ТЗ п.1-6';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4950,7 +4950,7 @@ $('btnReq').addEventListener('click', async ()=>{
     started=true; last=0;
     applyMode();
     try{
-      if(window.TUT && TUT.requested) TUT.begin();
+      if(window.TUT && TUT.requested) runPrologueIntro(()=>TUT.begin());   // (07-25a)
       else if(window.__devMode==='host'){               // (07-17h) одразу створити тіло для двох рук
         equalizerOn=false; try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
         if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
@@ -5057,6 +5057,62 @@ function tutHint(txt){                                  // (07-21b) вчител
     }
   }catch(e){}
   tutHint_orig(txt);
+}
+
+// ── PROLOGUE (07-25a): вступна послідовність, ТЗ п.1 ──
+const PROLOGUE={ state:'IDLE', done:true, veil:null, gain:null, osc:null, osc2:null };
+const PSTATES=['PROLOGUE_START','INITIATION','FIRST_AWAKENING','MENTOR_APPEARS','MENTOR_CONTACT'];
+function prologueSetState(s){
+  if(PSTATES.indexOf(s)<0 || PROLOGUE.state===s) return;
+  PROLOGUE.state=s; try{ logE('пролог: → '+s); }catch(e){}
+}
+function prologueVeil(){
+  if(!PROLOGUE.veil){
+    PROLOGUE.veil=document.createElement('div');
+    PROLOGUE.veil.style.cssText='position:fixed;inset:0;background:#000;z-index:200;'+
+      'opacity:0;pointer-events:none;transition:opacity 1.2s ease';
+    document.body.appendChild(PROLOGUE.veil);
+  }
+  return PROLOGUE.veil;
+}
+function prologueSwellStart(){                       // тиха низька гуде, наростає (ТЗ п.2-3)
+  try{
+    if(!AC) return;
+    const g=AC.createGain(); g.gain.value=0.0001; g.connect(master||AC.destination);
+    const o1=AC.createOscillator(); o1.type='sine'; o1.frequency.value=52;   // далекий низ
+    const o2=AC.createOscillator(); o2.type='sine'; o2.frequency.value=140;  // простір над ним
+    const g2=AC.createGain(); g2.gain.value=0.35;
+    o1.connect(g); o2.connect(g2); g2.connect(g);
+    o1.start(); o2.start();
+    const t=AC.currentTime;
+    g.gain.linearRampToValueAtTime(0.05, t+2.0);      // майже тиша → слабкий шум
+    g.gain.linearRampToValueAtTime(0.09, t+3.4);      // → просторовий фон
+    g.gain.linearRampToValueAtTime(0.0001, t+5.6);    // згасає перед голосом наставника
+    PROLOGUE.gain=g; PROLOGUE.osc=o1; PROLOGUE.osc2=o2;
+    setTimeout(()=>{ try{ o1.stop(); o2.stop(); }catch(e){} }, 6200);
+  }catch(e){}
+}
+function runPrologueIntro(cb){
+  PROLOGUE.done=false;                                // (07-25a) наставник почекає — його ще не видно
+  const veil=prologueVeil();
+  prologueSetState('PROLOGUE_START');
+  veil.style.transition='none'; veil.style.opacity='1'; veil.offsetHeight; veil.style.transition='opacity 1.2s ease';
+  setTimeout(()=>{
+    prologueSetState('INITIATION'); prologueSwellStart();
+  }, 200);
+  setTimeout(()=>{
+    prologueSetState('FIRST_AWAKENING');              // «далекий об'єкт» — ще тиша, ще темрява
+    try{ blip(220,0.18,'sine',0.06); }catch(e){}       // ледь чутний віддалений сигнал (п.6)
+  }, 2600);
+  setTimeout(()=>{
+    prologueSetState('MENTOR_APPEARS');
+    PROLOGUE.done=true;                               // тепер супутник має право з'явитись
+    veil.style.opacity='0';
+  }, 4200);
+  setTimeout(()=>{
+    prologueSetState('MENTOR_CONTACT');
+    try{ cb(); }catch(e){}
+  }, 5500);
 }
 
 // ── СТАН ТУТОРІАЛУ ──
@@ -6665,6 +6721,7 @@ function allyMode(R){
 }
 function allySpawn(R){
   try{
+    if(typeof PROLOGUE!=='undefined' && !PROLOGUE.done) return;   // (07-25a) ще темрява — рано
     allyClear();
     if(!ADV.on || mode!=='fighter') return;
     const ph=makePhantom(1,'fighter');
