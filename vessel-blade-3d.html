@@ -4092,7 +4092,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-07-25a · ПРОЛОГ(чорний екран·тиша→гул·наставник з\'являється після) · ТЗ п.1-6';
+const BUILD_TAG='2026-07-26c · ТАТАМІ-СЦЕНАРІЙ(без 1/7...7/7, один ворог, гравець вбиває сам) · ТЗ п.2,9-13';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4873,7 +4873,8 @@ function frame(now){
   sampleT -= dt;
   if(sampleT<=0){
     sampleT = 2.0;
-    if(mode==='fighter'){
+    if(window.TUT && (TUT.active||TUT.requested)){ /* (07-25b) татамі веде свій лог, не цей */ }
+    else if(mode==='fighter'){
       const ph = phantoms.filter(p=>!p.dead && !p.ally).sort((a,b)=>(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy))-(Math.abs(b.gx-player.gx)+Math.abs(b.gy-player.gy)))[0];
       const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомів немає';
       logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
@@ -4950,7 +4951,7 @@ $('btnReq').addEventListener('click', async ()=>{
     started=true; last=0;
     applyMode();
     try{
-      if(window.TUT && TUT.requested) runPrologueIntro(()=>TUT.begin());   // (07-25a)
+      if(window.TUT && TUT.requested) runPrologueIntro(()=>runTatamiScript());   // (07-26c) новий сценарій
       else if(window.__devMode==='host'){               // (07-17h) одразу створити тіло для двох рук
         equalizerOn=false; try{ $('mEq').textContent='⚖ РІВНОВАГА: ВИМК'; }catch(e){}
         if(!ADV.on) setTimeout(()=>{ try{ $('mAdv').click(); }catch(e){} }, 400);
@@ -5059,12 +5060,23 @@ function tutHint(txt){                                  // (07-21b) вчител
   tutHint_orig(txt);
 }
 
+// ── ТАТАМІ: власний шар логу, окремий словник (за задумом автора) ──
+const TAT={ t0:0, stage:'idle', _mvI:null };
+function tatami(tag, text){
+  try{
+    const rel=TAT.t0 ? ((Date.now()-TAT.t0)/1000).toFixed(1) : '0.0';
+    logE('ТАТАМІ +'+rel+'с · '+tag+': '+text);
+  }catch(e){}
+}
 // ── PROLOGUE (07-25a): вступна послідовність, ТЗ п.1 ──
 const PROLOGUE={ state:'IDLE', done:true, veil:null, gain:null, osc:null, osc2:null };
 const PSTATES=['PROLOGUE_START','INITIATION','FIRST_AWAKENING','MENTOR_APPEARS','MENTOR_CONTACT'];
+const PLABEL={PROLOGUE_START:'починається',INITIATION:'перший звук',
+  FIRST_AWAKENING:'далекий сигнал',MENTOR_APPEARS:'простір відкривається',
+  MENTOR_CONTACT:'контакт із майстром'};
 function prologueSetState(s){
   if(PSTATES.indexOf(s)<0 || PROLOGUE.state===s) return;
-  PROLOGUE.state=s; try{ logE('пролог: → '+s); }catch(e){}
+  PROLOGUE.state=s; try{ tatami('ТАТАМІ', PLABEL[s]||s); }catch(e){}
 }
 function prologueVeil(){
   if(!PROLOGUE.veil){
@@ -5093,6 +5105,7 @@ function prologueSwellStart(){                       // тиха низька г
   }catch(e){}
 }
 function runPrologueIntro(cb){
+  TAT.t0=Date.now();                                  // (07-25b) власний годинник татамі, з нуля
   PROLOGUE.done=false;                                // (07-25a) наставник почекає — його ще не видно
   const veil=prologueVeil();
   prologueSetState('PROLOGUE_START');
@@ -6517,6 +6530,97 @@ function roomR(rx,ry){
 const RNAME={1:'Пробудження',2:'Маяк',3:'Ехо',4:'Душа',5:'Ритм',6:'Молнія',7:'Шум'};
 const WAVES={ left:0, total:0, R:1, betweenT:0 };
 
+function tatamiSpawnEnemy(){
+  const offs=[[3,2],[-3,2],[3,-2],[-3,-2],[2,3],[-2,-3],[4,0],[-4,0]];
+  let gx=null, gy=null;
+  for(const o of offs){
+    const tx=clamp(player.gx+o[0],1,11), ty=clamp(player.gy+o[1],1,11);
+    if(!obstacleAt(tx,ty)){ gx=tx; gy=ty; break; }
+  }
+  if(gx==null){ try{ const c=freeSpawnCell(player.gx,player.gy,null); gx=c[0]; gy=c[1]; }catch(e){ gx=player.gx; gy=player.gy; } }
+  const ph=makePhantom(0,'fighter'); ph.gx=gx; ph.gy=gy; ph.hp=70;
+  phantoms.push(ph);
+  return ph;
+}
+function tatamiEnemy(){
+  TAT.stage='enemy_wait';
+  tatami('ТАТАМІ','ворог наближається');
+  mentorSay('Стій.');
+  setTimeout(()=>{ if(TAT.stage==='enemy_wait') mentorSay('Слухай.'); }, 1800);
+  setTimeout(()=>{
+    if(TAT.stage!=='enemy_wait') return;
+    tatamiSpawnEnemy();
+    tatami('ТАТАМІ','ворог зʼявився');
+    mentorSay('Він попереду.');
+    setTimeout(()=>{ if(TAT.stage==='enemy_wait'){ TAT.stage='fight'; tatami('ТАТАМІ','бій: гравець сам');
+      mentorSay('Тепер ти.'); } }, 2600);
+  }, 3600);
+}
+function tatamiBlade(){
+  TAT.stage='blade';
+  tatami('ТАТАМІ','клинок: старт');
+  mentorSay('Тепер клинок.');
+  setTimeout(()=>{ if(TAT.stage==='blade') mentorSay('Наведи і вдар.'); }, 2600);
+}
+function tatamiMove2(){
+  TAT.stage='move2';
+  tatami('ТАТАМІ','рух: крок 2');
+  mentorSay('Ще один.');
+  const sx=player.gx, sy=player.gy;
+  clearInterval(TAT._mvI);
+  TAT._mvI=setInterval(()=>{
+    if(TAT.stage!=='move2'){ clearInterval(TAT._mvI); return; }
+    if(player.gx!==sx || player.gy!==sy){
+      clearInterval(TAT._mvI); tatami('ТАТАМІ','рух завершено'); mentorSay('Рухаєшся.');
+      setTimeout(tatamiBlade,1800);
+    }
+  },500);
+}
+function tatamiMove1(){
+  TAT.stage='move1';
+  tatami('ТАТАМІ','рух: крок 1');
+  mentorSay('Зроби один крок.');
+  const sx=player.gx, sy=player.gy; let idle=0, nudge=0;
+  const NUDGE=['Один крок.','Рушай.'];
+  clearInterval(TAT._mvI);
+  TAT._mvI=setInterval(()=>{
+    if(TAT.stage!=='move1'){ clearInterval(TAT._mvI); return; }
+    if(player.gx!==sx || player.gy!==sy){
+      clearInterval(TAT._mvI); tatami('ТАТАМІ','крок 1 готовий'); mentorSay('Добре.');
+      setTimeout(tatamiMove2,1800);
+      return;
+    }
+    idle+=0.5;
+    if(idle>=6 && nudge<NUDGE.length){ mentorSay(NUDGE[nudge]); nudge++; idle=0; }
+  },500);
+}
+function tatamiFinish(){
+  tatami('ТАТАМІ','завершення');
+  mentorSay('Ти впорався сам.',{critical:true});
+  setTimeout(()=>{
+    mentorSay('Тепер ти готовий.',{critical:true});
+    setTimeout(()=>{
+      mentorSay('Далі — сам.');
+      MENTOR.tatamiMode=false; TAT.stage='idle';
+      try{ if(window.TUT){ TUT.requested=false; } TUT.finish(1); }catch(e){}
+      tatami('ТАТАМІ','вільна гра');
+    }, 2400);
+  }, 2200);
+}
+function runTatamiScript(){
+  if(!window.TUT) return;
+  TUT.requested=false; TUT.active=true;               // існуючі гейти (mentorEmit/ensureTeacher) далі працюють
+  MENTOR.tatamiMode=true; TAT.stage='awaken';
+  if(!TAT.t0) TAT.t0=Date.now();
+  tatami('ТАТАМІ','старт сценарію (без хвиль)');
+  spawnPhantoms(0);
+  player.hp=100; player.stamina=100;
+  try{ if(ADV.on) $('mAdv').click(); }catch(e){}
+  allySpawn(1);
+  mentorSay('Не рухайся.');
+  setTimeout(()=>{ if(TAT.stage==='awaken') mentorSay('Ти мене чуєш?'); }, 2600);
+  setTimeout(()=>{ if(TAT.stage==='awaken') tatamiMove1(); }, 5200);
+}
 function ensureTeacher(){                        // (07-23) під час навчання вчитель обов'язковий
   try{
     if(!(window.TUT && (TUT.active||TUT.requested))) return;
@@ -6638,7 +6742,7 @@ function allyDemoTick(dt){
 }
 
 /* ── MENTOR: стейт-машина наставника (ТЗ п.1-20) ──────────────────────── */
-const MENTOR={ state:'SPAWN', arc:'wise', hpPct:1, interventionLevel:2, isBoss:false, _metOnce:false };
+const MENTOR={ state:'SPAWN', arc:'wise', hpPct:1, interventionLevel:2, isBoss:false, _metOnce:false, tatamiMode:false };
 const MSTATES=['SPAWN','INTRO','FOLLOW','GUIDE','WAIT','DEMONSTRATE','ASSIST',
   'PROTECT','COMBAT','RETREAT','INJURED','DIALOGUE','PANIC','MAD','BOSS'];
 function mentorSetState(s, why){
@@ -6648,20 +6752,39 @@ function mentorSetState(s, why){
 }
 /* Черга реплік (ТЗ п.9): один голос, кулдаун 3-5с; критичні йдуть повз чергу. */
 const MDQ={ cd:0, counts:{} };
+function ttsClean(t){
+  var q1=String.fromCharCode(8220), q2=String.fromCharCode(8221);
+  var q3=String.fromCharCode(8216), q4=String.fromCharCode(8217);
+  var s=String(t||'');
+  s=s.replace(/\u041a\u0420\u041e\u041a\s*\d+\s*\/\s*\d+/gi,'');
+  s=s.replace(/[\u{1F300}-\u{1FAFF}\u{2190}-\u{21FF}\u{2600}-\u{27BF}]/gu,'');
+  s=s.replace(/<[^>]+>/g,'');
+  s=s.split('"').join('').split(q1).join('').split(q2).join('').split(q3).join('').split(q4).join('');
+  s=s.replace(/[\u25AE\u25AF\u25BA\u25B6\u25C0\u00B7\u2022]/g,'');
+  s=s.replace(/\s+/g,' ').trim();
+  return s;
+}
 function mentorSay(text, opts){
   opts=opts||{};
+  text=ttsClean(text);
   if(!text) return;
-  if(opts.critical){ allySayNow(text); MDQ.cd=1.2; return; }
+  if(opts.critical){ allySayNow(text); MDQ.cd=1.2; tatami('МАЙСТЕР','"'+text+'"'); return; }
   if(MDQ.cd>0) return;                                 // не критичне — чекає свого кулдауна
   allySay(text); MDQ.cd=3+Math.random()*2;              // 3–5с, за ТЗ
+  tatami('МАЙСТЕР','"'+text+'"');                       // (07-25b) видно, що саме сказав
 }
 function mentorQueueTick(dt){ if(MDQ.cd>0) MDQ.cd-=dt; }
 /* Шина подій (ТЗ п.10-11): короткі репліки за подіями, не за таймером.
    Працює лише під час навчання — щоб вільна гра не була балакучою (п.42-44). */
 const MEV={};
 function mentorOn(name, fn){ (MEV[name]=MEV[name]||[]).push(fn); }
+const ELABEL={PLAYER_SWUNG:'махнув клинком',PLAYER_KILLED_ENEMY:'здолав ворога',
+  PLAYER_ENTERED_CLINCH:'зчепив клинки',PLAYER_WON_CLINCH:'продавив клінч',
+  PLAYER_LOST_CLINCH:'програв клінч',PLAYER_IDLE_TOO_LONG:'завмер'};
 function mentorEmit(name, data){
   if(!(window.TUT && (TUT.active||TUT.requested))) return;
+  if(name==='PLAYER_DAMAGED' && data && data.who==='mentor') tatami('МАЙСТЕР','прийняв удар за тебе');
+  else if(ELABEL[name]) tatami('ГРАВЕЦЬ', ELABEL[name]);
   const hs=MEV[name]; if(!hs) return;
   MDQ.counts[name]=(MDQ.counts[name]||0)+1;
   for(const fn of hs){ try{ fn(data, MDQ.counts[name]); }catch(e){} }
@@ -6670,6 +6793,7 @@ function mentorEmit(name, data){
    удару на себе. Ймовірність і поріг здоров'я залежать від arc/HP. */
 function mentorIntercept(mob, dmg){
   try{
+    if(MENTOR.tatamiMode) return false;                 // (07-26) татамі: наставник не б'ється
     const a=ALLY.ph;
     if(!a || a.dead || a.allyMad || MENTOR.isBoss || MENTOR.hpPct<=0.15) return false;
     if(Math.abs(mob.gx-a.gx)+Math.abs(mob.gy-a.gy)>1) return false;
@@ -6710,6 +6834,8 @@ mentorOn('PLAYER_ENTERED_CLINCH', (d,n)=>{ if(n===1) mentorSay('Тримай т�
 mentorOn('PLAYER_WON_CLINCH', ()=>mentorSay('Продавив! Так і далі.'));
 mentorOn('PLAYER_LOST_CLINCH', ()=>mentorSay('Не страшно. Ще раз.'));
 mentorOn('PLAYER_IDLE_TOO_LONG', ()=>mentorSay('Спробуй крок.'));
+mentorOn('PLAYER_SWUNG', ()=>{ if(TAT.stage==='blade'){ TAT.stage='blade_done'; tatami('ТАТАМІ','клинок: завершено'); setTimeout(tatamiEnemy,1800); } });
+mentorOn('PLAYER_KILLED_ENEMY', ()=>{ if(TAT.stage==='fight'){ TAT.stage='done'; setTimeout(tatamiFinish,2600); } });
 
 /* ── СУПУТНИК ─────────────────────────────────────────────────────────── */
 const ALLY={ ph:null, mode:'wise', atkT:0, sayT:0 };
@@ -6810,10 +6936,11 @@ function allyTick(dt){
     if(a.mentorCrest) a.mentorCrest.rotation.z=Math.sin(performance.now()/800)*0.06;
   } }catch(e){}
   a.atkT=(a.atkT||0)-dt;
-  const foes=phantoms.filter(p=>p!==a && !p.dead && !p.ally);
+  const foes = MENTOR.tatamiMode ? [] : phantoms.filter(p=>p!==a && !p.dead && !p.ally);   // (07-26)
   // ціль за режимом
   let tgt=null;
-  if(a.mode==='mad'){ tgt = (Math.random()<0.65) ? player : (foes[0]||player); }
+  if(MENTOR.tatamiMode){ tgt=player; }                  // (07-26) татамі: ніколи не йде на ворога
+  else if(a.mode==='mad'){ tgt = (Math.random()<0.65) ? player : (foes[0]||player); }
   else if(foes.length) tgt=foes.reduce((b,p)=>{
     const d=Math.abs(p.gx-a.gx)+Math.abs(p.gy-a.gy);
     return (!b || d<b.d) ? {p,d} : b; }, null).p;
@@ -6826,8 +6953,9 @@ function allyTick(dt){
     let dx=Math.sign((tgt.gx||6)-a.gx), dy=Math.sign((tgt.gy||6)-a.gy);
     const dPl=Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy);
     if(tgt===player){                                    // (07-22) НЕ лізе на клітинку гравця
-      if(dPl<=1){ a.moveT=0.5; return; }                 // достатньо близько — стоїмо
-      if(dPl<=2 && a.mode!=='mad'){ a.moveT=0.4; return; }
+      const _keepD = MENTOR.tatamiMode ? 3 : 1;           // (07-26) татамі тримає 3-4 клітинки
+      if(dPl<=_keepD){ a.moveT=0.5; return; }             // достатньо близько — стоїмо
+      if(dPl<=_keepD+1 && a.mode!=='mad'){ a.moveT=0.4; return; }
     }
     if(a.mode==='dumb' && Math.random()<0.45){ dx=Math.round(Math.random()*2-1); dy=Math.round(Math.random()*2-1); }
     const nx=clamp(a.gx+dx,0,12), ny=clamp(a.gy+dy,0,12);
