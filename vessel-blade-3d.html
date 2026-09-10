@@ -357,10 +357,11 @@ const sensor = {
   headConf: 1,    // надёжность ролл-независимого азимута (0 плашмя … 1 вертикально)
   yawRate: 0,     // °/с вокруг мировой вертикали (от гироскопа)
   chx: null, chz: null,   // сглаженный компас как вектор (нет рывка на 359°→0°)
-  haveGyro: false,  // (09-10) гироскоп реально шевелится — значит ведёт он
-  settleT: 0,       // (09-10) сколько секунд телефон стоит неподвижно
-  yawSrc: '—',      // (09-10) кто сейчас правит азимутом (для лога/HUD)
-  compBias: 0,      // (09-10) накопленное расхождение гиро↔компас (°)
+  haveGyro: false,  // гироскоп реально шевелится (только для диагностики/жестов)
+  spin: 0,          // |скорость вращения| °/с
+  headRaw: null,    // (09-10b) КУРС ИЗ ОРИЕНТАЦИИ УСТРОЙСТВА — единственный источник yaw
+  alphaRaw: null, betaRaw: null,   // сырые углы (диагностика, ТЗ п.9)
+  yawSrc: '—',      // ABSOLUTE | DEVICE — выбирается один раз при первом событии
 };
 let invertPitch = false;   // перемикач у меню (страховка)
 /* (07-20e) АВТОВІСЬ НАХИЛУ: телефон нахилили — гравітація каже, куди саме.
@@ -444,15 +445,52 @@ function onOrient(e){
     sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }   // елевація задньої кришки (fallback без грав.)
   if(e.gamma!=null) sensor.roll = e.gamma;
   if(e.alpha!=null && !isNaN(e.alpha)){
-    if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютний азимут активний (orientation.absolute)'); }
-    if(e.absolute===true || !haveAbsOrient){ sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true; }
+    if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; sensor.yawSrc='ABSOLUTE';
+      logE('СЕНСОР: джерело азимуту = ABSOLUTE (orientation.absolute)'); }
+    if(e.absolute===true || !haveAbsOrient){
+      // (09-10b, ТЗ п.3) ОСНОВНЕ і ЄДИНЕ джерело напряму клинка — орієнтація пристрою.
+      sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
+      sensor.headRaw = orientationHeading(e.alpha, e.beta);
+      sensor.compass = sensor.headRaw; sensor.haveCompass = true;
+      if(!haveAbsOrient && sensor.yawSrc!=='DEVICE'){ sensor.yawSrc='DEVICE';
+        logE('СЕНСОР: джерело азимуту = DEVICE (deviceorientation, відносний нуль)'); }
+    }
   }
 }
 function onOrientAbs(e){
   if(e.alpha!=null && !isNaN(e.alpha)){
-    if(!haveAbsOrient){ haveAbsOrient=true; logE('КОМПАС: абсолютний азимут активний (deviceorientationabsolute)'); }
-    sensor.compass = orientationHeading(e.alpha, e.beta); sensor.haveCompass = true;
+    if(!haveAbsOrient){ haveAbsOrient=true; sensor.yawSrc='ABSOLUTE';
+      logE('СЕНСОР: джерело азимуту = ABSOLUTE (deviceorientationabsolute)'); }
+    sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
+    sensor.headRaw = orientationHeading(e.alpha, e.beta);
+    sensor.compass = sensor.headRaw; sensor.haveCompass = true;
   }
+}
+/* ════ ЄДИНИЙ ФІЛЬТР НАПРЯМУ КЛИНКА (2026-09-10b, ТЗ п.3-8) ══════════════
+   Було: гіро-швидкість → інтегрування → власний gyro-yaw → корекція компасом
+   → ще одне згладжування. Кожна ланка додавала свою помилку, і разом вони
+   давали дрейф і ривки. Стало: беремо готовий курс з орієнтації пристрою і
+   проганяємо через ОДИН фільтр. Гіроскоп більше не накопичує кут — тому
+   нерухомий телефон не «уповзає» нікуди.                                   */
+const YAW_FILTER_K = 20;              // 1/с; τ≈50мс — тремтіння прибирає, лаг непомітний
+function sensorYawTick(dt){
+  if(sensor.headRaw==null) return;    // немає орієнтації (десктоп) — yaw правлять стрілки
+  sensor.yawFused = smoothAngle(sensor.yawFused, sensor.headRaw, clamp(YAW_FILTER_K*dt, 0, 1));
+}
+/* Діагностика сенсорів (ТЗ п.9, п.37) — тільки в лог, гравцю не показується. */
+let sensDiagT=0;
+function sensDiagTick(dt){
+  if(!(window.__vbSensLog || (typeof MENTOR!=='undefined' && MENTOR.tatamiMode))) return;
+  sensDiagT-=dt; if(sensDiagT>0) return; sensDiagT=4.0;
+  try{
+    const scr=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)||0);
+    logE('СЕНСОР · джерело='+(sensor.yawSrc||'—')+
+      ' · сирий α='+(sensor.alphaRaw==null?'—':Math.round(sensor.alphaRaw))+'°'+
+      ' · курс='+(sensor.headRaw==null?'—':Math.round(sensor.headRaw))+'°'+
+      ' · гіро='+Math.round(sensor.yawRate||0)+'°/с'+
+      ' · YAW='+Math.round(sensor.yawFused)+'° ('+DSYM[player.dirIdx]+')'+
+      ' · екран='+scr+'°');
+  }catch(e){}
 }
 function onMotion(e){
   const now = performance.now();
@@ -473,10 +511,9 @@ function onMotion(e){
   }
   // level (для отладки/HUD): 1 ровно, 0 вертикально
   sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
-  // ── АЗИМУТ: комплементарный фильтр (гироскоп + медленная коррекция компасом) ──
-  // Мгновенный, ГЛАДКИЙ поворот берём от гироскопа: omegaG — скорость вращения вокруг
-  // МИРОВОЙ вертикали = проекция угловой скорости на вектор гравитации. Устойчиво в любой
-  // ориентации и не шумит на сингулярности «плашмя» (в отличие от сырого компаса).
+  // ── ШВИДКІСТЬ ОБЕРТАННЯ (2026-09-10b, ТЗ п.4) ──
+  // Гіроскоп лишається ЛИШЕ вимірювачем швидкості: жестів, різких рухів, діагностики.
+  // Самостійним джерелом кута клинка він більше НЕ є — інтегрування прибрано.
   const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
   const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
   // γ-СЛАГАЕМОЕ ИСКЛЮЧЕНО: r.gamma — вращение вокруг ДЛИННОЙ оси телефона (крен запястья).
@@ -485,34 +522,9 @@ function onMotion(e){
   // по определению не крутит камеру; телесный поворот ловится через α/β-компоненты
   // гироскопа + γ-инвариантный компас (orientationHeading) добирает остальное.
   const omegaG=((r.beta||0)*cgx + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали, БЕЗ крена
-  sensor.yawRate=omegaG;
-  // 1) ГИРОСКОП — мгновенный отклик, работает при ЛЮБОМ наклоне (в т.ч. когда смотрим вниз на доску).
-  sensor.yawFused=wrap360(sensor.yawFused + YAW_GYRO_SIGN*omegaG*dt);
-  // 2) КОМПАС — ТОЛЬКО ОПОРА, НЕ ПОВОДЫРЬ (2026-09-10, ТЗ п.29-30).
-  //    Раньше коррекция была включена всегда и сильно (k≈12/с), а вектор компаса при
-  //    вращении шёл почти сырым (aC→0.95). Итог: во время поворота вокруг себя дёрганый
-  //    магнитометр боролся с гладким гироскопом — те самые рывки/подтягивание.
-  //    Теперь: КРУТИМ → правит один гироскоп (компас молчит); ОСТАНОВИЛИСЬ → компас
-  //    мягко (τ≈0.6с) снимает накопленный дрейф. Один фильтр, один хозяин в каждый момент.
-  const spin=Math.abs(omegaG);
-  if(!sensor.haveGyro && spin>8) sensor.haveGyro=true;      // гироскоп живой — ведёт он
-  sensor.settleT = spin>10 ? 0 : (sensor.settleT||0)+dt;    // покой копится, вращение обнуляет
-  if(sensor.compass!=null){
-    const cr=sensor.compass*Math.PI/180, cx=Math.sin(cr), cz=-Math.cos(cr);
-    // Вектор компаса сглажен ВСЕГДА сильно (при вращении — почти заморожен): дрожь
-    // магнитометра не должна попадать в азимут ни в каком режиме.
-    const aC = sensor.haveGyro ? lerp(0.14, 0.02, clamp(spin/60,0,1)) : 0.5;
-    sensor.chx = sensor.chx==null ? cx : lerp(sensor.chx, cx, aC);
-    sensor.chz = sensor.chz==null ? cz : lerp(sensor.chz, cz, aC);
-    const comp=wrap360(Math.atan2(sensor.chx,-sensor.chz)*180/Math.PI);
-    sensor.compBias=angDiff(comp, sensor.yawFused);
-    let kBase;
-    if(!sensor.haveGyro)      kBase=10.0;                              // нет гироскопа — ведёт компас
-    else if(spin>10)          kBase=0;                                 // ВРАЩЕНИЕ — компас не вмешивается
-    else                      kBase=1.8*clamp((sensor.settleT-0.25)/0.5,0,1);   // покой — медленная правка
-    if(kBase>0) sensor.yawFused=smoothAngle(sensor.yawFused, comp, clamp(kBase*dt,0,0.35));
-    sensor.yawSrc = !sensor.haveGyro ? 'компас' : (spin>10 ? 'гіро' : (kBase>0 ? 'гіро+правка' : 'гіро'));
-  } else sensor.yawSrc = sensor.haveGyro ? 'гіро' : '—';
+  sensor.yawRate=omegaG;                                   // тільки вимір, у yaw не потрапляє
+  sensor.spin=Math.abs(omegaG);
+  sensor.haveGyro = sensor.haveGyro || sensor.spin>8;
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
   sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
@@ -1805,6 +1817,16 @@ function endClinch(reason){
   try{                                                    // (07-24) win/lose — за ТЗ п.10
     if(reason==='parry'||reason==='presswin') mentorEmit('PLAYER_WON_CLINCH');
     else if(reason==='disarm'||reason==='pressed') mentorEmit('PLAYER_LOST_CLINCH');
+  }catch(e){}
+  try{                                             // (09-10b, ТЗ п.23) пауза після клінчу
+    const f=clinch.foe;
+    if(f && f.tatFirstEnemy && f.ai && !f.dead){
+      const pause=(reason==='disarm') ? 3.4 : 2.0;   // втратив меч — дай підняти і зрозуміти
+      f.ai.burnCd=Math.max(f.ai.burnCd||0, pause);
+      f.ai.swingT=Math.max(f.ai.swingT||0, pause);
+      f.tatBackoff=1;                                 // і крок назад — відновити дистанцію
+      logE('ТАТАМІ: ворог витримує паузу '+pause.toFixed(1)+'с після клінчу ('+reason+')');
+    }
   }catch(e){}
   clinch.active=false; clinch.delta=0;
   clinch.cd=0.9;   // окно на разойтись: клинки ещё перекрыты кадр спустя — без паузы клинч стартовал заново через 0.02с (лог: 5 подряд → disarm)
@@ -3690,7 +3712,11 @@ function updatePhantoms(dt){
       if(tgt.local && !player.dead){   // ВСЕГДА уязвим: потеря оружия ≠ неуязвимость (щит !disarmed убран)
         if(typeof mentorIntercept==='function' && mentorIntercept(ph, D.dmg)){ ai.burnCd=D.cd; }   // (07-24)
         else{
-        damageTier(player, ph.tier, D.dmg); ai.burnCd=D.cd; doFlash('#ef4444'); buzz(50);
+        damageTier(player, ph.tier, D.dmg);
+        // (09-10b, ТЗ п.22) навчальний ворог не рубає безперервною серією:
+        // після влучання — вікно, щоб гравець устиг зрозуміти і відповісти.
+        ai.burnCd = ph.tatFirstEnemy ? Math.max(D.cd, 1.5) : D.cd;
+        doFlash('#ef4444'); buzz(50);
         emitSparks(worldX(player.gx), TIER_H*(0.6+ph.tier*0.7), worldZ(player.gy), '#ff5a5a', 14, 3.2);
         logE('фантом ріже гравця ярус '+ph.tier+' → HP '+Math.round(player.hp));
         }
@@ -4130,7 +4156,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-10a · ЄДИНИЙ ВХІД startTutorial() · ТАТАМІ-STATE-MACHINE · 1 ворог, гравець убиває сам · наставник-спостерігач · TTS-черга · gyro-first yaw · ТЗ п.41-52';
+const BUILD_TAG='2026-09-10b · YAW = ОРІЄНТАЦІЯ ПРИСТРОЮ (один фільтр, без гіро-інтегрування і компасної корекції) · ВИДИМІСТЬ ворога — єдиний власник · навчальний ворог із паузами · ТЗ 09-10b п.2-23';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4766,6 +4792,8 @@ function frame(now){
   dt2=dt;
   last=now;
 
+  sensorYawTick(dt);        // (09-10b) ЄДИНИЙ фільтр напряму клинка — до всієї ігрової логіки
+
   // клавиатурная отладка (если нет сенсоров под рукой)
   if(keys['ArrowLeft']) sensor.yawFused=wrap360(sensor.yawFused-120*dt);
   if(keys['ArrowRight']) sensor.yawFused=wrap360(sensor.yawFused+120*dt);
@@ -4896,9 +4924,9 @@ function frame(now){
     ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
     updateAvatarMesh(ph, now);
     updateBlade(ph);
-    if(ph._hidden){                       // (09-10) ТЗ п.25: спершу чути, потім бачити
-      try{ if(ph.mesh) ph.mesh.visible=false; if(ph.blade) ph.blade.visible=false; }catch(e){}
-    }
+    // (09-10b, ТЗ п.14-18) ВИДИМІСТЬ навчального ворога вирішує ОДНА функція,
+    // і робить це ОСТАННЬОЮ в кадрі — після AI, моделі та клинка, перед render.
+    if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
   renderRemotes(now, dt);              // чужие игроки
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
@@ -5455,6 +5483,7 @@ setInterval(()=>{
   try{ allyTick(0.16); }catch(e){}
   try{ sayTick(0.16); }catch(e){}
   try{ tatamiTick(0.16); }catch(e){}      // (09-10) сценарій навчання — подієвий, не таймерний
+  try{ sensDiagTick(0.16); }catch(e){}    // (09-10b) діагностика сенсорів у лог (ТЗ п.9)
   try{ allyDemoTick(0.16); }catch(e){}
   try{ ensureTeacher(); }catch(e){}
   try{ pairFollow(); }catch(e){}
@@ -6685,8 +6714,12 @@ function tatamiSpawnEnemy(){
   const ph=makePhantom(0,'fighter');
   window.__tatSpawn=false;
   ph.gx=gx; ph.gy=gy; ph.hp=70; ph.maxHp=70;
-  ph._hidden=true;                                // ТЗ п.25: спершу чути, потім бачити
+  ph.tatFirstEnemy=true;                          // єдиний навчальний ворог — своя логіка видимості
+  ph.hiddenUntilDetected=true;                    // ТЗ п.12,20: спершу лише звук
+  ph._visLog=0;
   phantoms.push(ph);
+  try{ tatEnemyVisibility(ph); }catch(e){}
+  logE('ВОРОГ навчання: створений ('+gx+','+gy+') · приховано до виявлення · HP 70');
   TAT.enemy=ph; TAT.pingT=0; TAT.seenT=0; botDiff=0;
   tatami('ТАТАМІ','ворог 1/1 у ('+gx+','+gy+') — поки лише звук');
   logE('ТАТАМІ: ворогів на арені 1 (більше не буде — ТЗ п.44)');
@@ -6715,10 +6748,31 @@ function tatPing(){                               // серцебиття вор
   }catch(err){}
   if(d<=1){ try{ buzz([0,16]); }catch(err){} }    // впритул — ще й тілом
 }
+/* ЄДИНИЙ ВЛАСНИК ВИДИМОСТІ (ТЗ п.14-19). Викликається щокадру для навчального
+   ворога останнім — тож будь-яке чуже visible=false (respawn у пригоді, applyMode,
+   старі гілки туторіалу) вже не встигає його сховати. Стан обнаружения
+   (hiddenUntilDetected) і стан видимості розділені: другий є наслідком першого. */
+function tatEnemyVisibility(ph){
+  if(!ph) return;
+  const want = !ph.hiddenUntilDetected && !ph.dead;
+  try{
+    if(ph.mesh) ph.mesh.visible = want;
+    if(ph.blade) ph.blade.visible = want && !ph.disarmed;
+  }catch(e){}
+  if(ph._visLog>0){                                   // ТЗ п.19: кілька кадрів після виявлення
+    ph._visLog--;
+    try{ logE('ВИДИМІСТЬ ворога (перед render): приховано='+(!!ph.hiddenUntilDetected)+
+      ' mesh.visible='+(ph.mesh?ph.mesh.visible:'—')+
+      ' blade.visible='+(ph.blade?ph.blade.visible:'—')+
+      ' сегментів='+(ph.blade?ph.blade.count:'—')); }catch(e){}
+  }
+}
 function tatRevealEnemy(why){
-  const e=TAT.enemy; if(!e || !e._hidden) return;
-  e._hidden=false;
-  tatami('ТАТАМІ','ворога виявлено ('+why+')');
+  const e=TAT.enemy; if(!e || !e.hiddenUntilDetected) return;
+  e.hiddenUntilDetected=false;                        // знімається НАЗАВЖДИ (ТЗ п.15,39)
+  e._visLog=6;
+  tatEnemyVisibility(e);                              // показати вже цього кадру
+  tatami('ТАТАМІ','ворога виявлено ('+why+') → модель і клинок РОЗКРИТО');
   try{ mentorEmit('LOOKED_AT_TARGET'); }catch(err){}
   try{ blip(660,0.12,'sine',0.16); buzz([0,40]); }catch(err){}
   if(tatIs('FIRST_ENEMY')){
@@ -6841,6 +6895,17 @@ function tatamiTick(dt){
     }
   }catch(e){}
 
+  // крок назад після клінчу — щоб бій не був суцільним «впритул»
+  try{
+    const e0=TAT.enemy;
+    if(e0 && e0.tatBackoff && !e0.dead){
+      e0.tatBackoff=0;
+      const dx=Math.sign(e0.gx-player.gx)||1, dy=Math.sign(e0.gy-player.gy)||1;
+      const nx=clamp(e0.gx+dx,0,12), ny=clamp(e0.gy+dy,0,12);
+      if(!obstacleAt(nx,ny) && !(nx===player.gx&&ny===player.gy)){ e0.gx=nx; e0.gy=ny; }
+    }
+  }catch(e){}
+
   if(tatIs('MOVEMENT')){
     if(player.gx!==TAT.mvX || player.gy!==TAT.mvY){
       TAT.mvX=player.gx; TAT.mvY=player.gy; TAT.moveDone=(TAT.moveDone||0)+1;
@@ -6870,7 +6935,7 @@ function tatamiTick(dt){
     if(e && !e.dead){
       TAT.pingT=(TAT.pingT||0)-dt;
       if(TAT.pingT<=0){ tatPing(); TAT.pingT=clamp(0.30+tatEnemyDist()*0.16, 0.30, 1.5); }
-      if(e._hidden){
+      if(e.hiddenUntilDetected){
         const look=Math.abs(angDiff(tatEnemyBearing(), (typeof aimYawEff==='function')?aimYawEff():sensor.yawFused));
         if(look<32){ TAT.seenT=(TAT.seenT||0)+dt; if(TAT.seenT>0.5) tatRevealEnemy('гравець навівся на звук'); }
         else TAT.seenT=Math.max(0,(TAT.seenT||0)-dt*0.5);
@@ -6886,11 +6951,15 @@ function tatamiTick(dt){
 function tatDiag(why){
   try{
     const foes=phantoms.filter(p=>p && !p.dead && !p.ally).length;
-    logE('ДІАГ '+(why||'')+' · вхід=startTutorial · татамі='+(MENTOR.tatamiMode?'ON':'OFF')+
+    const e=TAT.enemy;
+    logE('ДІАГ '+(why||'')+' · сенсор='+(sensor.yawSrc||'—')+' yaw='+Math.round(sensor.yawFused)+'°'+
+      ' · ворог='+(e?('є, '+(e.hiddenUntilDetected?'ПРИХОВАНИЙ':'РОЗКРИТИЙ')+
+        ', mesh.visible='+(e.mesh?e.mesh.visible:'—')):'немає')+
+      ' · вхід=startTutorial · татамі='+(MENTOR.tatamiMode?'ON':'OFF')+
       ' · крок='+TAT.stage+' · старий 1/7…7/7='+((window.TUT&&TUT.legacyOK)?'ДОЗВОЛЕНО':'BLOCKED')+
       ' · бій наставника=OFF · ворогів='+foes+
       ' · наставник='+(ALLY.ph?('є, HP '+Math.round((MENTOR.hpPct||1)*100)+'%'):'немає')+
-      ' · yaw='+Math.round(sensor.yawFused)+'° ('+(sensor.yawSrc||'—')+')'+
+      ' · убито гравцем='+(TAT.kills||0)+
       ' · TTS='+(ttsBusy()?'говорить':'тиша')+'/'+TTSQ.q.length);
   }catch(e){}
 }
