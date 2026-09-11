@@ -1808,7 +1808,9 @@ function updateBlade(av){
   const wname = av===player ? playerWpn : av.wpn;
   const wst = wname && WEAPON_FX[wname];
   if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
-  const H = handInfo(av);
+  const H0 = handInfo(av);
+  // (09-12b) клинок гравця ЗУПИНЯЄТЬСЯ на поверхні: візуал вкорочується до точки контакту
+  const H = (av===player && GAMEC.playerClamp<1) ? Object.assign({},H0,{tipX:H0.hx+(H0.tipX-H0.hx)*GAMEC.playerClamp,tipY:H0.hy+(H0.tipY-H0.hy)*GAMEC.playerClamp,tipZ:H0.hz+(H0.tipZ-H0.hz)*GAMEC.playerClamp}) : H0;
   const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;   // вектор клинка
   const blen = Math.hypot(bx,by,bz)||1;
   const segs = clamp(Math.round(blen/(CELL*0.9)), 1, 6);  // плотное заполнение без разрывов
@@ -4407,7 +4409,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-12a · VB_HAPTIC · SWORD_CONTACT (тиск/ковзання/удар/підлога) · двуручний хват IK · нова COMBAT_READY + DRAW_BACK/OVERHEAD/THRUST/SIDE/LOW · LIVE SENSOR · RECORD/PLAY/SAVE/EXPORT MOTION · CHARACTER & STRUCTURE LAB (ріг, пози, анімації, hitbox, клітини, контакт меча, sensor preview) · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
+const BUILD_TAG='2026-09-12b · COLLISION FOUNDATION 2: SWORD_COLLIDERS (підлога/стіни/стеля/структури/манекен), swept-контакт, STOP+SLIDE у грі та LAB, калібровка вібро · VB_HAPTIC · SWORD_CONTACT (тиск/ковзання/удар/підлога) · двуручний хват IK · нова COMBAT_READY + DRAW_BACK/OVERHEAD/THRUST/SIDE/LOW · LIVE SENSOR · RECORD/PLAY/SAVE/EXPORT MOTION · CHARACTER & STRUCTURE LAB (ріг, пози, анімації, hitbox, клітини, контакт меча, sensor preview) · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5119,6 +5121,7 @@ function frame(now){
       setSwordSound(worldX(clamp(tip.x,0,12)), TIER_H, worldZ(clamp(tip.y,0,12)), lvl, 120 + sensor.speed*6);
     }
     updateAvatarMesh(player, now);
+    try{ gameSwordContact(dt); }catch(e){}            // (09-12b) стіна/підлога/стеля: STOP + SLIDE + haptic + звук
     if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
     else updateBlade(player);
   }else if(mode==='spectator'){
@@ -5219,7 +5222,7 @@ function frame(now){
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  yaw-джерело ${sensor.yawSrc||'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead && !p.ally).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}`;
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}${(typeof VB_HAPTIC!=='undefined'&&VB_HAPTIC.lastMs)?(' '+VB_HAPTIC.lastMs+'мс/'+VB_HAPTIC.lastRet):''}  клинок:${(typeof SWORD_CONTACT!=='undefined')?SWORD_CONTACT.state('player').replace('CONTACT_',''):'—'}`;
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
@@ -5235,6 +5238,122 @@ function frame(now){
 }
 
 
+
+/* ═══════════ SWORD_COLLISION (2026-09-12b) — COLLISION FOUNDATION 2 ═══════════
+   Один реєстр колайдерів (FLOOR · WALL · CEILING · STRUCTURE · MANNEQUIN · SOLID),
+   один swept-тест «попередній клинок → поточний», один SWORD_CONTACT, одна
+   передача у VB_HAPTIC / CONTACT_AUDIO. І гра, і лабораторія викликають те саме. */
+const SWORD_COLLIDERS={ scopes:{}, set(scope,list){ this.scopes[scope]=list; }, get(scope){ return this.scopes[scope]||[]; },
+  make(id,type,surfaceType,min,max){ return {id,type,surfaceType,box:new THREE.Box3(new THREE.Vector3(min[0],min[1],min[2]),new THREE.Vector3(max[0],max[1],max[2]))}; } };
+window.SWORD_COLLIDERS=SWORD_COLLIDERS;
+/* slab-тест: перша точка входу відрізка a→b в AABB. Повертає {t,p,n}; n — нормаль грані входу. */
+function segBoxHit(a,b,box){
+  const d={x:b.x-a.x,y:b.y-a.y,z:b.z-a.z}; let tmin=0,tmax=1,axis=null,sign=0;
+  for(const k of ['x','y','z']){
+    if(Math.abs(d[k])<1e-9){ if(a[k]<box.min[k]||a[k]>box.max[k]) return null; continue; }
+    const inv=1/d[k]; let t1=(box.min[k]-a[k])*inv, t2=(box.max[k]-a[k])*inv, sg=-1;
+    if(t1>t2){ const tt=t1; t1=t2; t2=tt; sg=1; }
+    if(t1>tmin){ tmin=t1; axis=k; sign=sg; }
+    if(t2<tmax) tmax=t2;
+    if(tmin>tmax) return null;
+  }
+  const p=new THREE.Vector3(a.x+d.x*tmin,a.y+d.y*tmin,a.z+d.z*tmin);
+  const n=new THREE.Vector3();
+  if(axis) n[axis]=sign;
+  else { // руків'я вже всередині об'єму — нормаль до найближчої грані
+    const dd=[p.x-box.min.x,box.max.x-p.x,p.y-box.min.y,box.max.y-p.y,p.z-box.min.z,box.max.z-p.z];
+    const i=dd.indexOf(Math.min.apply(null,dd)); n.set(...[[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]][i]);
+  }
+  return {t:tmin,p,n};
+}
+/* sweep: клинок не перестрибує тонку стіну між кадрами — перевіряємо проміжні положення */
+function sweepBladeContact(pA,pB,a,b,colliders,steps){
+  steps=steps||4; let best=null;
+  for(let si=1;si<=steps;si++){
+    const u=si/steps, A=pA.clone().lerp(a,u), B=pB.clone().lerp(b,u);
+    for(const c of colliders){ const h=segBoxHit(A,B,c.box); if(h && (!best||h.t<best.t)) best={t:h.t,p:h.p,n:h.n,c,u}; }
+    if(best) break;
+  }
+  return best;
+}
+const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRESSURE_MS:450, LOG_MS:250, IMPACT_REPEAT_MS:300},
+  step(id, gripW, tipW, dt, colliders, opt){
+    opt=opt||{};
+    const S=this.blades[id]||(this.blades[id]={prevA:null,prevB:null,prevTip:null,contacts:{},state:'FREE',last:null});
+    const vel = S.prevTip ? tipW.clone().sub(S.prevTip).multiplyScalar(1/Math.max(dt,0.001)) : new THREE.Vector3();
+    // спершу поточне положення; sweep між кадрами — лише коли контакту ще не було
+    // (інакше вихід із поверхні хибно читається як новий дотик)
+    let hit=sweepBladeContact(gripW,tipW,gripW,tipW,colliders,1);
+    if(!hit && S.state==='FREE' && S.prevA) hit=sweepBladeContact(S.prevA,S.prevB,gripW,tipW,colliders,4);
+    S.prevA=gripW.clone(); S.prevB=tipW.clone(); S.prevTip=tipW.clone();
+    if(!hit){ this.release(id,opt); S.state='FREE'; S.last=null; return null; }
+    const {t,p,n,c}=hit, len=gripW.distanceTo(tipW);
+    const nS=vel.dot(n), tV=vel.clone().sub(n.clone().multiplyScalar(nS)), tS=tV.length();
+    const normalSpeed=Math.max(0,-nS), tangentialSpeed=tS, relativeSpeed=vel.length();
+    const depth=(1-t)*len;                                          // скільки клинка «хотіло» увійти
+    const pressure=clamp(depth*2.2+normalSpeed*0.25,0,1);
+    const bladeDir=tipW.clone().sub(gripW).normalize();
+    const angle=Math.acos(clamp(Math.abs(bladeDir.dot(n)),0,1))*180/Math.PI;   // 0° — прямо в поверхню, 90° — уздовж
+    const edgeAngle=(opt.edge&&tS>0.2)?Math.acos(clamp(Math.abs(opt.edge.dot(tV.clone().normalize())),0,1))*180/Math.PI:0;
+    const impulse=normalSpeed*0.35+depth*0.6;
+    const correction=n.clone().multiplyScalar(depth);              // виштовхування з поверхні: V - N·(V·N)
+    const key=c.id, was=S.contacts[key], now=performance.now();
+    let ev;
+    if(!was){ ev = normalSpeed>this.cfg.IMPACT_NORMAL ? 'IMPACT' : 'CONTACT_START'; S.contacts[key]={t:now,pT:0,logT:0}; }
+    else { ev = tangentialSpeed>this.cfg.SLIDE_TANGENT ? 'CONTACT_SLIDE' : 'CONTACT_PRESSURE'; if(normalSpeed>this.cfg.IMPACT_NORMAL*1.35 && now-was.t>this.cfg.IMPACT_REPEAT_MS) ev='IMPACT'; }
+    for(const k of Object.keys(S.contacts)) if(k!==key) this._end(S,k,opt);
+    const CT={id,object:key,type:c.type,surfaceType:c.surfaceType,position:p,normal:n,relativeSpeed,normalSpeed,tangentialSpeed,impulse,pressure,angle,edgeAngle,depth,f:t,
+      preState:S.state,postState:ev,correction,collider:c};
+    S.state=ev; S.last=CT;
+    const H={object:key,surfaceType:c.surfaceType,speed:relativeSpeed,pressure,impulse,source:opt.source||id};
+    const A={surfaceType:c.surfaceType,x:p.x,y:p.y,z:p.z,speed:relativeSpeed,pressure};
+    if(ev==='IMPACT'){ VB_HAPTIC.play('HAPTIC_IMPACT',Object.assign({intensity:clamp(normalSpeed/6+impulse*0.2,0.3,1)},H)); CONTACT_AUDIO.play('IMPACT',A); }
+    else if(ev==='CONTACT_START'){ VB_HAPTIC.play('HAPTIC_CONTACT_START',Object.assign({intensity:clamp(0.25+normalSpeed*0.3,0.25,1)},H)); CONTACT_AUDIO.play('CONTACT_START',A); }
+    else if(ev==='CONTACT_SLIDE'){ VB_HAPTIC.play('HAPTIC_CONTACT_SLIDE',Object.assign({intensity:clamp(tangentialSpeed/3,0.1,1)},H)); CONTACT_AUDIO.play('CONTACT_SLIDE',Object.assign({},A,{speed:tangentialSpeed})); }
+    else { if(pressure>0.08 && now-(was.pT||0)>this.cfg.PRESSURE_MS){ was.pT=now; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',Object.assign({intensity:pressure},H)); CONTACT_AUDIO.play('CONTACT_PRESSURE',A); } }
+    if(opt.log!==false && (!was || now-(was.logT||0)>this.cfg.LOG_MS)){
+      S.contacts[key].logT=now;
+      try{ logE((opt.tag||'SWORD_CONTACT')+' '+(ev==='CONTACT_PRESSURE'||ev==='CONTACT_SLIDE'?'CONTACT_CONTINUE/'+ev.replace('CONTACT_',''):ev)+' · '+key+' · '+c.type+'/'+c.surfaceType+
+        ' · p('+p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2)+') · n('+n.x+','+n.y+','+n.z+') · v '+relativeSpeed.toFixed(2)+' (n '+normalSpeed.toFixed(2)+' t '+tangentialSpeed.toFixed(2)+') · глибина '+(depth*100).toFixed(0)+'см · тиск '+pressure.toFixed(2)+' · імп '+impulse.toFixed(2)+' · кут '+angle.toFixed(0)+'°'+(opt.edge?' · кромка '+edgeAngle.toFixed(0)+'°':'')); }catch(e){}
+    }
+    return CT;
+  },
+  _end(S,k,opt){
+    const c=S.contacts[k]; delete S.contacts[k];
+    VB_HAPTIC.play('HAPTIC_CONTACT_END',{object:k,source:(opt&&opt.source)||'?',intensity:0.3});
+    const L=S.last; if(L) CONTACT_AUDIO.play('CONTACT_END',{x:L.position.x,y:L.position.y,z:L.position.z,surfaceType:L.surfaceType});
+    try{ if(!opt||opt.log!==false) logE(((opt&&opt.tag)||'SWORD_CONTACT')+' CONTACT_END · '+k+' · тривав '+(c?((performance.now()-c.t)/1000).toFixed(2):'?')+'с'); }catch(e){}
+  },
+  release(id,opt){ const S=this.blades[id]; if(!S) return; for(const k of Object.keys(S.contacts)) this._end(S,k,opt); if(S.state!=='FREE'){ S.state='FREE'; VB_HAPTIC.free(); } },
+  state(id){ const S=this.blades[id]; return S?S.state:'FREE'; }
+};
+window.SWORD_CONTACT=SWORD_CONTACT;
+
+/* ── КОЛАЙДЕРИ ГРИ: перешкоди кімнати + підлога + стеля ─────────────────────── */
+const GAMEC={ sig:'', list:[], playerClamp:1 };
+function gameBuildColliders(){
+  const alive=obstacles.filter(o=>o.alive && !o.pass);
+  const sig=alive.length+':'+alive.map(o=>o.gx*13+o.gy).join(',');
+  if(sig===GAMEC.sig) return GAMEC.list;
+  const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-20,-2,-20],[20,0,20]),
+           SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-20,TIER_H*3.4,-20],[20,TIER_H*4.4,20])];
+  for(const o of alive){
+    if(o._hW==null){ try{ const b=new THREE.Box3().setFromObject(o.mesh); o._hW=Math.max(0.3,b.max.y); }catch(e){ o._hW=TIER_H*2; } }
+    const cx=worldX(o.gx), cz=worldZ(o.gy), half=CELL*0.48;
+    L.push(SWORD_COLLIDERS.make('OBST_'+o.gx+'_'+o.gy, o.solid?'WALL':'STRUCTURE', o.solid?'STONE':'WOOD',[cx-half,0,cz-half],[cx+half,o._hW,cz+half]));
+  }
+  GAMEC.sig=sig; GAMEC.list=L; SWORD_COLLIDERS.set('game',L);
+  return L;
+}
+/* щокадру: клинок гравця проти світу — зупинка, ковзання, haptic, звук */
+function gameSwordContact(dt){
+  if(!player || player.disarmed || player.dead || (typeof clinch!=='undefined' && clinch.active)){ GAMEC.playerClamp=1; SWORD_CONTACT.release('player',{source:'game',tag:'ГРА КЛИНОК'}); return; }
+  const H=handInfo(player);
+  const g=new THREE.Vector3(H.hx,H.hy,H.hz), tp=new THREE.Vector3(H.tipX,H.tipY,H.tipZ);
+  const CT=SWORD_CONTACT.step('player',g,tp,dt,gameBuildColliders(),{source:'game',tag:'ГРА КЛИНОК'});
+  GAMEC.playerClamp = CT ? Math.max(0.06,CT.f) : 1;
+}
+
 /* ═══════════════════ VB_HAPTIC (2026-09-12) — тактильний канал гри ═══════════════════
    Вібрація тут — інтерфейс, а не декор. Стани: OFF · FREE · CONTACT_START ·
    CONTACT_PRESSURE · CONTACT_SLIDE · IMPACT · CONTACT_END. Пріоритет
@@ -5243,12 +5362,24 @@ function frame(now){
 const VB_HAPTIC={
   available: ('vibrate' in navigator),
   state:'HAPTIC_OFF', intensity:0, lastT:0, lastState:'', log:[],
-  cfg:{ CONTACT_VIBRATION_MIN:10, CONTACT_VIBRATION_MAX:70, CONTACT_VIBRATION_DURATION:28,
-        CONTACT_VIBRATION_COOLDOWN:70, CONTACT_PRESSURE_SCALE:1.0, SLIDE_PERIOD_MIN:60, SLIDE_PERIOD_MAX:220,
-        IMPACT_MIN:45, IMPACT_MAX:140, END_MS:14 },
+  /* Web Vibration API не має амплітуди: intensity → ТРИВАЛІСТЬ. Тому значення помітні,
+     а не 30мс, яких слабкий мотор не показує. lastMs/lastRet — щоб відрізняти
+     «код надіслав» від «телефон прийняв» (п.1 розбору). */
+  cfg:{ CONTACT_VIBRATION_MIN:40, CONTACT_VIBRATION_MAX:90, CONTACT_VIBRATION_DURATION:160,
+        CONTACT_VIBRATION_COOLDOWN:70, CONTACT_PRESSURE_SCALE:1.0, SLIDE_PERIOD_MIN:40, SLIDE_PERIOD_MAX:140,
+        IMPACT_MIN:120, IMPACT_MAX:300, END_MS:20 },
+  lastMs:0, lastRet:null, lastPattern:null,
   PRIO:{HAPTIC_IMPACT:5,HAPTIC_CONTACT_START:4,HAPTIC_CONTACT_PRESSURE:3,HAPTIC_CONTACT_SLIDE:2,HAPTIC_CONTACT_END:1,HAPTIC_FREE:0,HAPTIC_OFF:0},
   material:{WOOD:{gain:0.85,dur:0.9},STONE:{gain:1.0,dur:0.6},METAL:{gain:1.1,dur:0.5},GROUND:{gain:0.7,dur:1.2},UNKNOWN:{gain:1,dur:1}},
-  _vib(pattern){ if(!this.available) return false; try{ navigator.vibrate(pattern); }catch(e){ return false; } try{ hapticFlash=0.16; }catch(e){} return true; },
+  _vib(pattern){
+    this.lastPattern=pattern; this.lastMs=Array.isArray(pattern)?pattern.reduce((a,b)=>a+b,0):(pattern|0);
+    if(!this.available){ this.lastRet=false; return false; }
+    let r=false; try{ r=navigator.vibrate(pattern); }catch(e){ r=false; }
+    this.lastRet=r; try{ hapticFlash=0.16; }catch(e){} return r!==false;
+  },
+  /* сирий тест повз усі кулдауни/пріоритети — перевірка самого телефону */
+  raw(ms){ this.lastT=0; const ok=this._vib(ms|0); try{ logE('HAPTIC RAW navigator.vibrate('+ms+') → '+ok+' · API='+(this.available?'YES':'NO')); }catch(e){} return ok; },
+  diag(){ return 'VIBRATION API: '+(this.available?'YES':'NO')+' · vibrate(): '+(this.lastRet==null?'—':this.lastRet)+' · LAST: '+this.lastMs+' ms'+(this.lastPattern&&Array.isArray(this.lastPattern)?' ['+this.lastPattern.join('/')+']':''); },
   /* p: {intensity 0..1, surfaceType, speed, pressure, impulse, object, source} */
   play(state,p){
     p=p||{}; const now=performance.now(), C=this.cfg;
@@ -5259,7 +5390,7 @@ const VB_HAPTIC={
     let inten=clamp((p.intensity==null?0.5:p.intensity)*M.gain,0,1), pattern=null, dur=0;
     if(state==='HAPTIC_CONTACT_START'){ dur=Math.round(lerp(C.CONTACT_VIBRATION_MIN,C.CONTACT_VIBRATION_MAX,inten)*M.dur); pattern=[dur]; }
     else if(state==='HAPTIC_CONTACT_PRESSURE'){ dur=Math.round(lerp(C.CONTACT_VIBRATION_MIN,C.CONTACT_VIBRATION_DURATION*1.6,inten*C.CONTACT_PRESSURE_SCALE)); pattern=[dur]; }
-    else if(state==='HAPTIC_CONTACT_SLIDE'){ dur=Math.round(lerp(8,C.CONTACT_VIBRATION_DURATION,inten)); const gap=Math.round(lerp(C.SLIDE_PERIOD_MAX,C.SLIDE_PERIOD_MIN,inten)); pattern=[dur,gap,dur]; }
+    else if(state==='HAPTIC_CONTACT_SLIDE'){ dur=Math.round(lerp(30,60,inten)); const gap=Math.round(lerp(C.SLIDE_PERIOD_MAX,C.SLIDE_PERIOD_MIN,inten)); pattern=[dur,gap,dur,gap,dur]; }
     else if(state==='HAPTIC_IMPACT'){ dur=Math.round(lerp(C.IMPACT_MIN,C.IMPACT_MAX,inten)); pattern=[dur,30,Math.round(dur*0.35)]; }
     else if(state==='HAPTIC_CONTACT_END'){ dur=C.END_MS; pattern=[dur]; }
     else if(state==='HAPTIC_FREE'||state==='HAPTIC_OFF'){ try{ if(this.available) navigator.vibrate(0); }catch(e){} }
@@ -5305,7 +5436,7 @@ window.CONTACT_AUDIO=CONTACT_AUDIO;
 const LAB={ on:false, scene:null, cam:null, obj:null, kind:'CHARACTER', profile:'PLAYER',
   size:1, structH:'MEDIUM', material:'WOOD', rotY:0,
   orbit:{yaw:35,pitch:18,dist:5.4,ty:0.95},
-  flags:{cells:true,hitbox:false,joints:false,sockets:true,relation:false,collision:false,direction:true,silhouette:false,flat:false,sensor:false},
+  flags:{cells:true,hitbox:false,joints:false,sockets:true,relation:false,collision:false,direction:true,silhouette:false,flat:false,sensor:false,walls:true},
   pose:'COMBAT_READY', anim:null, animT:0, playing:false, loop:true, speed:1,
   rig:null, struct:null, target:null, contacts:{}, hidden:[], _last:0, body:{visYaw:0},
   lights:{}, helpers:{}, prevTip:null, hitboxes:[] };
@@ -5539,6 +5670,15 @@ function labInitScene(){
   arrow([-1,0,0],sz/2-0.3,0x60a5fa,'LEFT'); arrow([1,0,0],sz/2-0.3,0x60a5fa,'RIGHT');
   arrow([0,1,0],2.6,0xffffff,'UP');
   sc.add(dirG); LAB.helpers.dir=dirG;
+  // СТІНИ і СТЕЛЯ — реальні колайдери на межі платформи (WALL/SOLID, CEILING/SOLID), видимі напівпрозоро
+  const wg=new THREE.Group(); wg.name='WALLS';
+  const wm=new THREE.MeshBasicMaterial({color:0x3b82f6,transparent:true,opacity:0.10,side:THREE.DoubleSide});
+  const R=3.5*CELL, H=2.6*CELL;
+  const wall=(x,z,ry)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(2*R,H),wm); m.position.set(x,H/2,z); m.rotation.y=ry; wg.add(m); };
+  wall(0,R,0); wall(0,-R,0); wall(R,0,Math.PI/2); wall(-R,0,Math.PI/2);
+  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(2*R,2*R),new THREE.MeshBasicMaterial({color:0x60a5fa,transparent:true,opacity:0.06,side:THREE.DoubleSide})); ceil.rotation.x=-Math.PI/2; ceil.position.y=H; wg.add(ceil);
+  for(const [t,x,z] of [['WALL_N',0,R-0.05],['WALL_S',0,-R+0.05],['WALL_E',R-0.05,0],['WALL_W',-R+0.05,0]]){ const l=labLabel(t,'#60a5fa',0.34); l.position.set(x,H-0.2,z); wg.add(l); }
+  sc.add(wg); LAB.helpers.walls=wg;
   // footprint (клітини об'єкта) і межі
   LAB.helpers.cells=new THREE.Mesh(new THREE.PlaneGeometry(CELL,CELL),new THREE.MeshBasicMaterial({color:0x22d3ee,transparent:true,opacity:0.18,side:THREE.DoubleSide}));
   LAB.helpers.cells.rotation.x=-Math.PI/2; LAB.helpers.cells.position.y=0.003; sc.add(LAB.helpers.cells);
@@ -5679,6 +5819,7 @@ function labCamPreset(n){
 function labRefreshFlags(){
   const F=LAB.flags;
   if(LAB.helpers.dir) LAB.helpers.dir.visible=F.direction;
+  if(LAB.helpers.walls) LAB.helpers.walls.visible=F.walls!==false;
   if(LAB.helpers.cells){ LAB.helpers.cells.visible=F.cells; LAB.helpers.bounds.visible=F.cells; const n=Math.round(Math.sqrt(LAB.size)); LAB.helpers.cells.scale.set(n,n,1); }
   if(LAB.helpers.hit) LAB.helpers.hit.visible=F.hitbox||F.collision;
   if(LAB.rig) LAB.rig.root.traverse(o=>{
@@ -5727,6 +5868,7 @@ function labFrame(now){
       const anchor=new THREE.Vector3(0.06*s,1.08*s,0.34*s).applyAxisAngle(new THREE.Vector3(0,1,0),-lag*dr);
       anchor.y+=clamp(pitchA/80,-1,1)*0.18*s;
       sw.position.copy(anchor);
+      if(LAB.pushBack) sw.position.add(LAB.pushBack);   // упор у стіну: меч відстає від телефона на глибину входу
       sw.rotation.set((-90+pitchA)*dr, -lag*dr, rollA*dr, 'YXZ');
       LAB.liveBlade={yaw:yawRel,pitch:pitchA,roll:rollA,body:bodyRel,lag};
       if(Math.abs(lag)>70){ LAB.lagT=(LAB.lagT||0)+dt; if(LAB.lagT>0.4) LAB.warn.push('BODY_LAG_TOO_HIGH'); } else LAB.lagT=0;
@@ -5771,68 +5913,44 @@ function labFrame(now){
   renderer.render(LAB.scene,LAB.cam);
   labInfo(hits,relTxt,ctTxt,mark);
 }
+function labBuildColliders(){
+  const R=3.5*CELL, H=2.6*CELL, T=1.0;
+  const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-R,-T,-R],[R,0,R]),
+           SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-R,H,-R],[R,H+T,R]),
+           SWORD_COLLIDERS.make('WALL_N','WALL','SOLID',[-R,0,R],[R,H,R+T]),
+           SWORD_COLLIDERS.make('WALL_S','WALL','SOLID',[-R,0,-R-T],[R,H,-R]),
+           SWORD_COLLIDERS.make('WALL_E','WALL','SOLID',[R,0,-R],[R+T,H,R]),
+           SWORD_COLLIDERS.make('WALL_W','WALL','SOLID',[-R-T,0,-R],[-R,H,R])];
+  if(LAB.target){ LAB.targetG.updateMatrixWorld(true);
+    for(const m of LAB.target.userData.parts){ const b=new THREE.Box3().setFromObject(m);
+      L.push({id:m.name,type:LAB.target.name.startsWith('MANNEQUIN')?'MANNEQUIN':'STRUCTURE',surfaceType:LAB.target.userData.surfaceType,box:b}); } }
+  LAB.colliders=L; SWORD_COLLIDERS.set('lab',L);
+  logE('LAB SWORD_COLLIDERS: '+L.map(c=>c.id).join(', '));
+  return L;
+}
 function labContactTick(dt){
   LAB.helpers.contact.visible=false;
-  const rig=LAB.rig; if(!rig || !rig.sword.root.visible){ if(rig) rig.sword.blade.scale.y=1; return labContactIdle(dt); }
+  const rig=LAB.rig; if(!rig || !rig.sword.root.visible){ if(rig) rig.sword.blade.scale.y=1; SWORD_CONTACT.release('lab',{source:'lab',tag:'LAB SWORD_CONTACT'}); LAB.contactState='FREE'; LAB.contact=null; return ''; }
+  if(!LAB.colliders) labBuildColliders();
   const sw=rig.sword;
   LAB.obj.updateMatrixWorld(true);
   const a=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), b=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
-  const vel = LAB.prevTip ? b.clone().sub(LAB.prevTip).multiplyScalar(1/Math.max(dt,0.001)) : new THREE.Vector3();
-  LAB.prevTip=b.clone(); LAB.bladeSpeed=vel.length();
-  const edgeW=new THREE.Vector3(1,0,0).applyQuaternion(sw.blade.getWorldQuaternion(new THREE.Quaternion()));   // BLADE_EDGE_DIRECTION
-  LAB.edgeDir=edgeW;
-  /* кандидати: цільові структури + ПІДЛОГА (CONTACT_FLOOR, п.19) */
-  const cands=[]; if(LAB.target) for(const m of LAB.target.userData.parts) cands.push({m,box:new THREE.Box3().setFromObject(m),surf:LAB.target.userData.surfaceType,name:m.name});
-  const floorBox=new THREE.Box3(new THREE.Vector3(-4,-1,-4),new THREE.Vector3(4,0,4)); cands.push({m:null,box:floorBox,surf:'GROUND',name:'FLOOR'});
-  let best=null;
-  for(const c of cands){ for(let i=0;i<=28;i++){ const f=i/28; const p=a.clone().lerp(b,f); if(c.box.containsPoint(p)){ if(!best||f<best.f) best={f,p,c}; break; } } }
-  if(!best){ sw.blade.scale.y=1; return labContactIdle(dt); }
-  const {f,p,c}=best, box=c.box;
-  const d=[p.x-box.min.x,box.max.x-p.x,p.y-box.min.y,box.max.y-p.y,p.z-box.min.z,box.max.z-p.z];
-  const ni=d.indexOf(Math.min.apply(null,d)); const n=new THREE.Vector3(...[[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]][ni]);
-  /* SWORD_CONTACT (п.15): усі величини з однієї точки */
-  const nS=vel.dot(n), tV=vel.clone().sub(n.clone().multiplyScalar(nS)), tS=tV.length();
-  const normalSpeed=Math.max(0,-nS), tangentialSpeed=tS, relSpeed=vel.length();
-  const depth=(1-f)*sw.bladeL;                                       // наскільки клинок «хотів» увійти
-  const pressure=clamp(depth*2.2+normalSpeed*0.25,0,1);              // тиск = глибина втискання + нормальна швидкість
-  const bladeDir=b.clone().sub(a).normalize();
-  const angle=Math.acos(clamp(Math.abs(bladeDir.dot(n)),0,1))*180/Math.PI;   // 90° = клинок паралельний поверхні
-  const edgeAng=tS>0.2?Math.acos(clamp(Math.abs(edgeW.dot(tV.clone().normalize())),0,1))*180/Math.PI:0;
-  const impulse=normalSpeed*0.35+depth*0.6;
-  sw.blade.scale.y=Math.max(0.02,f);                                 // п.16: клинок зупиняється на поверхні
-  LAB.helpers.contact.position.copy(p); LAB.helpers.contact.visible=true;
-  const key=c.name, was=LAB.contacts[key], now=performance.now();
-  let ev;
-  if(!was){ ev = normalSpeed>2.2 ? 'IMPACT' : 'CONTACT_START'; LAB.contacts[key]={t:now,slideT:0,maxP:pressure}; }
-  else { ev = tangentialSpeed>0.35 ? 'CONTACT_SLIDE' : 'CONTACT_PRESSURE'; if(normalSpeed>3.0 && now-was.t>300) ev='IMPACT'; }
-  const CT={object:key,surfaceType:c.surf,x:p.x,y:p.y,z:p.z,normal:n.toArray(),relativeSpeed:relSpeed,normalSpeed,tangentialSpeed,impulse,pressure,angle,edgeAngle:edgeAng,depth,preState:LAB.contactState||'FREE',postState:ev};
-  LAB.contactState=ev; LAB.contact=CT;
-  /* HAPTIC + AUDIO, з кулдауном і пріоритетом усередині VB_HAPTIC */
-  const H={object:key,surfaceType:c.surf,speed:relSpeed,pressure,impulse,source:'lab'};
-  if(ev==='IMPACT'){ VB_HAPTIC.play('HAPTIC_IMPACT',Object.assign({intensity:clamp(normalSpeed/6+impulse*0.2,0.3,1)},H)); CONTACT_AUDIO.play('IMPACT',{surfaceType:c.surf,x:p.x,y:p.y,z:p.z,speed:relSpeed}); LAB.recoil=clamp(0.4+normalSpeed*0.15,0.4,1); labCycleMark('IMPACT'); }
-  else if(ev==='CONTACT_START'){ VB_HAPTIC.play('HAPTIC_CONTACT_START',Object.assign({intensity:clamp(0.25+normalSpeed*0.3,0.25,1)},H)); CONTACT_AUDIO.play('CONTACT_START',{surfaceType:c.surf,x:p.x,y:p.y,z:p.z,speed:relSpeed}); labCycleMark('CONTACT'); }
-  else if(ev==='CONTACT_SLIDE'){ VB_HAPTIC.play('HAPTIC_CONTACT_SLIDE',Object.assign({intensity:clamp(tangentialSpeed/3,0.1,1)},H)); CONTACT_AUDIO.play('CONTACT_SLIDE',{surfaceType:c.surf,x:p.x,y:p.y,z:p.z,speed:tangentialSpeed}); }
-  else { if(pressure>0.08 && now-(was.pT||0)>180){ was.pT=now; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',Object.assign({intensity:pressure},H)); CONTACT_AUDIO.play('CONTACT_PRESSURE',{surfaceType:c.surf,x:p.x,y:p.y,z:p.z,pressure}); } }
-  if(!was || now-(was.logT||0)>250){
-    LAB.contacts[key].logT=now;
-    logE('LAB SWORD_CONTACT '+ev+' · '+key+' · '+c.surf+' · p('+p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2)+') · n('+n.toArray().join(',')+') · v '+relSpeed.toFixed(2)+' (n '+normalSpeed.toFixed(2)+' t '+tangentialSpeed.toFixed(2)+') · тиск '+pressure.toFixed(2)+' · імп '+impulse.toFixed(2)+' · кут '+angle.toFixed(0)+'° · кромка '+edgeAng.toFixed(0)+'°');
+  LAB.bladeSpeed = LAB.prevTip ? b.distanceTo(LAB.prevTip)/Math.max(dt,0.001) : 0; LAB.prevTip=b.clone();
+  const edgeW=new THREE.Vector3(1,0,0).applyQuaternion(sw.blade.getWorldQuaternion(new THREE.Quaternion())); LAB.edgeDir=edgeW;
+  const CT=SWORD_CONTACT.step('lab',a,b,dt,LAB.colliders,{source:'lab',tag:'LAB SWORD_CONTACT',edge:edgeW});
+  if(!CT){ sw.blade.scale.y=1; LAB.contactState='FREE'; LAB.contact=null; LAB.pushBack=LAB.pushBack?LAB.pushBack.multiplyScalar(0.8):null; return ''; }
+  sw.blade.scale.y=Math.max(0.02,CT.f);                             // STOP: клинок закінчується на поверхні
+  LAB.helpers.contact.position.copy(CT.position); LAB.helpers.contact.visible=true;
+  LAB.contactState=CT.postState; LAB.contact=CT;
+  if(LAB.swordFree){                                                 // LIVE: виштовхування — рука упирається, тангенс лишається
+    LAB.pushBack=(LAB.pushBack||new THREE.Vector3()).multiplyScalar(0.6).add(CT.correction.clone().multiplyScalar(0.9));
+    if(LAB.pushBack.length()>0.6) LAB.pushBack.setLength(0.6);
   }
-  if(angle<12) LAB.warn.push('INVALID_CONTACT_ANGLE');
-  if(edgeAng>55 && (ev==='IMPACT'||ev==='CONTACT_START')) LAB.warn.push('BLADE_EDGE_WRONG');
-  for(const k of Object.keys(LAB.contacts)) if(k!==key){ labContactEnd(k); }
-  return ev+' '+key+' · '+c.surf+' · n('+n.toArray().join(',')+') · v '+relSpeed.toFixed(1)+' n'+normalSpeed.toFixed(1)+' t'+tangentialSpeed.toFixed(1)+' · тиск '+pressure.toFixed(2)+' · кут '+angle.toFixed(0)+'°';
-}
-function labContactEnd(k){
-  const c=LAB.contacts[k]; delete LAB.contacts[k];
-  VB_HAPTIC.play('HAPTIC_CONTACT_END',{object:k,source:'lab',intensity:0.3});
-  const p=LAB.helpers.contact.position; CONTACT_AUDIO.play('CONTACT_END',{x:p.x,y:p.y,z:p.z,surfaceType:LAB.contact&&LAB.contact.surfaceType});
-  logE('LAB SWORD_CONTACT CONTACT_END · '+k+' · тривав '+(c?((performance.now()-c.t)/1000).toFixed(2):'?')+'с');
-  LAB.contactState='FREE';
-}
-function labContactIdle(dt){
-  for(const k of Object.keys(LAB.contacts)) labContactEnd(k);
-  if(LAB.contactState!=='FREE'){ LAB.contactState='FREE'; VB_HAPTIC.free(); }
-  LAB.contact=null; return '';
+  if(CT.postState==='IMPACT'){ LAB.recoil=clamp(0.4+CT.normalSpeed*0.15,0.4,1); labCycleMark('IMPACT'); }
+  else if(CT.postState==='CONTACT_START') labCycleMark('CONTACT');
+  if(CT.angle<12) LAB.warn.push('INVALID_CONTACT_ANGLE');
+  if(CT.edgeAngle>55 && (CT.postState==='IMPACT'||CT.postState==='CONTACT_START')) LAB.warn.push('BLADE_EDGE_WRONG');
+  return CT.postState+' '+CT.object+' · '+CT.type+'/'+CT.surfaceType+' · n('+CT.normal.x+','+CT.normal.y+','+CT.normal.z+') · v '+CT.relativeSpeed.toFixed(1)+' n'+CT.normalSpeed.toFixed(1)+' t'+CT.tangentialSpeed.toFixed(1)+' · глибина '+(CT.depth*100).toFixed(0)+'см · тиск '+CT.pressure.toFixed(2)+' · кут '+CT.angle.toFixed(0)+'°';
 }
 function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
 /* ── джерело входів LIVE: живий сенсор або кадр запису (той самий pipeline, п.70) ── */
@@ -5922,7 +6040,7 @@ function labSetTarget(kind){
   else if(kind==='STRUCTURE_4') LAB.target=labBuildStructure(4,'MEDIUM',LAB.material);
   else if(kind==='MANNEQUIN') LAB.target=labBuildMannequin();
   if(LAB.target){ LAB.targetG.add(LAB.target); LAB.targetG.position.set(0,0,(kind==='STRUCTURE_4'?2.2:1.7)*CELL); }
-  labRefreshFlags();
+  labRefreshFlags(); labBuildColliders();
 }
 /* ── експорт (ТЗ п.61-63) ─────────────────────────────────────────────── */
 function labExportJSON(){
@@ -5966,7 +6084,7 @@ function labBuildPanel(){
     '<div>'+labBtn('size:1','1 CELL')+labBtn('size:4','4 CELLS')+labBtn('size:9','9 CELLS')+' '+labBtn('h:LOW','LOW')+labBtn('h:MEDIUM','MED')+labBtn('h:HIGH','HIGH')+' '+labBtn('mat:UNKNOWN','UNKNOWN')+labBtn('mat:WOOD','WOOD')+'</div>'+
     '<h3>ОБЕРТАННЯ ОБ\'ЄКТА · КАМЕРА</h3>'+labBtn('rot:-1','⟲ LEFT')+labBtn('rot:1','⟳ RIGHT')+labBtn('rot:0','RESET ROT')+
     '<div>'+['FRONT','BACK','LEFT','RIGHT','TOP','BOTTOM','FREE'].map(c=>labBtn('cam:'+c,c)).join('')+labBtn('cam:RESET','RESET VIEW')+labBtn('zoom:-1','＋')+labBtn('zoom:1','－')+'</div>'+
-    '<h3>ШАРИ</h3>'+['cells','hitbox','joints','sockets','relation','collision','direction','silhouette','flat','sensor'].map(T).join('')+
+    '<h3>ШАРИ</h3>'+['cells','hitbox','joints','sockets','relation','collision','direction','walls','silhouette','flat','sensor'].map(T).join('')+
     '<h3>ПОЗА</h3>'+Object.keys(LAB_POSES).map(n=>labBtn('pose:'+n,n)).join('')+
     '<div style="margin-top:4px">POSE MODE: <select id="labJoint">'+LAB_JOINTS.map(j=>'<option>'+j+'</option>').join('')+'</select>'+
     '<input type="range" id="labRx" min="-180" max="180" value="0"><input type="range" id="labRy" min="-180" max="180" value="0"><input type="range" id="labRz" min="-180" max="180" value="0">'+
@@ -5978,7 +6096,9 @@ function labBuildPanel(){
     '<h3>LIVE SENSOR · ЗАПИС РУХУ</h3>'+labBtn('flag:sensor','LIVE SENSOR')+labBtn('neutral','NEUTRAL (калібр.)')+
     '<div>'+labBtn('rec','● RECORD')+labBtn('recstop','■ STOP REC')+labBtn('recplay','▶ PLAY REC')+labBtn('recplaystop','⏹ PLAY OFF')+labBtn('recsave','SAVE MOTION')+labBtn('recexport','EXPORT MOTION')+'</div>'+
     '<select id="labMotion"><option value="">— запис —</option></select>'+
-    '<h3>HAPTIC TEST</h3>'+['FREE','CONTACT','PRESSURE','SLIDE','IMPACT','END'].map(n=>labBtn('hap:'+n,n)).join('')+
+    '<h3>HAPTIC TEST · калібровка вібро</h3>'+labBtn('hapraw:300','RAW vibrate(300)','warn')+labBtn('hapraw:1000','RAW 1000мс','warn')+
+    '<div>'+labBtn('hap:START','START 80мс')+labBtn('hap:IMPACT','IMPACT 120мс')+labBtn('hap:PRESSURE','PRESSURE 250мс')+labBtn('hap:SLIDE','SLIDE 50/50')+labBtn('hap:STRONG','STRONG 300мс')+labBtn('hap:END','END')+labBtn('hap:FREE','FREE')+'</div>'+
+    '<div id="labHapLabel" style="font-size:14px;font-weight:bold;color:#fbbf24;padding:6px 0">ВІБРАЦІЯ: —</div>'+
     '<h3>ПАРАМЕТРИ (VB_SENS)</h3>'+Object.keys(LAB_PRESETS).map(n=>labBtn('preset:'+n,n)).join('')+
     '<h3>RESET · EXPORT</h3>'+['CHARACTER','POSE','ANIMATION','CAMERA','OBJECT','ALL'].map(n=>labBtn('reset:'+n,n)).join('')+labBtn('export','JSON')+
     '<h3>ІНФО</h3><div id="labInfo">—</div>';
@@ -6036,8 +6156,12 @@ function labAct(act){
   else if(k==='recplaystop') labRecPlayStop();
   else if(k==='recsave') labRecSave();
   else if(k==='recexport') labRecExport();
-  else if(k==='hap'){ const M={FREE:'HAPTIC_FREE',CONTACT:'HAPTIC_CONTACT_START',PRESSURE:'HAPTIC_CONTACT_PRESSURE',SLIDE:'HAPTIC_CONTACT_SLIDE',IMPACT:'HAPTIC_IMPACT',END:'HAPTIC_CONTACT_END'}[v];
-    VB_HAPTIC.lastT=0; VB_HAPTIC.play(M,{intensity:0.7,surfaceType:LAB.material,source:'haptic-test',object:'TEST'}); }
+  else if(k==='hapraw'){ const ok=VB_HAPTIC.raw(+v); labHapLabel(ok,+v); }
+  else if(k==='hap'){
+    const T={START:['HAPTIC_CONTACT_START',0.8],IMPACT:['HAPTIC_IMPACT',0.0],PRESSURE:['HAPTIC_CONTACT_PRESSURE',1.0],SLIDE:['HAPTIC_CONTACT_SLIDE',0.9],STRONG:['HAPTIC_IMPACT',1.0],END:['HAPTIC_CONTACT_END',0.5],FREE:['HAPTIC_FREE',0]}[v];
+    if(v==='SLIDE'){ VB_HAPTIC.lastT=0; const ok=VB_HAPTIC._vib([50,50,50,50,50,50]); VB_HAPTIC.state='HAPTIC_CONTACT_SLIDE'; logE('HAPTIC TEST SLIDE 50/50×3 → '+ok); labHapLabel(ok,300); }
+    else { VB_HAPTIC.lastT=0; const ok=VB_HAPTIC.play(T[0],{intensity:T[1],surfaceType:'UNKNOWN',source:'haptic-test',object:'TEST'}); labHapLabel(v==='FREE'?null:ok,VB_HAPTIC.lastMs); }
+  }
   labPanelSync();
 }
 function labPanelSync(){
@@ -6067,9 +6191,16 @@ function labInfo(hits,relTxt,ctTxt,mark){
     L.push((LAB.play&&LAB.play.on?'PLAY REC «'+LAB.play.clip.name+'» t '+LAB.play.t.toFixed(2)+' кадр '+(LAB.play.i||0)+' · ':'LIVE · ')+'клинок yaw '+Math.round(B.yaw||0)+'° pitch '+Math.round(B.pitch||0)+'° roll '+Math.round(B.roll||0)+'° · корпус '+Math.round(B.body||0)+'° (lag '+Math.round(B.lag||0)+'°) · v '+(LAB.bladeSpeed||0).toFixed(2)+' м/с');
     L.push('MOTION '+(sensor.motion||'—')+' · GESTURE '+(sensor.gesture||'NONE')+' · conf m '+clamp((sensor.aMag||0)/SENSCFG.MOTION_MOVE,0,1).toFixed(2)+' g '+labGestureConf().toFixed(2)+(LAB.rec&&LAB.rec.on?' · ● REC '+LAB.rec.frames.length:''));
   }
-  L.push('CONTACT '+(LAB.contactState||'FREE')+' · HAPTIC '+VB_HAPTIC.state.replace('HAPTIC_','')+' i='+VB_HAPTIC.intensity.toFixed(2)+(VB_HAPTIC.available?'':' (вібро відсутнє)')+' · хват L '+((LAB.gripErrL||0)*100).toFixed(1)+'см');
+  L.push('CONTACT '+(LAB.contactState||'FREE')+' · HAPTIC '+VB_HAPTIC.state.replace('HAPTIC_','')+' i='+VB_HAPTIC.intensity.toFixed(2)+' · хват L '+((LAB.gripErrL||0)*100).toFixed(1)+'см');
+  L.push(VB_HAPTIC.diag()+' · колайдерів '+((LAB.colliders||[]).length));
   if(LAB.warn&&LAB.warn.length) L.push('⚠ '+Array.from(new Set(LAB.warn)).join(' · '));
   el.textContent=L.join('\n');
+}
+function labHapLabel(ok,ms){
+  const el=$('labHapLabel'); if(!el) return;
+  if(ok===null){ el.textContent='ВІБРАЦІЯ: ЗУПИНЕНО'; el.style.color='#94a3b8'; return; }
+  el.textContent = !VB_HAPTIC.available ? 'ВІБРАЦІЯ: НЕМАЄ (API відсутнє)' : ok ? 'ВІБРАЦІЯ: ЗАПУЩЕНА · '+ms+' мс · vibrate()=true' : 'ВІБРАЦІЯ: ВІДХИЛЕНО · vibrate()=false';
+  el.style.color = !VB_HAPTIC.available ? '#ef4444' : ok ? '#22c55e' : '#f59e0b';
 }
 function labGestureConf(){ const A=[Math.abs(sensor.ax||0),Math.abs(sensor.ay||0),Math.abs(sensor.az||0)], s=A[0]+A[1]+A[2]; return s>0.5?Math.max(A[0],A[1],A[2])/s:0; }
 /* ── вхід/вихід ──────────────────────────────────────────────────────── */
