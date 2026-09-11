@@ -492,6 +492,10 @@ const SENSCFG={
   SWING_MIN_DURATION: 0.05,    // с — коротше цього не мах, а тремтіння
   SWING_MAX_DURATION: 0.45,    // с — довше цього не мах, а просто поворот
   SWING_COOLDOWN: 0.30,        // с між махами
+  MOTION_IDLE: 1.2,            // м/с² — нижче цього рука стоїть
+  MOTION_MOVE: 3.5,            // м/с² — впевнений лінійний рух
+  MOTION_IMPACT: 14,           // м/с² — удар/ривок
+  MOTION_ROT: 120,             // °/с — переважає поворот, а не перенос
   profile: 'НОРМАЛЬНИЙ'
 };
 const SENS_PROFILES={
@@ -507,8 +511,38 @@ function sensProfile(name){
 window.VB_SENS=SENSCFG; window.VB_SENS_PROFILE=sensProfile;
 
 const SWING={t:0, cd:0, hold:0, peak:0, power:0, active:false, count:0};
+/* ════ ЩО САМЕ РОБИТЬ РУКА (спільний код із SENSOR LAB) ═════════════════
+   Сенсор відповідає не на питання «де рука», а «що нею роблять»: осі
+   пристрою X — вбік, Y — до вістря, Z — від екрана на гравця.
+   IDLE · PUSH · PULL · LEFT · RIGHT · UP · DOWN · ROTATE · IMPACT        */
+function classifyMotion(dt){
+  const ax=sensor.ax||0, ay=sensor.ay||0, az=sensor.az||0;
+  const aMag=Math.hypot(ax,ay,az);
+  const rMax=Math.max(Math.abs(sensor.yawRate||0),Math.abs(sensor.pitchRate||0),Math.abs(sensor.rollRate||0));
+  const k=clamp(dt*14,0,1);
+  sensor.fax=(sensor.fax||0)+(ax-(sensor.fax||0))*k;
+  sensor.fay=(sensor.fay||0)+(ay-(sensor.fay||0))*k;
+  sensor.faz=(sensor.faz||0)+(az-(sensor.faz||0))*k;
+  sensor.aMag=aMag; sensor.rMax=rMax;
+  let m='IDLE';
+  if(aMag>=SENSCFG.MOTION_IMPACT) m='IMPACT';
+  else if(aMag<SENSCFG.MOTION_IDLE && rMax<SENSCFG.MOTION_ROT*0.5) m='IDLE';
+  else if(rMax>=SENSCFG.MOTION_ROT && aMag<SENSCFG.MOTION_MOVE) m='ROTATE';
+  else if(aMag>=SENSCFG.MOTION_MOVE){
+    const A=[Math.abs(ax),Math.abs(ay),Math.abs(az)], mx=Math.max(A[0],A[1],A[2]), i=A.indexOf(mx);
+    m = i===0 ? (ax>0?'RIGHT':'LEFT') : i===1 ? (ay>0?'UP':'DOWN') : (az>0?'PULL':'PUSH');
+  } else if(rMax>=SENSCFG.MOTION_ROT) m='ROTATE';
+  let g='';
+  if(m==='UP') g='THRUST'; else if(m==='DOWN') g='RETRACT';
+  else if(m==='RIGHT') g='SLASH_RIGHT'; else if(m==='LEFT') g='SLASH_LEFT';
+  else if(m==='PUSH') g='PUSH'; else if(m==='PULL') g='PULL';
+  else if(m==='ROTATE') g='TURN'; else if(m==='IMPACT') g = rMax>=SENSCFG.MOTION_ROT?'POWER_SWING':'IMPACT';
+  if(rMax>=SENSCFG.MOTION_ROT && (m==='RIGHT'||m==='LEFT'||m==='UP')) g='POWER_SWING';
+  sensor.motion=m; sensor.gesture=g;
+}
 function sensorYawTick(dt){
   swingTick(dt);
+  classifyMotion(dt);
   if(sensor.headRaw==null) return;    // немає орієнтації (десктоп) — yaw правлять стрілки
   const tgt=wrap360(sensor.headRaw - (sensor.yawZero||0));
   const r=clamp(SENSCFG.BLADE_RESPONSE,0.02,1);
@@ -576,8 +610,8 @@ function sensViewToggle(on){
   SENSVIEW.on = (on==null) ? !SENSVIEW.on : !!on;
   if(SENSVIEW.on && !SENSVIEW.cv){
     const c=document.createElement('canvas');
-    c.width=180; c.height=230;
-    c.style.cssText='position:fixed;left:6px;top:132px;width:180px;height:230px;z-index:60;'+
+    c.width=180; c.height=286;
+    c.style.cssText='position:fixed;left:6px;top:120px;width:180px;height:286px;z-index:60;'+
       'pointer-events:none;background:rgba(6,10,18,0.72);border:1px solid #1e3a5f;border-radius:8px';
     document.body.appendChild(c); SENSVIEW.cv=c;
   }
@@ -632,6 +666,27 @@ function drawSensView(){
   ];
   g.font='9px monospace';
   txt.forEach((t,i)=>{ g.fillStyle = i===3?'#22d3ee' : i===4?'#f59e0b' : '#9fb3c8'; g.fillText(t, 6, 150+i*11); });
+  // ── MOTION: урізана панель із SENSOR LAB (вектор руху + стан) ────────
+  const mx=146, my=252, R=26;
+  g.strokeStyle='#1e3a5f'; g.lineWidth=1;
+  g.beginPath(); g.arc(mx,my,R,0,Math.PI*2); g.stroke();
+  g.beginPath(); g.moveTo(mx-R,my); g.lineTo(mx+R,my); g.moveTo(mx,my-R); g.lineTo(mx,my+R); g.stroke();
+  const sc=R/Math.max(SENSCFG.MOTION_IMPACT,6);
+  const vx=clamp((sensor.fax||0)*sc,-R,R), vy=clamp(-(sensor.fay||0)*sc,-R,R);
+  if(Math.hypot(vx,vy)>2){
+    const col = sensor.motion==='IMPACT'?'#ef4444' : sensor.motion==='ROTATE'?'#a78bfa' : '#22d3ee';
+    line([mx,my],[mx+vx,my+vy],col,3);
+  }
+  const zb=clamp((sensor.faz||0)*sc,-R,R);
+  g.fillStyle='#0a1628'; g.fillRect(mx+R+4,my-R,5,R*2);
+  g.fillStyle = zb>0?'#fbbf24':'#60a5fa'; g.fillRect(mx+R+4,my,5,-zb);
+  g.fillStyle = sensor.motion==='IDLE'?'#475569':'#22d3ee'; g.font='bold 11px monospace';
+  g.fillText(sensor.motion||'—', 6, 244);
+  g.fillStyle='#f59e0b'; g.font='9px monospace';
+  g.fillText(sensor.gesture||'', 6, 256);
+  g.fillStyle='#64748b';
+  g.fillText('|a| '+(sensor.aMag||0).toFixed(1)+' m/s²', 6, 268);
+  g.fillText('|g+a| '+(sensor.gMag||0).toFixed(1), 6, 279);
 }
 /* Діагностика сенсорів (ТЗ п.9, п.37) — тільки в лог, гравцю не показується. */
 let sensDiagT=0;
@@ -644,6 +699,8 @@ function sensDiagTick(dt){
       ' · сирий α='+(sensor.alphaRaw==null?'—':Math.round(sensor.alphaRaw))+'°'+
       ' · курс='+(sensor.headRaw==null?'—':Math.round(sensor.headRaw))+'°'+
       ' · гіро='+Math.round(sensor.yawRate||0)+'°/с'+
+      ' · рух='+(sensor.motion||'—')+(sensor.gesture?('/'+sensor.gesture):'')+
+      ' |a|='+(sensor.aMag||0).toFixed(1)+'  |g+a|='+(sensor.gMag||0).toFixed(1)+
       ' · YAW='+Math.round(sensor.yawFused)+'° ('+DSYM[player.dirIdx]+')'+
       ' · екран='+scr+'°');
   }catch(e){}
@@ -683,7 +740,11 @@ function onMotion(e){
   sensor.haveGyro = sensor.haveGyro || sensor.spin>8;
   // скорость руки = чистое ускорение
   const a = e.acceleration || {};
-  sensor.speed = Math.hypot(a.x||0, a.y||0, a.z||0);
+  // (09-11b) ОСІ ЧИСТОГО ПРИСКОРЕННЯ — куди фізично їде рука. Саме воно, а не
+  // accelerationIncludingGravity, годиться для порогів: у спокої ≈0, а не 9.81.
+  sensor.ax=a.x||0; sensor.ay=a.y||0; sensor.az=a.z||0;
+  sensor.gMag=gg?Math.hypot(gg.x||0, gg.y||0, gg.z||0):9.8;
+  sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
   sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
   sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
 }
@@ -4344,7 +4405,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-11a · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · пороги маху налаштовувані · калібровка клинка · SENSOR DEBUG VIEW · бойова стійка';
+const BUILD_TAG='2026-09-11b · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
