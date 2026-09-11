@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Vessel Blade — SENSOR LAB</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#010d1f;color:#c5d8f0;font-family:'Courier New',monospace;font-size:12px;padding:12px;-webkit-tap-highlight-color:transparent;user-select:none}
+h1{color:#3a6a9f;font-size:16px;font-weight:bold;margin-bottom:2px}
+.sub{color:#1e3a5f;font-size:9px;letter-spacing:.2em;margin-bottom:6px}
+.divider{height:1px;background:linear-gradient(90deg,#1e3a5f,transparent);margin-bottom:12px}
+#statusBar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#060f1e;border-radius:6px;margin-bottom:10px;border:1px solid #1e3a5f}
+#statusBar.on{border-color:#1e5f3f}#statusBar.off{border-color:#7f1d1d}
+#dot{width:9px;height:9px;border-radius:50%;background:#334155;flex-shrink:0}
+#dot.on{background:#22c55e;box-shadow:0 0 10px #22c55e}#dot.off{background:#ef4444}
+#sTxt{font-size:11px;font-weight:bold;color:#334155}#sTxt.on{color:#22c55e}#sTxt.off{color:#ef4444}
+#hzInfo{margin-left:auto;font-size:9px;color:#1e3a5f}
+.card{background:#060f1e;border:1px solid #1e3a5f;border-radius:8px;padding:12px;margin-bottom:10px}
+.card p{color:#4a6a9f;font-size:10px;line-height:1.8;margin-bottom:10px}
+.card p strong{color:#60a5fa}
+.btn{width:100%;padding:11px;background:#0c2a1f;border:1px solid #16a34a;color:#22c55e;border-radius:6px;cursor:pointer;font-size:12px;letter-spacing:.08em;font-family:inherit}
+.btn:active{background:#14532d}.btn:disabled{opacity:.45}
+.btn.alt{background:#0b1c33;border-color:#1e4a7a;color:#60a5fa}
+.note{font-size:9px;color:#1e3a5f;margin-top:8px;line-height:1.7}
+.warn{background:#1a0c00;border-color:#78350f!important}
+.warn-title{color:#fb923c;font-size:11px;font-weight:bold;margin-bottom:6px}
+.err{color:#ef4444;font-size:10px;margin-bottom:8px}
+.diag-row{display:flex;justify-content:space-between;padding:3px 6px;background:#010b18;border-radius:3px;font-size:10px;margin-bottom:3px}
+.diag-ok{color:#22c55e}.diag-warn{color:#f59e0b}.diag-err{color:#ef4444}
+#main{display:none}
+.cols{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1;min-width:250px;display:flex;flex-direction:column;gap:8px}
+.srow{background:#060f1e;border:1px solid #1e3a5f;border-radius:6px;padding:9px}
+.srow-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.srow-lbl{color:#1e3a5f;font-size:9px;letter-spacing:.06em}
+.srow-val{font-size:15px;font-weight:bold;font-variant-numeric:tabular-nums}
+.srow-unit{font-size:9px;color:#1e3a5f;margin-left:2px}
+.bar-t{height:4px;background:#010b18;border-radius:2px;overflow:hidden;margin-bottom:5px}
+.bar-f{height:100%;border-radius:2px}
+canvas.sc{width:100%;height:30px;display:block;border-radius:3px}
+#phoneWrap{perspective:320px;width:120px;height:126px;display:flex;align-items:center;justify-content:center}
+#phone3d{width:50px;height:96px;transform-style:preserve-3d;position:relative}
+.ph-body{position:absolute;inset:0;background:linear-gradient(160deg,#1a3050,#0a1628);border:2px solid #1e4a7a;border-radius:10px;box-shadow:0 0 24px rgba(59,130,246,.25)}
+.ph-scr{position:absolute;top:8px;left:4px;right:4px;bottom:12px;background:#010b18;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px}
+.ph-scr span{font-size:7px}
+.ph-notch{position:absolute;top:3px;left:50%;transform:translateX(-50%);width:16px;height:3px;background:#0a1628;border-radius:2px}
+.sec{color:#1e3a5f;font-size:9px;letter-spacing:.12em;padding:4px 0 2px}
+#motCard{background:#060f1e;border:1px solid #1e4a7a;border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center}
+#motState{font-size:20px;font-weight:bold;color:#22d3ee;letter-spacing:.08em;margin-top:6px}
+#motGesture{font-size:12px;color:#f59e0b;letter-spacing:.06em;margin-top:2px;min-height:15px}
+#motNums{font-size:9px;color:#4a6a9f;margin-top:4px;text-align:center;line-height:1.6}
+#compassCard{background:#060f1e;border:1px solid #1e3a5f;border-radius:8px;padding:10px;display:flex;flex-direction:column;align-items:center}
+#compassHdg{font-size:20px;font-weight:bold;color:#60a5fa;font-variant-numeric:tabular-nums;margin-top:4px}
+#compassDir{font-size:13px;color:#94a3b8;letter-spacing:.1em}
+#compassSrc{font-size:8px;color:#1e3a5f;margin-top:2px}
+.tbtn{padding:9px;background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;border-radius:6px;font-family:inherit;font-size:11px;text-align:left;cursor:pointer;margin-bottom:6px;width:100%}
+.tbtn:active{background:#14304f}
+.tbtn.run{border-color:#f59e0b;color:#fbbf24}
+.tbtn.pass{border-color:#16a34a;color:#22c55e}
+.tbtn.fail{border-color:#b91c1c;color:#ef4444}
+.tbtn small{display:block;color:#1e3a5f;font-size:9px;margin-top:3px;line-height:1.5}
+#testLive{background:#010b18;border:1px solid #1e3a5f;border-radius:6px;padding:10px;font-size:10px;line-height:1.75;color:#8fc0f0;white-space:pre-wrap;min-height:64px}
+#report{background:#010b18;border:1px solid #1e3a5f;border-radius:6px;padding:10px;font-size:9px;line-height:1.6;color:#4a6a9f;white-space:pre-wrap;max-height:210px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="sub">VESSEL BLADE · BLIND-FIRST</div>
+<h1>SENSOR LAB <span style="color:#1e3a5f;font-size:11px">ORIENT · GYRO · ACCEL · MOTION</span></h1>
+<div class="divider"></div>
+
+<div id="statusBar">
+  <div id="dot"></div>
+  <div id="sTxt">WAITING</div>
+  <div id="hzInfo">orient <span id="hzO" style="color:#60a5fa">0</span> Hz &nbsp; motion <span id="hzM" style="color:#f59e0b">0</span> Hz &nbsp; compass <span id="hzC" style="color:#ef4444">0</span> Hz</div>
+</div>
+
+<div id="gate">
+  <div class="card">
+    <div style="color:#1e3a5f;font-size:9px;letter-spacing:.12em;margin-bottom:8px">BROWSER DIAGNOSTICS</div>
+    <div id="diagRows"></div>
+  </div>
+  <div class="card warn" id="braveWarn" style="display:none">
+    <div class="warn-title">⚠ Brave Browser</div>
+    <p>Brave блокує сенсори. Відкрий у <strong style="color:#fb923c">Chrome</strong> або: brave://settings/content/sensors → Allow</p>
+  </div>
+  <div class="card">
+    <p>Лабораторія телефона: три незалежні канали — <strong>орієнтація</strong> (куди дивиться клинок), <strong>гіроскоп</strong> (як швидко повертають), <strong>акселерометр</strong> (куди фізично рухається рука). Перед будь-якою зміною керування в грі перевіряй телефон тут.</p>
+    <div id="errMsg" class="err" style="display:none"></div>
+    <button class="btn" id="btnReq">▷ ЗАПРОСИТИ СЕНСОРИ ТА ПОЧАТИ</button>
+    <div class="note">Chrome/Android — одразу після кліку. iOS Safari — з'явиться діалог дозволу. Потрібен HTTPS.</div>
+  </div>
+</div>
+
+<div id="main">
+  <div class="cols">
+
+    <div style="display:flex;flex-direction:column;gap:8px;min-width:170px">
+      <div id="motCard">
+        <div class="srow-lbl" style="letter-spacing:.12em">MOTION</div>
+        <canvas id="motCv" width="150" height="150" style="width:150px;height:150px"></canvas>
+        <div id="motState">IDLE</div>
+        <div id="motGesture"></div>
+        <div id="motNums">—</div>
+      </div>
+
+      <div id="compassCard">
+        <div class="srow-lbl" style="letter-spacing:.12em">COMPASS</div>
+        <canvas id="compassCv" width="130" height="130" style="width:130px;height:130px"></canvas>
+        <div id="compassHdg">—°</div>
+        <div id="compassDir">—</div>
+        <div id="compassSrc">очікую магнітометр…</div>
+      </div>
+
+      <div class="card" style="align-items:center;display:flex;flex-direction:column;padding:8px">
+        <div class="srow-lbl" style="margin-bottom:4px">3D ORIENTATION</div>
+        <div id="phoneWrap"><div id="phone3d">
+          <div class="ph-body"></div><div class="ph-notch"></div>
+          <div class="ph-scr"><span style="color:#22c55e" id="phB">β 0°</span><span style="color:#a78bfa" id="phG">γ 0°</span></div>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="sec">── ТЕСТИ ТЕЛЕФОНА ───────</div>
+      <div class="card" style="padding:10px">
+        <button class="tbtn" id="t1">① ПОВОРОТ 45/90/180/360<small>Тримай телефон нерухомо в просторі й повільно обертайся. Перевіряє курс, гіро, затримку і дрейф після зупинки.</small></button>
+        <button class="tbtn" id="t2">② НАХИЛ (β)<small>Не обертаючи навколо вертикалі: вгору → горизонтально → вниз.</small></button>
+        <button class="tbtn" id="t3">③ КРЕН / ROLL (γ)<small>Портрет → на бік → портрет. Перевіряє γ і кут екрана.</small></button>
+        <button class="tbtn" id="t4">④ ЛІНІЙНИЙ ПОШТОВХ<small>Спокій → різкий поштовх уперед → стоп. Потім — ліворуч. Без повороту телефона.</small></button>
+        <div id="testLive">Обери тест. Ліва панель MOTION працює завжди.</div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn alt" id="btnStop" style="flex:1">■ СТОП</button>
+          <button class="btn alt" id="btnCopy" style="flex:1">⧉ КОПІЮВАТИ ЗВІТ</button>
+        </div>
+      </div>
+      <div class="sec">── ЗВІТ ─────────────────</div>
+      <div id="report">звіт порожній</div>
+    </div>
+
+    <div class="col">
+      <div class="sec">── ORIENTATION ──────────</div>
+      <div class="srow" id="r-alpha"></div>
+      <div class="srow" id="r-beta"></div>
+      <div class="srow" id="r-gamma"></div>
+      <div class="sec">── GYROSCOPE (rot rate) ─</div>
+      <div class="srow" id="r-ra"></div>
+      <div class="srow" id="r-rb"></div>
+      <div class="srow" id="r-rg"></div>
+      <div class="sec">── ACCEL pure (без g) ───</div>
+      <div class="srow" id="r-ax"></div>
+      <div class="srow" id="r-ay"></div>
+      <div class="srow" id="r-az"></div>
+      <div class="sec">── ACCEL incl. gravity ──</div>
+      <div class="srow" id="r-gx"></div>
+      <div class="srow" id="r-gy"></div>
+      <div class="srow" id="r-gz"></div>
+      <div class="card" style="padding:10px">
+        <div class="srow-lbl" style="margin-bottom:6px">|a| ЧИСТЕ (рух) vs |g+a| (з гравітацією)</div>
+        <div style="font-size:18px;font-weight:bold;color:#f59e0b;font-variant-numeric:tabular-nums"><span id="magPure">0.00</span><span style="font-size:10px;color:#1e3a5f"> m/s² рух</span></div>
+        <div style="height:6px;background:#010b18;border-radius:3px;overflow:hidden;margin-top:5px"><div id="magFill" style="height:100%;background:#f59e0b;width:0%;border-radius:3px"></div></div>
+        <div style="font-size:10px;color:#4a6a9f;margin-top:6px">|g+a| = <span id="magG">0.00</span> m/s² — у спокої ≈ 9.81, тому для детекції удару воно НЕ годиться.</div>
+        <div class="note">Поріг удару рахуємо по чистому |a|: <span id="thrTxt">14</span> m/s².</div>
+      </div>
+      <div class="card" style="padding:10px">
+        <div class="srow-lbl" style="margin-bottom:6px">ПОРОГИ (як у грі: VB_SENS)</div>
+        <div style="font-size:10px;color:#8fc0f0;line-height:1.9">
+          IDLE &lt; <input id="cfgIdle" value="1.2" style="width:44px;background:#010b18;border:1px solid #1e3a5f;color:#8fc0f0;font-family:inherit;font-size:10px;padding:1px 3px"> m/s²<br>
+          MOVE ≥ <input id="cfgMove" value="3.5" style="width:44px;background:#010b18;border:1px solid #1e3a5f;color:#8fc0f0;font-family:inherit;font-size:10px;padding:1px 3px"> m/s²<br>
+          IMPACT ≥ <input id="cfgImpact" value="14" style="width:44px;background:#010b18;border:1px solid #1e3a5f;color:#8fc0f0;font-family:inherit;font-size:10px;padding:1px 3px"> m/s²<br>
+          ROTATE ≥ <input id="cfgRot" value="120" style="width:44px;background:#010b18;border:1px solid #1e3a5f;color:#8fc0f0;font-family:inherit;font-size:10px;padding:1px 3px"> °/с
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div style="margin-top:12px;color:#091828;font-size:9px;letter-spacing:.1em">SENSOR LAB · еталонний інструмент розробки · у грі — урізана версія (SENSOR DEBUG VIEW)</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const wrap360 = d => ((d%360)+360)%360;
+const angDiff = (a,b) => { let d=wrap360(a)-wrap360(b); if(d>180)d-=360; if(d<-180)d+=360; return d; };
+
+/* ─── діагностика браузера ─────────────────────────────────────── */
+const ua=navigator.userAgent;
+const isBrave=navigator.brave!==undefined;
+const isChrome=/Chrome/.test(ua)&&!isBrave;
+const isSafari=/Safari/.test(ua)&&!/Chrome/.test(ua);
+const hasOrientAPI=typeof DeviceOrientationEvent!=='undefined';
+const hasMotionAPI=typeof DeviceMotionEvent!=='undefined';
+const needsPermission=hasOrientAPI&&typeof DeviceOrientationEvent.requestPermission==='function';
+const isSecure=location.protocol==='https:'||location.hostname==='localhost'||location.protocol==='file:';
+[['Browser',isBrave?'Brave ⚠':isChrome?'Chrome ✓':isSafari?'Safari ✓':'Other',isBrave?'diag-warn':(isChrome||isSafari)?'diag-ok':'diag-warn'],
+ ['Secure ctx',isSecure?'yes ✓':'NO ⚠',isSecure?'diag-ok':'diag-err'],
+ ['OrientAPI',hasOrientAPI?'present ✓':'missing ✗',hasOrientAPI?'diag-ok':'diag-err'],
+ ['MotionAPI',hasMotionAPI?'present ✓':'missing ✗',hasMotionAPI?'diag-ok':'diag-err'],
+ ['NeedsPermission',needsPermission?'yes (iOS)':'no','diag-ok']
+].forEach(([k,v,cls])=>{
+  const d=document.createElement('div'); d.className='diag-row';
+  d.innerHTML='<span style="color:#1e3a5f">'+k+'</span><span class="'+cls+'">'+v+'</span>';
+  $('diagRows').appendChild(d);
+});
+if(isBrave) $('braveWarn').style.display='block';
+
+/* ─── рядки зі шкалою та осцилографом ──────────────────────────── */
+function makeScope(container,color){
+  const buf=new Array(100).fill(0);
+  const cv=document.createElement('canvas'); cv.className='sc'; cv.width=300; cv.height=30;
+  container.appendChild(cv);
+  const ctx=cv.getContext('2d');
+  (function draw(){
+    ctx.fillStyle='#010b18'; ctx.fillRect(0,0,300,30);
+    ctx.strokeStyle='#091c30'; ctx.lineWidth=.5;
+    ctx.beginPath(); ctx.moveTo(0,15); ctx.lineTo(300,15); ctx.stroke();
+    ctx.strokeStyle=color; ctx.lineWidth=1.4;
+    ctx.beginPath();
+    buf.forEach((v,i)=>{ const x=(i/99)*300, y=15-clamp(v,-1,1)*12; i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.stroke();
+    requestAnimationFrame(draw);
+  })();
+  return v=>{ buf.shift(); buf.push(v); };
+}
+function buildRow(id,label,unit,color,mn,mx){
+  const el=$(id);
+  el.innerHTML='<div class="srow-head"><span class="srow-lbl">'+label+'</span>'+
+    '<span class="srow-val" id="v'+id+'" style="color:'+color+'">0.00<span class="srow-unit">'+unit+'</span></span></div>'+
+    '<div class="bar-t"><div class="bar-f" id="b'+id+'" style="background:'+color+';width:50%"></div></div>';
+  const push=makeScope(el,color);
+  return v=>{
+    $('v'+id).innerHTML=v.toFixed(2)+'<span class="srow-unit">'+unit+'</span>';
+    $('b'+id).style.width=clamp(((v-mn)/(mx-mn))*100,0,100)+'%';
+    push(clamp((v-(mn+mx)/2)/((mx-mn)/2),-1,1));
+  };
+}
+const updA=buildRow('r-alpha','α ALPHA — курс','°','#60a5fa',0,360);
+const updB=buildRow('r-beta','β BETA — нахил [вісь клинка]','°','#22c55e',-90,90);
+const updG=buildRow('r-gamma','γ GAMMA — крен','°','#a78bfa',-90,90);
+const updRA=buildRow('r-ra','rot.α — швидкість рискання','°/s','#60a5fa',-360,360);
+const updRB=buildRow('r-rb','rot.β — швидкість нахилу','°/s','#22c55e',-360,360);
+const updRG=buildRow('r-rg','rot.γ — швидкість крену','°/s','#a78bfa',-360,360);
+const updAX=buildRow('r-ax','A.X чисте — вбік','m/s²','#f87171',-15,15);
+const updAY=buildRow('r-ay','A.Y чисте — вздовж клинка','m/s²','#fb923c',-15,15);
+const updAZ=buildRow('r-az','A.Z чисте — від/до себе','m/s²','#fbbf24',-15,15);
+const updGX=buildRow('r-gx','G.X (з гравітацією)','m/s²','#f87171',-20,20);
+const updGY=buildRow('r-gy','G.Y (з гравітацією)','m/s²','#fb923c',-20,20);
+const updGZ=buildRow('r-gz','G.Z (з гравітацією)','m/s²','#fbbf24',-5,25);
+
+/* ─── стан сенсорів ────────────────────────────────────────────── */
+const S={
+  alpha:null,beta:0,gamma:0, absAlpha:null, heading:null, hSrc:'',
+  ra:0,rb:0,rg:0, ax:0,ay:0,az:0, gx:0,gy:0,gz:9.8,
+  aMag:0, gMag:0, rMax:0,
+  fax:0,fay:0,faz:0,            // згладжені осі руху (для стрілки)
+  motion:'IDLE', gesture:'', motionT:0, lastMotion:'IDLE',
+  tOrient:0, tMotion:0
+};
+const CFG={ idle:1.2, move:3.5, impact:14, rot:120 };
+function readCfg(){
+  CFG.idle=parseFloat($('cfgIdle').value)||1.2;
+  CFG.move=parseFloat($('cfgMove').value)||3.5;
+  CFG.impact=parseFloat($('cfgImpact').value)||14;
+  CFG.rot=parseFloat($('cfgRot').value)||120;
+  $('thrTxt').textContent=CFG.impact;
+}
+['cfgIdle','cfgMove','cfgImpact','cfgRot'].forEach(id=>$(id).addEventListener('change',readCfg));
+
+/* ─── КЛАСИФІКАТОР РУХУ ────────────────────────────────────────────
+   Працює на ЧИСТОМУ прискоренні (без гравітації): у спокої воно ≈0,
+   тому поріг чесний. Осі пристрою: X — вправо по екрану, Y — до
+   верхівки телефона (вістря клинка), Z — з екрана на гравця.        */
+function classifyMotion(dt){
+  const ax=S.ax, ay=S.ay, az=S.az;
+  S.aMag=Math.hypot(ax,ay,az);
+  S.rMax=Math.max(Math.abs(S.ra),Math.abs(S.rb),Math.abs(S.rg));
+  const k=clamp(dt*14,0,1);
+  S.fax+=(ax-S.fax)*k; S.fay+=(ay-S.fay)*k; S.faz+=(az-S.faz)*k;
+  let m='IDLE', g='';
+  if(S.aMag>=CFG.impact){ m='IMPACT'; }
+  else if(S.aMag<CFG.idle && S.rMax<CFG.rot*0.5){ m='IDLE'; }
+  else if(S.rMax>=CFG.rot && S.aMag<CFG.move){ m='ROTATE'; }
+  else if(S.aMag>=CFG.move){
+    const A=[Math.abs(ax),Math.abs(ay),Math.abs(az)];
+    const i=A.indexOf(Math.max(A[0],A[1],A[2]));
+    if(i===0) m = ax>0 ? 'RIGHT' : 'LEFT';
+    else if(i===1) m = ay>0 ? 'UP' : 'DOWN';
+    else m = az>0 ? 'PULL' : 'PUSH';
+  } else if(S.rMax>=CFG.rot) m='ROTATE';
+  // жест = що гравець, найпевніше, робить рукою
+  if(m==='UP') g='THRUST (укол вістрям)';
+  else if(m==='DOWN') g='RETRACT (відтяг)';
+  else if(m==='RIGHT') g='SLASH_RIGHT';
+  else if(m==='LEFT') g='SLASH_LEFT';
+  else if(m==='PUSH') g='PUSH (від себе)';
+  else if(m==='PULL') g='PULL (на себе)';
+  else if(m==='ROTATE') g='TURN';
+  else if(m==='IMPACT') g = S.rMax>=CFG.rot ? 'POWER_SWING (оберт + ривок)' : 'IMPACT';
+  if(m!=='IDLE' && S.rMax>=CFG.rot && (m==='RIGHT'||m==='LEFT'||m==='UP')) g='POWER_SWING';
+  if(m!==S.motion){ S.lastMotion=S.motion; S.motion=m; S.motionT=performance.now(); }
+  S.gesture=g;
+}
+
+/* ─── стрілка руху ─────────────────────────────────────────────── */
+const motCv=$('motCv'), motCtx=motCv.getContext('2d');
+function drawMotion(){
+  const W=150,H=150,cx=75,cy=75, ctx=motCtx;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#010b18'; ctx.beginPath(); ctx.arc(cx,cy,70,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#1e3a5f'; ctx.lineWidth=1;
+  for(const r of [24,48,68]){ ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(cx-68,cy); ctx.lineTo(cx+68,cy); ctx.moveTo(cx,cy-68); ctx.lineTo(cx,cy+68); ctx.stroke();
+  ctx.fillStyle='#1e3a5f'; ctx.font='8px monospace'; ctx.textAlign='center';
+  ctx.fillText('вістря +Y',cx,cy-58); ctx.fillText('−Y',cx,cy+62);
+  ctx.fillText('+X',cx+58,cy+3); ctx.fillText('−X',cx-58,cy+3);
+  // горизонтальна площина X/Y
+  const sc=68/Math.max(CFG.impact,6);
+  const vx=clamp(S.fax*sc,-66,66), vy=clamp(-S.fay*sc,-66,66);
+  const len=Math.hypot(vx,vy);
+  if(len>3){
+    const col = S.motion==='IMPACT' ? '#ef4444' : S.motion==='ROTATE' ? '#a78bfa' : '#22d3ee';
+    ctx.strokeStyle=col; ctx.lineWidth=4; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+vx,cy+vy); ctx.stroke();
+    const a=Math.atan2(vy,vx);
+    ctx.beginPath(); ctx.moveTo(cx+vx,cy+vy);
+    ctx.lineTo(cx+vx-Math.cos(a-0.4)*11, cy+vy-Math.sin(a-0.4)*11);
+    ctx.lineTo(cx+vx-Math.cos(a+0.4)*11, cy+vy-Math.sin(a+0.4)*11);
+    ctx.closePath(); ctx.fillStyle=col; ctx.fill();
+  }
+  // вісь Z (від/до себе) — вертикальна смужка збоку
+  const z=clamp(S.faz*sc,-66,66);
+  ctx.fillStyle='#0a1628'; ctx.fillRect(W-10,cy-66,7,132);
+  ctx.fillStyle = z>0 ? '#fbbf24' : '#60a5fa';
+  ctx.fillRect(W-10, cy, 7, -z);
+  ctx.fillStyle='#1e3a5f'; ctx.font='7px monospace'; ctx.textAlign='right';
+  ctx.fillText('Z', W-12, cy-58);
+  // гіро-кільце
+  const rr=clamp(S.rMax/360,0,1);
+  if(rr>0.02){ ctx.strokeStyle='rgba(167,139,250,0.75)'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(cx,cy,70,-Math.PI/2,-Math.PI/2+rr*Math.PI*2); ctx.stroke(); }
+}
+
+/* ─── компас ───────────────────────────────────────────────────── */
+const cCv=$('compassCv'), cCtx=cCv.getContext('2d');
+function dirWord(h){ return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(h/22.5)%16]; }
+function drawCompass(h){
+  const cx=65,cy=65,r=58, ctx=cCtx;
+  ctx.clearRect(0,0,130,130);
+  ctx.fillStyle='#010b18'; ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#1e3a5f'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+  if(h===null||h===undefined){
+    ctx.fillStyle='#1e3a5f'; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText('NO MAGNETIC',cx,cy-6); ctx.fillText('DATA',cx,cy+8); return;
+  }
+  [['N',0,'#ef4444'],['E',90,'#2a4a6f'],['S',180,'#94a3b8'],['W',270,'#2a4a6f']].forEach(([l,deg,c])=>{
+    const a=(deg-h)*Math.PI/180;
+    ctx.fillStyle=c; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(l, cx+Math.sin(a)*(r-14), cy-Math.cos(a)*(r-14));
+  });
+  ctx.strokeStyle='#ef4444'; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx,cy-44); ctx.stroke();
+  ctx.strokeStyle='#3b82f6'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx,cy+24); ctx.stroke();
+  ctx.fillStyle='#334155'; ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2); ctx.fill();
+}
+drawCompass(null);
+
+/* ─── Hz ───────────────────────────────────────────────────────── */
+let oC=0,mC=0,cC=0;
+setInterval(()=>{
+  $('hzO').textContent=oC; $('hzM').textContent=mC; $('hzC').textContent=cC;
+  const on=oC>0||mC>0;
+  $('statusBar').className=on?'on':'off'; $('dot').className=on?'on':'off';
+  $('sTxt').className=on?'on':'off'; $('sTxt').textContent=on?'STREAMING':'STALLED — поворуши телефон';
+  oC=0;mC=0;cC=0;
+},1000);
+
+/* ─── обробники подій ──────────────────────────────────────────── */
+function onOrient(e){
+  S.alpha=e.alpha; S.beta=e.beta??0; S.gamma=e.gamma??0; S.tOrient=performance.now(); oC++;
+  if(e.absolute===true && e.alpha!=null){ S.absAlpha=e.alpha; S.heading=wrap360(360-e.alpha); S.hSrc='deviceorientation.absolute'; cC++; }
+  if(e.webkitCompassHeading!=null && !isNaN(e.webkitCompassHeading)){ S.heading=e.webkitCompassHeading; S.hSrc='webkitCompassHeading (iOS)'; cC++; }
+  if(S.heading==null && e.alpha!=null){ S.heading=wrap360(360-e.alpha); S.hSrc='deviceorientation (відносний!)'; }
+}
+function onOrientAbs(e){
+  if(e.alpha==null||isNaN(e.alpha)) return;
+  S.absAlpha=e.alpha; S.heading=wrap360(360-e.alpha); S.hSrc='deviceorientationabsolute'; cC++;
+}
+function onMotion(e){
+  const a=e.acceleration||{}, g=e.accelerationIncludingGravity||{}, r=e.rotationRate||{};
+  S.ax=a.x??0; S.ay=a.y??0; S.az=a.z??0;
+  S.gx=g.x??0; S.gy=g.y??0; S.gz=g.z??9.8;
+  S.ra=r.alpha??0; S.rb=r.beta??0; S.rg=r.gamma??0;
+  S.gMag=Math.hypot(S.gx,S.gy,S.gz);
+  S.tMotion=performance.now(); mC++;
+}
+
+/* ─── головний цикл UI ─────────────────────────────────────────── */
+let lastT=performance.now();
+function loop(){
+  const now=performance.now(), dt=Math.min((now-lastT)/1000,0.05); lastT=now;
+  classifyMotion(dt);
+  updA(S.alpha??0); updB(S.beta); updG(S.gamma);
+  updRA(S.ra); updRB(S.rb); updRG(S.rg);
+  updAX(S.ax); updAY(S.ay); updAZ(S.az);
+  updGX(S.gx); updGY(S.gy); updGZ(S.gz);
+  $('magPure').textContent=S.aMag.toFixed(2);
+  $('magG').textContent=S.gMag.toFixed(2);
+  $('magFill').style.width=clamp(S.aMag/CFG.impact*100,0,100)+'%';
+  $('phone3d').style.transform='rotateX('+(-S.beta*0.7)+'deg) rotateZ('+(S.gamma*0.7)+'deg)';
+  $('phB').textContent='β '+S.beta.toFixed(0)+'°';
+  $('phG').textContent='γ '+S.gamma.toFixed(0)+'°';
+  $('motState').textContent=S.motion;
+  $('motState').style.color = S.motion==='IMPACT'?'#ef4444':S.motion==='IDLE'?'#334155':'#22d3ee';
+  $('motGesture').textContent=S.gesture;
+  $('motNums').textContent='|a| '+S.aMag.toFixed(1)+' m/s²  ·  гіро '+Math.round(S.rMax)+' °/с\n'+
+    'X '+S.ax.toFixed(1)+'  Y '+S.ay.toFixed(1)+'  Z '+S.az.toFixed(1);
+  drawMotion();
+  if(S.heading!=null){
+    drawCompass(S.heading);
+    $('compassHdg').textContent=Math.round(S.heading)+'°';
+    $('compassDir').textContent=dirWord(S.heading);
+    $('compassSrc').textContent=S.hSrc;
+  }
+  testTick(now,dt);
+  requestAnimationFrame(loop);
+}
+
+/* ═══ ЧОТИРИ ТЕСТИ ══════════════════════════════════════════════ */
+const REPORT=[];
+let T=null;   // активний тест
+function say(txt){ $('testLive').textContent=txt; }
+function finish(id,ok,lines){
+  const btn=$(id); btn.className='tbtn '+(ok?'pass':'fail');
+  const head=(ok?'✔ ':'✘ ')+T.title;
+  REPORT.unshift(head+'\n  '+lines.join('\n  '));
+  $('report').textContent=REPORT.join('\n\n');
+  say((ok?'✔ ПРОЙДЕНО\n':'✘ ПРОБЛЕМА\n')+lines.join('\n'));
+  T=null;
+}
+function startTest(id,title,dur,init){
+  if(T) $(T.id).className='tbtn';
+  T={id,title,t0:performance.now(),dur,data:{}};
+  Object.assign(T.data, init||{});
+  $(id).className='tbtn run';
+}
+$('btnStop').onclick=()=>{ if(T){ $(T.id).className='tbtn'; T=null; say('Зупинено.'); } };
+$('btnCopy').onclick=()=>{
+  const txt='SENSOR LAB · '+new Date().toISOString()+'\n'+
+    'UA: '+ua+'\nджерело курсу: '+(S.hSrc||'—')+'\nпороги: idle '+CFG.idle+' move '+CFG.move+' impact '+CFG.impact+' rot '+CFG.rot+'\n\n'+REPORT.join('\n\n');
+  navigator.clipboard?.writeText(txt).then(()=>say('Звіт скопійовано.'),()=>say('Не вдалось скопіювати — виділи текст звіту вручну.'));
+};
+
+/* ① ПОВОРОТ */
+$('t1').onclick=()=>{
+  if(S.heading==null && S.alpha==null){ say('Немає орієнтації — тест неможливий.'); return; }
+  startTest('t1','① ПОВОРОТ',26,{h0:curYaw(),peak:0,maxDelta:0,still:0,driftStart:null,drift:0,lat:null,rateT:null});
+  say('Тримай телефон нерухомо відносно себе.\nПовільно повернись: 45° → 90° → 180° → 360°.\nПотім завмри на 3 секунди.');
+};
+function curYaw(){ return S.heading!=null ? S.heading : (S.alpha!=null ? wrap360(360-S.alpha) : 0); }
+/* ② НАХИЛ */
+$('t2').onclick=()=>{ startTest('t2','② НАХИЛ (β)',16,{bMin:999,bMax:-999}); say('Не обертаючи телефон навколо вертикалі:\nнахили вістря вгору → горизонтально → вниз.'); };
+/* ③ КРЕН */
+$('t3').onclick=()=>{ startTest('t3','③ КРЕН (γ)',16,{gMin:999,gMax:-999,scr:new Set()}); say('Поверни телефон боком і назад:\nпортрет → ландшафт → портрет.'); };
+/* ④ ЛІНІЙНИЙ ПОШТОВХ */
+$('t4').onclick=()=>{
+  startTest('t4','④ ЛІНІЙНИЙ ПОШТОВХ',20,{y0:curYaw(),peak:0,peakAx:0,peakAy:0,peakAz:0,yawSpan:0,seen:{},hits:0,last:0});
+  say('Спокій → різкий поштовх УПЕРЕД (вістрям) → стоп.\nПотім: спокій → поштовх ЛІВОРУЧ → стоп.\nНамагайся НЕ повертати телефон.');
+};
+
+function testTick(now,dt){
+  if(!T) return;
+  const t=(now-T.t0)/1000, left=Math.max(0,T.dur-t), d=T.data;
+  if(T.id==='t1'){
+    const y=curYaw(), delta=Math.abs(angDiff(y,d.h0));
+    d.maxDelta=Math.max(d.maxDelta,delta);
+    d.peak=Math.max(d.peak,Math.abs(S.ra),Math.abs(S.rg));
+    if(S.rMax>60){ d.still=0; d.driftStart=null; if(d.rateT==null) d.rateT=now; }
+    else {
+      d.still+=dt;
+      if(d.driftStart==null && d.still>0.4){ d.driftStart=y; d.driftT=now; }
+      else if(d.driftStart!=null) d.drift=Math.abs(angDiff(y,d.driftStart));
+    }
+    say('ПОВОРОТ · лишилось '+left.toFixed(0)+'с\n'+
+        'курс '+Math.round(y)+'°  Δ від старту '+Math.round(delta)+'°\n'+
+        'макс Δ '+Math.round(d.maxDelta)+'°  пік гіро '+Math.round(d.peak)+'°/с\n'+
+        'у спокої '+d.still.toFixed(1)+'с · дрейф '+d.drift.toFixed(1)+'°');
+    if(t>=T.dur){
+      const ok = d.maxDelta>40 && d.peak>30 && d.drift<6;
+      finish('t1',ok,[
+        'макс поворот: '+Math.round(d.maxDelta)+'° (треба >40°)',
+        'пік гіро: '+Math.round(d.peak)+'°/с',
+        'дрейф у спокої: '+d.drift.toFixed(1)+'° (треба <6°)',
+        'джерело курсу: '+(S.hSrc||'—'),
+        ok?'курс іде за телефоном і не уповзає після зупинки':'курс нестабільний — у грі керування буде «пливти»'
+      ]);
+    }
+  }
+  else if(T.id==='t2'){
+    d.bMin=Math.min(d.bMin,S.beta); d.bMax=Math.max(d.bMax,S.beta);
+    say('НАХИЛ · лишилось '+left.toFixed(0)+'с\nβ '+S.beta.toFixed(0)+'°\nдіапазон '+Math.round(d.bMin)+'° … '+Math.round(d.bMax)+'°');
+    if(t>=T.dur){
+      const span=d.bMax-d.bMin, ok=span>70;
+      finish('t2',ok,['діапазон β: '+Math.round(span)+'° ('+Math.round(d.bMin)+'…'+Math.round(d.bMax)+'), треба >70°',
+        ok?'нахил читається — ярус і висота клинка працюватимуть':'β майже не змінюється — ярус у грі буде залипати']);
+    }
+  }
+  else if(T.id==='t3'){
+    d.gMin=Math.min(d.gMin,S.gamma); d.gMax=Math.max(d.gMax,S.gamma);
+    d.scr.add(((screen.orientation&&screen.orientation.angle)||window.orientation||0)+'°');
+    say('КРЕН · лишилось '+left.toFixed(0)+'с\nγ '+S.gamma.toFixed(0)+'°\nдіапазон '+Math.round(d.gMin)+'° … '+Math.round(d.gMax)+'°\nкути екрана: '+[...d.scr].join(', '));
+    if(t>=T.dur){
+      const span=d.gMax-d.gMin, ok=span>60;
+      finish('t3',ok,['діапазон γ: '+Math.round(span)+'° ('+Math.round(d.gMin)+'…'+Math.round(d.gMax)+'), треба >60°',
+        'кути екрана за тест: '+[...d.scr].join(', '),
+        d.scr.size>1?'екран перевертався — перевір, чи не стрибав курс у грі':'екран лишався в одній орієнтації',
+        ok?'крен читається — стійка/гарда працюватимуть':'γ майже не змінюється']);
+    }
+  }
+  else if(T.id==='t4'){
+    const y=curYaw();
+    d.yawSpan=Math.max(d.yawSpan,Math.abs(angDiff(y,d.y0)));
+    d.peak=Math.max(d.peak,S.aMag);
+    d.peakAx=Math.max(d.peakAx,Math.abs(S.ax)); d.peakAy=Math.max(d.peakAy,Math.abs(S.ay)); d.peakAz=Math.max(d.peakAz,Math.abs(S.az));
+    if(S.motion!=='IDLE' && S.motion!=='ROTATE' && now-d.last>250){ d.seen[S.motion]=(d.seen[S.motion]||0)+1; d.hits++; d.last=now; }
+    say('ПОШТОВХ · лишилось '+left.toFixed(0)+'с\n'+
+        'зараз: '+S.motion+(S.gesture?' · '+S.gesture:'')+'\n'+
+        '|a| '+S.aMag.toFixed(1)+' пік '+d.peak.toFixed(1)+' m/s²\n'+
+        'спіймано подій: '+d.hits+' ['+Object.keys(d.seen).join(',')+']\n'+
+        'паразитний поворот: '+Math.round(d.yawSpan)+'°');
+    if(t>=T.dur){
+      const kinds=Object.keys(d.seen);
+      const ok = d.peak>=CFG.move*1.5 && kinds.length>=1;
+      finish('t4',ok,[
+        'пік чистого |a|: '+d.peak.toFixed(1)+' m/s²',
+        'пік по осях: X '+d.peakAx.toFixed(1)+'  Y '+d.peakAy.toFixed(1)+'  Z '+d.peakAz.toFixed(1),
+        'розпізнані напрямки: '+(kinds.length?kinds.join(', '):'жодного'),
+        'паразитний поворот курсу: '+Math.round(d.yawSpan)+'°'+(d.yawSpan<25?' (добре — рух без повороту)':' (телефон таки повертався)'),
+        ok?'телефон розрізняє напрямок ЛІНІЙНОГО руху — можна будувати THRUST/SLASH на акселерометрі'
+           :'лінійний рух розпізнається погано — покладайся на орієнтацію+гіро, а пороги знизь'
+      ]);
+    }
+  }
+}
+
+/* ─── запуск ───────────────────────────────────────────────────── */
+function startListening(){
+  window.addEventListener('deviceorientation',onOrient,true);
+  window.addEventListener('deviceorientationabsolute',onOrientAbs,true);
+  window.addEventListener('devicemotion',onMotion);
+  $('gate').style.display='none';
+  $('main').style.display='block';
+  readCfg();
+  requestAnimationFrame(loop);
+  setTimeout(()=>{ if(S.heading==null){ drawCompass(null); $('compassSrc').textContent='магнітометра немає'; } },3000);
+}
+$('btnReq').addEventListener('click',async()=>{
+  $('btnReq').textContent='⏳ запит…'; $('btnReq').disabled=true; $('errMsg').style.display='none';
+  try{
+    if(needsPermission){
+      const r1=await DeviceOrientationEvent.requestPermission();
+      if(r1!=='granted') throw new Error('Orientation: відмова');
+      const r2=await DeviceMotionEvent.requestPermission();
+      if(r2!=='granted') throw new Error('Motion: відмова');
+    }
+    startListening();
+  }catch(err){
+    $('errMsg').textContent='⚠ '+err.message; $('errMsg').style.display='block';
+    $('btnReq').textContent='▷ СПРОБУВАТИ ЩЕ РАЗ'; $('btnReq').disabled=false;
+  }
+});
+</script>
+</body>
+</html>
