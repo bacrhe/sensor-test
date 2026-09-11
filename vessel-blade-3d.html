@@ -203,6 +203,8 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mFF">⚔ ШКОДА ГРАВЦЯМ: УВІМК</button>
   <button id="mEq">⚖ РІВНОВАГА: УВІМК</button>
   <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВИМК</button>
+  <button id="mCal">🧭 КАЛІБРУВАТИ КЛИНОК</button>
+  <button id="mSens">🛠 SENSOR DEBUG: ВИМК</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
@@ -425,6 +427,7 @@ function orientationHeading(alpha,beta){
   // проекции лежат на ОДНОМ азимуте (крен обнулён), сумма |H|≥1.0 ПО ВСЕЙ СФЕРЕ —
   // проверено численно. Компасу больше не нужны ни порог доверия, ни удержание
   // последнего значения: он корректирует ВСЕГДА, в любом хвате.
+  sensor.quat={x:_oQuat.x,y:_oQuat.y,z:_oQuat.z,w:_oQuat.w};   // (09-11) для SENSOR DEBUG VIEW
   _lookh.set(0,0,-1).applyQuaternion(_oQuat);   // спинка
   _toph.set(0,1,0).applyQuaternion(_oQuat);     // верхушка (клинок)
   const s = _toph.y>=0 ? 1 : -1;                // клинок ниже горизонта → азимут спинки зеркален
@@ -472,10 +475,163 @@ function onOrientAbs(e){
    давали дрейф і ривки. Стало: беремо готовий курс з орієнтації пристрою і
    проганяємо через ОДИН фільтр. Гіроскоп більше не накопичує кут — тому
    нерухомий телефон не «уповзає» нікуди.                                   */
-const YAW_FILTER_K = 20;              // 1/с; τ≈50мс — тремтіння прибирає, лаг непомітний
+/* ════ ТРИ НЕЗАЛЕЖНІ КАНАЛИ СЕНСОРІВ (2026-09-11, ТЗ п.19-20) ════════════
+   1) ОРІЄНТАЦІЯ телефону  → куди дивиться КЛИНОК. Миттєво, без гальм.
+   2) ГІРОСКОП             → наскільки різко рухається рука (не кут!).
+   3) АКСЕЛЕРОМЕТР         → факт фізичного маху.
+   Згладжування більше не стоїть на дорозі клинка — воно переїхало туди, де
+   від нього є користь: на КОРПУС, який доганяє руку. Це вже не «гума
+   керування», а маса тіла.                                                */
+const SENSCFG={
+  BLADE_RESPONSE: 1.00,        // 1.0 = клинок миттєво за телефоном; 0.2 — дуже м'яко
+  BODY_FOLLOW_SPEED: 7.0,      // 1/с — як швидко корпус доганяє клинок
+  BODY_TURN_DELAY: 0.13,       // с — пауза перед тим, як корпус рушить за рукою
+  BODY_SWING_HOLD: 0.26,       // с — під час різкого маху корпус стоїть на місці
+  SWING_ACCEL_THRESHOLD: 14,   // м/с² — поріг різкого руху рукою
+  SWING_GYRO_THRESHOLD: 210,   // °/с — поріг кутової швидкості
+  SWING_MIN_DURATION: 0.05,    // с — коротше цього не мах, а тремтіння
+  SWING_MAX_DURATION: 0.45,    // с — довше цього не мах, а просто поворот
+  SWING_COOLDOWN: 0.30,        // с між махами
+  profile: 'НОРМАЛЬНИЙ'
+};
+const SENS_PROFILES={
+  'М\u2019ЯКИЙ':   {BLADE_RESPONSE:0.55, BODY_FOLLOW_SPEED:5.0, BODY_TURN_DELAY:0.18, BODY_SWING_HOLD:0.32, SWING_ACCEL_THRESHOLD:18, SWING_GYRO_THRESHOLD:260},
+  'НОРМАЛЬНИЙ':{BLADE_RESPONSE:1.00, BODY_FOLLOW_SPEED:7.0, BODY_TURN_DELAY:0.13, BODY_SWING_HOLD:0.26, SWING_ACCEL_THRESHOLD:14, SWING_GYRO_THRESHOLD:210},
+  'РІЗКИЙ':    {BLADE_RESPONSE:1.00, BODY_FOLLOW_SPEED:9.5, BODY_TURN_DELAY:0.08, BODY_SWING_HOLD:0.18, SWING_ACCEL_THRESHOLD:10, SWING_GYRO_THRESHOLD:160}
+};
+function sensProfile(name){
+  const p=SENS_PROFILES[name]; if(!p){ logE('профіль сенсорів: немає «'+name+'»'); return; }
+  Object.assign(SENSCFG,p); SENSCFG.profile=name;
+  logE('СЕНСОР: профіль «'+name+'» · клинок '+SENSCFG.BLADE_RESPONSE+' · корпус '+SENSCFG.BODY_FOLLOW_SPEED+'/с · мах '+SENSCFG.SWING_ACCEL_THRESHOLD+'м/с²');
+}
+window.VB_SENS=SENSCFG; window.VB_SENS_PROFILE=sensProfile;
+
+const SWING={t:0, cd:0, hold:0, peak:0, power:0, active:false, count:0};
 function sensorYawTick(dt){
+  swingTick(dt);
   if(sensor.headRaw==null) return;    // немає орієнтації (десктоп) — yaw правлять стрілки
-  sensor.yawFused = smoothAngle(sensor.yawFused, sensor.headRaw, clamp(YAW_FILTER_K*dt, 0, 1));
+  const tgt=wrap360(sensor.headRaw - (sensor.yawZero||0));
+  const r=clamp(SENSCFG.BLADE_RESPONSE,0.02,1);
+  // BLADE_RESPONSE=1 → ЖОДНОГО фільтра: телефон повернувся на 30° — клинок теж.
+  sensor.yawFused = (r>=0.999) ? tgt : smoothAngle(sensor.yawFused, tgt, clamp(r*30*dt,0,1));
+}
+/* Канал 2+3: різкий фізичний мах рукою. Пороги налаштовувані (ТЗ п.10). */
+function swingTick(dt){
+  const acc=sensor.speed||0;
+  const gyr=Math.abs(sensor.yawRate||0)+Math.abs(sensor.rollRate||0)*0.4+Math.abs(sensor.pitchRate||0)*0.4;
+  const hot = acc>=SENSCFG.SWING_ACCEL_THRESHOLD || gyr>=SENSCFG.SWING_GYRO_THRESHOLD;
+  SWING.cd=Math.max(0,SWING.cd-dt);
+  SWING.hold=Math.max(0,SWING.hold-dt);
+  if(hot){
+    SWING.t+=dt;
+    SWING.peak=Math.max(SWING.peak, acc/SENSCFG.SWING_ACCEL_THRESHOLD, gyr/SENSCFG.SWING_GYRO_THRESHOLD);
+    if(!SWING.active && SWING.t>=SENSCFG.SWING_MIN_DURATION && SWING.cd<=0) swingStart();
+    if(SWING.t>SENSCFG.SWING_MAX_DURATION) swingEnd();
+  }else if(SWING.active || SWING.t>0) swingEnd();
+  SWING.power=lerp(SWING.power, SWING.active?clamp(SWING.peak,0,2.5):0, clamp(dt*9,0,1));
+}
+function swingStart(){
+  SWING.active=true; SWING.hold=SENSCFG.BODY_SWING_HOLD; SWING.cd=SENSCFG.SWING_COOLDOWN;
+  SWING.count++;
+  try{ if(typeof MENTOR!=='undefined' && MENTOR.tatamiMode) TAT.swing=(TAT.swing||0)+1; }catch(e){}
+  if(window.__vbSensLog) logE('МАХ #'+SWING.count+': прискорення '+ (sensor.speed||0).toFixed(1)+
+    ' м/с² · гіро '+Math.round(Math.abs(sensor.yawRate||0))+'°/с');
+}
+function swingEnd(){ SWING.active=false; SWING.t=0; SWING.peak=0; }
+/* КОРПУС ДОГАНЯЄ РУКУ (ТЗ п.20): спершу йде клинок, тіло рушає з затримкою
+   і плавно приходить у новий напрям. Саме тут живе вся «плавність». */
+function bodyFollowTick(av, tgt, dt){
+  const d=Math.abs(angDiff(tgt, av.visYaw||0));
+  if(SWING.hold>0){ return; }                       // мах ще триває — тіло тримає стару позу
+  if(!av.bodyTurning){
+    if(d<=6){ av.bodyWait=0; return; }
+    av.bodyWait=(av.bodyWait||0)+dt;
+    if(av.bodyWait<SENSCFG.BODY_TURN_DELAY) return;
+    av.bodyTurning=true;
+  }
+  const k=clamp(SENSCFG.BODY_FOLLOW_SPEED*dt*(0.6+clamp(d/60,0,1.4)),0,1);
+  av.visYaw=smoothAngle(av.visYaw||0, tgt, k);
+  if(Math.abs(angDiff(tgt,av.visYaw))<=2){ av.bodyTurning=false; av.bodyWait=0; }
+}
+/* ── ГОЛОСОВА КАЛІБРОВКА ПРИРОДНОГО ПОЛОЖЕННЯ (ТЗ п.8) ────────────────── */
+function calibrateBlade(){
+  if(sensor.headRaw==null){ showBanner('🧭 немає орієнтації — калібрувати нічого','#f59e0b'); return; }
+  try{ ttsSpeak('Постав телефон у природне положення для гри.',{critical:true}); }catch(e){}
+  showBanner('🧭 ТРИМАЙ ТЕЛЕФОН ПРИРОДНО…','#7cc8ff');
+  setTimeout(()=>{ try{ ttsSpeak('Тримай.',{critical:true}); showBanner('🧭 ТРИМАЙ…','#7cc8ff'); }catch(e){} }, 2600);
+  setTimeout(()=>{
+    sensor.yawZero = wrap360((sensor.headRaw||0) - (player.visYaw||0));
+    try{ localStorage.setItem('vb3d_yawZero', String(sensor.yawZero)); }catch(e){}
+    try{ ttsSpeak('Калібровку завершено.',{critical:true}); }catch(e){}
+    showBanner('🧭 КАЛІБРОВКУ ЗАВЕРШЕНО','#86efac'); buzz([0,40,60,40]);
+    logE('КАЛІБРОВКА: нуль клинка = '+Math.round(sensor.yawZero)+'° (курс '+Math.round(sensor.headRaw)+'°)');
+  }, 4600);
+}
+window.calibrateBlade=calibrateBlade;
+try{ const _z=localStorage.getItem('vb3d_yawZero'); if(_z!=null) sensor.yawZero=parseFloat(_z)||0; }catch(e){}
+
+/* ── DEVELOPER SENSOR VIEW: віртуальний телефон у просторі (ТЗ п.22) ──── */
+const SENSVIEW={on:false, cv:null};
+function sensViewToggle(on){
+  SENSVIEW.on = (on==null) ? !SENSVIEW.on : !!on;
+  if(SENSVIEW.on && !SENSVIEW.cv){
+    const c=document.createElement('canvas');
+    c.width=180; c.height=230;
+    c.style.cssText='position:fixed;left:6px;top:132px;width:180px;height:230px;z-index:60;'+
+      'pointer-events:none;background:rgba(6,10,18,0.72);border:1px solid #1e3a5f;border-radius:8px';
+    document.body.appendChild(c); SENSVIEW.cv=c;
+  }
+  if(SENSVIEW.cv) SENSVIEW.cv.style.display=SENSVIEW.on?'block':'none';
+  try{ const b=$('mSens'); if(b) b.textContent='🛠 SENSOR DEBUG: '+(SENSVIEW.on?'УВІМК':'ВИМК'); }catch(e){}
+  logE('SENSOR DEBUG VIEW: '+(SENSVIEW.on?'УВІМК':'ВИМК'));
+}
+window.VB_SENSVIEW=sensViewToggle;
+const _svQ=new THREE.Quaternion(), _svV=new THREE.Vector3();
+function _svProj(x,y,z){                     // 3/4 вид зверху-спереду, ортопроєкція
+  const tilt=0.52, ct=Math.cos(tilt), st=Math.sin(tilt);
+  const Y=y*ct - z*st, Z=y*st + z*ct;
+  return [90 + x*46, 74 - Y*46 + Z*6];
+}
+function drawSensView(){
+  const c=SENSVIEW.cv; if(!c) return; const g=c.getContext('2d');
+  g.clearRect(0,0,c.width,c.height);
+  const q=sensor.quat;
+  const line=(a,b,col,w)=>{ g.strokeStyle=col; g.lineWidth=w||1.5; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); };
+  // підлога-компас: N вгорі
+  g.strokeStyle='#1e3a5f'; g.lineWidth=1;
+  for(const r of [0.55,1.0]){ g.beginPath();
+    for(let i=0;i<=32;i++){ const a=i/32*Math.PI*2, p=_svProj(Math.sin(a)*r,0,-Math.cos(a)*r);
+      i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]); } g.stroke(); }
+  g.fillStyle='#64748b'; g.font='9px monospace'; g.fillText('N', _svProj(0,0,-1.18)[0]-3, _svProj(0,0,-1.18)[1]);
+  // напрям корпусу і клинка
+  const arrow=(yaw,col,len,w)=>{ const d=dirXZ(yaw); line(_svProj(0,0,0), _svProj(d[0]*len,0,d[1]*len), col, w); };
+  arrow(player.visYaw||0, '#f59e0b', 0.95, 3);                  // корпус
+  arrow(typeof aimYawEff==='function'?aimYawEff():sensor.yawFused, '#22d3ee', 1.15, 2);   // клинок
+  // сам віртуальний телефон
+  if(q){
+    _svQ.set(q.x,q.y,q.z,q.w);
+    const W=0.20,H=0.40,D=0.035, pts=[];
+    for(const sx of [-1,1]) for(const sy of [-1,1]) for(const sz of [-1,1]){
+      _svV.set(sx*W, sy*H, sz*D).applyQuaternion(_svQ);
+      pts.push(_svProj(_svV.x, _svV.y+0.5, _svV.z));
+    }
+    const E=[[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+    for(const [a,b] of E) line(pts[a],pts[b],'#94a3b8',1.4);
+    _svV.set(0,H*1.9,0).applyQuaternion(_svQ);                  // верхівка = клинок
+    line(_svProj(0,0.5,0), _svProj(_svV.x,_svV.y+0.5,_svV.z), '#22d3ee', 2);
+  }
+  // цифри
+  const txt=[
+    'джерело '+(sensor.yawSrc||'—')+'  проф '+SENSCFG.profile,
+    'сирий α '+(sensor.alphaRaw==null?'—':Math.round(sensor.alphaRaw))+'°  екран '+(((screen.orientation&&screen.orientation.angle)||0))+'°',
+    'курс '+(sensor.headRaw==null?'—':Math.round(sensor.headRaw))+'°  нуль '+Math.round(sensor.yawZero||0)+'°',
+    'КЛИНОК '+Math.round((typeof aimYawEff==='function'?aimYawEff():sensor.yawFused))+'°',
+    'КОРПУС '+Math.round(player.visYaw||0)+'°  Δ '+Math.round(angDiff((typeof aimYawEff==='function'?aimYawEff():sensor.yawFused), player.visYaw||0))+'°',
+    'гіро '+Math.round(sensor.yawRate||0)+'°/с  приск '+(sensor.speed||0).toFixed(1),
+    'мах '+(SWING.active?'ТАК':'—')+'  сила '+(SWING.power||0).toFixed(2)+'  №'+SWING.count
+  ];
+  g.font='9px monospace';
+  txt.forEach((t,i)=>{ g.fillStyle = i===3?'#22d3ee' : i===4?'#f59e0b' : '#9fb3c8'; g.fillText(t, 6, 150+i*11); });
 }
 /* Діагностика сенсорів (ТЗ п.9, п.37) — тільки в лог, гравцю не показується. */
 let sensDiagT=0;
@@ -1284,12 +1440,21 @@ function aggressionHue(a){ // a:0 (норма) колодный синий → 1
    лишь слегка наклоняет гарду. Во время удара — снап-выпад вперёд +
    рубящая дуга вниз (atk 1→0), возврат в стойку. Всё это чисто визуально;
    хитбокс считается по клеткам (bladeContestCell) и не зависит от анимации. */
+/* Бойова стійка — параметри під підбір (ТЗ п.21). VB_STANCE у консолі. */
+const POSE={ on:true, legFwd:0.20, legBack:0.17, knee:0.90, sink:0.09,
+             twist:0.40, torsoFwd:0.05, hipFwd:0.25 };
+window.VB_POSE=POSE;
 const STRIKE_DUR = 0.32;               // длительность видимого взмаха
 function handInfo(av){
   // (07-17q) ДВОРУЧЧЯ: правий клинок веде СВІЙ телефон і росте з правої кисті,
   // а не з дворучного хвата перед грудьми — звідси й був «меч окремо від руки».
   const _two = (av===player && typeof linkFreshL==='function' && linkFreshL());
-  const [dx,dz] = dirXZ(_two ? aimYawEff() : av.visYaw);
+  // (09-11, ТЗ п.20) РУКА ВЕДЕ, ТІЛО ДОГАНЯЄ: клинок свого гравця будується від
+  // НАПРЯМУ ТЕЛЕФОНУ, а не від корпусу. Корпус ще дивиться старим курсом — тож
+  // кисть фізично виноситься вбік, як при справжньому замаху. У клінчі кут
+  // заморожений, там працює стара прив'язка до корпусу.
+  const _instant = _two || (av===player && !clinch.active);
+  const [dx,dz] = dirXZ(_instant ? aimYawEff() : av.visYaw);
   const rx = -dz, rz = dx;                        // «вправо» от направления
   const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);   // якір руки = візуальне тіло (плавний крок)
   const cr = av.crouch||0;
@@ -1360,13 +1525,34 @@ function updateAvatarMesh(av, t){
   if(av.kmodel){ if(av.kanim) av.kanim(av, t); return; }
   // ── ноги/стопы: присед опускает и разводит колени ──
   const spread=0.17+cr*0.13;
-  P.legL.position.set(-spread,0.33*sq,0); P.legL.scale.y=sq;
-  P.legR.position.set( spread,0.33*sq,0); P.legR.scale.y=sq;
-  P.footL.position.set(-spread,0.09,0.08); P.footR.position.set(spread,0.09,0.08);
-  P.pelvis.position.set(0,0.78*sq,0);
-  P.torso.position.set(0,1.26*sq,0);  P.torso.scale.y=sq;
-  P.head.position.set(0,1.86*sq,0.02);
-  P.visor.position.set(0,1.9*sq,0.27);
+  /* (09-11, ТЗ п.21) БОЙОВА СТІЙКА замість «стоїть рівно»: одна нога попереду,
+     друга позаду, коліна підігнуті, таз і плечі в напівоберті, руки попереду,
+     центр ваги трохи вперед — тіло готове до випаду, а не до черги. */
+  const ST=POSE, lead=(av===player?1:(av._stLead||(av._stLead=(Math.random()<0.5?1:-1))));
+  if(ST.on){
+    const sk=sq*ST.knee, dip=ST.sink*sq;
+    P.legL.position.set(-spread*0.9, 0.33*sk, lead>0? ST.legFwd : -ST.legBack);
+    P.legR.position.set( spread*1.0, 0.33*sk, lead>0? -ST.legBack : ST.legFwd);
+    P.legL.scale.y=sk; P.legR.scale.y=sk;
+    P.footL.position.set(-spread*0.9, 0.09, (lead>0? ST.legFwd : -ST.legBack)+0.09);
+    P.footR.position.set( spread*1.0, 0.09, (lead>0? -ST.legBack : ST.legFwd)+0.05);
+    P.pelvis.position.set(0, 0.78*sq-dip, ST.hipFwd*lead*0.2);
+    P.pelvis.rotation.y = -ST.twist*0.45*lead;
+    P.torso.position.set(0, 1.26*sq-dip, ST.torsoFwd); P.torso.scale.y=sq;
+    P.torso.rotation.y = -ST.twist*lead;                     // плечі в напівоберті
+    P.head.position.set(0, 1.86*sq-dip, 0.02);
+    P.head.rotation.y = ST.twist*0.5*lead;                   // погляд лишається на цілі
+    P.visor.position.set(0, 1.9*sq-dip, 0.27);
+    P.visor.rotation.y = ST.twist*0.5*lead;
+  }else{
+    P.legL.position.set(-spread,0.33*sq,0); P.legL.scale.y=sq;
+    P.legR.position.set( spread,0.33*sq,0); P.legR.scale.y=sq;
+    P.footL.position.set(-spread,0.09,0.08); P.footR.position.set(spread,0.09,0.08);
+    P.pelvis.position.set(0,0.78*sq,0); P.pelvis.rotation.y=0;
+    P.torso.position.set(0,1.26*sq,0);  P.torso.scale.y=sq; P.torso.rotation.y=0;
+    P.head.position.set(0,1.86*sq,0.02); P.head.rotation.y=0;
+    P.visor.position.set(0,1.9*sq,0.27); P.visor.rotation.y=0;
+  }
   col(P.legL,base*0.78); col(P.legR,base*0.78);
   col(P.footL,base*0.55); col(P.footR,base*0.55);
   col(P.pelvis,base*0.9); col(P.torso,base,0.8); col(P.head,base*1.08,0.7);
@@ -4146,6 +4332,8 @@ let equalizerOn=true;
 $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
   $('mEq').textContent='⚖ РІВНОВАГА: '+(equalizerOn?'УВІМК':'ВИМК');
   logE('правило рівноваги: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
+try{ $('mCal').onclick=()=>{ closeMenu(); setTimeout(calibrateBlade, 350); }; }catch(e){}
+try{ $('mSens').onclick=()=>{ sensViewToggle(); }; }catch(e){}
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
   if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
@@ -4156,7 +4344,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-10b · YAW = ОРІЄНТАЦІЯ ПРИСТРОЮ (один фільтр, без гіро-інтегрування і компасної корекції) · ВИДИМІСТЬ ворога — єдиний власник · навчальний ворог із паузами · ТЗ 09-10b п.2-23';
+const BUILD_TAG='2026-09-11a · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · пороги маху налаштовувані · калібровка клинка · SENSOR DEBUG VIEW · бойова стійка';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -4792,7 +4980,8 @@ function frame(now){
   dt2=dt;
   last=now;
 
-  sensorYawTick(dt);        // (09-10b) ЄДИНИЙ фільтр напряму клинка — до всієї ігрової логіки
+  sensorYawTick(dt);        // (09-11) канали сенсорів: клинок миттєво, мах — за порогами
+  if(SENSVIEW.on){ try{ drawSensView(); }catch(e){} }
 
   // клавиатурная отладка (если нет сенсоров под рукой)
   if(keys['ArrowLeft']) sensor.yawFused=wrap360(sensor.yawFused-120*dt);
@@ -4806,7 +4995,7 @@ function frame(now){
     sensor.pitch=lerp(sensor.pitch,pTgt,clamp(dt*10,0,1));
     player.dirIdx=yawToDirIdx(aimYawEff()); player.tier=1;
     player.pitch=sensor.pitch; player.roll=sensor.roll;
-    player.visYaw=smoothAngle(player.visYaw,sensor.yawFused,dt*6);
+    bodyFollowTick(player, aimYawEff(), dt);
     updateStanceAndCamera(dt);
     updateMorphVisual(now);
     updateGhost();      // призрак показывает, куда встанет блок
@@ -4829,8 +5018,9 @@ function frame(now){
       player.swingCd = (player.swingCd||0) - dt;
       // (07-15) РИВОК ТЕЛЕФОНА БІЛЬШЕ НЕ Б'Є: клинок пропалює контактом (resolveBurn),
       // а ВИПАД (strikeT) народжується ЛИШЕ з заряду МАЯКА — поверни боком, заряди, різко назад.
-      // КЛИНОК/тело трейлит за движением; камера уже мгновенная
-      player.visYaw = smoothAngle(player.visYaw, sensor.yawFused, dt*6);
+      // (09-11) КЛИНОК уже там, куди дивиться телефон; ТІЛО доганяє його з
+      // затримкою і масою — уся плавність живе тут, а не в керуванні.
+      bodyFollowTick(player, aimYawEff(), dt);
     }
 
     updateStanceAndCamera(dt);
@@ -6920,10 +7110,10 @@ function tatamiTick(dt){
     } else tatHelp(['Один крок.','Проведи пальцем по екрану — і крок.','Дивись, як це роблю я.'], 'крок свайп рух');
   }
   else if(tatIs('BLADE')){
-    // перший жест — forgiving (ТЗ п.19): досить справжнього змаху рукою,
-    // не вимагаємо одразу ідеального заряду МАЯКА.
-    if((sensor.speed||0)>11){ TAT.swing=(TAT.swing||0)+1; TAT.stepT=0; }
-    if((TAT.swing||0)>=2){ TAT.swing=0; tatamiBladeDone('змах рукою'); }
+    // перший жест — forgiving: досить справжнього маху рукою. Поріг тепер
+    // спільний і налаштовуваний (SENSCFG.SWING_*), а не магічне число.
+    if((TAT.swing||0)>0) TAT.stepT=0;
+    if((TAT.swing||0)>=2){ TAT.swing=0; tatamiBladeDone('мах рукою'); }
     else tatHelp(['Наведи і вдар.','Тримай телефон вертикально — з нього росте клинок.','Махни рукою, як б’єш.'], 'вертикально удар');
   }
   else if(tatIs('ENVIRONMENT')){
