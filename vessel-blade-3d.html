@@ -205,6 +205,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mAdv">🚪 ПРИГОДА (13×13 мета): ВИМК</button>
   <button id="mCal">🧭 КАЛІБРУВАТИ КЛИНОК</button>
   <button id="mSens">🛠 SENSOR DEBUG: ВИМК</button>
+  <button id="mLab">🧪 CHARACTER &amp; STRUCTURE LAB</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
@@ -4395,6 +4396,7 @@ $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
   logE('правило рівноваги: '+(equalizerOn?'ВКЛ':'ВЫКЛ')); };
 try{ $('mCal').onclick=()=>{ closeMenu(); setTimeout(calibrateBlade, 350); }; }catch(e){}
 try{ $('mSens').onclick=()=>{ sensViewToggle(); }; }catch(e){}
+try{ $('mLab').onclick=()=>{ $('menu').style.display='none'; labEnter(); }; }catch(e){}
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
   if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
@@ -4405,7 +4407,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-11b · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
+const BUILD_TAG='2026-09-11c · CHARACTER & STRUCTURE LAB (ріг, пози, анімації, hitbox, клітини, контакт меча, sensor preview) · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5036,6 +5038,7 @@ let started=false, last=0, introT=4, sampleT=2, resyncT=3;
 function frame(now){
   requestAnimationFrame(frame);
   if(!started) return;
+  if(LAB.on){ try{ labFrame(now); }catch(e){ console.error(e); } return; }   // (09-11c) лабораторія — своя сцена
   if(paused){ composer.render(); last=0; return; }   // пауза: только рендер
   const dt = last ? clamp((now-last)/1000,0,0.05) : 0.016;
   dt2=dt;
@@ -5230,6 +5233,571 @@ function frame(now){
   updateSparks(dt);
   composer.render();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHARACTER & STRUCTURE LAB (2026-09-11c) — інженерна лабораторія.
+   Окрема сцена, окрема камера, окремий ріг персонажа з ієрархією
+   ROOT → PELVIS → TORSO → HEAD / ARMS / LEGS → HAND → WEAPON SOCKET → SWORD.
+   Не чіпає HP, хвилі, ворогів, туторіал, наставника (ТЗ п.64-65).
+   ═══════════════════════════════════════════════════════════════════════════ */
+const LAB={ on:false, scene:null, cam:null, obj:null, kind:'CHARACTER', profile:'PLAYER',
+  size:1, structH:'MEDIUM', material:'WOOD', rotY:0,
+  orbit:{yaw:35,pitch:18,dist:5.4,ty:0.95},
+  flags:{cells:true,hitbox:false,joints:false,sockets:true,relation:false,collision:false,direction:true,silhouette:false,flat:false,sensor:false},
+  pose:'COMBAT_READY', anim:null, animT:0, playing:false, loop:true, speed:1,
+  rig:null, struct:null, target:null, contacts:{}, hidden:[], _last:0, body:{visYaw:0},
+  lights:{}, helpers:{}, prevTip:null, hitboxes:[] };
+window.LAB=LAB;
+const LAB_JOINTS=['PELVIS','TORSO','NECK','HEAD','LEFT_SHOULDER','LEFT_ELBOW','LEFT_WRIST','RIGHT_SHOULDER','RIGHT_ELBOW','RIGHT_WRIST','LEFT_HIP','LEFT_KNEE','LEFT_ANKLE','RIGHT_HIP','RIGHT_KNEE','RIGHT_ANKLE'];
+/* CHARACTER_PROFILE — різниця між PLAYER/MENTOR/ENEMY/BOSS виражена ДАНИМИ (ТЗ п.79). */
+const RIG_PROFILES={
+  PLAYER:{scale:1.00, hue:0.55, torsoW:0.36, armLen:1.00, legLen:1.00, headSize:0.22, swordLen:1.35, cells:1},
+  MENTOR:{scale:1.08, hue:0.74, torsoW:0.42, armLen:1.06, legLen:1.03, headSize:0.24, swordLen:1.55, cloak:true, cells:1},
+  ENEMY: {scale:0.98, hue:0.96, torsoW:0.33, armLen:0.98, legLen:0.97, headSize:0.21, swordLen:1.30, spikes:true, cells:1},
+  BOSS:  {scale:1.65, hue:0.03, torsoW:0.56, armLen:1.12, legLen:1.06, headSize:0.30, swordLen:2.30, crown:true, cells:4}
+};
+/* Пози — таблиця кутів суглобів у градусах [x,y,z]; root — зсув/нахил кореня. */
+const LAB_LEGS={LEFT_HIP:[-24,0,0],LEFT_KNEE:[28,0,0],LEFT_ANKLE:[-4,0,0],RIGHT_HIP:[14,0,0],RIGHT_KNEE:[20,0,0],RIGHT_ANKLE:[-14,0,0],PELVIS:[0,-18,0]};
+const LAB_POSES={
+  RELAXED:{LEFT_SHOULDER:[0,0,-8],RIGHT_SHOULDER:[0,0,8]},
+  IDLE:{LEFT_SHOULDER:[6,0,-6],RIGHT_SHOULDER:[6,0,6],LEFT_ELBOW:[-12,0,0],RIGHT_ELBOW:[-12,0,0]},
+  READY:{RIGHT_SHOULDER:[-62,-10,10],RIGHT_ELBOW:[-45,0,0],RIGHT_WRIST:[10,0,0],LEFT_SHOULDER:[-40,20,-12],LEFT_ELBOW:[-70,0,0],TORSO:[0,-8,0],HEAD:[0,10,0],LEFT_KNEE:[10,0,0],RIGHT_KNEE:[10,0,0],root:{y:-0.02}},
+  COMBAT_READY:Object.assign({},LAB_LEGS,{TORSO:[6,-14,0],HEAD:[0,26,0],RIGHT_SHOULDER:[-78,-16,14],RIGHT_ELBOW:[-38,0,0],RIGHT_WRIST:[18,0,0],LEFT_SHOULDER:[-56,28,-10],LEFT_ELBOW:[-62,0,0],root:{y:-0.09}}),
+  RAISE_SWORD:Object.assign({},LAB_LEGS,{TORSO:[-6,-10,0],HEAD:[0,20,0],RIGHT_SHOULDER:[-150,-8,12],RIGHT_ELBOW:[-30,0,0],LEFT_SHOULDER:[-120,20,-14],LEFT_ELBOW:[-40,0,0],root:{y:-0.06}}),
+  BLOCK:Object.assign({},LAB_LEGS,{TORSO:[4,-6,0],HEAD:[0,16,0],RIGHT_SHOULDER:[-88,-45,10],RIGHT_ELBOW:[-95,0,0],RIGHT_WRIST:[0,0,80],LEFT_SHOULDER:[-70,35,-10],LEFT_ELBOW:[-90,0,0],root:{y:-0.1}}),
+  PARRY:Object.assign({},LAB_LEGS,{TORSO:[4,22,0],HEAD:[0,-10,0],RIGHT_SHOULDER:[-72,-38,10],RIGHT_ELBOW:[-50,0,0],RIGHT_WRIST:[-10,0,35],LEFT_SHOULDER:[-50,30,-10],LEFT_ELBOW:[-70,0,0],root:{y:-0.08}}),
+  RECOIL:Object.assign({},LAB_LEGS,{TORSO:[-10,14,0],HEAD:[-6,0,0],RIGHT_SHOULDER:[-40,32,18],RIGHT_ELBOW:[-72,0,0],RIGHT_WRIST:[25,0,-20],LEFT_SHOULDER:[-30,20,-15],LEFT_ELBOW:[-50,0,0],root:{y:-0.06}}),
+  HIT:Object.assign({},LAB_LEGS,{TORSO:[-14,6,0],HEAD:[14,0,0],RIGHT_SHOULDER:[-30,0,18],RIGHT_ELBOW:[-40,0,0],LEFT_SHOULDER:[-20,0,-18],LEFT_ELBOW:[-30,0,0],root:{y:-0.07}}),
+  DEATH:{RIGHT_SHOULDER:[10,0,40],LEFT_SHOULDER:[10,0,-40],RIGHT_ELBOW:[-20,0,0],LEFT_KNEE:[15,0,0],HEAD:[-10,20,0],root:{rx:-88,y:0.12}}
+};
+try{ const sv=JSON.parse(localStorage.getItem('vb3d_lab_poses')||'{}'); Object.assign(LAB_POSES,sv); }catch(e){}
+const _SL_MID={RIGHT_SHOULDER:[-70,50,10],RIGHT_ELBOW:[-15,0,0],RIGHT_WRIST:[10,0,0],TORSO:[8,28,0],PELVIS:[0,8,0],HEAD:[0,-6,0]};
+const _SL_MIDL={RIGHT_SHOULDER:[-70,-70,10],RIGHT_ELBOW:[-15,0,0],RIGHT_WRIST:[10,0,0],TORSO:[8,-34,0],PELVIS:[0,-28,0],HEAD:[0,20,0]};
+const _TH_OUT={RIGHT_SHOULDER:[-98,-6,6],RIGHT_ELBOW:[-2,0,0],RIGHT_WRIST:[0,0,0],TORSO:[10,-26,0],HEAD:[0,30,0]};
+const LAB_ANIMS={
+  IDLE:{loop:true,keys:[{t:0,p:'IDLE'},{t:1.3,p:'IDLE',ov:{TORSO:[2,0,0],HEAD:[-3,0,0]},root:{y:0.01}},{t:2.6,p:'IDLE'}]},
+  READY:{keys:[{t:0,p:'IDLE'},{t:0.5,p:'READY'},{t:1.2,p:'READY'}]},
+  TURN:{keys:[{t:0,p:'COMBAT_READY'},{t:0.35,p:'COMBAT_READY',root:{ry:45,y:-0.09}},{t:0.7,p:'COMBAT_READY',root:{ry:90,y:-0.09}},{t:1.1,p:'COMBAT_READY',root:{ry:90,y:-0.09}}]},
+  STEP:{loop:true,keys:[{t:0,p:'COMBAT_READY'},{t:0.3,p:'COMBAT_READY',ov:{LEFT_HIP:[-40,0,0],LEFT_KNEE:[50,0,0],RIGHT_HIP:[24,0,0]},root:{y:-0.04,z:0.3}},{t:0.6,p:'COMBAT_READY',root:{y:-0.09,z:0.6}},{t:1.0,p:'COMBAT_READY',root:{y:-0.09,z:0.6}}]},
+  RAISE_SWORD:{keys:[{t:0,p:'READY'},{t:0.4,p:'RAISE_SWORD'},{t:0.9,p:'RAISE_SWORD'}]},
+  LOWER_SWORD:{keys:[{t:0,p:'RAISE_SWORD'},{t:0.4,p:'READY'},{t:0.9,p:'READY'}]},
+  SLASH_RIGHT:{keys:[{t:0,p:'COMBAT_READY'},{t:0.18,p:'RAISE_SWORD',ov:{RIGHT_SHOULDER:[-140,-40,10],TORSO:[-4,-30,0]}},{t:0.34,p:'COMBAT_READY',ov:_SL_MID,mark:'CONTACT'},{t:0.85,p:'COMBAT_READY'}]},
+  SLASH_LEFT:{keys:[{t:0,p:'COMBAT_READY'},{t:0.18,p:'RAISE_SWORD',ov:{RIGHT_SHOULDER:[-140,40,10],TORSO:[-4,26,0]}},{t:0.34,p:'COMBAT_READY',ov:_SL_MIDL,mark:'CONTACT'},{t:0.85,p:'COMBAT_READY'}]},
+  THRUST:{keys:[{t:0,p:'COMBAT_READY'},{t:0.16,p:'COMBAT_READY',ov:{RIGHT_SHOULDER:[-45,-20,14],RIGHT_ELBOW:[-95,0,0]}},{t:0.32,p:'COMBAT_READY',ov:_TH_OUT,root:{y:-0.12,z:0.16},mark:'CONTACT'},{t:0.85,p:'COMBAT_READY'}]},
+  RETRACT:{keys:[{t:0,p:'COMBAT_READY',ov:_TH_OUT,root:{y:-0.12,z:0.16}},{t:0.3,p:'COMBAT_READY',ov:{RIGHT_SHOULDER:[-45,-20,14],RIGHT_ELBOW:[-95,0,0]}},{t:0.7,p:'COMBAT_READY'}]},
+  BLOCK:{keys:[{t:0,p:'COMBAT_READY'},{t:0.25,p:'BLOCK'},{t:0.9,p:'BLOCK'}]},
+  PARRY:{keys:[{t:0,p:'BLOCK'},{t:0.18,p:'PARRY'},{t:0.7,p:'COMBAT_READY'}]},
+  RECOIL:{keys:[{t:0,p:'COMBAT_READY'},{t:0.12,p:'RECOIL'},{t:0.75,p:'COMBAT_READY'}]},
+  DISARM:{keys:[{t:0,p:'COMBAT_READY'},{t:0.15,p:'RECOIL'},{t:0.3,p:'RECOIL',ov:{RIGHT_WRIST:[40,0,60]},sword:false},{t:1.0,p:'HIT',sword:false}]},
+  HIT:{keys:[{t:0,p:'COMBAT_READY'},{t:0.12,p:'HIT'},{t:0.8,p:'COMBAT_READY'}]},
+  DEATH:{keys:[{t:0,p:'COMBAT_READY'},{t:0.2,p:'HIT'},{t:1.1,p:'DEATH'},{t:1.8,p:'DEATH'}]},
+  /* ТЗ п.23: READY → SLASH → CONTACT → RECOIL → REALIGN → READY */
+  COMBAT_CHAIN:{keys:[{t:0,p:'READY',mark:'READY'},{t:0.4,p:'COMBAT_READY'},{t:0.6,p:'RAISE_SWORD',ov:{RIGHT_SHOULDER:[-140,-40,10]},mark:'SLASH'},{t:0.78,p:'COMBAT_READY',ov:_SL_MID,mark:'CONTACT'},{t:0.9,p:'COMBAT_READY',ov:_SL_MID},{t:1.05,p:'RECOIL',mark:'RECOIL'},{t:1.5,p:'READY',ov:{RIGHT_SHOULDER:[-70,-12,10]},mark:'REALIGN'},{t:1.9,p:'READY',mark:'READY'}]}
+};
+const LAB_PRESETS={
+  DEFAULT:{BLADE_RESPONSE:1.0,BODY_FOLLOW_SPEED:7.0,BODY_TURN_DELAY:0.13,BODY_SWING_HOLD:0.26},
+  'FAST BLADE':{BLADE_RESPONSE:1.0,BODY_FOLLOW_SPEED:9.5,BODY_TURN_DELAY:0.08,BODY_SWING_HOLD:0.18},
+  'SLOW BODY':{BLADE_RESPONSE:1.0,BODY_FOLLOW_SPEED:3.5,BODY_TURN_DELAY:0.25,BODY_SWING_HOLD:0.4},
+  COMBAT:{BLADE_RESPONSE:1.0,BODY_FOLLOW_SPEED:8.5,BODY_TURN_DELAY:0.1,BODY_SWING_HOLD:0.22,SWING_ACCEL_THRESHOLD:11,SWING_GYRO_THRESHOLD:170},
+  DEBUG:{BLADE_RESPONSE:0.6,BODY_FOLLOW_SPEED:2.0,BODY_TURN_DELAY:0.35,BODY_SWING_HOLD:0.6}
+};
+
+/* ── будівельні блоки ─────────────────────────────────────────────────── */
+function labMat(h,l,s){ return new THREE.MeshLambertMaterial({color:new THREE.Color().setHSL(h,s==null?0.55:s,l)}); }
+function labBox(name,w,h,d,mat,ox,oy,oz){ const g=new THREE.BoxGeometry(w,h,d); g.translate(ox||0,oy||0,oz||0); const m=new THREE.Mesh(g,mat); m.name=name; m.userData.labPart=true; return m; }
+function labJoint(name,x,y,z,parent){ const j=new THREE.Group(); j.name=name; j.position.set(x,y,z); j.userData.joint=true; parent.add(j); return j; }
+function labLabel(text,color,scale){
+  const c=document.createElement('canvas'); c.width=256; c.height=64; const g=c.getContext('2d');
+  g.fillStyle='rgba(2,8,20,0.75)'; g.fillRect(0,0,256,64);
+  g.fillStyle=color||'#9fb3c8'; g.font='bold 30px monospace'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,128,32);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,transparent:true}));
+  sp.scale.set((scale||0.5)*2,(scale||0.5)*0.5,1); sp.userData.label=true; return sp;
+}
+/* CHARACTER_BASE: один ріг для всіх профілів. */
+function labBuildRig(profileName){
+  const P=Object.assign({},RIG_PROFILES.PLAYER,RIG_PROFILES[profileName]||{});
+  const s=P.scale, hue=P.hue;
+  const mB=labMat(hue,0.42), mD=labMat(hue,0.30), mL=labMat(hue,0.55), mSk=labMat(hue,0.62,0.35);
+  const root=new THREE.Group(); root.name='CHARACTER_ROOT';
+  const legL=0.86*s*P.legLen, thigh=legL*0.52, shin=legL*0.44, foot=0.09*s, hipH=legL+foot;
+  const J={};
+  J.PELVIS=labJoint('PELVIS',0,hipH,0,root);
+  J.PELVIS.add(labBox('pelvis',P.torsoW*0.95*s,0.22*s,0.24*s,mD,0,0.11*s,0));
+  J.TORSO=labJoint('TORSO',0,0.22*s,0,J.PELVIS);
+  const torsoH=0.56*s;
+  J.TORSO.add(labBox('torso',P.torsoW*s,torsoH,0.28*s,mB,0,torsoH/2,0));
+  J.NECK=labJoint('NECK',0,torsoH,0,J.TORSO); J.NECK.add(labBox('neck',0.1*s,0.1*s,0.1*s,mSk,0,0.05*s,0));
+  J.HEAD=labJoint('HEAD',0,0.1*s,0,J.NECK);
+  J.HEAD.add(labBox('head',P.headSize*s,P.headSize*1.1*s,P.headSize*s,mSk,0,P.headSize*0.55*s,0.01));
+  J.HEAD.add(labBox('visor',P.headSize*0.8*s,0.05*s,0.02*s,new THREE.MeshBasicMaterial({color:0x22d3ee}),0,P.headSize*0.6*s,P.headSize*0.5*s));
+  const upper=0.30*s*P.armLen, fore=0.28*s*P.armLen, hand=0.09*s;
+  const arm=(side,sx)=>{
+    const sh=labJoint(side+'_SHOULDER',sx*(P.torsoW/2+0.07)*s,torsoH-0.05*s,0,J.TORSO);
+    sh.add(labBox(side.toLowerCase()+'_upperarm',0.11*s,upper,0.11*s,mB,0,-upper/2,0));
+    const el=labJoint(side+'_ELBOW',0,-upper,0,sh);
+    el.add(labBox(side.toLowerCase()+'_forearm',0.095*s,fore,0.095*s,mL,0,-fore/2,0));
+    const wr=labJoint(side+'_WRIST',0,-fore,0,el);
+    wr.add(labBox(side.toLowerCase()+'_hand',0.09*s,hand,0.06*s,mSk,0,-hand/2,0.01));
+    const sock=labJoint(side+'_HAND_WEAPON',0,-hand*0.6,0.02,wr); sock.userData.socket=true;
+    return {sh,el,wr,sock};
+  };
+  const aL=arm('LEFT',-1), aR=arm('RIGHT',1);
+  J.LEFT_SHOULDER=aL.sh; J.LEFT_ELBOW=aL.el; J.LEFT_WRIST=aL.wr; J.RIGHT_SHOULDER=aR.sh; J.RIGHT_ELBOW=aR.el; J.RIGHT_WRIST=aR.wr;
+  const leg=(side,sx)=>{
+    const hp=labJoint(side+'_HIP',sx*0.12*s,0,0,J.PELVIS);
+    hp.add(labBox(side.toLowerCase()+'_thigh',0.14*s,thigh,0.15*s,mD,0,-thigh/2,0));
+    const kn=labJoint(side+'_KNEE',0,-thigh,0,hp);
+    kn.add(labBox(side.toLowerCase()+'_shin',0.12*s,shin,0.12*s,mB,0,-shin/2,0));
+    const an=labJoint(side+'_ANKLE',0,-shin,0,kn);
+    an.add(labBox(side.toLowerCase()+'_foot',0.12*s,foot,0.24*s,mD,0,-foot/2,0.07*s));
+    return {hp,kn,an};
+  };
+  const lL=leg('LEFT',-1), lR=leg('RIGHT',1);
+  J.LEFT_HIP=lL.hp; J.LEFT_KNEE=lL.kn; J.LEFT_ANKLE=lL.an; J.RIGHT_HIP=lR.hp; J.RIGHT_KNEE=lR.kn; J.RIGHT_ANKLE=lR.an;
+  // WEAPON: ARM → HAND → SWORD_GRIP → SWORD (руків'я продовжує лінію руки, вістря — по -Y сокета)
+  const sword=labBuildSword(s,P.swordLen*s);
+  aR.sock.add(sword.root);
+  // профільна індивідуальність — даними, не окремою системою
+  if(P.cloak) J.TORSO.add(labBox('cloak',P.torsoW*1.25*s,torsoH*1.15,0.06*s,labMat(hue,0.22),0,torsoH*0.42,-0.2*s));
+  if(P.spikes) for(let i=0;i<3;i++) J.HEAD.add(labBox('spike'+i,0.04*s,0.14*s,0.04*s,labMat(hue,0.5),(i-1)*0.07*s,P.headSize*1.2*s,0));
+  if(P.crown) J.HEAD.add(labBox('crown',P.headSize*1.2*s,0.06*s,P.headSize*1.2*s,labMat(0.12,0.6,0.9),0,P.headSize*1.15*s,0));
+  const parts=[]; root.traverse(o=>{ if(o.isMesh && o.userData.labPart) parts.push(o); });
+  return {root,J,sword,parts,P,sockets:{RIGHT_HAND_WEAPON:aR.sock,LEFT_HAND_WEAPON:aL.sock},dims:{hipH,torsoH,upper,fore,hand}};
+}
+function labBuildSword(s,bladeL){
+  const root=new THREE.Group(); root.name='SWORD_ROOT';
+  const gripL=0.22*s;
+  const grip=labBox('SWORD_GRIP',0.045*s,gripL,0.045*s,labMat(0.08,0.25),0,-gripL/2,0);
+  const guard=labBox('SWORD_GUARD',0.22*s,0.03*s,0.05*s,labMat(0.1,0.5,0.2),0,-gripL,0);
+  const blade=labBox('SWORD_BLADE',0.05*s,bladeL,0.012*s,new THREE.MeshBasicMaterial({color:0x7cc8ff}),0,-bladeL/2,0);
+  blade.position.y=-gripL;          // геометрія від основи — scale.y вкорочує клинок ВІД руків'я
+  root.add(grip,guard,blade);
+  return {root,grip,guard,blade,gripL,bladeL};
+}
+/* STRUCTURE_BASE: клітинний footprint + окрема висота + collision volume + surfaceType (ТЗ п.32-37). */
+function labBuildStructure(cells,hName,material){
+  const n=Math.round(Math.sqrt(cells)), H={LOW:0.6,MEDIUM:1.4,HIGH:2.6}[hName]||1.4;
+  const w=n*CELL*0.94, h=H*CELL;
+  const mat = material==='WOOD' ? labMat(0.08,0.38,0.5) : labMat(0.6,0.4,0.15);
+  const g=new THREE.Group(); g.name='STRUCTURE_'+cells;
+  const m=labBox('STRUCTURE_'+cells,w,h,w,mat,0,h/2,0); g.add(m);
+  g.userData={structure:true,cells,footprint:n,height:H,surfaceType:material,parts:[m]};
+  return g;
+}
+function labBuildMannequin(){
+  const g=new THREE.Group(); g.name='MANNEQUIN';
+  const wood=labMat(0.08,0.4,0.55);
+  const post=labBox('MANNEQUIN_POST',0.12,1.5,0.12,wood,0,0.75,0);
+  const torso=labBox('MANNEQUIN_TORSO',0.36,0.6,0.26,wood,0,1.25,0);
+  const head=labBox('MANNEQUIN_HEAD',0.2,0.22,0.2,wood,0,1.7,0);
+  const armL=labBox('MANNEQUIN_ARM_L',0.5,0.09,0.09,wood,-0.42,1.4,0.12);
+  const armR=labBox('MANNEQUIN_ARM_R',0.5,0.09,0.09,wood,0.42,1.4,0.12);
+  const peg=labBox('MANNEQUIN_PEG',0.09,0.09,0.4,wood,0,1.0,0.3);
+  g.add(post,torso,head,armL,armR,peg);
+  g.userData={structure:true,cells:1,footprint:1,height:1.9,surfaceType:'WOOD',parts:[post,torso,head,armL,armR,peg]};
+  return g;
+}
+
+/* ── сцена ─────────────────────────────────────────────────────────────── */
+function labInitScene(){
+  if(LAB.scene) return;
+  const sc=new THREE.Scene(); sc.background=new THREE.Color(0x061021);
+  LAB.scene=sc;
+  LAB.cam=new THREE.PerspectiveCamera(50,1,0.05,100);
+  LAB.lights.hemi=new THREE.HemisphereLight(0xcfe3ff,0x1a2233,0.9);
+  LAB.lights.dir=new THREE.DirectionalLight(0xffffff,0.9); LAB.lights.dir.position.set(3,6,4);
+  LAB.lights.amb=new THREE.AmbientLight(0xffffff,0.0);
+  sc.add(LAB.lights.hemi,LAB.lights.dir,LAB.lights.amb);
+  // платформа: 7×7 клітинок, центр, сітка, напрямки (ТЗ п.4)
+  const N=7, sz=N*CELL;
+  const plate=new THREE.Mesh(new THREE.PlaneGeometry(sz,sz),new THREE.MeshBasicMaterial({color:0x0b1a30,side:THREE.DoubleSide}));
+  plate.rotation.x=-Math.PI/2; plate.position.y=-0.005; sc.add(plate);
+  const grid=new THREE.GridHelper(sz,N,0x3b82f6,0x1e3a5f); sc.add(grid);
+  const center=new THREE.Mesh(new THREE.RingGeometry(0.06,0.1,24),new THREE.MeshBasicMaterial({color:0x22d3ee,side:THREE.DoubleSide}));
+  center.rotation.x=-Math.PI/2; center.position.y=0.002; sc.add(center);
+  // напрямки
+  const dirG=new THREE.Group(); dirG.name='DIRECTIONS';
+  const arrow=(dir,len,col,txt)=>{
+    const a=new THREE.ArrowHelper(new THREE.Vector3(dir[0],dir[1],dir[2]).normalize(),new THREE.Vector3(0,0.01,0),len,col,0.16,0.09); dirG.add(a);
+    const l=labLabel(txt,'#cbd5e1',0.36); l.position.set(dir[0]*(len+0.25),0.12+dir[1]*(len+0.2),dir[2]*(len+0.25)); dirG.add(l);
+  };
+  arrow([0,0,1],sz/2-0.3,0x22c55e,'FORWARD'); arrow([0,0,-1],sz/2-0.3,0xef4444,'BACK');
+  arrow([-1,0,0],sz/2-0.3,0x60a5fa,'LEFT'); arrow([1,0,0],sz/2-0.3,0x60a5fa,'RIGHT');
+  arrow([0,1,0],2.6,0xffffff,'UP');
+  sc.add(dirG); LAB.helpers.dir=dirG;
+  // footprint (клітини об'єкта) і межі
+  LAB.helpers.cells=new THREE.Mesh(new THREE.PlaneGeometry(CELL,CELL),new THREE.MeshBasicMaterial({color:0x22d3ee,transparent:true,opacity:0.18,side:THREE.DoubleSide}));
+  LAB.helpers.cells.rotation.x=-Math.PI/2; LAB.helpers.cells.position.y=0.003; sc.add(LAB.helpers.cells);
+  LAB.helpers.bounds=new THREE.Box3Helper(new THREE.Box3(),0x22d3ee); sc.add(LAB.helpers.bounds);
+  LAB.helpers.contact=new THREE.Mesh(new THREE.SphereGeometry(0.05,12,12),new THREE.MeshBasicMaterial({color:0xef4444})); LAB.helpers.contact.visible=false; sc.add(LAB.helpers.contact);
+  LAB.helpers.rel=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xfbbf24})); LAB.helpers.rel.visible=false; sc.add(LAB.helpers.rel);
+  LAB.helpers.hit=new THREE.Group(); sc.add(LAB.helpers.hit);
+  LAB.obj=new THREE.Group(); LAB.obj.name='LAB_OBJECT'; sc.add(LAB.obj);
+  LAB.targetG=new THREE.Group(); LAB.targetG.name='LAB_TARGET'; LAB.targetG.position.set(0,0,2*CELL); sc.add(LAB.targetG);
+}
+/* ── об'єкт на платформі ──────────────────────────────────────────────── */
+function labSpawn(){
+  labInitScene();
+  while(LAB.obj.children.length) LAB.obj.remove(LAB.obj.children[0]);
+  while(LAB.helpers.hit.children.length) LAB.helpers.hit.remove(LAB.helpers.hit.children[0]);
+  LAB.rig=null; LAB.struct=null; LAB.swordOnly=null;
+  if(LAB.kind==='CHARACTER'){
+    LAB.rig=labBuildRig(LAB.profile);
+    LAB.size=RIG_PROFILES[LAB.profile].cells||LAB.size;
+    LAB.obj.add(LAB.rig.root);
+    labAddJointDebug(LAB.rig);
+    labApplyPose(LAB.pose);
+  }else if(LAB.kind==='STRUCTURE'){
+    LAB.struct=labBuildStructure(LAB.size,LAB.structH,LAB.material); LAB.obj.add(LAB.struct);
+  }else if(LAB.kind==='WEAPON'){
+    const sw=labBuildSword(1,1.35); sw.root.rotation.x=Math.PI; sw.root.position.y=1.6; LAB.obj.add(sw.root); LAB.swordOnly=sw;
+  }else{
+    LAB.struct=labBuildMannequin(); LAB.obj.add(LAB.struct);
+  }
+  labBuildHitboxes();
+  labRefreshFlags();
+  logE('LAB: об\'єкт '+LAB.kind+(LAB.kind==='CHARACTER'?' / '+LAB.profile:'')+' · клітин '+LAB.size);
+}
+function labAddJointDebug(rig){
+  for(const name of Object.keys(rig.J)){
+    const j=rig.J[name];
+    const sp=new THREE.Mesh(new THREE.SphereGeometry(0.03,10,10),new THREE.MeshBasicMaterial({color:0xfbbf24,depthTest:false}));
+    sp.userData.jointDot=true; sp.renderOrder=5; j.add(sp);
+    const l=labLabel(name.replace('RIGHT_','R.').replace('LEFT_','L.'),'#fbbf24',0.22); l.position.set(0.12,0.06,0); l.userData.jointLabel=true; j.add(l);
+  }
+  for(const sn of Object.keys(rig.sockets)){
+    const ax=new THREE.AxesHelper(0.18); ax.userData.socketAxes=true; rig.sockets[sn].add(ax);
+    const l=labLabel(sn,'#22d3ee',0.28); l.position.set(0,-0.12,0.1); l.userData.socketLabel=true; rig.sockets[sn].add(l);
+  }
+}
+function labBuildHitboxes(){
+  const list = LAB.rig ? LAB.rig.parts : (LAB.struct ? LAB.struct.userData.parts : []);
+  LAB.hitboxes=[];
+  for(const m of list){
+    const b=new THREE.Box3(); const h=new THREE.Box3Helper(b,0x22c55e); h.userData.mesh=m; h.userData.box=b;
+    LAB.helpers.hit.add(h); LAB.hitboxes.push(h);
+  }
+  if(LAB.rig){ const b=new THREE.Box3(); const h=new THREE.Box3Helper(b,0x7cc8ff); h.userData.mesh=LAB.rig.sword.blade; h.userData.box=b; h.userData.sword=true; LAB.helpers.hit.add(h); LAB.hitboxes.push(h); }
+}
+/* ── пози / анімації ─────────────────────────────────────────────────── */
+function labResolve(key){
+  const base=LAB_POSES[key.p]||{};
+  const out={root:Object.assign({y:0,z:0,rx:0,ry:0},base.root||{},key.root||{})};
+  for(const j of LAB_JOINTS) out[j]=(key.ov&&key.ov[j])||base[j]||[0,0,0];
+  out.sword = key.sword!==false;
+  return out;
+}
+function labLerpPose(a,b,f){
+  const o={root:{}}; for(const k of ['y','z','rx','ry']) o.root[k]=lerp(a.root[k],b.root[k],f);
+  for(const j of LAB_JOINTS) o[j]=[0,1,2].map(i=>lerp(a[j][i],b[j][i],f));
+  o.sword = f<0.5 ? a.sword : b.sword; return o;
+}
+function labSetPose(P){
+  const rig=LAB.rig; if(!rig||!P) return;
+  const d=Math.PI/180;
+  for(const j of LAB_JOINTS){ const r=P[j]; rig.J[j].rotation.set(r[0]*d,r[1]*d,r[2]*d,'XYZ'); }
+  rig.root.position.set(0,P.root.y,P.root.z); rig.root.rotation.set(P.root.rx*d,P.root.ry*d,0);
+  rig.sword.root.visible=P.sword!==false;
+  LAB.curPose=P;
+}
+function labApplyPose(name){ LAB.pose=name; LAB.anim=null; LAB.playing=false; labSetPose(labResolve({p:name})); }
+function labAnimAt(name,t){
+  const A=LAB_ANIMS[name]; if(!A) return null;
+  const K=A.keys, T=K[K.length-1].t;
+  if(A.loop||LAB.loop) t=T>0?((t%T)+T)%T:0; else t=clamp(t,0,T);
+  let i=0; while(i<K.length-2 && t>K[i+1].t) i++;
+  const k0=K[i], k1=K[Math.min(i+1,K.length-1)];
+  const f=(k1.t>k0.t)?clamp((t-k0.t)/(k1.t-k0.t),0,1):1, e=f*f*(3-2*f);
+  const P=labLerpPose(labResolve(k0),labResolve(k1),e);
+  P.mark=(f<0.5?k0.mark:k1.mark)||''; P.T=T; P.t=t; return P;
+}
+function labPlay(name){ if(name) LAB.anim=name; if(!LAB.anim) LAB.anim='COMBAT_CHAIN'; LAB.playing=true; }
+/* ── камера / орбіта ─────────────────────────────────────────────────── */
+function labCamUpdate(){
+  const o=LAB.orbit, c=LAB.cam, p=o.pitch*Math.PI/180, y=o.yaw*Math.PI/180;
+  c.position.set(Math.cos(p)*Math.sin(y)*o.dist, o.ty+Math.sin(p)*o.dist, Math.cos(p)*Math.cos(y)*o.dist);
+  c.lookAt(0,o.ty,0);
+  const w=renderer.domElement.width, h=renderer.domElement.height; c.aspect=w/Math.max(1,h); c.updateProjectionMatrix();
+}
+function labCamPreset(n){
+  const o=LAB.orbit;
+  const P={FRONT:[0,8],BACK:[180,8],LEFT:[-90,8],RIGHT:[90,8],TOP:[0,88],BOTTOM:[0,-80],FREE:[35,18]}[n];
+  if(P){ o.yaw=P[0]; o.pitch=P[1]; }
+  if(n==='RESET'){ o.yaw=35; o.pitch=18; o.dist=5.4; o.ty=0.95; }
+}
+/* ── прапорці шарів ──────────────────────────────────────────────────── */
+function labRefreshFlags(){
+  const F=LAB.flags;
+  if(LAB.helpers.dir) LAB.helpers.dir.visible=F.direction;
+  if(LAB.helpers.cells){ LAB.helpers.cells.visible=F.cells; LAB.helpers.bounds.visible=F.cells; const n=Math.round(Math.sqrt(LAB.size)); LAB.helpers.cells.scale.set(n,n,1); }
+  if(LAB.helpers.hit) LAB.helpers.hit.visible=F.hitbox||F.collision;
+  if(LAB.rig) LAB.rig.root.traverse(o=>{
+    if(o.userData.jointDot||o.userData.jointLabel) o.visible=F.joints;
+    if(o.userData.socketAxes||o.userData.socketLabel) o.visible=F.sockets;
+  });
+  if(LAB.helpers.rel) LAB.helpers.rel.visible=F.relation;
+  LAB.lights.dir.intensity=F.flat?0:0.9; LAB.lights.hemi.intensity=F.flat?0.35:0.9; LAB.lights.amb.intensity=F.flat?1.1:0;
+  const sil=F.silhouette; LAB.scene.background.set(sil?0xdfe7f2:0x061021);
+  const apply=root=>root&&root.traverse(o=>{ if(o.isMesh && o.userData.labPart){
+    if(sil){ if(!o.userData.mat0) o.userData.mat0=o.material; o.material=LAB._silMat||(LAB._silMat=new THREE.MeshBasicMaterial({color:0x0b0f14})); }
+    else if(o.userData.mat0){ o.material=o.userData.mat0; o.userData.mat0=null; } } });
+  apply(LAB.obj); apply(LAB.targetG);
+}
+/* ── кадр лабораторії ────────────────────────────────────────────────── */
+const _labV1=new THREE.Vector3(), _labV2=new THREE.Vector3(), _labV3=new THREE.Vector3(), _labB=new THREE.Box3();
+function labFrame(now){
+  const dt=LAB._last?clamp((now-LAB._last)/1000,0,0.05):0.016; LAB._last=now;
+  LAB.obj.rotation.y=LAB.rotY;
+  let mark='';
+  if(LAB.rig){
+    if(LAB.anim){
+      if(LAB.playing) LAB.animT+=dt*LAB.speed;
+      const P=labAnimAt(LAB.anim,LAB.animT);
+      if(P){ labSetPose(P); mark=P.mark; LAB.animLen=P.T; LAB.animCur=P.t;
+        if(!LAB_ANIMS[LAB.anim].loop && !LAB.loop && LAB.animT>=P.T) LAB.playing=false; }
+    }
+    if(LAB.flags.sensor){                 // SENSOR PREVIEW: ORIENTATION → BLADE / BODY FOLLOW, без бою (ТЗ п.25-26)
+      const blade=(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused;
+      bodyFollowTick(LAB.body,blade,dt);
+      LAB.rig.root.rotation.y=-(LAB.body.visYaw||0)*Math.PI/180;
+      const d=angDiff(blade,LAB.body.visYaw||0), sh=LAB.rig.J.RIGHT_SHOULDER;
+      sh.rotation.y += -d*Math.PI/180;                                   // рука вже там, куди дивиться телефон
+      sh.rotation.x += -clamp(sensor.pitch||0,-1,1)*0.8;                 // нахил телефона — висота клинка
+    }
+  }
+  // hitbox-и + колізії (ТЗ п.15)
+  const hits=[];
+  if(LAB.hitboxes && (LAB.flags.hitbox||LAB.flags.collision)){
+    for(const h of LAB.hitboxes){ h.userData.box.setFromObject(h.userData.mesh); h.material.color.set(h.userData.sword?0x7cc8ff:0x22c55e); }
+    if(LAB.flags.collision && LAB.rig){
+      const byName=n=>LAB.hitboxes.find(h=>h.userData.mesh.name===n);
+      const S=LAB.hitboxes.find(h=>h.userData.sword);
+      const bodyParts=['torso','head','pelvis','left_upperarm','left_forearm','left_hand','left_thigh','right_thigh','left_shin','right_shin'];
+      if(S && LAB.rig.sword.root.visible){
+        for(const n of bodyParts){ const h=byName(n); if(h && S.userData.box.intersectsBox(h.userData.box)){ hits.push('SWORD ↔ '+n); h.material.color.set(0xef4444); S.material.color.set(0xef4444); } }
+        if(S.userData.box.min.y<0){ hits.push('SWORD ↔ GROUND'); S.material.color.set(0xef4444); }
+      }
+      for(const [a,b] of [['left_hand','torso'],['right_hand','torso'],['left_forearm','torso'],['right_forearm','torso'],['left_thigh','right_thigh'],['left_upperarm','torso']]){
+        const ha=byName(a), hb=byName(b); if(ha&&hb&&ha.userData.box.intersectsBox(hb.userData.box)){ hits.push(a+' ↔ '+b); ha.material.color.set(0xef4444); }
+      }
+    }
+  }
+  // межі об'єкта та клітини (ТЗ п.8)
+  _labB.setFromObject(LAB.obj); LAB.helpers.bounds.box.copy(_labB);
+  // зв'язок рука↔меч (ТЗ п.14)
+  let relTxt='';
+  if(LAB.rig && LAB.flags.relation){
+    const sw=LAB.rig.sword, wr=LAB.rig.J.RIGHT_WRIST, el=LAB.rig.J.RIGHT_ELBOW;
+    const gripP=sw.root.localToWorld(_labV1.set(0,-sw.gripL,0)).clone();
+    const tipP=sw.root.localToWorld(_labV2.set(0,-sw.gripL-sw.bladeL,0)).clone();
+    const wrP=wr.getWorldPosition(new THREE.Vector3()), elP=el.getWorldPosition(new THREE.Vector3());
+    const fore=wrP.clone().sub(elP).normalize(), bl=tipP.clone().sub(gripP).normalize();
+    const ang=Math.acos(clamp(fore.dot(bl),-1,1))*180/Math.PI;
+    LAB.helpers.rel.geometry.setFromPoints([wrP,gripP,tipP.clone().add(bl.clone().multiplyScalar(0.4))]);
+    relTxt='кисть↔хват '+(wrP.distanceTo(gripP)*100).toFixed(1)+'см · передпліччя↔клинок '+ang.toFixed(0)+'° · вістря ('+tipP.x.toFixed(2)+','+tipP.y.toFixed(2)+','+tipP.z.toFixed(2)+')';
+  }
+  // контакт меча зі структурою (ТЗ п.38-40)
+  const ctTxt=labContactTick(dt);
+  labCamUpdate();
+  renderer.render(LAB.scene,LAB.cam);
+  labInfo(hits,relTxt,ctTxt,mark);
+}
+function labContactTick(dt){
+  LAB.helpers.contact.visible=false;
+  if(!LAB.rig || !LAB.target || !LAB.rig.sword.root.visible){ if(LAB.rig) LAB.rig.sword.blade.scale.y=1; return ''; }
+  const sw=LAB.rig.sword;
+  const a=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), b=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+  const speed = LAB.prevTip ? b.distanceTo(LAB.prevTip)/Math.max(dt,0.001) : 0; LAB.prevTip=b.clone();
+  let best=null;
+  for(const m of LAB.target.userData.parts){
+    const box=new THREE.Box3().setFromObject(m);
+    for(let i=0;i<=28;i++){ const f=i/28; const p=a.clone().lerp(b,f); if(box.containsPoint(p)){ if(!best||f<best.f) best={f,p,m,box}; break; } }
+  }
+  const out=[];
+  if(best){
+    const {f,p,m,box}=best;
+    const d=[p.x-box.min.x,box.max.x-p.x,p.y-box.min.y,box.max.y-p.y,p.z-box.min.z,box.max.z-p.z];
+    const i=d.indexOf(Math.min.apply(null,d)); const n=[[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]][i];
+    sw.blade.scale.y=Math.max(0.02,f);                       // меч ЗУПИНЯЄТЬСЯ на поверхні; тангенс — ковзання
+    LAB.helpers.contact.position.copy(p); LAB.helpers.contact.visible=true;
+    const key=m.name, c=LAB.contacts[key], ev=c?'CONTACT_CONTINUE':'CONTACT_START';
+    const impulse=(speed*0.35).toFixed(2), surf=LAB.target.userData.surfaceType;
+    if(!c || (performance.now()-c.t>250)){
+      LAB.contacts[key]={t:performance.now()};
+      logE('LAB '+ev+' · '+key+' · '+surf+' · p('+p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2)+') · n('+n.join(',')+') · v '+speed.toFixed(2)+' м/с · імп '+impulse+' · глибина '+((1-f)*sw.bladeL*100).toFixed(0)+'см');
+      if(ev==='CONTACT_START'){ try{ spatialBlip(p.x,p.y,p.z,surf==='WOOD'?420:800,0.09,'triangle',0.2); buzz([0,clamp(Math.round(speed*12),12,60)]); }catch(e){} }
+    }
+    out.push(ev+' '+key+' · '+surf+' · n('+n.join(',')+') · v '+speed.toFixed(1)+' · f '+f.toFixed(2));
+    for(const k of Object.keys(LAB.contacts)) if(k!==key){ logE('LAB CONTACT_END · '+k); delete LAB.contacts[k]; }
+  }else{
+    sw.blade.scale.y=1;
+    for(const k of Object.keys(LAB.contacts)){ logE('LAB CONTACT_END · '+k); delete LAB.contacts[k]; }
+  }
+  return out.join('\n');
+}
+/* ── ціль для контакту ───────────────────────────────────────────────── */
+function labSetTarget(kind){
+  while(LAB.targetG.children.length) LAB.targetG.remove(LAB.targetG.children[0]);
+  LAB.target=null; LAB.contacts={};
+  if(kind==='STRUCTURE_1') LAB.target=labBuildStructure(1,'MEDIUM',LAB.material);
+  else if(kind==='STRUCTURE_4') LAB.target=labBuildStructure(4,'MEDIUM',LAB.material);
+  else if(kind==='MANNEQUIN') LAB.target=labBuildMannequin();
+  if(LAB.target){ LAB.targetG.add(LAB.target); LAB.targetG.position.set(0,0,(kind==='STRUCTURE_4'?2.2:1.7)*CELL); }
+  labRefreshFlags();
+}
+/* ── експорт (ТЗ п.61-63) ─────────────────────────────────────────────── */
+function labExportJSON(){
+  let o;
+  if(LAB.rig){
+    const r=LAB.rig;
+    o={CHARACTER:{id:LAB.profile.toLowerCase(),profile:LAB.profile,size:{cells:LAB.size,heightCells:+((_labB.max.y-_labB.min.y)/CELL).toFixed(2)},
+      scale:{x:1,y:1,z:1},parts:r.parts.map(m=>({name:m.name,parent:m.parent.name})),
+      sockets:Object.keys(r.sockets),poses:Object.keys(LAB_POSES),animations:Object.keys(LAB_ANIMS),
+      collision:r.parts.map(m=>{const b=new THREE.Box3().setFromObject(m);return {part:m.name,min:b.min.toArray().map(v=>+v.toFixed(3)),max:b.max.toArray().map(v=>+v.toFixed(3))};}),
+      visual:{hue:r.P.hue,cloak:!!r.P.cloak,spikes:!!r.P.spikes,crown:!!r.P.crown},weapon:{gripL:r.sword.gripL,bladeL:r.sword.bladeL,socket:'RIGHT_HAND_WEAPON'}}};
+  }else if(LAB.struct){
+    const u=LAB.struct.userData, b=new THREE.Box3().setFromObject(LAB.struct);
+    o={STRUCTURE:{id:LAB.struct.name.toLowerCase(),size:u.cells,height:u.height,cells:u.footprint+'x'+u.footprint,collision:{min:b.min.toArray(),max:b.max.toArray()},surfaceType:u.surfaceType,visual:{material:LAB.material},contactPoints:u.parts.map(m=>m.name)}};
+  }else o={WEAPON:{id:'sword',gripL:0.22,bladeL:1.35}};
+  const txt=JSON.stringify(o,null,1);
+  try{ navigator.clipboard.writeText(txt); }catch(e){}
+  logE('LAB EXPORT ('+txt.length+' симв.) → буфер обміну'); logE(txt.slice(0,400)+(txt.length>400?'…':''));
+}
+/* ── панель ──────────────────────────────────────────────────────────── */
+function labBtn(act,label,cls){ return '<button data-act="'+act+'" class="lb'+(cls?' '+cls:'')+'">'+label+'</button>'; }
+function labBuildPanel(){
+  if($('labPanel')) return;
+  const st=document.createElement('style'); st.textContent=
+    '#labOverlay{position:fixed;inset:0;z-index:70;touch-action:none}'+
+    '#labPanel{position:fixed;right:0;top:0;bottom:0;width:54%;max-width:340px;z-index:71;overflow:auto;background:rgba(4,10,22,0.86);color:#c5d8f0;font:10px "Courier New",monospace;padding:8px;border-left:1px solid #1e3a5f}'+
+    '#labPanel h3{color:#3a6a9f;font-size:9px;letter-spacing:.14em;margin:8px 0 4px}'+
+    '#labPanel .lb{background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:10px "Courier New",monospace;padding:5px 6px;border-radius:4px;margin:2px 1px}'+
+    '#labPanel .lb.on{background:#0c2a1f;border-color:#16a34a;color:#22c55e}'+
+    '#labPanel .lb.warn{border-color:#b45309;color:#fbbf24}'+
+    '#labPanel select,#labPanel input[type=range]{width:100%;background:#010b18;color:#8fc0f0;border:1px solid #1e3a5f;font:10px "Courier New",monospace;margin:2px 0}'+
+    '#labInfo{background:#010b18;border:1px solid #1e3a5f;border-radius:4px;padding:6px;white-space:pre-wrap;line-height:1.5;color:#9fb3c8;min-height:60px}';
+  document.head.appendChild(st);
+  const ov=document.createElement('div'); ov.id='labOverlay'; document.body.appendChild(ov);
+  const p=document.createElement('div'); p.id='labPanel';
+  const T=(a)=>labBtn('flag:'+a,a.toUpperCase());
+  p.innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:center"><b style="color:#60a5fa">CHARACTER &amp; STRUCTURE LAB</b>'+labBtn('exit','✕ ВИЙТИ','warn')+'</div>'+
+    '<h3>ОБ\'ЄКТ</h3>'+labBtn('kind:CHARACTER','CHARACTER')+labBtn('kind:STRUCTURE','STRUCTURE')+labBtn('kind:WEAPON','WEAPON')+labBtn('kind:TEST','TEST OBJECT')+
+    '<div>'+labBtn('prof:PLAYER','PLAYER')+labBtn('prof:MENTOR','MENTOR')+labBtn('prof:ENEMY','ENEMY')+labBtn('prof:BOSS','BOSS')+'</div>'+
+    '<div>'+labBtn('size:1','1 CELL')+labBtn('size:4','4 CELLS')+labBtn('size:9','9 CELLS')+' '+labBtn('h:LOW','LOW')+labBtn('h:MEDIUM','MED')+labBtn('h:HIGH','HIGH')+' '+labBtn('mat:UNKNOWN','UNKNOWN')+labBtn('mat:WOOD','WOOD')+'</div>'+
+    '<h3>ОБЕРТАННЯ ОБ\'ЄКТА · КАМЕРА</h3>'+labBtn('rot:-1','⟲ LEFT')+labBtn('rot:1','⟳ RIGHT')+labBtn('rot:0','RESET ROT')+
+    '<div>'+['FRONT','BACK','LEFT','RIGHT','TOP','BOTTOM','FREE'].map(c=>labBtn('cam:'+c,c)).join('')+labBtn('cam:RESET','RESET VIEW')+labBtn('zoom:-1','＋')+labBtn('zoom:1','－')+'</div>'+
+    '<h3>ШАРИ</h3>'+['cells','hitbox','joints','sockets','relation','collision','direction','silhouette','flat','sensor'].map(T).join('')+
+    '<h3>ПОЗА</h3>'+Object.keys(LAB_POSES).map(n=>labBtn('pose:'+n,n)).join('')+
+    '<div style="margin-top:4px">POSE MODE: <select id="labJoint">'+LAB_JOINTS.map(j=>'<option>'+j+'</option>').join('')+'</select>'+
+    '<input type="range" id="labRx" min="-180" max="180" value="0"><input type="range" id="labRy" min="-180" max="180" value="0"><input type="range" id="labRz" min="-180" max="180" value="0">'+
+    '<span id="labRot">x 0 · y 0 · z 0</span> '+labBtn('savepose','SAVE POSE AS…')+'</div>'+
+    '<h3>ANIMATION LAB</h3><select id="labAnim">'+Object.keys(LAB_ANIMS).map(n=>'<option>'+n+'</option>').join('')+'</select>'+
+    '<div>'+labBtn('play','▶ PLAY')+labBtn('pause','⏸')+labBtn('stop','■ STOP')+labBtn('loop','LOOP')+labBtn('step:-1','◀ FRAME')+labBtn('step:1','FRAME ▶')+'</div>'+
+    '<div>швидкість: '+[0.1,0.25,0.5,1,2,4].map(v=>labBtn('speed:'+v,v+'×')).join('')+'</div>'+
+    '<h3>SWORD CONTACT · ЦІЛЬ</h3>'+labBtn('tgt:NONE','NONE')+labBtn('tgt:STRUCTURE_1','STRUCTURE_1')+labBtn('tgt:STRUCTURE_4','STRUCTURE_4')+labBtn('tgt:MANNEQUIN','MANNEQUIN')+
+    '<h3>ПАРАМЕТРИ (VB_SENS)</h3>'+Object.keys(LAB_PRESETS).map(n=>labBtn('preset:'+n,n)).join('')+
+    '<h3>RESET · EXPORT</h3>'+['CHARACTER','POSE','ANIMATION','CAMERA','OBJECT','ALL'].map(n=>labBtn('reset:'+n,n)).join('')+labBtn('export','JSON')+
+    '<h3>ІНФО</h3><div id="labInfo">—</div>';
+  document.body.appendChild(p);
+  p.addEventListener('click',e=>{ const b=e.target.closest('[data-act]'); if(b) labAct(b.dataset.act); });
+  const sl=['labRx','labRy','labRz'].map(id=>$(id));
+  const onSl=()=>{ if(!LAB.rig||!LAB.curPose) return; const j=$('labJoint').value; const v=sl.map(s=>+s.value); LAB.curPose[j]=v; LAB.anim=null; LAB.playing=false; labSetPose(LAB.curPose); $('labRot').textContent='x '+v[0]+' · y '+v[1]+' · z '+v[2]; };
+  sl.forEach(s=>s.addEventListener('input',onSl));
+  $('labJoint').addEventListener('change',()=>{ if(!LAB.curPose) return; const v=LAB.curPose[$('labJoint').value]||[0,0,0]; sl.forEach((s,i)=>s.value=v[i]); $('labRot').textContent='x '+v[0]+' · y '+v[1]+' · z '+v[2]; });
+  $('labAnim').addEventListener('change',()=>{ LAB.anim=$('labAnim').value; LAB.animT=0; });
+  // орбіта: тягнути — обертати камеру, два пальці — зум, колесо — зум
+  let drag=null, pinch=null;
+  ov.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY,id:e.pointerId}; try{ ov.setPointerCapture(e.pointerId); }catch(err){} });
+  ov.addEventListener('pointermove',e=>{ if(!drag||e.pointerId!==drag.id) return; LAB.orbit.yaw-=(e.clientX-drag.x)*0.5; LAB.orbit.pitch=clamp(LAB.orbit.pitch+(e.clientY-drag.y)*0.4,-85,89); drag.x=e.clientX; drag.y=e.clientY; });
+  ov.addEventListener('pointerup',()=>{ drag=null; }); ov.addEventListener('pointercancel',()=>{ drag=null; });
+  ov.addEventListener('touchstart',e=>{ if(e.touches.length===2){ pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); drag=null; } },{passive:true});
+  ov.addEventListener('touchmove',e=>{ if(e.touches.length===2&&pinch){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); LAB.orbit.dist=clamp(LAB.orbit.dist*(pinch/d),1.2,16); pinch=d; } },{passive:true});
+  ov.addEventListener('wheel',e=>{ LAB.orbit.dist=clamp(LAB.orbit.dist*(e.deltaY>0?1.1:0.9),1.2,16); },{passive:true});
+}
+function labAct(act){
+  const i=act.indexOf(':'), k=i<0?act:act.slice(0,i), v=i<0?'':act.slice(i+1);
+  if(k==='exit') labExit();
+  else if(k==='kind'){ LAB.kind=v; labSpawn(); }
+  else if(k==='prof'){ LAB.profile=v; LAB.kind='CHARACTER'; labSpawn(); }
+  else if(k==='size'){ LAB.size=+v; if(LAB.kind!=='CHARACTER') labSpawn(); else labRefreshFlags(); }
+  else if(k==='h'){ LAB.structH=v; if(LAB.kind==='STRUCTURE') labSpawn(); }
+  else if(k==='mat'){ LAB.material=v; if(LAB.kind!=='CHARACTER') labSpawn(); }
+  else if(k==='rot'){ LAB.rotY = v==='0' ? 0 : LAB.rotY+(+v)*Math.PI/8; }
+  else if(k==='cam') labCamPreset(v);
+  else if(k==='zoom') LAB.orbit.dist=clamp(LAB.orbit.dist*(+v>0?1.2:0.83),1.2,16);
+  else if(k==='flag'){ LAB.flags[v]=!LAB.flags[v]; if(v==='sensor'){ LAB.body.visYaw=0; if(!LAB.flags.sensor && LAB.rig) labApplyPose(LAB.pose); } labRefreshFlags(); }
+  else if(k==='pose'){ labApplyPose(v); $('labJoint').dispatchEvent(new Event('change')); }
+  else if(k==='savepose'){ const n=prompt('Назва пози:','CUSTOM_'+Object.keys(LAB_POSES).length); if(n&&LAB.curPose){ const P={}; for(const j of LAB_JOINTS) P[j]=LAB.curPose[j].map(x=>Math.round(x)); P.root=Object.assign({},LAB.curPose.root); LAB_POSES[n.toUpperCase()]=P; try{ const sv=JSON.parse(localStorage.getItem('vb3d_lab_poses')||'{}'); sv[n.toUpperCase()]=P; localStorage.setItem('vb3d_lab_poses',JSON.stringify(sv)); }catch(e){} logE('LAB: позу «'+n+'» збережено'); } }
+  else if(k==='play'){ labPlay($('labAnim').value); }
+  else if(k==='pause'){ LAB.playing=false; }
+  else if(k==='stop'){ LAB.playing=false; LAB.animT=0; if(LAB.anim) labSetPose(labAnimAt(LAB.anim,0)); }
+  else if(k==='loop'){ LAB.loop=!LAB.loop; }
+  else if(k==='step'){ if(!LAB.anim) LAB.anim=$('labAnim').value; LAB.playing=false; LAB.animT=Math.max(0,LAB.animT+(+v)/30); labSetPose(labAnimAt(LAB.anim,LAB.animT)); }
+  else if(k==='speed'){ LAB.speed=+v; }
+  else if(k==='tgt'){ labSetTarget(v); }
+  else if(k==='preset'){ const pr=LAB_PRESETS[v]; if(pr){ Object.assign(SENSCFG,pr); SENSCFG.profile='LAB:'+v; logE('LAB preset «'+v+'» → VB_SENS'); } }
+  else if(k==='reset'){
+    if(v==='CHARACTER'||v==='ALL'){ LAB.kind='CHARACTER'; LAB.profile='PLAYER'; LAB.pose='COMBAT_READY'; labSpawn(); }
+    if(v==='POSE'||v==='ALL'){ labApplyPose(LAB.pose); }
+    if(v==='ANIMATION'||v==='ALL'){ LAB.anim=null; LAB.playing=false; LAB.animT=0; LAB.speed=1; if(LAB.rig) labApplyPose(LAB.pose); }
+    if(v==='CAMERA'||v==='ALL'){ labCamPreset('RESET'); }
+    if(v==='OBJECT'||v==='ALL'){ LAB.rotY=0; LAB.size=RIG_PROFILES[LAB.profile]?RIG_PROFILES[LAB.profile].cells:1; labSetTarget('NONE'); labRefreshFlags(); }
+  }
+  else if(k==='export') labExportJSON();
+  labPanelSync();
+}
+function labPanelSync(){
+  document.querySelectorAll('#labPanel [data-act]').forEach(b=>{
+    const a=b.dataset.act, i=a.indexOf(':'), k=i<0?a:a.slice(0,i), v=i<0?'':a.slice(i+1); let on=false;
+    if(k==='kind') on=LAB.kind===v; else if(k==='prof') on=LAB.kind==='CHARACTER'&&LAB.profile===v;
+    else if(k==='size') on=LAB.size===+v; else if(k==='h') on=LAB.structH===v; else if(k==='mat') on=LAB.material===v;
+    else if(k==='flag') on=!!LAB.flags[v]; else if(k==='pose') on=!LAB.anim&&LAB.pose===v;
+    else if(k==='loop') on=LAB.loop; else if(k==='speed') on=LAB.speed===+v; else if(k==='play') on=LAB.playing;
+    else if(k==='tgt') on=(v==='NONE'&&!LAB.target)||(!!LAB.target&&LAB.target.name===v);
+    b.classList.toggle('on',on);
+  });
+}
+function labInfo(hits,relTxt,ctTxt,mark){
+  const el=$('labInfo'); if(!el) return;
+  const sz=_labB.max.clone().sub(_labB.min);
+  const L=[];
+  L.push('розмір: Ш '+sz.x.toFixed(2)+' · В '+sz.y.toFixed(2)+' · Г '+sz.z.toFixed(2)+' м · footprint '+Math.round(Math.sqrt(LAB.size))+'×'+Math.round(Math.sqrt(LAB.size))+' · основа y='+_labB.min.y.toFixed(2));
+  L.push('обертання '+Math.round(LAB.rotY*180/Math.PI)+'° · камера yaw '+Math.round(LAB.orbit.yaw)+' pitch '+Math.round(LAB.orbit.pitch)+' dist '+LAB.orbit.dist.toFixed(1));
+  if(LAB.anim) L.push('анім '+LAB.anim+' · t '+(LAB.animCur||0).toFixed(2)+'/'+(LAB.animLen||0).toFixed(2)+' · кадр '+Math.floor((LAB.animCur||0)*30)+' · '+(LAB.playing?'PLAY':'PAUSE')+' · '+LAB.speed+'× · '+(LAB.loop?'LOOP':'ONCE')+(mark?' · '+mark:''));
+  else L.push('поза '+LAB.pose);
+  if(relTxt) L.push(relTxt);
+  if(LAB.flags.collision) L.push(hits.length?('⚠ ПЕРЕТИНИ: '+hits.join(', ')):'перетинів немає');
+  if(ctTxt) L.push(ctTxt);
+  if(LAB.flags.sensor) L.push('SENSOR: клинок '+Math.round(typeof aimYawEff==='function'?aimYawEff():sensor.yawFused)+'° · корпус '+Math.round(LAB.body.visYaw||0)+'° · MOTION '+(sensor.motion||'—')+' · GESTURE '+(sensor.gesture||'NONE')+
+    ' · conf m '+clamp((sensor.aMag||0)/SENSCFG.MOTION_MOVE,0,1).toFixed(2)+' g '+labGestureConf().toFixed(2));
+  el.textContent=L.join('\n');
+}
+function labGestureConf(){ const A=[Math.abs(sensor.ax||0),Math.abs(sensor.ay||0),Math.abs(sensor.az||0)], s=A[0]+A[1]+A[2]; return s>0.5?Math.max(A[0],A[1],A[2])/s:0; }
+/* ── вхід/вихід ──────────────────────────────────────────────────────── */
+function labEnter(){
+  labInitScene(); labBuildPanel();
+  LAB.hidden=[];
+  for(const el of Array.from(document.body.children)){
+    if(el.id==='cv'||el.id==='labPanel'||el.id==='labOverlay'||el.tagName==='SCRIPT'||el.tagName==='STYLE') continue;
+    LAB.hidden.push([el,el.style.visibility]); el.style.visibility='hidden';
+  }
+  $('labPanel').style.display='block'; $('labOverlay').style.display='block';
+  LAB.on=true; LAB._last=0; paused=true;
+  if(!LAB.rig && !LAB.struct && !LAB.swordOnly) labSpawn(); else labRefreshFlags();
+  labPanelSync();
+  logE('▶ CHARACTER & STRUCTURE LAB: вхід (гра на паузі, стан не змінюється)');
+}
+function labExit(){
+  LAB.on=false;
+  for(const [el,vis] of LAB.hidden) el.style.visibility=vis; LAB.hidden=[];
+  $('labPanel').style.display='none'; $('labOverlay').style.display='none';
+  try{ resize(); }catch(e){}
+  logE('CHARACTER & STRUCTURE LAB: вихід');
+  try{ openMenu(); }catch(e){}
+}
+window.labEnter=labEnter;
+
 requestAnimationFrame(frame);
 
 /* ════════════════════ КНОПКА ВХОДА ═══════════════════════════ */
