@@ -206,6 +206,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mCal">🧭 КАЛІБРУВАТИ КЛИНОК</button>
   <button id="mSens">🛠 SENSOR DEBUG: ВИМК</button>
   <button id="mLab">🧪 CHARACTER &amp; STRUCTURE LAB</button>
+  <button id="mVib">🔔 ВІБРО-ТЕСТ 500мс (прямо з кліку)</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
@@ -437,6 +438,15 @@ function orientationHeading(alpha,beta){
   return wrap360(Math.atan2(hx,-hz)*180/Math.PI);
 }
 
+/* (09-13c) ПОВНИЙ кватерніон пристрою (з γ) — потрібен, щоб лінійне прискорення телефона
+   правильно переносити у світ; для азимуту лишається безкреновий _oQuat вище. */
+const _oEulerF=new THREE.Euler(), _oQuatF=new THREE.Quaternion();
+function orientationFullQuat(alpha,beta,gamma){
+  const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
+  _oEulerF.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,-(gamma||0)*Math.PI/180,'YXZ');
+  _oQuatF.setFromEuler(_oEulerF); _oQuatF.multiply(_q1h); _oQuatF.multiply(_q0h.setFromAxisAngle(_upZh,-o));
+  sensor.quatFull={x:_oQuatF.x,y:_oQuatF.y,z:_oQuatF.z,w:_oQuatF.w};
+}
 // Приоритет источников азимута: 'deviceorientationabsolute' (магнитометр, привязан к
 // реальной комнате) > 'deviceorientation' (ОТНОСИТЕЛЬНЫЙ: произвольный ноль, дрейфует).
 // Раньше оба писали в sensor.compass наперегонки, и относительный (частый) затирал
@@ -455,6 +465,7 @@ function onOrient(e){
       // (09-10b, ТЗ п.3) ОСНОВНЕ і ЄДИНЕ джерело напряму клинка — орієнтація пристрою.
       sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
       sensor.headRaw = orientationHeading(e.alpha, e.beta);
+      try{ orientationFullQuat(e.alpha,e.beta,e.gamma); }catch(err){}
       sensor.compass = sensor.headRaw; sensor.haveCompass = true;
       if(!haveAbsOrient && sensor.yawSrc!=='DEVICE'){ sensor.yawSrc='DEVICE';
         logE('СЕНСОР: джерело азимуту = DEVICE (deviceorientation, відносний нуль)'); }
@@ -467,6 +478,7 @@ function onOrientAbs(e){
       logE('СЕНСОР: джерело азимуту = ABSOLUTE (deviceorientationabsolute)'); }
     sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
     sensor.headRaw = orientationHeading(e.alpha, e.beta);
+    try{ orientationFullQuat(e.alpha,e.beta,e.gamma); }catch(err){}
     sensor.compass = sensor.headRaw; sensor.haveCompass = true;
   }
 }
@@ -4402,6 +4414,9 @@ $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
 try{ $('mCal').onclick=()=>{ closeMenu(); setTimeout(calibrateBlade, 350); }; }catch(e){}
 try{ $('mSens').onclick=()=>{ sensViewToggle(); }; }catch(e){}
 try{ $('mLab').onclick=()=>{ $('menu').style.display='none'; labEnter(); }; }catch(e){}
+try{ $('mVib').onclick=()=>{ let r='API_ABSENT'; try{ if('vibrate' in navigator) r=navigator.vibrate(500); }catch(e){ r='ERR '+e; }
+  const b=$('mVib'); if(b) b.textContent='🔔 ВІБРО-ТЕСТ: vibrate(500) → '+r+(r===true?' (якщо мовчить — налаштування телефона)':'');
+  logE('ВІБРО-ТЕСТ з меню: navigator.vibrate(500) → '+r+' · API='+('vibrate' in navigator)+' · UA='+navigator.userAgent.slice(0,80)); }; }catch(e){}
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
   if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
@@ -4412,7 +4427,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-13b · крен навколо осі клинка (без витоку в yaw), крен із гравітації, права рука праворуч, лічильники haptic · LAB: живі сенсори у кадрі (yaw/pitch/мах), без скручування пози, точне виштовхування меча з поверхні, гістерезис контакту · COLLISION FOUNDATION 2: SWORD_COLLIDERS (підлога/стіни/стеля/структури/манекен), swept-контакт, STOP+SLIDE у грі та LAB, калібровка вібро · VB_HAPTIC · SWORD_CONTACT (тиск/ковзання/удар/підлога) · двуручний хват IK · нова COMBAT_READY + DRAW_BACK/OVERHEAD/THRUST/SIDE/LOW · LIVE SENSOR · RECORD/PLAY/SAVE/EXPORT MOTION · CHARACTER & STRUCTURE LAB (ріг, пози, анімації, hitbox, клітини, контакт меча, sensor preview) · КЛИНОК МИТТЄВО ЗА ТЕЛЕФОНОМ, ТІЛО ДОГАНЯЄ · класифікатор руху руки (IDLE/PUSH/PULL/LEFT/RIGHT/UP/DOWN/ROTATE/IMPACT) · SENSOR DEBUG VIEW = урізаний SENSOR LAB · бойова стійка';
+const BUILD_TAG='2026-09-13c · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5279,7 +5294,7 @@ function sweepBladeContact(pA,pB,a,b,colliders,steps){
   }
   return best;
 }
-const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRESSURE_MS:450, LOG_MS:250, IMPACT_REPEAT_MS:300},
+const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRESSURE_MS:450, LOG_MS:250, IMPACT_REPEAT_MS:700},
   step(id, gripW, tipW, dt, colliders, opt){
     opt=opt||{};
     const S=this.blades[id]||(this.blades[id]={prevA:null,prevB:null,prevTip:null,contacts:{},state:'FREE',last:null});
@@ -5707,6 +5722,9 @@ function labSpawn(){
   while(LAB.obj.children.length) LAB.obj.remove(LAB.obj.children[0]);
   while(LAB.helpers.hit.children.length) LAB.helpers.hit.remove(LAB.helpers.hit.children[0]);
   LAB.rig=null; LAB.struct=null; LAB.swordOnly=null;
+  LAB.swordFree=false; LAB.prevTip=null; LAB.intendedDepth=0; LAB.pushBack=null;   // (09-13c) новий ріг — меч у руці; live перепідвісить сам
+  try{ SWORD_CONTACT.release('lab',{source:'lab',tag:'LAB SWORD_CONTACT'}); }catch(e){}
+  if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); }
   if(LAB.kind==='CHARACTER'){
     LAB.rig=labBuildRig(LAB.profile);
     LAB.size=RIG_PROFILES[LAB.profile].cells||LAB.size;
@@ -5887,6 +5905,11 @@ function labFrame(now){
       const sw=rig.sword.root;
       const anchor=new THREE.Vector3(-0.06*s,1.08*s,0.34*s).applyAxisAngle(new THREE.Vector3(0,1,0),-lag*dr);
       anchor.y+=clamp(pitchA/80,-1,1)*0.18*s;
+      const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM)
+      anchor.add(armOff.clone().multiplyScalar(s));
+      rig.J.TORSO.rotation.x += clamp(armOff.z,-0.3,0.6)*0.45;        // випад — корпус подається вперед
+      rig.J.TORSO.rotation.z += -clamp(armOff.x,-0.45,0.45)*0.25;     // замах убік — корпус за рукою
+      if(armOff.y>0.25){ rig.J.LEFT_KNEE.rotation.x -= 0.1; rig.J.RIGHT_KNEE.rotation.x -= 0.1; }   // руки вгору — ноги випрямляються
       sw.position.copy(anchor);
       /* ОРІЄНТАЦІЯ МЕЧА (09-13b): YAW — навколо світової вертикалі, PITCH — підйом вістря,
          ROLL — навколо ВЛАСНОЇ ОСІ КЛИНКА. Раніше крен ішов через Euler-Z і нахиляв саму вісь
@@ -5989,6 +6012,32 @@ function labContactTick(dt){
   return CT.postState+' '+CT.object+' · '+CT.type+'/'+CT.surfaceType+' · n('+CT.normal.x+','+CT.normal.y+','+CT.normal.z+') · v '+CT.relativeSpeed.toFixed(1)+' n'+CT.normalSpeed.toFixed(1)+' t'+CT.tangentialSpeed.toFixed(1)+' · глибина '+(CT.depth*100).toFixed(0)+'см · тиск '+CT.pressure.toFixed(2)+' · кут '+CT.angle.toFixed(0)+'°';
 }
 function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
+/* ═══ VB_ARM (09-13c): РУКА РУХАЄТЬСЯ, А НЕ ЛИШЕ ОБЕРТАЄТЬСЯ ═══
+   Чисте прискорення телефона (без g) → у світ через повний кватерніон → у систему тіла →
+   пружинно-демпфований зсув руків'я. Штовхнув телефон уперед — випад; підняв — руки вгору
+   (і меч догори дриґом лишається перед обличчям, а не в підлозі); відвів убік — замах поруч
+   із собою. Пружина повертає руку до нейтралі: у спокої швидко, у русі повільно — тож
+   позу «руки вгорі» можна утримувати, поки рука справді рухається/тримається. */
+const VB_ARM={ on:true, gain:0.55, dead:0.45, kStill:7.0, kMove:2.2, damp:3.2,
+  lim:{x:0.45, yMin:-0.35, yMax:0.65, zMin:-0.30, zMax:0.60} };
+window.VB_ARM=VB_ARM;
+function labArmTick(I,N,bodyRel,dt){
+  const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
+  if(!VB_ARM.on){ A.off.set(0,0,0); A.vel.set(0,0,0); return A.off; }
+  const q=I.quat||sensor.quatFull||sensor.quat;
+  const a=new THREE.Vector3(I.accel[0]||0,I.accel[1]||0,I.accel[2]||0);
+  if(a.length()<VB_ARM.dead || !q) a.set(0,0,0);
+  else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
+        a.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
+        a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
+        a.multiplyScalar(VB_ARM.gain); }
+  const moving=a.lengthSq()>1e-4; A.still=moving?0:A.still+dt;
+  const k=A.still>0.8?VB_ARM.kStill:VB_ARM.kMove;
+  A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(VB_ARM.damp)).multiplyScalar(dt));
+  A.off.add(A.vel.clone().multiplyScalar(dt));
+  const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
+  return A.off;
+}
 /* ── джерело входів LIVE: живий сенсор або кадр запису (той самий pipeline, п.70) ── */
 function labLiveInputs(dt){
   if(LAB.play&&LAB.play.on){
@@ -5998,9 +6047,9 @@ function labLiveInputs(dt){
     let i=LAB.play.i||0; while(i<F.length-1 && F[i+1].t<=LAB.play.t) i++; while(i>0 && F[i].t>LAB.play.t) i--; LAB.play.i=i;
     const f=F[i]||{}; const o=f.orientation||{}, g=f.gyro||[0,0,0], ac=f.accel||[0,0,0];
     sensor.motion=f.motionState||'IDLE'; sensor.gesture=f.gesture||'';
-    return {yaw:o.yaw||0,pitch:o.pitch||0,roll:o.roll||0,groll:o.groll,gyro:g,accel:ac,rec:true};
+    return {yaw:o.yaw||0,pitch:o.pitch||0,roll:o.roll||0,groll:o.groll,quat:f.q?{x:f.q[0],y:f.q[1],z:f.q[2],w:f.q[3]}:null,gyro:g,accel:ac,rec:true};
   }
-  return {yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll,
+  return {yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll,quat:sensor.quatFull||sensor.quat,
     gyro:[sensor.yawRate||0,sensor.pitchRate||0,sensor.rollRate||0],accel:[sensor.ax||0,sensor.ay||0,sensor.az||0],rec:false};
 }
 function labCalibrateNeutral(){
@@ -6024,7 +6073,8 @@ function labRecordTick(dt){
   LAB.rec.frames.push({t:+((now-LAB.rec.t0)/1000).toFixed(3),
     orientation:{yaw:+I.yaw.toFixed(1),pitch:+(I.pitch||0).toFixed(3),roll:+(I.roll||0).toFixed(1),groll:I.groll==null?null:+I.groll.toFixed(1)},
     orientationAbsolute:sensor.headRaw==null?null:+sensor.headRaw.toFixed(1),
-    gyro:I.gyro.map(v=>+v.toFixed(1)), accel:I.accel.map(v=>+v.toFixed(2)),
+    gyro:I.gyro.map(v=>+v.toFixed(1)), accel:I.accel.map(v=>+v.toFixed(2)), q:I.quat?[I.quat.x,I.quat.y,I.quat.z,I.quat.w].map(v=>+v.toFixed(4)):null,
+    arm:LAB.arm?LAB.arm.off.toArray().map(v=>+v.toFixed(3)):null,
     motionState:sensor.motion||'IDLE', gesture:sensor.gesture||'',
     blade:{yaw:+(B.yaw||0).toFixed(1),pitch:+(B.pitch||0).toFixed(1),roll:+(B.roll||0).toFixed(1),speed:+(LAB.bladeSpeed||0).toFixed(2),edge:LAB.edgeDir?LAB.edgeDir.toArray().map(v=>+v.toFixed(2)):null},
     body:{yaw:+(B.body||0).toFixed(1),lag:+(B.lag||0).toFixed(1)},
@@ -6120,7 +6170,7 @@ function labBuildPanel(){
     '<div>'+labBtn('size:1','1 CELL')+labBtn('size:4','4 CELLS')+labBtn('size:9','9 CELLS')+' '+labBtn('h:LOW','LOW')+labBtn('h:MEDIUM','MED')+labBtn('h:HIGH','HIGH')+' '+labBtn('mat:UNKNOWN','UNKNOWN')+labBtn('mat:WOOD','WOOD')+'</div>'+
     '<h3>ОБЕРТАННЯ ОБ\'ЄКТА · КАМЕРА</h3>'+labBtn('rot:-1','⟲ LEFT')+labBtn('rot:1','⟳ RIGHT')+labBtn('rot:0','RESET ROT')+
     '<div>'+['FRONT','BACK','LEFT','RIGHT','TOP','BOTTOM','FREE'].map(c=>labBtn('cam:'+c,c)).join('')+labBtn('cam:RESET','RESET VIEW')+labBtn('zoom:-1','＋')+labBtn('zoom:1','－')+'</div>'+
-    '<h3>ШАРИ</h3>'+['cells','hitbox','joints','sockets','relation','collision','direction','walls','silhouette','flat','sensor'].map(T).join('')+
+    '<h3>ШАРИ</h3>'+['cells','hitbox','joints','sockets','relation','collision','direction','walls','silhouette','flat','sensor'].map(T).join('')+labBtn('armtoggle','ARM (акселерометр)')+
     '<h3>ПОЗА</h3>'+Object.keys(LAB_POSES).map(n=>labBtn('pose:'+n,n)).join('')+
     '<div style="margin-top:4px">POSE MODE: <select id="labJoint">'+LAB_JOINTS.map(j=>'<option>'+j+'</option>').join('')+'</select>'+
     '<input type="range" id="labRx" min="-180" max="180" value="0"><input type="range" id="labRy" min="-180" max="180" value="0"><input type="range" id="labRz" min="-180" max="180" value="0">'+
@@ -6167,7 +6217,7 @@ function labAct(act){
   else if(k==='rot'){ LAB.rotY = v==='0' ? 0 : LAB.rotY+(+v)*Math.PI/8; }
   else if(k==='cam') labCamPreset(v);
   else if(k==='zoom') LAB.orbit.dist=clamp(LAB.orbit.dist*(+v>0?1.2:0.83),1.2,16);
-  else if(k==='flag'){ LAB.flags[v]=!LAB.flags[v]; if(v==='sensor'){ if(LAB.flags.sensor){ if(!LAB.neutral) labCalibrateNeutral(); LAB.body.visYaw=LAB.neutral.yaw; if(LAB.play) LAB.play=null; } else if(LAB.rig){ labSwordMode(false); labApplyPose(LAB.pose); } } labRefreshFlags(); }
+  else if(k==='flag'){ LAB.flags[v]=!LAB.flags[v]; if(v==='sensor'){ if(LAB.flags.sensor){ if(!LAB.neutral) labCalibrateNeutral(); LAB.body.visYaw=LAB.neutral.yaw; if(LAB.play) LAB.play=null; labCamPreset('BACK'); LAB.orbit.dist=4.4; LAB.orbit.ty=1.1; logE('LAB LIVE: камера ЗЗАДУ — праве плече праворуч на екрані'); } else if(LAB.rig){ labSwordMode(false); labApplyPose(LAB.pose); } } labRefreshFlags(); }
   else if(k==='pose'){ labApplyPose(v); $('labJoint').dispatchEvent(new Event('change')); }
   else if(k==='savepose'){ const n=prompt('Назва пози:','CUSTOM_'+Object.keys(LAB_POSES).length); if(n&&LAB.curPose){ const P={}; for(const j of LAB_JOINTS) P[j]=LAB.curPose[j].map(x=>Math.round(x)); P.root=Object.assign({},LAB.curPose.root); LAB_POSES[n.toUpperCase()]=P; try{ const sv=JSON.parse(localStorage.getItem('vb3d_lab_poses')||'{}'); sv[n.toUpperCase()]=P; localStorage.setItem('vb3d_lab_poses',JSON.stringify(sv)); }catch(e){} logE('LAB: позу «'+n+'» збережено'); } }
   else if(k==='play'){ if(LAB.play&&LAB.play.on) LAB.play.playing=true; else labPlay($('labAnim').value); }
@@ -6187,6 +6237,7 @@ function labAct(act){
   }
   else if(k==='export') labExportJSON();
   else if(k==='neutral') labCalibrateNeutral();
+  else if(k==='armtoggle'){ VB_ARM.on=!VB_ARM.on; logE('VB_ARM: '+(VB_ARM.on?'УВІМК':'ВИМК')); }
   else if(k==='rec'){ if(!LAB.flags.sensor && !(LAB.play&&LAB.play.on)){ LAB.flags.sensor=true; labRefreshFlags(); } labRecStart(); }
   else if(k==='recstop') labRecStop();
   else if(k==='recplay') labRecPlay();
@@ -6209,7 +6260,7 @@ function labPanelSync(){
     else if(k==='flag') on=!!LAB.flags[v]; else if(k==='pose') on=!LAB.anim&&LAB.pose===v;
     else if(k==='loop') on=LAB.loop; else if(k==='speed') on=LAB.speed===+v; else if(k==='play') on=LAB.playing;
     else if(k==='tgt') on=(v==='NONE'&&!LAB.target)||(!!LAB.target&&LAB.target.name===v);
-    else if(k==='rec') on=!!(LAB.rec&&LAB.rec.on); else if(k==='recplay') on=!!(LAB.play&&LAB.play.on);
+    else if(k==='rec') on=!!(LAB.rec&&LAB.rec.on); else if(k==='recplay') on=!!(LAB.play&&LAB.play.on); else if(k==='armtoggle') on=VB_ARM.on;
     b.classList.toggle('on',on);
   });
 }
@@ -6226,6 +6277,7 @@ function labInfo(hits,relTxt,ctTxt,mark){
   if(ctTxt) L.push(ctTxt);
   if(LAB.flags.sensor||(LAB.play&&LAB.play.on)){ const B=LAB.liveBlade||{};
     L.push((LAB.play&&LAB.play.on?'PLAY REC «'+LAB.play.clip.name+'» t '+LAB.play.t.toFixed(2)+' кадр '+(LAB.play.i||0)+' · ':'LIVE · ')+'клинок yaw '+Math.round(B.yaw||0)+'° pitch '+Math.round(B.pitch||0)+'° roll '+Math.round(B.roll||0)+'° · корпус '+Math.round(B.body||0)+'° (lag '+Math.round(B.lag||0)+'°) · v '+(LAB.bladeSpeed||0).toFixed(2)+' м/с');
+    if(LAB.arm) L.push('РУКА (VB_ARM): вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
     L.push('MOTION '+(sensor.motion||'—')+' · GESTURE '+(sensor.gesture||'NONE')+' · conf m '+clamp((sensor.aMag||0)/SENSCFG.MOTION_MOVE,0,1).toFixed(2)+' g '+labGestureConf().toFixed(2)+(LAB.rec&&LAB.rec.on?' · ● REC '+LAB.rec.frames.length:''));
   }
   L.push('CONTACT '+(LAB.contactState||'FREE')+' · HAPTIC '+VB_HAPTIC.state.replace('HAPTIC_','')+' i='+VB_HAPTIC.intensity.toFixed(2)+' · хват L '+((LAB.gripErrL||0)*100).toFixed(1)+'см');
@@ -6242,6 +6294,7 @@ function labHapLabel(ok,ms){
 function labGestureConf(){ const A=[Math.abs(sensor.ax||0),Math.abs(sensor.ay||0),Math.abs(sensor.az||0)], s=A[0]+A[1]+A[2]; return s>0.5?Math.max(A[0],A[1],A[2])/s:0; }
 /* ── вхід/вихід ──────────────────────────────────────────────────────── */
 function labEnter(){
+  try{ const r=('vibrate' in navigator)?navigator.vibrate(120):'API_ABSENT'; logE('LAB вхід: navigator.vibrate(120) прямо з кліку → '+r); }catch(e){ logE('LAB вхід: vibrate помилка '+e); }
   labInitScene(); labBuildPanel();
   LAB.hidden=[];
   for(const el of Array.from(document.body.children)){
