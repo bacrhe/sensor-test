@@ -642,7 +642,7 @@ function _svProj(x,y,z){                     // 3/4 вид зверху-спер
 function drawSensView(){
   const c=SENSVIEW.cv; if(!c) return; const g=c.getContext('2d');
   g.clearRect(0,0,c.width,c.height);
-  const q=sensor.quat;
+  const q=sensor.quatFull||sensor.quat;          // (09-13d) з креном γ — інакше «альбомний» поворот не видно
   const line=(a,b,col,w)=>{ g.strokeStyle=col; g.lineWidth=w||1.5; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); };
   // підлога-компас: N вгорі
   g.strokeStyle='#1e3a5f'; g.lineWidth=1;
@@ -1530,7 +1530,7 @@ function handInfo(av){
   // НАПРЯМУ ТЕЛЕФОНУ, а не від корпусу. Корпус ще дивиться старим курсом — тож
   // кисть фізично виноситься вбік, як при справжньому замаху. У клінчі кут
   // заморожений, там працює стара прив'язка до корпусу.
-  const _instant = _two || (av===player && !clinch.active);
+  const _instant = _two || (av===player && !clinch.active && !(typeof WALLLOCK!=='undefined' && WALLLOCK.active));
   const [dx,dz] = dirXZ(_instant ? aimYawEff() : av.visYaw);
   const rx = -dz, rz = dx;                        // «вправо» от направления
   const px=worldX(av.vgx??av.gx), pz=worldZ(av.vgy??av.gy);   // якір руки = візуальне тіло (плавний крок)
@@ -2604,7 +2604,8 @@ const astral = (function(){
   return {grip,arm,blade};
 })();
 function hideAstral(){ astral.blade.visible=false; astral.blade.count=0; astral.grip.visible=false; astral.arm.visible=false; }
-function renderClinchGuideAndAstral(){
+function renderClinchGuideAndAstral(deltaDeg,lockLen){
+  const _D = deltaDeg==null ? clinch.delta : deltaDeg, _LL = lockLen==null ? clinch.lockLen : lockLen;
   // 1) ЗАМОРОЖЕННЫЙ клинок игрока = ОЧЕНЬ БЛЕДНЫЙ ориентир (хитбокс), куда возвращать телефон
   updateBlade(player);
   player.blade.material.opacity = 0.22;
@@ -2612,11 +2613,11 @@ function renderClinchGuideAndAstral(){
   player.blade.instanceColor.needsUpdate=true;
   // 2) АСТРАЛ — живой клинок по ТЕКУЩЕМУ положению телефона (им управляет игрок)
   const live={visYaw:sensor.yawFused, gx:player.gx, gy:player.gy, crouch:player.crouch,
-              pitch:sensor.pitch, roll:sensor.roll, strikeT:0, swordLen:clinch.lockLen};
+              pitch:sensor.pitch, roll:sensor.roll, strikeT:0, swordLen:_LL};
   const H=handInfo(live);
   const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz, blen=Math.hypot(bx,by,bz)||1;
   const segs=clamp(Math.round(blen/(CELL*0.9)),1,6), segLen=blen/segs;
-  const n=clamp(clinch.delta/CLINCH_DELTA_CRIT,0,1);   // 0 — точно на линии, 1 — критический увод
+  const n=clamp(_D/CLINCH_DELTA_CRIT,0,1);   // 0 — точно на линии, 1 — критический увод
   const hue=lerp(0.5,0.0,n);                            // близко голубой → далеко красный
   astral.blade.count=segs; astral.blade.visible=true;
   for(let i=0;i<segs;i++){ const f=(i+0.5)/segs;
@@ -4427,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-13c · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-13d · ЗАЧЕП у грі (силует+астрал, вібрація росте, витривалість тане, меч вирває) · VB_ARM: вище голови/до підлоги, повернення із затримкою · debug-телефон із креном · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5104,7 +5105,7 @@ function frame(now){
       // а ВИПАД (strikeT) народжується ЛИШЕ з заряду МАЯКА — поверни боком, заряди, різко назад.
       // (09-11) КЛИНОК уже там, куди дивиться телефон; ТІЛО доганяє його з
       // затримкою і масою — уся плавність живе тут, а не в керуванні.
-      bodyFollowTick(player, aimYawEff(), dt);
+      if(!WALLLOCK.active) bodyFollowTick(player, aimYawEff(), dt);   // у зачепі корпус тримає силует
     }
 
     updateStanceAndCamera(dt);
@@ -5141,6 +5142,7 @@ function frame(now){
     updateAvatarMesh(player, now);
     try{ gameSwordContact(dt); }catch(e){}            // (09-12b) стіна/підлога/стеля: STOP + SLIDE + haptic + звук
     if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
+    else if(WALLLOCK.active) renderClinchGuideAndAstral(WALLLOCK.mis, WALLLOCK.lockLen);   // (09-13d) зачеп: силует + астрал
     else updateBlade(player);
   }else if(mode==='spectator'){
     // облёт сверху: высота ~9, вращение вокруг центра по компасу
@@ -5240,7 +5242,7 @@ function frame(now){
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  yaw-джерело ${sensor.yawSrc||'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead && !p.ally).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}${(typeof VB_HAPTIC!=='undefined'&&VB_HAPTIC.lastMs)?(' '+VB_HAPTIC.lastMs+'мс/'+VB_HAPTIC.lastRet):''}  клинок:${(typeof SWORD_CONTACT!=='undefined')?SWORD_CONTACT.state('player').replace('CONTACT_',''):'—'}`;
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}${(typeof VB_HAPTIC!=='undefined'&&VB_HAPTIC.lastMs)?(' '+VB_HAPTIC.lastMs+'мс/'+VB_HAPTIC.lastRet):''}  клинок:${(typeof WALLLOCK!=='undefined'&&WALLLOCK.active)?('ЗАЧЕП '+Math.round(WALLLOCK.mis)+'°'):((typeof SWORD_CONTACT!=='undefined')?SWORD_CONTACT.state('player').replace('CONTACT_',''):'—')}`;
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
@@ -5370,13 +5372,65 @@ function gameBuildColliders(){
   GAMEC.sig=sig; GAMEC.list=L; SWORD_COLLIDERS.set('game',L);
   return L;
 }
-/* щокадру: клинок гравця проти світу — зупинка, ковзання, haptic, звук */
+/* ═══ ЗАЧЕП (09-13d): клинок уперся в неруйнівну поверхню серединою або ближче до руків'я.
+   Віртуальний меч ЗАЛИШАЄТЬСЯ на поверхні (блідий силует), а живий клинок за телефоном —
+   астрал. Поки гравець не поверне телефон до силуета (або не відведе його від стіни),
+   росте розсинхрон: вібрація сильнішає, витривалість тане; на нулі — меч випадає.
+   Краєчком (зовнішня третина клинка) — лише ковзання/подряпина без зачепу. */
+const WALLLOCK={ active:false, lockYaw:0, lockPitch:0, lockLen:1, obj:'', mis:0, t:0, hapT:0, sndT:0, lastFreeYaw:0, lastFreePitch:0, GRIP_FRACTION:0.62, stamRate:12 };
+window.WALLLOCK=WALLLOCK;
+function wallLockStart(CT){
+  WALLLOCK.active=true; WALLLOCK.obj=CT.object; WALLLOCK.t=0; WALLLOCK.mis=0; WALLLOCK.hapT=0; WALLLOCK.sndT=0;
+  WALLLOCK.lockYaw=WALLLOCK.lastFreeYaw; WALLLOCK.lockPitch=WALLLOCK.lastFreePitch; WALLLOCK.lockLen=player.swordLen||1;
+  player.visYaw=WALLLOCK.lockYaw; player.dirIdx=yawToDirIdx(WALLLOCK.lockYaw);
+  logE('⛓ ЗАЧЕП: клинок уперся у '+CT.object+' ('+CT.type+'/'+CT.surfaceType+') на '+Math.round(CT.f*100)+'% довжини — верни телефон до силуета');
+  showBanner('⛓ ЗАЧЕП — ВЕРНИ КЛИНОК','#f59e0b');
+  try{ VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:0.6,surfaceType:CT.surfaceType,object:CT.object,source:'game-lock'}); CONTACT_AUDIO.play('IMPACT',{surfaceType:CT.surfaceType,x:CT.position.x,y:CT.position.y,z:CT.position.z,speed:CT.relativeSpeed}); }catch(e){}
+}
+function wallLockRelease(why){
+  if(!WALLLOCK.active) return;
+  WALLLOCK.active=false;
+  logE('ЗАЧЕП знято ('+why+') · розсинхрон '+Math.round(WALLLOCK.mis)+'° · тривав '+WALLLOCK.t.toFixed(1)+'с');
+  try{ hideAstral(); player.blade.material.opacity=1; }catch(e){}
+  try{ VB_HAPTIC.play('HAPTIC_CONTACT_END',{intensity:0.4,source:'game-lock'}); }catch(e){}
+}
+/* щокадру: клинок гравця проти світу — зупинка, ковзання, зачеп, haptic, звук */
 function gameSwordContact(dt){
-  if(!player || player.disarmed || player.dead || (typeof clinch!=='undefined' && clinch.active)){ GAMEC.playerClamp=1; SWORD_CONTACT.release('player',{source:'game',tag:'ГРА КЛИНОК'}); return; }
-  const H=handInfo(player);
+  if(!player || player.disarmed || player.dead || (typeof clinch!=='undefined' && clinch.active)){ GAMEC.playerClamp=1; wallLockRelease('стан'); SWORD_CONTACT.release('player',{source:'game',tag:'ГРА КЛИНОК'}); return; }
+  // ЖИВИЙ клинок — куди дивиться телефон (у зачепі handInfo(player) дає заморожений силует)
+  const live = WALLLOCK.active ? {visYaw:sensor.yawFused,gx:player.gx,gy:player.gy,crouch:player.crouch,pitch:sensor.pitch,roll:sensor.roll,strikeT:0,swordLen:WALLLOCK.lockLen} : player;
+  const H=handInfo(live);
   const g=new THREE.Vector3(H.hx,H.hy,H.hz), tp=new THREE.Vector3(H.tipX,H.tipY,H.tipZ);
   const CT=SWORD_CONTACT.step('player',g,tp,dt,gameBuildColliders(),{source:'game',tag:'ГРА КЛИНОК'});
-  GAMEC.playerClamp = CT ? Math.max(0.06,CT.f) : 1;
+  if(!WALLLOCK.active){
+    if(!CT){ WALLLOCK.lastFreeYaw=aimYawEff(); WALLLOCK.lastFreePitch=sensor.pitch||0; GAMEC.playerClamp=1; return; }
+    const lockable = CT.type!=='FLOOR' && CT.f<=WALLLOCK.GRIP_FRACTION;
+    if(lockable){ wallLockStart(CT); GAMEC.playerClamp=1; return; }
+    GAMEC.playerClamp=Math.max(0.06,CT.f);                              // краєчком — ковзання/подряпина
+    return;
+  }
+  // ── у зачепі ──
+  WALLLOCK.t+=dt;
+  player.visYaw=WALLLOCK.lockYaw; player.dirIdx=yawToDirIdx(WALLLOCK.lockYaw);
+  const dYaw=angDiff(sensor.yawFused,WALLLOCK.lockYaw), dPitch=((sensor.pitch||0)-WALLLOCK.lockPitch)*60;
+  WALLLOCK.mis=Math.hypot(dYaw,dPitch);
+  if(!CT){ wallLockRelease(WALLLOCK.mis<8?'синхронізовано':'відвів клинок від стіни'); GAMEC.playerClamp=1; return; }
+  if(CT.f>WALLLOCK.GRIP_FRACTION+0.15 && WALLLOCK.mis<8){ wallLockRelease('лише краєчком'); GAMEC.playerClamp=Math.max(0.06,CT.f); return; }
+  GAMEC.playerClamp=1;
+  // розсинхрон коштує витривалості й трясе дедалі сильніше (як тиск у клінчі)
+  const m=clamp(WALLLOCK.mis/45,0,1.5);
+  player.stamina=Math.max(0,(player.stamina||0)-(0.15+m)*WALLLOCK.stamRate*dt);
+  WALLLOCK.hapT-=dt; if(WALLLOCK.hapT<=0){ WALLLOCK.hapT=lerp(0.5,0.18,clamp(m,0,1));
+    VB_HAPTIC.lastT=0; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',{intensity:clamp(0.35+m*0.65,0.35,1),surfaceType:CT.surfaceType,object:CT.object,pressure:m,source:'game-lock'}); }
+  WALLLOCK.sndT-=dt; if(WALLLOCK.sndT<=0){ WALLLOCK.sndT=lerp(0.32,0.12,clamp(m,0,1));
+    try{ spatialBlip(CT.position.x,CT.position.y,CT.position.z,180+WALLLOCK.mis*9,0.08,'sawtooth',0.08+m*0.14); }catch(e){} }
+  if(player.stamina<=0){                                                  // не повернув — меч вирвало
+    wallLockRelease('витривалість вичерпано');
+    player.disarmed=true; player.stamina=0; player.disarmT=0;
+    try{ dropBlade(player); }catch(e){}
+    showBanner('✖ МЕЧ ВИРВАЛО ЗІ СТІНИ — КРОКНИ ДО МЕЧА','#ef4444');
+    try{ blip(50,0.6,'sawtooth',0.22); VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:1,source:'game-lock'}); }catch(e){}
+  }
 }
 
 /* ═══════════════════ VB_HAPTIC (2026-09-12) — тактильний канал гри ═══════════════════
@@ -5907,6 +5961,7 @@ function labFrame(now){
       anchor.y+=clamp(pitchA/80,-1,1)*0.18*s;
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM)
       anchor.add(armOff.clone().multiplyScalar(s));
+      anchor.y=Math.max(anchor.y,0.06*s);                              // руків'я не нижче підлоги
       rig.J.TORSO.rotation.x += clamp(armOff.z,-0.3,0.6)*0.45;        // випад — корпус подається вперед
       rig.J.TORSO.rotation.z += -clamp(armOff.x,-0.45,0.45)*0.25;     // замах убік — корпус за рукою
       if(armOff.y>0.25){ rig.J.LEFT_KNEE.rotation.x -= 0.1; rig.J.RIGHT_KNEE.rotation.x -= 0.1; }   // руки вгору — ноги випрямляються
@@ -6018,8 +6073,8 @@ function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
    (і меч догори дриґом лишається перед обличчям, а не в підлозі); відвів убік — замах поруч
    із собою. Пружина повертає руку до нейтралі: у спокої швидко, у русі повільно — тож
    позу «руки вгорі» можна утримувати, поки рука справді рухається/тримається. */
-const VB_ARM={ on:true, gain:0.55, dead:0.45, kStill:7.0, kMove:2.2, damp:3.2,
-  lim:{x:0.45, yMin:-0.35, yMax:0.65, zMin:-0.30, zMax:0.60} };
+const VB_ARM={ on:true, gain:0.95, dead:0.40, kStill:4.0, kMove:0.6, damp:2.6, holdT:1.6,
+  lim:{x:0.60, yMin:-1.00, yMax:0.95, zMin:-0.35, zMax:0.70} };   // руки вище голови / руків'я до підлоги
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -6032,7 +6087,9 @@ function labArmTick(I,N,bodyRel,dt){
         a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
         a.multiplyScalar(VB_ARM.gain); }
   const moving=a.lengthSq()>1e-4; A.still=moving?0:A.still+dt;
-  const k=A.still>0.8?VB_ARM.kStill:VB_ARM.kMove;
+  // повернення до нейтралі: спершу пауза holdT (позу можна тримати), потім м'яка пружина;
+  // зворотний лінійний рух повертає негайно — це просто прискорення в інший бік
+  const k=A.still>VB_ARM.holdT?VB_ARM.kStill:VB_ARM.kMove;
   A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(VB_ARM.damp)).multiplyScalar(dt));
   A.off.add(A.vel.clone().multiplyScalar(dt));
   const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
