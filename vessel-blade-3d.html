@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-13e · VB_ARM: чутливіше, позу тримає, повернення через 5 с або зворотним рухом · ЗАЧЕП у грі (силует+астрал, вібрація росте, витривалість тане, меч вирває) · VB_ARM: вище голови/до підлоги, повернення із затримкою · debug-телефон із креном · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-14a · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5962,9 +5962,29 @@ function labFrame(now){
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM)
       anchor.add(armOff.clone().multiplyScalar(s));
       anchor.y=Math.max(anchor.y,0.06*s);                              // руків'я не нижче підлоги
-      rig.J.TORSO.rotation.x += clamp(armOff.z,-0.3,0.6)*0.45;        // випад — корпус подається вперед
-      rig.J.TORSO.rotation.z += -clamp(armOff.x,-0.45,0.45)*0.25;     // замах убік — корпус за рукою
-      if(armOff.y>0.25){ rig.J.LEFT_KNEE.rotation.x -= 0.1; rig.J.RIGHT_KNEE.rotation.x -= 0.1; }   // руки вгору — ноги випрямляються
+      /* (09-14) ТІЛО ЙДЕ ЗА РУКІВ'ЯМ, а не меч за телекінезом: низько — присідає й нахиляється,
+         далеко — тягнеться корпусом; після цього руків'я обрізається сферою досяжності плеча,
+         тож меч ЗАВЖДИ лишається в руках. */
+      const dm=rig.dims, hipY=dm.hipH;
+      const low=clamp((hipY*1.05-anchor.y)/(hipY*0.95),0,1);                       // 0 — на рівні стегон, 1 — біля підлоги
+      const far=clamp((Math.hypot(anchor.x,anchor.z)-0.42*s)/(0.45*s),0,1);          // далеко вперед/убік
+      const high=clamp((anchor.y-1.45*s)/(0.5*s),0,1);                                 // руки над головою
+      const lean=clamp(low*0.85+far*0.7,0,1);
+      rig.root.position.y -= 0.22*s*low;
+      rig.J.LEFT_HIP.rotation.x += -0.9*low;  rig.J.RIGHT_HIP.rotation.x += -0.9*low;      // стегна вперед
+      rig.J.LEFT_KNEE.rotation.x += 1.3*low;  rig.J.RIGHT_KNEE.rotation.x += 1.3*low;      // коліна зігнуті
+      rig.J.LEFT_ANKLE.rotation.x += -0.4*low; rig.J.RIGHT_ANKLE.rotation.x += -0.4*low;
+      rig.J.PELVIS.rotation.x += 0.35*lean;    rig.J.TORSO.rotation.x += 0.75*lean;        // нахил уперед
+      rig.J.TORSO.rotation.y += -Math.atan2(anchor.x,Math.max(anchor.z,0.05))*0.5*far;      // корпус за рукою вбік
+      rig.J.TORSO.rotation.x += -0.25*high; rig.J.LEFT_KNEE.rotation.x -= 0.12*high; rig.J.RIGHT_KNEE.rotation.x -= 0.12*high;   // руки вгору — випрямляється
+      rig.J.TORSO.rotation.x += clamp(armOff.z,-0.3,0.6)*0.3;                                // випад — подається вперед
+      /* сфера досяжності: руків'я не далі, ніж плече + рука */
+      LAB.obj.updateMatrixWorld(true);
+      { const S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
+        const reach=(dm.upper+dm.fore+dm.hand*0.6)*0.985;
+        const T=rig.root.localToWorld(anchor.clone());
+        const d=T.distanceTo(S);
+        if(d>reach){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); } }
       sw.position.copy(anchor);
       /* ОРІЄНТАЦІЯ МЕЧА (09-13b): YAW — навколо світової вертикалі, PITCH — підйом вістря,
          ROLL — навколо ВЛАСНОЇ ОСІ КЛИНКА. Раніше крен ішов через Euler-Z і нахиляв саму вісь
@@ -6077,7 +6097,7 @@ function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
    демпфування), щойно рух припинився — швидкість гаситься і рука ЗАВМИРАЄ де є; повернення
    до нейтралі лише через holdT (5 с) і повільно. Зворотний лінійний рух повертає одразу —
    це те саме прискорення, тільки в інший бік. Вертикаль чутливіша (gainY). */
-const VB_ARM={ on:true, gain:1.4, gainY:1.6, dead:0.25, moveDamp:1.0, stopDamp:9.0, holdT:5.0, kReturn:1.6, retDamp:2.4,
+const VB_ARM={ on:true, gain:1.1, gainY:1.25, dead:0.42, biasTau:1.5, moveDamp:1.0, stopDamp:9.0, holdT:3.0, kReturn:1.6, retDamp:2.4,
   lim:{x:0.70, yMin:-1.00, yMax:1.00, zMin:-0.40, zMax:0.80} };   // руки вище голови / руків'я до підлоги
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
@@ -6085,11 +6105,15 @@ function labArmTick(I,N,bodyRel,dt){
   if(!VB_ARM.on){ A.off.set(0,0,0); A.vel.set(0,0,0); return A.off; }
   const q=I.quat||sensor.quatFull||sensor.quat;
   const a=new THREE.Vector3(I.accel[0]||0,I.accel[1]||0,I.accel[2]||0);
-  if(a.length()<VB_ARM.dead || !q) a.set(0,0,0);
+  if(!q) a.set(0,0,0);
   else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
         a.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
         a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
-        a.multiplyScalar(VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; }
+        // (09-14) ЗАЛИШОК ГРАВІТАЦІЇ: ОС прибирає g неідеально, і сталий «хвіст» уздовж вертикалі
+        // тягнув руку до підлоги. Повільна оцінка зміщення віднімається — поштовхи проходять, дрейф ні.
+        A.bias=A.bias||new THREE.Vector3(); A.bias.lerp(a,clamp(dt/VB_ARM.biasTau,0,1)); a.sub(A.bias);
+        if(a.length()<VB_ARM.dead) a.set(0,0,0);
+        else { a.multiplyScalar(VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; } }
   const moving=a.lengthSq()>1e-4; A.still=moving?0:A.still+dt;
   let k=0, c=VB_ARM.moveDamp;                       // у русі — пружини немає, лише легке демпфування
   if(!moving){ if(A.still<VB_ARM.holdT){ c=VB_ARM.stopDamp; } else { c=VB_ARM.retDamp; k=VB_ARM.kReturn; } }   // зупинився — завмер; після holdT — повільно додому
@@ -6212,7 +6236,10 @@ function labBuildPanel(){
   if($('labPanel')) return;
   const st=document.createElement('style'); st.textContent=
     '#labOverlay{position:fixed;inset:0;z-index:70;touch-action:none}'+
-    '#labPanel{position:fixed;right:0;top:0;bottom:0;width:54%;max-width:340px;z-index:71;overflow:auto;background:rgba(4,10,22,0.86);color:#c5d8f0;font:10px "Courier New",monospace;padding:8px;border-left:1px solid #1e3a5f}'+
+    '#labPanel{position:fixed;right:0;top:0;bottom:0;width:44%;max-width:290px;z-index:71;overflow:auto;background:rgba(4,10,22,0.80);color:#c5d8f0;font:9px "Courier New",monospace;padding:6px;border-left:1px solid #1e3a5f}'+
+    '#labPanel.hidden{display:none}'+
+    '#labTab{position:fixed;right:6px;top:6px;z-index:72;background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:11px "Courier New",monospace;padding:6px 9px;border-radius:6px}'+
+    '#labMini{position:fixed;left:6px;top:6px;z-index:72;max-width:60%;background:rgba(4,10,22,0.62);border:1px solid #1e3a5f;border-radius:6px;padding:5px 7px;color:#9fb3c8;font:9px "Courier New",monospace;white-space:pre-wrap;line-height:1.45;pointer-events:none}'+
     '#labPanel h3{color:#3a6a9f;font-size:9px;letter-spacing:.14em;margin:8px 0 4px}'+
     '#labPanel .lb{background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:10px "Courier New",monospace;padding:5px 6px;border-radius:4px;margin:2px 1px}'+
     '#labPanel .lb.on{background:#0c2a1f;border-color:#16a34a;color:#22c55e}'+
@@ -6221,10 +6248,12 @@ function labBuildPanel(){
     '#labInfo{background:#010b18;border:1px solid #1e3a5f;border-radius:4px;padding:6px;white-space:pre-wrap;line-height:1.5;color:#9fb3c8;min-height:60px}';
   document.head.appendChild(st);
   const ov=document.createElement('div'); ov.id='labOverlay'; document.body.appendChild(ov);
+  const tab=document.createElement('button'); tab.id='labTab'; tab.textContent='☰ LAB'; tab.onclick=()=>labPanelToggle(); document.body.appendChild(tab);
+  const mini=document.createElement('div'); mini.id='labMini'; mini.textContent='—'; document.body.appendChild(mini);
   const p=document.createElement('div'); p.id='labPanel';
   const T=(a)=>labBtn('flag:'+a,a.toUpperCase());
   p.innerHTML=
-    '<div style="display:flex;justify-content:space-between;align-items:center"><b style="color:#60a5fa">CHARACTER &amp; STRUCTURE LAB</b>'+labBtn('exit','✕ ВИЙТИ','warn')+'</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:4px"><b style="color:#60a5fa;font-size:9px">CHAR &amp; STRUCT LAB</b>'+labBtn('hidepanel','◀ СХОВАТИ')+labBtn('exit','✕ ВИЙТИ','warn')+'</div>'+
     '<h3>ОБ\'ЄКТ</h3>'+labBtn('kind:CHARACTER','CHARACTER')+labBtn('kind:STRUCTURE','STRUCTURE')+labBtn('kind:WEAPON','WEAPON')+labBtn('kind:TEST','TEST OBJECT')+
     '<div>'+labBtn('prof:PLAYER','PLAYER')+labBtn('prof:MENTOR','MENTOR')+labBtn('prof:ENEMY','ENEMY')+labBtn('prof:BOSS','BOSS')+'</div>'+
     '<div>'+labBtn('size:1','1 CELL')+labBtn('size:4','4 CELLS')+labBtn('size:9','9 CELLS')+' '+labBtn('h:LOW','LOW')+labBtn('h:MEDIUM','MED')+labBtn('h:HIGH','HIGH')+' '+labBtn('mat:UNKNOWN','UNKNOWN')+labBtn('mat:WOOD','WOOD')+'</div>'+
@@ -6266,9 +6295,16 @@ function labBuildPanel(){
   ov.addEventListener('touchmove',e=>{ if(e.touches.length===2&&pinch){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); LAB.orbit.dist=clamp(LAB.orbit.dist*(pinch/d),1.2,16); pinch=d; } },{passive:true});
   ov.addEventListener('wheel',e=>{ LAB.orbit.dist=clamp(LAB.orbit.dist*(e.deltaY>0?1.1:0.9),1.2,16); },{passive:true});
 }
+function labPanelToggle(force){
+  const p=$('labPanel'); if(!p) return;
+  const hide = force==null ? !p.classList.contains('hidden') : !!force;
+  p.classList.toggle('hidden',hide); LAB.panelHidden=hide;
+  const t=$('labTab'); if(t) t.textContent=hide?'☰ LAB':'✕';
+}
 function labAct(act){
   const i=act.indexOf(':'), k=i<0?act:act.slice(0,i), v=i<0?'':act.slice(i+1);
   if(k==='exit') labExit();
+  else if(k==='hidepanel') labPanelToggle(true);
   else if(k==='kind'){ LAB.kind=v; labSpawn(); }
   else if(k==='prof'){ LAB.profile=v; LAB.kind='CHARACTER'; labSpawn(); }
   else if(k==='size'){ LAB.size=+v; if(LAB.kind!=='CHARACTER') labSpawn(); else labRefreshFlags(); }
@@ -6344,6 +6380,12 @@ function labInfo(hits,relTxt,ctTxt,mark){
   L.push(VB_HAPTIC.diag()+' · колайдерів '+((LAB.colliders||[]).length));
   if(LAB.warn&&LAB.warn.length) L.push('⚠ '+Array.from(new Set(LAB.warn)).join(' · '));
   el.textContent=L.join('\n');
+  const mini=$('labMini'); if(mini){                         // компактний статус поверх сцени, коли панель схована
+    const B=LAB.liveBlade||{};
+    mini.style.display=LAB.panelHidden?'block':'none';
+    mini.textContent=(LAB.flags.sensor?('LIVE · клинок '+Math.round(B.yaw||0)+'° / '+Math.round(B.pitch||0)+'° · корпус '+Math.round(B.body||0)+'°'+(LAB.arm?(' · рука ↕'+(LAB.arm.off.y*100).toFixed(0)+' ↔'+(LAB.arm.off.x*100).toFixed(0)+' →'+(LAB.arm.off.z*100).toFixed(0)+'см'):'')+'\n'):'')+
+      'CONTACT '+(LAB.contactState||'FREE')+' · HAPTIC '+VB_HAPTIC.state.replace('HAPTIC_','')+(LAB.warn&&LAB.warn.length?('\n⚠ '+Array.from(new Set(LAB.warn)).join(' · ')):'');
+  }
 }
 function labHapLabel(ok,ms){
   const el=$('labHapLabel'); if(!el) return;
@@ -6362,6 +6404,7 @@ function labEnter(){
     LAB.hidden.push([el,el.style.visibility]); el.style.visibility='hidden';
   }
   $('labPanel').style.display='block'; $('labOverlay').style.display='block';
+  try{ $('labTab').style.display='block'; $('labMini').style.display=LAB.panelHidden?'block':'none'; }catch(e){}
   LAB.on=true; LAB._last=0; paused=true;
   if(!LAB.rig && !LAB.struct && !LAB.swordOnly) labSpawn(); else labRefreshFlags();
   labPanelSync();
@@ -6371,6 +6414,7 @@ function labExit(){
   LAB.on=false;
   for(const [el,vis] of LAB.hidden) el.style.visibility=vis; LAB.hidden=[];
   $('labPanel').style.display='none'; $('labOverlay').style.display='none';
+  try{ $('labTab').style.display='none'; $('labMini').style.display='none'; }catch(e){}
   try{ resize(); }catch(e){}
   logE('CHARACTER & STRUCTURE LAB: вихід');
   try{ openMenu(); }catch(e){}
