@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-13d · ЗАЧЕП у грі (силует+астрал, вібрація росте, витривалість тане, меч вирває) · VB_ARM: вище голови/до підлоги, повернення із затримкою · debug-телефон із креном · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-13e · VB_ARM: чутливіше, позу тримає, повернення через 5 с або зворотним рухом · ЗАЧЕП у грі (силует+астрал, вібрація росте, витривалість тане, меч вирває) · VB_ARM: вище голови/до підлоги, повернення із затримкою · debug-телефон із креном · VB_ARM (акселерометр рухає рукоять: випад / вбік / вгору) · LIVE: камера ззаду, зміна профілю без збоїв · крен навколо осі клинка · SWORD_COLLIDERS + swept-контакт + STOP/SLIDE · VB_HAPTIC з прямими вібро-тестами · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6073,8 +6073,12 @@ function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
    (і меч догори дриґом лишається перед обличчям, а не в підлозі); відвів убік — замах поруч
    із собою. Пружина повертає руку до нейтралі: у спокої швидко, у русі повільно — тож
    позу «руки вгорі» можна утримувати, поки рука справді рухається/тримається. */
-const VB_ARM={ on:true, gain:0.95, dead:0.40, kStill:4.0, kMove:0.6, damp:2.6, holdT:1.6,
-  lim:{x:0.60, yMin:-1.00, yMax:0.95, zMin:-0.35, zMax:0.70} };   // руки вище голови / руків'я до підлоги
+/* (09-13e) Рука тримає позу: під час руху — майже вільне подвійне інтегрування (легке
+   демпфування), щойно рух припинився — швидкість гаситься і рука ЗАВМИРАЄ де є; повернення
+   до нейтралі лише через holdT (5 с) і повільно. Зворотний лінійний рух повертає одразу —
+   це те саме прискорення, тільки в інший бік. Вертикаль чутливіша (gainY). */
+const VB_ARM={ on:true, gain:1.4, gainY:1.6, dead:0.25, moveDamp:1.0, stopDamp:9.0, holdT:5.0, kReturn:1.6, retDamp:2.4,
+  lim:{x:0.70, yMin:-1.00, yMax:1.00, zMin:-0.40, zMax:0.80} };   // руки вище голови / руків'я до підлоги
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -6085,12 +6089,11 @@ function labArmTick(I,N,bodyRel,dt){
   else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
         a.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
         a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
-        a.multiplyScalar(VB_ARM.gain); }
+        a.multiplyScalar(VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; }
   const moving=a.lengthSq()>1e-4; A.still=moving?0:A.still+dt;
-  // повернення до нейтралі: спершу пауза holdT (позу можна тримати), потім м'яка пружина;
-  // зворотний лінійний рух повертає негайно — це просто прискорення в інший бік
-  const k=A.still>VB_ARM.holdT?VB_ARM.kStill:VB_ARM.kMove;
-  A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(VB_ARM.damp)).multiplyScalar(dt));
+  let k=0, c=VB_ARM.moveDamp;                       // у русі — пружини немає, лише легке демпфування
+  if(!moving){ if(A.still<VB_ARM.holdT){ c=VB_ARM.stopDamp; } else { c=VB_ARM.retDamp; k=VB_ARM.kReturn; } }   // зупинився — завмер; після holdT — повільно додому
+  A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(c)).multiplyScalar(dt));
   A.off.add(A.vel.clone().multiplyScalar(dt));
   const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
   return A.off;
