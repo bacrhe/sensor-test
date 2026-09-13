@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-14b · рука по дузі від орієнтації (вниз/вгору — від телефона, не від дрейфу), прискорення не читається під час нахилу, тіло — колайдер для власного меча, межі природних поз · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-14c · руки відходять від тіла (винос ~55% руки, у махові — повний), корпус тягнеться лише коли не дістає · рикошет після удару · привид розсинхрону в LAB · рука по дузі від орієнтації (вниз/вгору — від телефона, не від дрейфу), прискорення не читається під час нахилу, тіло — колайдер для власного меча, межі природних поз · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5962,38 +5962,42 @@ function labFrame(now){
          піднімається до грудей/голови. Акселерометр лише ДОДАЄ обмежений зсув (випад, вбік, підйом),
          тож модель більше не «застряє» біля підлоги чи стелі, коли телефон уже давно піднято. */
       const eAbs=elev(I.pitch), arc=clamp(eAbs/70,-1,1);
+      const dm=rig.dims, hipY=dm.hipH, reach=(dm.upper+dm.fore+dm.hand*0.6)*0.985;
+      /* (09-14c) РУКИ ВІД ТІЛА: базовий винос ~55% руки, у махові (SWING або швидкий клинок) —
+         руки випрямляються майже повністю: дальність і сила удару від кутової швидкості. */
+      const swingX=clamp(Math.max((SWING.power||0),(LAB.bladeSpeed||0)/5),0,1);
+      const ext=(0.55+0.40*swingX)*reach;                               // м від плеча вперед
       const armY=1.08*s + (arc<0 ? 0.50*arc : 0.32*arc)*s;              // 0.58 … 1.40 м
-      const armZ=(0.34 - 0.10*Math.abs(arc))*s;
+      const armZ=ext*Math.max(0.55,1-0.35*Math.abs(arc));                 // вниз/вгору — трохи ближче
       const anchor=new THREE.Vector3(-0.06*s,armY,armZ).applyAxisAngle(new THREE.Vector3(0,1,0),-lag*dr);
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
       anchor.y=Math.max(anchor.y,0.36*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
         if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
-      /* (09-14) ТІЛО ЙДЕ ЗА РУКІВ'ЯМ, а не меч за телекінезом: низько — присідає й нахиляється,
-         далеко — тягнеться корпусом; після цього руків'я обрізається сферою досяжності плеча,
-         тож меч ЗАВЖДИ лишається в руках. */
-      const dm=rig.dims, hipY=dm.hipH;
-      const low=clamp((hipY*1.05-anchor.y)/(hipY*0.95),0,1);                       // 0 — на рівні стегон, 1 — біля підлоги
-      const far=clamp((Math.hypot(anchor.x,anchor.z)-0.42*s)/(0.45*s),0,1);          // далеко вперед/убік
-      const high=clamp((anchor.y-1.45*s)/(0.5*s),0,1);                                 // руки над головою
-      const lean=clamp(low*0.85+far*0.7,0,1);
+      LAB.intendAnchor=anchor.clone();
+      /* тіло: низько — присідає; над головою — випрямляється */
+      const low=clamp((hipY*1.05-anchor.y)/(hipY*0.95),0,1);
+      const high=clamp((anchor.y-1.45*s)/(0.5*s),0,1);
       rig.root.position.y -= 0.22*s*low;
-      rig.J.LEFT_HIP.rotation.x += -0.9*low;  rig.J.RIGHT_HIP.rotation.x += -0.9*low;      // стегна вперед
-      rig.J.LEFT_KNEE.rotation.x += 1.3*low;  rig.J.RIGHT_KNEE.rotation.x += 1.3*low;      // коліна зігнуті
+      rig.J.LEFT_HIP.rotation.x += -0.9*low;  rig.J.RIGHT_HIP.rotation.x += -0.9*low;
+      rig.J.LEFT_KNEE.rotation.x += 1.3*low;  rig.J.RIGHT_KNEE.rotation.x += 1.3*low;
       rig.J.LEFT_ANKLE.rotation.x += -0.4*low; rig.J.RIGHT_ANKLE.rotation.x += -0.4*low;
-      rig.J.PELVIS.rotation.x += 0.35*lean;    rig.J.TORSO.rotation.x += 0.75*lean;        // нахил уперед
-      rig.J.TORSO.rotation.y += -Math.atan2(anchor.x,Math.max(anchor.z,0.05))*0.5*far;      // корпус за рукою вбік
-      rig.J.TORSO.rotation.x += -0.25*high; rig.J.LEFT_KNEE.rotation.x -= 0.12*high; rig.J.RIGHT_KNEE.rotation.x -= 0.12*high;   // руки вгору — випрямляється
-      rig.J.TORSO.rotation.x += clamp(armOff.z,-0.3,0.6)*0.3;                                // випад — подається вперед
-      /* сфера досяжності: руків'я не далі, ніж плече + рука */
+      rig.J.PELVIS.rotation.x += 0.30*low;     rig.J.TORSO.rotation.x += 0.45*low;
+      rig.J.TORSO.rotation.x += -0.25*high; rig.J.LEFT_KNEE.rotation.x -= 0.12*high; rig.J.RIGHT_KNEE.rotation.x -= 0.12*high;
+      /* корпус тягнеться ЛИШЕ коли рука не дістає: спершу нахил (до 0.45 рад), потім обрізання */
       LAB.obj.updateMatrixWorld(true);
-      { const S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
-        const reach=(dm.upper+dm.fore+dm.hand*0.6)*0.985;
-        const T=rig.root.localToWorld(anchor.clone());
-        const d=T.distanceTo(S);
-        if(d>reach){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); } }
-      sw.position.copy(anchor);
+      { let S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
+        let T=rig.root.localToWorld(anchor.clone()); let d=T.distanceTo(S);
+        if(d>reach){
+          const need=clamp((d-reach)/(0.35*s),0,1);
+          rig.J.PELVIS.rotation.x += 0.15*need; rig.J.TORSO.rotation.x += 0.45*need;
+          rig.J.TORSO.rotation.y += -Math.atan2(anchor.x,Math.max(anchor.z,0.05))*0.5*need;
+          LAB.obj.updateMatrixWorld(true);
+          S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3()); T=rig.root.localToWorld(anchor.clone()); d=T.distanceTo(S);
+          if(d>reach){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); }
+        } }
+      sw.position.copy(anchor);      sw.position.copy(anchor);
       /* ОРІЄНТАЦІЯ МЕЧА (09-13b): YAW — навколо світової вертикалі, PITCH — підйом вістря,
          ROLL — навколо ВЛАСНОЇ ОСІ КЛИНКА. Раніше крен ішов через Euler-Z і нахиляв саму вісь
          клинка вбік — звідси «меч ходить із боку в бік, коли нахиляю в альбомну». */
@@ -6001,6 +6005,13 @@ function labFrame(now){
       sw.quaternion.copy(new dq().setFromAxisAngle(ay,-lag*dr))
         .multiply(new dq().setFromAxisAngle(ax,(-90-pitchA)*dr))
         .multiply(new dq().setFromAxisAngle(ay,rollA*dr));
+      LAB.intendQ=sw.quaternion.clone();                              // куди «хоче» телефон — до відскоку і виштовхування
+      /* (09-14c) ВІДСКОК: після швидкого удару вістря на мить відкидає від поверхні (кут ∝ швидкості),
+         потім клинок повертається до телефона — це і є коротка розсинхронізація удару. */
+      if(LAB.kickT>0){
+        const k=LAB.kickT*LAB.kickT;                                    // швидкий старт, м'яке згасання
+        sw.quaternion.premultiply(new dq().slerp(LAB.kickQ, k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28);
+      }
       // ТОЧНЕ РОЗВ'ЯЗАННЯ ПРОНИКНЕННЯ (п.5,16-17 розбору): меч виштовхується з поверхні по нормалі
       // на повну глибину в ЦЬОМУ ж кадрі; тангенс лишається. Залишаємо 1.5см усередині, щоб
       // контакт не «блимав» на межі. Телефон іде далі — віртуальний меч упирається.
@@ -6017,6 +6028,17 @@ function labFrame(now){
         sw.position.add(new THREE.Vector3().copy(h.n).multiplyScalar(push));
       }
       LAB.liveBlade={yaw:yawRel,pitch:pitchA,roll:rollA,body:bodyRel,lag};
+      /* ПРИВИД РОЗСИНХРОНУ: якщо меч зачепився, а телефон пішов далі — з 0.25 с показуємо, де
+         «астральний» клинок (намір телефона), і в лог іде глибина розсинхрону. */
+      if(!rig.ghost){ const gsw=labBuildSword(s,rig.P.swordLen*s); gsw.root.traverse(o=>{ if(o.isMesh){ o.material=new THREE.MeshBasicMaterial({color:0x7cc8ff,transparent:true,opacity:0.28,depthWrite:false}); o.userData.labPart=false; } }); gsw.root.name='SWORD_GHOST'; rig.root.add(gsw.root); rig.ghost=gsw.root; }
+      const deep=(LAB.intendedDepth||0)>0.10;
+      LAB.desyncT = deep ? (LAB.desyncT||0)+dt : 0;
+      const desync = deep && LAB.desyncT>0.25;
+      rig.ghost.visible=desync;
+      if(desync){ rig.ghost.position.copy(LAB.intendAnchor||sw.position); rig.ghost.quaternion.copy(LAB.intendQ||sw.quaternion);
+        LAB.desyncLogT=(LAB.desyncLogT||0)+dt;
+        if(LAB.desyncLogT>0.5){ LAB.desyncLogT=0; logE('LAB РОЗСИНХРОН: астрал пішов на '+((LAB.intendedDepth||0)*100).toFixed(0)+'см далі за клинок · '+LAB.desyncT.toFixed(1)+'с'); }
+        LAB.warn.push('DESYNC '+((LAB.intendedDepth||0)*100).toFixed(0)+'см'); }
       if(Math.abs(lag)>70){ LAB.lagT=(LAB.lagT||0)+dt; if(LAB.lagT>0.4) LAB.warn.push('BODY_LAG_TOO_HIGH'); } else LAB.lagT=0;
       labTwoHandGrip();
     }
@@ -6096,7 +6118,18 @@ function labContactTick(dt){
   sw.blade.scale.y=Math.max(0.02,CT.f);                             // STOP: клинок закінчується на поверхні
   LAB.helpers.contact.position.copy(CT.position); LAB.helpers.contact.visible=true;
   LAB.contactState=CT.postState; LAB.contact=CT;
-  if(CT.postState==='IMPACT'){ LAB.recoil=clamp(0.4+CT.normalSpeed*0.15,0.4,1); labCycleMark('IMPACT'); }
+  if(CT.postState==='IMPACT'){ LAB.recoil=clamp(0.4+CT.normalSpeed*0.15,0.4,1); labCycleMark('IMPACT');
+    if(LAB.swordFree){                                               // (09-14c) РИКОШЕТ: швидкий удар — меч відскакує, не прилипає
+      const bodyRel=(LAB.liveBlade&&LAB.liveBlade.body)||0;
+      const nL=CT.normal.clone().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);   // нормаль у системі тіла
+      const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
+      A.vel.add(nL.multiplyScalar(clamp(CT.normalSpeed*0.45,0.35,2.2))); A.still=0;                  // рука відлітає від поверхні
+      const bd=b.clone().sub(a).normalize();
+      const axisW=new THREE.Vector3().crossVectors(bd,CT.normal); 
+      if(axisW.lengthSq()>1e-6){ axisW.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);
+        LAB.kickQ=new THREE.Quaternion().setFromAxisAngle(axisW,clamp(CT.normalSpeed*5,8,35)*Math.PI/180); LAB.kickT=1; }
+      logE('LAB РИКОШЕТ: відскок від '+CT.object+' · v '+CT.normalSpeed.toFixed(1)+' м/с · кут '+Math.round(clamp(CT.normalSpeed*5,8,35))+'°');
+    } }
   else if(CT.postState==='CONTACT_START') labCycleMark('CONTACT');
   if(CT.angle<12) LAB.warn.push('INVALID_CONTACT_ANGLE');
   if(CT.edgeAngle>55 && (CT.postState==='IMPACT'||CT.postState==='CONTACT_START')) LAB.warn.push('BLADE_EDGE_WRONG');
