@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-15e · якір руки будується ВІД ПЛЕЧА (лінійний зсув більше не зрізається досяжністю) · прибрано другий контур зворотного зв·язку (нахил↔досяжність): опора — нерухоме плече, доворот обмежений ±22° · розсинхрон КИСТЬ/РУКА/ТІЛО з широким допуском · маса зброї · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-15f · стабілізовано інтегратор руки (м·яка зона, легка пружина, дрейф лише у спокої, згладжений вихід) · якір від плеча · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5999,7 +5999,7 @@ function labFrame(now){
       /* (09-15b) ЗГЛАДЖУВАННЯ ЯКОРЯ: дрібний шум акселерометра й дуги давав покадрове «двоїння».
          Один фільтр на саме положення руків'я — орієнтація клинка лишається миттєвою. */
       { const p=LAB.anchorS||(LAB.anchorS=anchor.clone());
-        p.lerp(anchor, clamp(dt*30,0,1)); anchor.copy(p); }
+        p.lerp(anchor, clamp(dt*20,0,1)); anchor.copy(p); }
       LAB.intendAnchor=anchor.clone();
       const anchorI=anchor.clone();
       if(C.state==='LOOSE') anchor.copy(C.ph.anchor);                    // фізична рука — де її лишила інерція
@@ -6254,7 +6254,8 @@ const VB_RESYNC={ assist:0.15, pull:1.6 };   // pull — як сильно ті�
 const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:520, drainRate:0.9 };   // mass кг-умовних, strength 0.5…2
 window.VB_WEAPON=VB_WEAPON;
 window.VB_RESYNC=VB_RESYNC;
-const VB_ARM={ on:true, gain:1.15, gainY:1.3, dead:0.42, biasTau:2.5, spinGate:160, moveDamp:1.0, stopDamp:9.0, holdT:3.0, kReturn:1.6, retDamp:2.4,
+const VB_ARM={ on:true, gain:1.0, gainY:1.15, dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
+  moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07,
   lim:{x:0.45, yMin:-0.50, yMax:0.60, zMin:-0.25, zMax:0.55} };   // додаток до дуги руки, а не вся висота
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
@@ -6265,22 +6266,29 @@ function labArmTick(I,N,bodyRel,dt){
   // (09-14b) під час швидкого НАХИЛУ/ОБЕРТАННЯ телефон бреше про лінійне прискорення (ОС не встигає
   // прибрати g) — саме це «з'їжджало» вперед-назад при нахилах. Обертання → перенос не читаємо.
   const spin=Math.abs((I.gyro&&I.gyro[0])||0)+Math.abs((I.gyro&&I.gyro[1])||0)+Math.abs((I.gyro&&I.gyro[2])||0);
+  const mag0=a.length();
   if(!q || spin>VB_ARM.spinGate) a.set(0,0,0);
   else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
         a.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
         a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
         // (09-14) ЗАЛИШОК ГРАВІТАЦІЇ: ОС прибирає g неідеально, і сталий «хвіст» уздовж вертикалі
         // тягнув руку до підлоги. Повільна оцінка зміщення віднімається — поштовхи проходять, дрейф ні.
-        A.bias=A.bias||new THREE.Vector3(); A.bias.lerp(a,clamp(dt/VB_ARM.biasTau,0,1)); a.sub(A.bias);
-        if(a.length()<VB_ARM.dead) a.set(0,0,0);
-        else { a.multiplyScalar(VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; } }
-  const moving=a.lengthSq()>1e-4; A.still=moving?0:A.still+dt;
-  let k=0, c=VB_ARM.moveDamp;                       // у русі — пружини немає, лише легке демпфування
-  if(!moving){ if(A.still<VB_ARM.holdT){ c=VB_ARM.stopDamp; } else { c=VB_ARM.retDamp; k=VB_ARM.kReturn; } }   // зупинився — завмер; після holdT — повільно додому
+        A.bias=A.bias||new THREE.Vector3();
+        if(mag0<VB_ARM.dead) A.bias.lerp(a,clamp(dt/VB_ARM.biasTau,0,1));   // дрейф оцінюємо ЛИШЕ у спокої
+        a.sub(A.bias);
+        /* м'яка зона замість жорсткого порога: біля межі сигнал згасає плавно, без перемикань */
+        const m=a.length();
+        const w = m<=VB_ARM.dead ? 0 : clamp((m-VB_ARM.dead)/VB_ARM.soft,0,1);
+        a.multiplyScalar(w*VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; }
+  const moving=a.lengthSq()>1e-6; A.still=moving?0:A.still+dt;
+  /* пружина є ЗАВЖДИ (легка) — інакше швидкість накопичується і зсув «пливе» повз реальний рух */
+  let k=VB_ARM.kHold, c=VB_ARM.moveDamp;
+  if(!moving){ if(A.still<VB_ARM.holdT){ c=VB_ARM.stopDamp; } else { c=VB_ARM.retDamp; k=VB_ARM.kReturn; } }
   A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(c)).multiplyScalar(dt));
   A.off.add(A.vel.clone().multiplyScalar(dt));
   const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
-  return A.off;
+  A.outS=A.outS||A.off.clone(); A.outS.lerp(A.off, clamp(dt/VB_ARM.outTau,0,1));   // вихід згладжений — без двоїння
+  return A.outS;
 }
 /* ═══ ВТРАТА КОНТРОЛЮ (09-15): тіло лишається де є (з інерцією), душа виходить до телефона ═══ */
 /* Ступені втрати контролю (09-15b): WRIST — «вибило» лише кисть із клинком; ARM — уся рука;
@@ -6335,7 +6343,7 @@ function labLiveInputs(dt){
 function labCalibrateNeutral(){
   LAB.neutral={yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll};
   LAB.body.visYaw=LAB.neutral.yaw;
-  if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); if(LAB.arm.bias) LAB.arm.bias.set(0,0,0); LAB.arm.still=0; }   // калібровка = чистий нуль руки
+  if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); if(LAB.arm.bias) LAB.arm.bias.set(0,0,0); if(LAB.arm.outS) LAB.arm.outS.set(0,0,0); LAB.arm.still=0; }   // калібровка = чистий нуль руки
   try{ ttsSpeak('Нейтральне положення збережено.',{critical:true}); }catch(e){}
   logE('LAB NEUTRAL: yaw '+Math.round(LAB.neutral.yaw)+'° · pitch '+LAB.neutral.pitch.toFixed(2)+' · roll(γ) '+Math.round(LAB.neutral.roll)+'° · roll(g) '+(LAB.neutral.groll==null?'—':Math.round(LAB.neutral.groll)+'°'));
 }
