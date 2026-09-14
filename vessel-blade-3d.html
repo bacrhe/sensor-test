@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-14d · АСТРАЛЬНЕ ТІЛО (повна напівпрозора копія, плавно, без миготіння) + зустрічний ресинк · LIVE від бойової стійки · присід, коли рука не дістає · рикошет за матеріалом і відбитою траєкторією · руки відходять від тіла (винос ~55% руки, у махові — повний), корпус тягнеться лише коли не дістає · рикошет після удару · привид розсинхрону в LAB · рука по дузі від орієнтації (вниз/вгору — від телефона, не від дрейфу), прискорення не читається під час нахилу, тіло — колайдер для власного меча, межі природних поз · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-15a · ВТРАТА КОНТРОЛЮ: тіло з інерцією, душа за телефоном, ресинк повертає контроль; удар вибиває контроль і розвертає тіло · АСТРАЛЬНЕ ТІЛО (повна напівпрозора копія, плавно, без миготіння) + зустрічний ресинк · LIVE від бойової стійки · присід, коли рука не дістає · рикошет за матеріалом і відбитою траєкторією · руки відходять від тіла (винос ~55% руки, у махові — повний), корпус тягнеться лише коли не дістає · рикошет після удару · привид розсинхрону в LAB · рука по дузі від орієнтації (вниз/вгору — від телефона, не від дрейфу), прискорення не читається під час нахилу, тіло — колайдер для власного меча, межі природних поз · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5776,7 +5776,7 @@ function labSpawn(){
   while(LAB.obj.children.length) LAB.obj.remove(LAB.obj.children[0]);
   while(LAB.helpers.hit.children.length) LAB.helpers.hit.remove(LAB.helpers.hit.children[0]);
   LAB.rig=null; LAB.struct=null; LAB.swordOnly=null;
-  LAB.swordFree=false; LAB.prevTip=null; LAB.intendedDepth=0; LAB.pushBack=null;   // (09-13c) новий ріг — меч у руці; live перепідвісить сам
+  LAB.swordFree=false; LAB.prevTip=null; LAB.intendedDepth=0; LAB.pushBack=null; LAB.ctl=null; LAB.astralA=0;   // (09-13c) новий ріг — меч у руці; live перепідвісить сам
   try{ SWORD_CONTACT.release('lab',{source:'lab',tag:'LAB SWORD_CONTACT'}); }catch(e){}
   if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); }
   if(LAB.kind==='CHARACTER'){
@@ -5952,10 +5952,19 @@ function labFrame(now){
       const elev=v=>-Math.asin(clamp(v,-1,1))*180/Math.PI;
       const yawRel=angDiff(I.yaw,N.yaw), pitchA=clamp(elev(I.pitch)-elev(N.pitch),-85,85);
       const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1);
-      bodyFollowTick(LAB.body,I.yaw,dt);
+      /* (09-15) ДВА ТІЛА. SYNC: телефон керує фізичним тілом. LOOSE (втрата контролю — за спробу
+         протиснути меч крізь неруйнівне або за сильний удар): фізичне тіло рухається лише інерцією
+         і саме взаємодіє зі світом, а телефон керує АСТРАЛОМ; контроль повертається, коли гравець
+         зведе астрал із тілом. */
+      const C=LAB.ctl||(LAB.ctl={state:'SYNC',t:0,deepT:0,ph:null});
+      if(C.state==='SYNC') bodyFollowTick(LAB.body,I.yaw,dt);
+      else { LAB.astralBody=LAB.astralBody||{visYaw:LAB.body.visYaw}; bodyFollowTick(LAB.astralBody,I.yaw,dt);
+             LAB.body.visYaw=wrap360((LAB.body.visYaw||0)+C.ph.bodyV*dt); C.ph.bodyV*=Math.exp(-dt/1.2); }   // корпус довертається інерцією
       const bodyRel=angDiff(LAB.body.visYaw||0,N.yaw);
+      const bodyRelA = C.state==='SYNC' ? bodyRel : angDiff(LAB.astralBody.visYaw||0,N.yaw);
       rig.root.rotation.y=-bodyRel*dr;
-      const lag=angDiff(yawRel,bodyRel);
+      const lagI=angDiff(yawRel,bodyRelA);                                  // намір телефона відносно корпусу (астрального)
+      const lag = C.state==='SYNC' ? lagI : C.ph.yaw;                        // фізичний клинок відносно фізичного корпусу
       // участь корпусу (п.37,69): таз і плечі йдуть за клинком, ноги стабілізують
       rig.J.PELVIS.rotation.y += -clamp(lag,-45,45)*0.25*dr; rig.J.TORSO.rotation.y += -clamp(lag,-60,60)*0.4*dr;
       if(SWING.active||LAB.bladeSpeed>3){ rig.J.TORSO.rotation.x += 0.12; rig.J.LEFT_KNEE.rotation.x += 0.15; rig.J.RIGHT_KNEE.rotation.x += 0.12; }
@@ -5973,13 +5982,15 @@ function labFrame(now){
       const ext=(0.55+0.40*swingX)*reach;                               // м від плеча вперед
       const armY=1.08*s + (arc<0 ? 0.30*arc : 0.32*arc)*s;              // 0.78 … 1.40 м: вістря вниз — руки біля стегна, не біля підлоги
       const armZ=ext*Math.max(0.55,1-0.35*Math.abs(arc));                 // вниз/вгору — трохи ближче
-      const anchor=new THREE.Vector3(-0.06*s,armY,armZ).applyAxisAngle(new THREE.Vector3(0,1,0),-lag*dr);
+      const anchor=new THREE.Vector3(-0.06*s,armY,armZ).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr);
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
       anchor.y=Math.max(anchor.y,0.36*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
         if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
       LAB.intendAnchor=anchor.clone();
+      const anchorI=anchor.clone();
+      if(C.state==='LOOSE') anchor.copy(C.ph.anchor);                    // фізична рука — де її лишила інерція
       /* тіло: низько — присідає; над головою — випрямляється */
       const low=clamp((hipY*1.05-anchor.y)/(hipY*0.95),0,1);
       const high=clamp((anchor.y-1.45*s)/(0.5*s),0,1);
@@ -6007,70 +6018,68 @@ function labFrame(now){
           S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3()); T=rig.root.localToWorld(anchor.clone()); d=T.distanceTo(S);
           if(d>reach){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); }
         } }
-      sw.position.copy(anchor);      sw.position.copy(anchor);
-      /* ОРІЄНТАЦІЯ МЕЧА (09-13b): YAW — навколо світової вертикалі, PITCH — підйом вістря,
-         ROLL — навколо ВЛАСНОЇ ОСІ КЛИНКА. Раніше крен ішов через Euler-Z і нахиляв саму вісь
-         клинка вбік — звідси «меч ходить із боку в бік, коли нахиляю в альбомну». */
       const dq=THREE.Quaternion, ax=new THREE.Vector3(1,0,0), ay=new THREE.Vector3(0,1,0);
-      sw.quaternion.copy(new dq().setFromAxisAngle(ay,-lag*dr))
-        .multiply(new dq().setFromAxisAngle(ax,(-90-pitchA)*dr))
-        .multiply(new dq().setFromAxisAngle(ay,rollA*dr));
-      LAB.intendQ=sw.quaternion.clone();                              // куди «хоче» телефон — до відскоку і виштовхування
-      /* (09-14c) ВІДСКОК: після швидкого удару вістря на мить відкидає від поверхні (кут ∝ швидкості),
-         потім клинок повертається до телефона — це і є коротка розсинхронізація удару. */
-      if(LAB.kickT>0){
-        const k=LAB.kickT*LAB.kickT;                                    // швидкий старт, м'яке згасання
-        sw.quaternion.premultiply(new dq().slerp(LAB.kickQ, k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28);
-      }
-      // ТОЧНЕ РОЗВ'ЯЗАННЯ ПРОНИКНЕННЯ (п.5,16-17 розбору): меч виштовхується з поверхні по нормалі
-      // на повну глибину в ЦЬОМУ ж кадрі; тангенс лишається. Залишаємо 1.5см усередині, щоб
-      // контакт не «блимав» на межі. Телефон іде далі — віртуальний меч упирається.
-      LAB.intendedDepth=0;
-      for(let it=0;it<3;it++){
-        LAB.obj.updateMatrixWorld(true);
-        const g=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL,0)), t=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL-rig.sword.bladeL,0));
-        const h=sweepBladeContact(g,t,g,t,(LAB.colliders||labBuildColliders()).concat(labBodyColliders()),1); if(!h) break;
-        const bd=t.clone().sub(g).normalize(), len=g.distanceTo(t);
-        const penN=(1-h.t)*len*Math.abs(bd.dot(h.n));               // глибина вздовж нормалі
-        LAB.intendedDepth=Math.max(LAB.intendedDepth,(1-h.t)*len);
-        const push=Math.max(0,penN-0.015);
-        if(push<1e-4) break;
-        sw.position.add(new THREE.Vector3().copy(h.n).multiplyScalar(push));
+      const mkQ=(yw,pt,rl)=>new dq().setFromAxisAngle(ay,-yw*dr).multiply(new dq().setFromAxisAngle(ax,(-90-pt)*dr)).multiply(new dq().setFromAxisAngle(ay,rl*dr));
+      const qI=mkQ(lagI,pitchA,rollA); LAB.intendQ=qI.clone();
+      const resolvePen=()=>{                                              // меч не входить у неруйнівне: виштовхування по нормалі
+        LAB.intendedDepth=0;
+        for(let it=0;it<3;it++){
+          LAB.obj.updateMatrixWorld(true);
+          const g=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL,0)), t=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL-rig.sword.bladeL,0));
+          const h=sweepBladeContact(g,t,g,t,(LAB.colliders||labBuildColliders()).concat(labBodyColliders()),1); if(!h) break;
+          const bd=t.clone().sub(g).normalize(), len=g.distanceTo(t);
+          const penN=(1-h.t)*len*Math.abs(bd.dot(h.n));
+          LAB.intendedDepth=Math.max(LAB.intendedDepth,(1-h.t)*len);
+          const push=Math.max(0,penN-0.015); if(push<1e-4) break;
+          sw.position.add(new THREE.Vector3().copy(h.n).multiplyScalar(push));
+        } };
+      if(C.state==='SYNC'){
+        sw.position.copy(anchor); sw.quaternion.copy(qI);
+        if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
+        resolvePen();
+        C.deepT = (LAB.intendedDepth||0)>0.12 ? C.deepT+dt : 0;          // ПОРУШЕННЯ: протискування крізь неруйнівне
+        if(C.deepT>0.3) labLoseControl('спроба протиснути меч крізь '+(LAB.contact?LAB.contact.object:'поверхню'),null);
+      } else {
+        const Pp=C.ph; C.t+=dt;
+        Pp.yawV*=Math.exp(-dt/1.1); Pp.pitchV*=Math.exp(-dt/1.1); Pp.vel.multiplyScalar(Math.exp(-dt/0.9));
+        Pp.yaw=clamp(Pp.yaw+Pp.yawV*dt,-150,150); Pp.pitch=clamp(Pp.pitch+Pp.pitchV*dt,-85,85);
+        Pp.anchor.copy(anchor).add(Pp.vel.clone().multiplyScalar(dt));
+        if(VB_RESYNC.assist>0){                                          // зустрічна дія тіла (прокачуваний параметр): ледь тягнеться до астрала
+          const k=clamp(VB_RESYNC.assist*dt,0,0.2);
+          Pp.yaw+=angDiff(lagI+angDiff(bodyRelA,bodyRel),Pp.yaw)*k; Pp.pitch+=(pitchA-Pp.pitch)*k; Pp.anchor.lerp(anchorI,k);
+        }
+        Pp.anchor.y=Math.max(Pp.anchor.y,0.36*s);
+        sw.position.copy(Pp.anchor); sw.quaternion.copy(mkQ(Pp.yaw,Pp.pitch,Pp.roll));
+        resolvePen();
+        Pp.anchor.copy(sw.position);
+        /* РЕСИНК: астрал (намір) достатньо близько до фізичного — контроль повертається */
+        const dYaw=Math.abs(angDiff(yawRel, bodyRel+Pp.yaw)), dPitch=Math.abs(pitchA-Pp.pitch);
+        const wP=rig.root.localToWorld(Pp.anchor.clone()), wA=rig.root.localToWorld(anchorI.clone().applyAxisAngle(ay,-(bodyRelA-bodyRel)*dr));
+        const dPos=wP.distanceTo(wA);
+        C.mis={dYaw,dPitch,dPos};
+        if(C.t>0.4 && dYaw<12 && dPitch<12 && dPos<0.14*s) labRegainControl();
+        else { C.hapT=(C.hapT||0)-dt; if(C.hapT<=0){ C.hapT=lerp(0.6,0.25,clamp(dYaw/60,0,1)); VB_HAPTIC.lastT=0; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',{intensity:clamp(0.3+dYaw/70,0.3,1),source:'loose',object:'ASTRAL'}); } }
       }
       LAB.liveBlade={yaw:yawRel,pitch:pitchA,roll:rollA,body:bodyRel,lag};
-      /* (09-14d) АСТРАЛЬНЕ ТІЛО — як у грі при клінчі, лише повністю: друга, напівпрозора копія
-         персонажа з мечем стоїть там, куди насправді хоче телефон, а фізична — де дозволяє світ.
-         Дві моделі співіснують, поки гравець зводить їх; з'являється і зникає плавно (без миготіння).
-         Фізичне тіло й саме йде назустріч: VB_RESYNC.assist тягне руків'я вздовж поверхні до наміру. */
+      /* АСТРАЛЬНЕ ТІЛО: видиме лише поки втрачено контроль; стоїть там, куди хоче телефон */
       if(!rig.astral){
         const ra=labBuildRig(LAB.profile); ra.isAstral=true; ra.root.name='ASTRAL_BODY';
         const mat=new THREE.MeshBasicMaterial({color:0x8fd8ff,transparent:true,opacity:0.22,depthWrite:false,side:THREE.DoubleSide});
         ra.root.traverse(o=>{ if(o.isMesh){ o.material=mat; o.userData.labPart=false; } });
-        ra.root.scale.setScalar(1.03);                                  // «пишніша» душа
-        ra.root.add(ra.sword.root); ra.sword.root.position.set(0,0,0);  // меч астрала — вільний, як у LIVE
+        ra.root.scale.setScalar(1.03);
+        ra.root.add(ra.sword.root); ra.sword.root.position.set(0,0,0);
         ra.root.traverse(o=>{ if(o.userData.jointDot||o.userData.jointLabel||o.userData.socketAxes||o.userData.socketLabel) o.visible=false; });
         LAB.obj.add(ra.root); rig.astral=ra; rig.astralMat=mat; LAB.astralA=0;
-        if(rig.ghost){ rig.ghost.visible=false; }
+        if(rig.ghost) rig.ghost.visible=false;
       }
-      const deep=(LAB.intendedDepth||0)>0.10, shallow=(LAB.intendedDepth||0)<0.03;
-      LAB.desyncT = deep ? (LAB.desyncT||0)+dt : (shallow ? 0 : (LAB.desyncT||0));
-      const desync = deep && LAB.desyncT>0.25;
-      LAB.astralA += ((desync?1:0)-(LAB.astralA||0))*clamp(dt*5,0,1);   // плавне проявлення/згасання
+      LAB.astralA += ((C.state==='LOOSE'?1:0)-(LAB.astralA||0))*clamp(dt*5,0,1);
       const A=rig.astral; A.root.visible=LAB.astralA>0.03; rig.astralMat.opacity=0.24*LAB.astralA;
       if(A.root.visible){
-        A.root.position.copy(rig.root.position); A.root.rotation.copy(rig.root.rotation);
+        A.root.position.copy(rig.root.position); A.root.rotation.copy(rig.root.rotation); A.root.rotation.y=-bodyRelA*dr;
         for(const j of LAB_JOINTS) A.J[j].rotation.copy(rig.J[j].rotation);
-        A.sword.root.position.copy(LAB.intendAnchor||sw.position); A.sword.root.quaternion.copy(LAB.intendQ||sw.quaternion);
-        A.sword.blade.scale.y=1;
-        labTwoHandGrip(A,true);                                          // руки астрала — до його руків'я
-        if(VB_RESYNC.assist>0 && LAB.contact && LAB.contact.normal){       // фізичне тіло йде назустріч уздовж поверхні
-          const n=LAB.contact.normal, dV=(LAB.intendAnchor||sw.position).clone().sub(sw.position);
-          dV.sub(n.clone().multiplyScalar(dV.dot(n)));                                              // лише тангенс
-          sw.position.add(dV.multiplyScalar(clamp(VB_RESYNC.assist*dt*3,0,0.5)));
-        }
-        LAB.desyncLogT=(LAB.desyncLogT||0)+dt;
-        if(LAB.desyncLogT>0.5){ LAB.desyncLogT=0; logE('LAB РОЗСИНХРОН: астрал на '+((LAB.intendedDepth||0)*100).toFixed(0)+'см далі за тіло · '+LAB.desyncT.toFixed(1)+'с · assist '+VB_RESYNC.assist); }
-        LAB.warn.push('DESYNC '+((LAB.intendedDepth||0)*100).toFixed(0)+'см');
+        A.sword.root.position.copy(anchorI); A.sword.root.quaternion.copy(qI); A.sword.blade.scale.y=1;
+        labTwoHandGrip(A,true);
+        if(C.state==='LOOSE' && C.mis){ LAB.warn.push('ВТРАТА КОНТРОЛЮ '+Math.round(C.mis.dYaw)+'° / '+(C.mis.dPos*100).toFixed(0)+'см'); }
       }
       if(Math.abs(lag)>70){ LAB.lagT=(LAB.lagT||0)+dt; if(LAB.lagT>0.4) LAB.warn.push('BODY_LAG_TOO_HIGH'); } else LAB.lagT=0;
       labTwoHandGrip();
@@ -6169,6 +6178,13 @@ function labContactTick(dt){
       if(axisW.lengthSq()>1e-6){ axisW.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);
         LAB.kickQ=new THREE.Quaternion().setFromAxisAngle(axisW,clamp(CT.normalSpeed*6*e,6,40)*Math.PI/180); LAB.kickT=1; }
       logE('LAB РИКОШЕТ: '+CT.object+' ('+CT.surfaceType+', e='+e+') · v '+CT.normalSpeed.toFixed(1)+' м/с · відхил '+Math.round(clamp(CT.normalSpeed*6*e,6,40))+'° по відбитій траєкторії');
+      /* сильний удар вибиває контроль: тіло дістає імпульс і довертається саме, душа виходить */
+      if(CT.normalSpeed>3.5 || (LAB.ctl&&LAB.ctl.state==='LOOSE')){
+        const sgn = (new THREE.Vector3().crossVectors(bd,r).y>0) ? -1 : 1;             // куди відбило — туди й крутить
+        const imp={yawV:sgn*clamp(CT.normalSpeed*25*e,30,220), pitchV:clamp(r.y*90*e,-120,120),
+                   vel:nL.clone().multiplyScalar(clamp(CT.normalSpeed*0.25*e,0.15,0.9)), bodyV:sgn*clamp(CT.normalSpeed*9*e,12,80)};
+        labLoseControl('удар об '+CT.object+' на '+CT.normalSpeed.toFixed(1)+' м/с',imp);
+      }
     } }
   else if(CT.postState==='CONTACT_START') labCycleMark('CONTACT');
   if(CT.angle<12) LAB.warn.push('INVALID_CONTACT_ANGLE');
@@ -6187,7 +6203,7 @@ function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
    до нейтралі лише через holdT (5 с) і повільно. Зворотний лінійний рух повертає одразу —
    це те саме прискорення, тільки в інший бік. Вертикаль чутливіша (gainY). */
 /* (09-14d) Зустрічна дія: наскільки фізичне тіло саме тягнеться до астрального (0 — лише гравець, 1 — швидко). */
-const VB_RESYNC={ assist:0.35 };
+const VB_RESYNC={ assist:0.15 };   // 0 — тіло чекає гравця; більше — саме йде назустріч
 window.VB_RESYNC=VB_RESYNC;
 const VB_ARM={ on:true, gain:0.9, gainY:1.0, dead:0.5, biasTau:1.5, spinGate:90, moveDamp:1.0, stopDamp:9.0, holdT:3.0, kReturn:1.6, retDamp:2.4,
   lim:{x:0.45, yMin:-0.50, yMax:0.60, zMin:-0.25, zMax:0.55} };   // додаток до дуги руки, а не вся висота
@@ -6216,6 +6232,28 @@ function labArmTick(I,N,bodyRel,dt){
   A.off.add(A.vel.clone().multiplyScalar(dt));
   const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
   return A.off;
+}
+/* ═══ ВТРАТА КОНТРОЛЮ (09-15): тіло лишається де є (з інерцією), душа виходить до телефона ═══ */
+function labLoseControl(reason,imp){
+  const C=LAB.ctl||(LAB.ctl={state:'SYNC',t:0,deepT:0,ph:null});
+  if(C.state==='LOOSE'){ if(imp&&C.ph){ C.ph.yawV+=imp.yawV||0; C.ph.pitchV+=imp.pitchV||0; if(imp.vel) C.ph.vel.add(imp.vel); C.ph.bodyV+=imp.bodyV||0; } return; }
+  const B=LAB.liveBlade||{}, sw=LAB.rig&&LAB.rig.sword.root;
+  C.state='LOOSE'; C.t=0; C.deepT=0; C.mis=null;
+  C.ph={yaw:B.lag||0,pitch:B.pitch||0,roll:B.roll||0,anchor:sw?sw.position.clone():new THREE.Vector3(0,1,0.4),yawV:0,pitchV:0,vel:new THREE.Vector3(),bodyV:0};
+  if(imp){ C.ph.yawV=imp.yawV||0; C.ph.pitchV=imp.pitchV||0; if(imp.vel) C.ph.vel.copy(imp.vel); C.ph.bodyV=imp.bodyV||0; }
+  LAB.astralBody={visYaw:LAB.body.visYaw};
+  logE('⚡ ВТРАТА КОНТРОЛЮ: '+reason+' — астральне тіло вийшло; зведи його з фізичним (кут <12°, руків\'я <14см)');
+  try{ showBanner('⚡ ВТРАТА КОНТРОЛЮ — ЗВЕДИ ДУШУ З ТІЛОМ','#f59e0b'); }catch(e){}
+  try{ VB_HAPTIC.lastT=0; VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:1,source:'loose',object:'CONTROL'}); blip(90,0.35,'sawtooth',0.2); }catch(e){}
+}
+function labRegainControl(){
+  const C=LAB.ctl; if(!C||C.state!=='LOOSE') return;
+  C.state='SYNC'; C.deepT=0;
+  if(LAB.astralBody) LAB.body.visYaw=LAB.astralBody.visYaw;              // душа й тіло зійшлись — далі тіло знову за телефоном
+  logE('✔ КОНТРОЛЬ ПОВЕРНУТО: астрал зійшовся з тілом за '+C.t.toFixed(1)+'с');
+  try{ showBanner('✔ КОНТРОЛЬ ПОВЕРНУТО','#86efac'); }catch(e){}
+  try{ VB_HAPTIC.lastT=0; VB_HAPTIC.play('HAPTIC_CONTACT_START',{intensity:0.6,source:'loose',object:'CONTROL'}); blip(660,0.12,'sine',0.14); }catch(e){}
+  C.ph=null; LAB.kickT=0;
 }
 /* ── джерело входів LIVE: живий сенсор або кадр запису (той самий pipeline, п.70) ── */
 function labLiveInputs(dt){
@@ -6470,6 +6508,7 @@ function labInfo(hits,relTxt,ctTxt,mark){
   if(LAB.flags.sensor||(LAB.play&&LAB.play.on)){ const B=LAB.liveBlade||{};
     L.push((LAB.play&&LAB.play.on?'PLAY REC «'+LAB.play.clip.name+'» t '+LAB.play.t.toFixed(2)+' кадр '+(LAB.play.i||0)+' · ':'LIVE · ')+'клинок yaw '+Math.round(B.yaw||0)+'° pitch '+Math.round(B.pitch||0)+'° roll '+Math.round(B.roll||0)+'° · корпус '+Math.round(B.body||0)+'° (lag '+Math.round(B.lag||0)+'°) · v '+(LAB.bladeSpeed||0).toFixed(2)+' м/с');
     if(LAB.arm) L.push('РУКА (VB_ARM): вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
+    if(LAB.ctl) L.push('КОНТРОЛЬ: '+(LAB.ctl.state==='SYNC'?'тіло за телефоном':'ВТРАЧЕНО '+LAB.ctl.t.toFixed(1)+'с · до ресинку кут '+(LAB.ctl.mis?Math.round(LAB.ctl.mis.dYaw)+'° / '+(LAB.ctl.mis.dPos*100).toFixed(0)+'см':'…'))+' · assist '+VB_RESYNC.assist);
     L.push('MOTION '+(sensor.motion||'—')+' · GESTURE '+(sensor.gesture||'NONE')+' · conf m '+clamp((sensor.aMag||0)/SENSCFG.MOTION_MOVE,0,1).toFixed(2)+' g '+labGestureConf().toFixed(2)+(LAB.rec&&LAB.rec.on?' · ● REC '+LAB.rec.frames.length:''));
   }
   L.push('CONTACT '+(LAB.contactState||'FREE')+' · HAPTIC '+VB_HAPTIC.state.replace('HAPTIC_','')+' i='+VB_HAPTIC.intensity.toFixed(2)+' · хват L '+((LAB.gripErrL||0)*100).toFixed(1)+'см');
