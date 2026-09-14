@@ -729,7 +729,7 @@ function onMotion(e){
   const gg = e.accelerationIncludingGravity;
   if(gg){
     if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GRAV_SIGN*gg.y/9.4, -1, 1); }
-    try{ autoPitchAxis(gg); }catch(err){}          // (07-20e) сам визначає перевернуту вісь
+    if(!(window.LAB&&LAB.on)){ try{ autoPitchAxis(gg); }catch(err){} }   // (07-20e) сам визначає перевернуту вісь — але не в LAB (09-16c)
     // ВИДОШУКАЧ (07-15): елевація ЗАДНЬОЇ КРИШКИ (-Z пристрою). Екран догори → кришка
     // дивиться в підлогу → -1; телефон вертикально (будь-яка орієнтація!) → 0 (горизонт);
     // «фотографуєш небо» → +1. Це і є метафора справжньої камери — працює і боком.
@@ -4430,7 +4430,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-16b · панель ховається, повзунки у вузькій колонці, персонаж у вільній частині екрана · канали розділено (орієнтація → клинок, прискорення → рукоять), поза лише з досяжності, повзунки чутливості зі збереженням і копіюванням · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-16c · прибрано дрижання від швидкості вістря (EMA+поріг), стеля LAB 3.8 м, автоінверсія нахилу вимкнена в LAB · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5756,7 +5756,7 @@ function labInitScene(){
   // СТІНИ і СТЕЛЯ — реальні колайдери на межі платформи (WALL/SOLID, CEILING/SOLID), видимі напівпрозоро
   const wg=new THREE.Group(); wg.name='WALLS';
   const wm=new THREE.MeshBasicMaterial({color:0x3b82f6,transparent:true,opacity:0.10,side:THREE.DoubleSide});
-  const R=3.5*CELL, H=2.6*CELL;
+  const R=3.5*CELL, H=3.8*CELL;
   const wall=(x,z,ry)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(2*R,H),wm); m.position.set(x,H/2,z); m.rotation.y=ry; wg.add(m); };
   wall(0,R,0); wall(0,-R,0); wall(R,0,Math.PI/2); wall(-R,0,Math.PI/2);
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(2*R,2*R),new THREE.MeshBasicMaterial({color:0x60a5fa,transparent:true,opacity:0.06,side:THREE.DoubleSide})); ceil.rotation.x=-Math.PI/2; ceil.position.y=H; wg.add(ceil);
@@ -5991,7 +5991,12 @@ function labFrame(now){
       const dm=rig.dims, hipY=dm.hipH, reach=(dm.upper+dm.fore+dm.hand*0.6)*0.985;
       /* (09-14c) РУКИ ВІД ТІЛА: базовий винос ~55% руки, у махові (SWING або швидкий клинок) —
          руки випрямляються майже повністю: дальність і сила удару від кутової швидкості. */
-      const swingX=clamp(Math.max((SWING.power||0),(LAB.bladeSpeed||0)/5),0,1);
+      /* (09-16c) швидкість вістря брала участь у виносі руки без згладжування — покадровий шум
+         замикався сам на себе (виніс → вістря → швидкість → виніс). Тепер: EMA + поріг 1.5 м/с. */
+      LAB.speedS=(LAB.speedS||0)+((LAB.bladeSpeed||0)-(LAB.speedS||0))*clamp(dt*8,0,1);
+      const swingRaw=clamp(Math.max((SWING.power||0), Math.max(0,LAB.speedS-1.5)/4),0,1);
+      LAB.swingXS=(LAB.swingXS||0)+(swingRaw-(LAB.swingXS||0))*clamp(dt*(swingRaw>(LAB.swingXS||0)?12:4),0,1);
+      const swingX=LAB.swingXS;
       const ext=(0.55+0.40*swingX)*reach;                               // 55…95% довжини руки — завжди В МЕЖАХ
       /* ЯКІР ВІД ПЛЕЧА: рука висить від S0 у напрямку «вперед + вниз/вгору за дугою клинка»,
          повернутому навколо вертикалі на кут наміру. Відстань від плеча = ext, тож обрізання
@@ -6172,7 +6177,7 @@ function labFrame(now){
   labInfo(hits,relTxt,ctTxt,mark);
 }
 function labBuildColliders(){
-  const R=3.5*CELL, H=2.6*CELL, T=1.0;
+  const R=3.5*CELL, H=3.8*CELL, T=1.0;
   const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-R,-T,-R],[R,0,R]),
            SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-R,H,-R],[R,H+T,R]),
            SWORD_COLLIDERS.make('WALL_N','WALL','SOLID',[-R,0,R],[R,H,R+T]),
