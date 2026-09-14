@@ -4430,7 +4430,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-16c · прибрано дрижання від швидкості вістря (EMA+поріг), стеля LAB 3.8 м, автоінверсія нахилу вимкнена в LAB · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-16d · типові = ваш VB_SENS_CFG · без хибних самопорізів біля рукояті · підлога і тіло не карають розсинхроном · зачеп лише на неруйнівному · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5293,7 +5293,12 @@ function sweepBladeContact(pA,pB,a,b,colliders,steps){
   steps=steps||4; let best=null;
   for(let si=1;si<=steps;si++){
     const u=si/steps, A=pA.clone().lerp(a,u), B=pB.clone().lerp(b,u);
-    for(const c of colliders){ const h=segBoxHit(A,B,c.box); if(h && (!best||h.t<best.t)) best={t:h.t,p:h.p,n:h.n,c,u}; }
+    for(const c of colliders){
+      const A2 = c.startFrac ? A.clone().lerp(B,c.startFrac) : A;            // для тіла — від гарди, не від руків'я
+      const h=segBoxHit(A2,B,c.box); if(!h) continue;
+      if(c.skipInside && h.t<=0) continue;                                    // кисть біля тіла — не «самопоріз»
+      const t = c.startFrac ? c.startFrac+h.t*(1-c.startFrac) : h.t;
+      if(!best||t<best.t) best={t,p:h.p,n:h.n,c,u}; }
     if(best) break;
   }
   return best;
@@ -5339,7 +5344,8 @@ const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRE
     if(ev==='IMPACT'){ VB_HAPTIC.play('HAPTIC_IMPACT',Object.assign({intensity:clamp(normalSpeed/6+impulse*0.2,0.3,1)},H)); CONTACT_AUDIO.play('IMPACT',A); }
     else if(ev==='CONTACT_START'){ VB_HAPTIC.play('HAPTIC_CONTACT_START',Object.assign({intensity:clamp(0.25+normalSpeed*0.3,0.25,1)},H)); CONTACT_AUDIO.play('CONTACT_START',A); }
     else if(ev==='CONTACT_SLIDE'){ VB_HAPTIC.play('HAPTIC_CONTACT_SLIDE',Object.assign({intensity:clamp(tangentialSpeed/3,0.1,1)},H)); CONTACT_AUDIO.play('CONTACT_SLIDE',Object.assign({},A,{speed:tangentialSpeed})); }
-    else { if(pressure>0.08 && now-(was.pT||0)>this.cfg.PRESSURE_MS){ was.pT=now; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',Object.assign({intensity:pressure},H)); CONTACT_AUDIO.play('CONTACT_PRESSURE',A); } }
+    else { const idleGame=(opt.source==='game' && normalSpeed<0.25 && tangentialSpeed<0.25);   // у грі: без руху — без гудіння
+           if(!idleGame && pressure>0.08 && now-(was.pT||0)>this.cfg.PRESSURE_MS){ was.pT=now; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',Object.assign({intensity:pressure},H)); CONTACT_AUDIO.play('CONTACT_PRESSURE',A); } }
     if(opt.log!==false && (!was || now-(was.logT||0)>this.cfg.LOG_MS)){
       S.contacts[key].logT=now;
       try{ logE((opt.tag||'SWORD_CONTACT')+' '+(ev==='CONTACT_PRESSURE'||ev==='CONTACT_SLIDE'?'CONTACT_CONTINUE/'+ev.replace('CONTACT_',''):ev)+' · '+key+' · '+c.type+'/'+c.surfaceType+
@@ -5379,7 +5385,7 @@ function gameBuildColliders(){
    астрал. Поки гравець не поверне телефон до силуета (або не відведе його від стіни),
    росте розсинхрон: вібрація сильнішає, витривалість тане; на нулі — меч випадає.
    Краєчком (зовнішня третина клинка) — лише ковзання/подряпина без зачепу. */
-const WALLLOCK={ active:false, lockYaw:0, lockPitch:0, lockLen:1, obj:'', mis:0, t:0, hapT:0, sndT:0, lastFreeYaw:0, lastFreePitch:0, GRIP_FRACTION:0.62, stamRate:12 };
+const WALLLOCK={ active:false, lockYaw:0, lockPitch:0, lockLen:1, obj:'', mis:0, t:0, hapT:0, sndT:0, lastFreeYaw:null, lastFreePitch:0, GRIP_FRACTION:0.62, stamRate:12 };
 window.WALLLOCK=WALLLOCK;
 function wallLockStart(CT){
   WALLLOCK.active=true; WALLLOCK.obj=CT.object; WALLLOCK.t=0; WALLLOCK.mis=0; WALLLOCK.hapT=0; WALLLOCK.sndT=0;
@@ -5406,7 +5412,8 @@ function gameSwordContact(dt){
   const CT=SWORD_CONTACT.step('player',g,tp,dt,gameBuildColliders(),{source:'game',tag:'ГРА КЛИНОК'});
   if(!WALLLOCK.active){
     if(!CT){ WALLLOCK.lastFreeYaw=aimYawEff(); WALLLOCK.lastFreePitch=sensor.pitch||0; GAMEC.playerClamp=1; return; }
-    const lockable = CT.type!=='FLOOR' && CT.f<=WALLLOCK.GRIP_FRACTION;
+    if(WALLLOCK.lastFreeYaw==null){ WALLLOCK.lastFreeYaw=aimYawEff(); WALLLOCK.lastFreePitch=sensor.pitch||0; GAMEC.playerClamp=Math.max(0.06,CT.f); return; }   // перший кадр — ще не було вільного положення
+    const lockable = (CT.type==='WALL' || CT.type==='CEILING') && CT.f<=WALLLOCK.GRIP_FRACTION;   // лише неруйнівне; дерево пропалюється
     if(lockable){ wallLockStart(CT); GAMEC.playerClamp=1; return; }
     GAMEC.playerClamp=Math.max(0.06,CT.f);                              // краєчком — ковзання/подряпина
     return;
@@ -6069,7 +6076,9 @@ function labFrame(now){
         sw.position.copy(anchor); sw.quaternion.copy(qI);
         if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
         resolvePen();
-        C.deepT = (LAB.intendedDepth||0)>0.30 ? C.deepT+dt : 0;          // ПОРУШЕННЯ: лише відверте продавлювання
+        const ctType=LAB.contact?LAB.contact.type:'';
+        const punishable = ctType && ctType!=='FLOOR' && ctType!=='BODY';    // підлога і власне тіло — не порушення
+        C.deepT = (punishable && (LAB.intendedDepth||0)>0.30) ? C.deepT+dt : 0;   // ПОРУШЕННЯ: лише відверте продавлювання крізь стіну/структуру
         if(C.deepT>0.9) labLoseControl('продавлювання крізь '+(LAB.contact?LAB.contact.object:'поверхню')+' на '+((LAB.intendedDepth||0)*100).toFixed(0)+'см',null,
                                        (LAB.intendedDepth||0)>0.70 ? 'ARM' : 'WRIST');
       } else {
@@ -6196,7 +6205,7 @@ function labBuildColliders(){
 function labBodyColliders(){
   const rig=LAB.rig; if(!rig || !LAB.swordFree) return [];
   const names={torso:'BODY_TORSO',head:'BODY_HEAD',pelvis:'BODY_PELVIS',left_thigh:'BODY_THIGH_L',right_thigh:'BODY_THIGH_R',left_shin:'BODY_SHIN_L',right_shin:'BODY_SHIN_R'};
-  const out=[]; for(const m of rig.parts){ const id=names[m.name]; if(!id) continue; out.push({id,type:'BODY',surfaceType:'BODY',box:new THREE.Box3().setFromObject(m)}); }
+  const out=[]; for(const m of rig.parts){ const id=names[m.name]; if(!id) continue; out.push({id,type:'BODY',surfaceType:'BODY',box:new THREE.Box3().setFromObject(m),startFrac:0.22,skipInside:true}); }   // (09-16d) лише лезо, не руків'я
   return out;
 }
 function labContactTick(dt){
@@ -6260,7 +6269,7 @@ function labCycleMark(m){ LAB.cycleMark=m; LAB.cycleMarkT=performance.now(); }
 const VB_RESYNC={ assist:0.15, pull:1.6 };   // pull — як сильно тіло САМО збирається до душі (прокачка стійкості)
 /* (09-15b) МАСА ЗБРОЇ vs СИЛА ГЕРОЯ: телефон легкий, меч — ні. Різкий ривок важким клинком
    слабким персонажем зриває хват: спершу кисть, далі рука. Плавний розгін — можна. */
-const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:520, drainRate:0.9 };   // mass кг-умовних, strength 0.5…2
+const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:1100, drainRate:0.9 };   // 1100°/с при масі 1 — лише справжній ривок   // mass кг-умовних, strength 0.5…2
 window.VB_WEAPON=VB_WEAPON;
 window.VB_RESYNC=VB_RESYNC;
 /* (09-16) ДВА НЕЗАЛЕЖНІ КАНАЛИ. Кутовий: орієнтація телефона → ЛИШЕ напрям клинка (VB_ANG —
@@ -6268,7 +6277,7 @@ window.VB_RESYNC=VB_RESYNC;
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
 const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
 window.VB_ANG=VB_ANG;
-const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.15,
+const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
   moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
   lim:{x:0.60, yMin:-0.90, yMax:0.80, zMin:-0.40, zMax:0.70} };
