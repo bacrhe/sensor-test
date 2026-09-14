@@ -4431,7 +4431,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-17a · прогноз орієнтації гіроскопом між зразками (без запізнення) · плавні ворота акселерометра · утримуваний контакт CONTACT_HOLD · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-17b · зупинка без дрижання: ворота акселерометра з витримкою після обертання, неперервне демпфування руки, прогноз лише в русі · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6299,8 +6299,13 @@ function labArmTick(I,N,bodyRel,dt){
   // прибрати g) — саме це «з'їжджало» вперед-назад при нахилах. Обертання → перенос не читаємо.
   const spin=Math.abs((I.gyro&&I.gyro[0])||0)+Math.abs((I.gyro&&I.gyro[1])||0)+Math.abs((I.gyro&&I.gyro[2])||0);
   const mag0=a.length();
-  const gateRaw = spin>VB_ARM.spinGate ? 0 : 1;
-  A.gateS=(A.gateS==null?1:A.gateS)+(gateRaw-(A.gateS==null?1:A.gateS))*clamp(dt*(gateRaw<(A.gateS==null?1:A.gateS)?25:8),0,1);   // закривається швидко, відкривається плавно
+  /* (09-17b) Обертання дає РЕАЛЬНЕ лінійне прискорення датчика (доцентрове + тангенційне від
+     гальмування). На зупинці обертання цей сплеск потрапляв у руку — рука смикалась і секунду
+     поверталась пружиною. Ворота: закриті під час обертання, ще 0.25 с після нього, і лише тоді
+     плавно відкриваються; при помірному обертанні — частково. */
+  if(spin>VB_ARM.spinGate) A.gateHold=0.25; else A.gateHold=Math.max(0,(A.gateHold||0)-dt);
+  const gateRaw = A.gateHold>0 ? 0 : clamp(1.3-spin/VB_ARM.spinGate,0,1);
+  A.gateS=(A.gateS==null?1:A.gateS)+(gateRaw-(A.gateS==null?1:A.gateS))*clamp(dt*(gateRaw<(A.gateS==null?1:A.gateS)?25:6),0,1);   // закривається швидко, відкривається плавно
   a.multiplyScalar(A.gateS);
   if(!q) a.set(0,0,0);
   else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
@@ -6319,11 +6324,15 @@ function labArmTick(I,N,bodyRel,dt){
         a.z*= a.z>0 ? VB_ARM.gFwd : VB_ARM.gBack;
         a.x*= a.x<0 ? VB_ARM.gRight : VB_ARM.gLeft;
         a.y*= a.y>0 ? VB_ARM.gUp : VB_ARM.gDown; }
-  const moving=a.lengthSq()>1e-6; A.still=moving?0:A.still+dt;
-  /* пружина є ЗАВЖДИ (легка) — інакше швидкість накопичується і зсув «пливе» повз реальний рух */
-  let k=VB_ARM.kHold, c=VB_ARM.moveDamp;
-  if(!moving){ if(A.still<VB_ARM.holdT){ c=VB_ARM.stopDamp; } else { c=VB_ARM.retDamp; k=VB_ARM.kReturn; } }
+  const wMove=clamp(a.length()/Math.max(VB_ARM.gain,0.1)/1.5,0,1);                 // 0 — спокій, 1 — упевнений рух
+  A.wS=(A.wS==null?wMove:A.wS)+(wMove-(A.wS==null?wMove:A.wS))*clamp(dt/0.09,0,1);   // згладжена вага (~90 мс)
+  A.still = A.wS>0.08 ? 0 : A.still+dt;
+  /* демпфування й пружина — неперервні функції ваги, без режимів і перемикань */
+  const returning = A.still>VB_ARM.holdT ? clamp((A.still-VB_ARM.holdT)/0.6,0,1) : 0;
+  const c = lerp(lerp(VB_ARM.stopDamp,VB_ARM.retDamp,returning), VB_ARM.moveDamp, A.wS);
+  const k = lerp(lerp(VB_ARM.kHold,VB_ARM.kReturn,returning), VB_ARM.kHold, A.wS);
   A.vel.add(a.sub(A.off.clone().multiplyScalar(k)).sub(A.vel.clone().multiplyScalar(c)).multiplyScalar(dt));
+  if(A.wS<0.05 && A.vel.length()<0.03 && returning<0.01) A.vel.set(0,0,0);          // осів — стоїть, не «дихає»
   A.off.add(A.vel.clone().multiplyScalar(dt));
   const L=VB_ARM.lim; A.off.x=clamp(A.off.x,-L.x,L.x); A.off.y=clamp(A.off.y,L.yMin,L.yMax); A.off.z=clamp(A.off.z,L.zMin,L.zMax);
   A.outS=A.outS||A.off.clone(); A.outS.lerp(A.off, clamp(dt/VB_ARM.outTau,0,1));   // вихід згладжений — без двоїння
@@ -6378,8 +6387,11 @@ function labLiveInputs(dt){
   }
   const age=clamp((performance.now()-(sensor.tOrient||0))/1000,0,0.06);          // вік зразка, не більше 60 мс
   const yawBase=(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused;
-  const yawPred=wrap360(yawBase+(sensor.yawRate||0)*age*VB_PRED.k);              // прогноз гіроскопом
-  const pitchPred=clamp((sensor.pitch||0)-Math.sin((sensor.pitchRate||0)*age*Math.PI/180)*VB_PRED.k,-1,1);
+  const yr=sensor.yawRate||0, pr=sensor.pitchRate||0;
+  const gY=clamp((Math.abs(yr)-40)/80,0,1), gP=clamp((Math.abs(pr)-40)/80,0,1);   // прогноз лише при упевненому обертанні (>40°/с)
+  const dY=clamp(yr*age*VB_PRED.k*gY,-6,6), dP=clamp(pr*age*VB_PRED.k*gP,-6,6);    // і не більше 6°
+  const yawPred=wrap360(yawBase+dY);
+  const pitchPred=clamp((sensor.pitch||0)-Math.sin(dP*Math.PI/180),-1,1);
   return {yaw:yawPred,pitch:pitchPred,roll:sensor.roll||0,groll:sensor.gRoll,quat:sensor.quatFull||sensor.quat,
     gyro:[sensor.yawRate||0,sensor.pitchRate||0,sensor.rollRate||0],accel:[sensor.ax||0,sensor.ay||0,sensor.az||0],rec:false};
 }
