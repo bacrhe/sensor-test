@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-15d · прибрано другий контур зворотного зв·язку (нахил↔досяжність): опора — нерухоме плече, доворот обмежений ±22° · розсинхрон КИСТЬ/РУКА/ТІЛО з широким допуском · маса зброї · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-15e · якір руки будується ВІД ПЛЕЧА (лінійний зсув більше не зрізається досяжністю) · прибрано другий контур зворотного зв·язку (нахил↔досяжність): опора — нерухоме плече, доворот обмежений ±22° · розсинхрон КИСТЬ/РУКА/ТІЛО з широким допуском · маса зброї · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5983,19 +5983,23 @@ function labFrame(now){
       /* (09-14c) РУКИ ВІД ТІЛА: базовий винос ~55% руки, у махові (SWING або швидкий клинок) —
          руки випрямляються майже повністю: дальність і сила удару від кутової швидкості. */
       const swingX=clamp(Math.max((SWING.power||0),(LAB.bladeSpeed||0)/5),0,1);
-      const ext=(0.55+0.40*swingX)*reach;                               // м від плеча вперед
-      const armY=1.08*s + (arc<0 ? 0.30*arc : 0.32*arc)*s;              // 0.78 … 1.40 м: вістря вниз — руки біля стегна, не біля підлоги
-      const armZ=ext*Math.max(0.55,1-0.35*Math.abs(arc));                 // вниз/вгору — трохи ближче
-      const anchor=new THREE.Vector3(-0.06*s,armY,armZ).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr);
+      const ext=(0.55+0.40*swingX)*reach;                               // 55…95% довжини руки — завжди В МЕЖАХ
+      /* ЯКІР ВІД ПЛЕЧА: рука висить від S0 у напрямку «вперед + вниз/вгору за дугою клинка»,
+         повернутому навколо вертикалі на кут наміру. Відстань від плеча = ext, тож обрізання
+         по досяжності більше не з'їдає зсув від акселерометра. */
+      const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s, hipY+0.22*s+dm.torsoH-0.05*s, 0);
+      const el=clamp(arc,-1,1)*0.85;                                     // вістря вниз → кисть нижче плеча
+      const dirArm=new THREE.Vector3(0, Math.sin(el)*0.9, Math.cos(el)).normalize();
+      const anchor=S0.clone().add(dirArm.multiplyScalar(ext).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr));
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
-      anchor.y=Math.max(anchor.y,0.36*s);                              // не нижче коліна — до підлоги не притискається
+      anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
         if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
       /* (09-15b) ЗГЛАДЖУВАННЯ ЯКОРЯ: дрібний шум акселерометра й дуги давав покадрове «двоїння».
          Один фільтр на саме положення руків'я — орієнтація клинка лишається миттєвою. */
       { const p=LAB.anchorS||(LAB.anchorS=anchor.clone());
-        p.lerp(anchor, clamp(dt*18,0,1)); anchor.copy(p); }
+        p.lerp(anchor, clamp(dt*30,0,1)); anchor.copy(p); }
       LAB.intendAnchor=anchor.clone();
       const anchorI=anchor.clone();
       if(C.state==='LOOSE') anchor.copy(C.ph.anchor);                    // фізична рука — де її лишила інерція
@@ -6014,7 +6018,6 @@ function labFrame(now){
       /* корпус тягнеться ЛИШЕ коли рука не дістає: спершу нахил (до 0.45 рад), потім обрізання */
       /* опора для «дістає / не дістає» — НЕРУХОМА точка плеча в системі кореня (не залежить від пози),
          тож нахил корпусу більше не впливає на власну причину */
-      const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s, hipY+0.22*s+dm.torsoH-0.05*s, 0);
       { const d0=anchor.distanceTo(S0);
         const needRaw=d0>reach ? clamp((d0-reach)/(0.35*s),0,1) : 0;
         LAB.needS=(LAB.needS||0)+(needRaw-(LAB.needS||0))*clamp(dt*(needRaw>LAB.needS?6:2),0,1);
@@ -6251,7 +6254,7 @@ const VB_RESYNC={ assist:0.15, pull:1.6 };   // pull — як сильно ті�
 const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:520, drainRate:0.9 };   // mass кг-умовних, strength 0.5…2
 window.VB_WEAPON=VB_WEAPON;
 window.VB_RESYNC=VB_RESYNC;
-const VB_ARM={ on:true, gain:0.9, gainY:1.0, dead:0.5, biasTau:1.5, spinGate:90, moveDamp:1.0, stopDamp:9.0, holdT:3.0, kReturn:1.6, retDamp:2.4,
+const VB_ARM={ on:true, gain:1.15, gainY:1.3, dead:0.42, biasTau:2.5, spinGate:160, moveDamp:1.0, stopDamp:9.0, holdT:3.0, kReturn:1.6, retDamp:2.4,
   lim:{x:0.45, yMin:-0.50, yMax:0.60, zMin:-0.25, zMax:0.55} };   // додаток до дуги руки, а не вся висота
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
