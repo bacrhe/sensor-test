@@ -207,6 +207,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mSens">🛠 SENSOR DEBUG: ВИМК</button>
   <button id="mLab">🧪 CHARACTER &amp; STRUCTURE LAB</button>
   <button id="mVib">🔔 ВІБРО-ТЕСТ 500мс (прямо з кліку)</button>
+  <button id="mSensCfg">🎚 ЧУТЛИВІСТЬ СЕНСОРІВ</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
@@ -4415,6 +4416,7 @@ $('mEq').onclick=()=>{ equalizerOn=!equalizerOn;
 try{ $('mCal').onclick=()=>{ closeMenu(); setTimeout(calibrateBlade, 350); }; }catch(e){}
 try{ $('mSens').onclick=()=>{ sensViewToggle(); }; }catch(e){}
 try{ $('mLab').onclick=()=>{ $('menu').style.display='none'; labEnter(); }; }catch(e){}
+try{ $('mSensCfg').onclick=()=>{ $('menu').style.display='none'; sensSettingsOpen(); }; }catch(e){}
 try{ $('mVib').onclick=()=>{ let r='API_ABSENT'; try{ if('vibrate' in navigator) r=navigator.vibrate(500); }catch(e){ r='ERR '+e; }
   const b=$('mVib'); if(b) b.textContent='🔔 ВІБРО-ТЕСТ: vibrate(500) → '+r+(r===true?' (якщо мовчить — налаштування телефона)':'');
   logE('ВІБРО-ТЕСТ з меню: navigator.vibrate(500) → '+r+' · API='+('vibrate' in navigator)+' · UA='+navigator.userAgent.slice(0,80)); }; }catch(e){}
@@ -4428,7 +4430,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-15f · стабілізовано інтегратор руки (м·яка зона, легка пружина, дрейф лише у спокої, згладжений вихід) · якір від плеча · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-16a · канали розділено (орієнтація → клинок, прискорення → рукоять), поза лише з досяжності, повзунки чутливості зі збереженням і копіюванням · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5950,8 +5952,8 @@ function labFrame(now){
       const N=LAB.neutral||{yaw:0,pitch:0,roll:0};
       // ігровий sensor.pitch = -sin(кута підйому): ярус 2 при від'ємному pitch. Тут — явно в градуси підйому.
       const elev=v=>-Math.asin(clamp(v,-1,1))*180/Math.PI;
-      const yawRel=angDiff(I.yaw,N.yaw), pitchA=clamp(elev(I.pitch)-elev(N.pitch),-85,85);
-      const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1);
+      const yawRel=angDiff(I.yaw,N.yaw)*VB_ANG.yaw, pitchA=clamp((elev(I.pitch)-elev(N.pitch))*VB_ANG.pitch,-85,85);
+      const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1)*VB_ANG.roll;
       /* (09-15) ДВА ТІЛА. SYNC: телефон керує фізичним тілом. LOOSE (втрата контролю — за спробу
          протиснути меч крізь неруйнівне або за сильний удар): фізичне тіло рухається лише інерцією
          і саме взаємодіє зі світом, а телефон керує АСТРАЛОМ; контроль повертається, коли гравець
@@ -5988,8 +5990,9 @@ function labFrame(now){
          повернутому навколо вертикалі на кут наміру. Відстань від плеча = ext, тож обрізання
          по досяжності більше не з'їдає зсув від акселерометра. */
       const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s, hipY+0.22*s+dm.torsoH-0.05*s, 0);
-      const el=clamp(arc,-1,1)*0.85;                                     // вістря вниз → кисть нижче плеча
-      const dirArm=new THREE.Vector3(0, Math.sin(el)*0.9, Math.cos(el)).normalize();
+      /* нахил клинка сам по собі руку НЕ рухає (канали розділені); зв'язка — лише через tiltCouple */
+      const el=clamp(arc,-1,1)*1.35*VB_ARM.tiltCouple;
+      const dirArm=new THREE.Vector3(0, Math.sin(el), Math.cos(el)).normalize();
       const anchor=S0.clone().add(dirArm.multiplyScalar(ext).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr));
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
@@ -6004,16 +6007,10 @@ function labFrame(now){
       const anchorI=anchor.clone();
       if(C.state==='LOOSE') anchor.copy(C.ph.anchor);                    // фізична рука — де її лишила інерція
       /* тіло: низько — присідає; над головою — випрямляється */
-      const lowRaw=clamp((hipY*1.05-anchor.y)/(hipY*0.95),0,1);
+      /* поза — НАСЛІДОК досяжності, а не сценарій: присід/нахил з'являються нижче, лише коли рука не дістає */
       const highRaw=clamp((anchor.y-1.45*s)/(0.5*s),0,1);
-      LAB.lowS=(LAB.lowS||0)+(lowRaw-(LAB.lowS||0))*clamp(dt*(lowRaw>LAB.lowS?6:3),0,1);     // без кадрового «підстрибування»
       LAB.highS=(LAB.highS||0)+(highRaw-(LAB.highS||0))*clamp(dt*5,0,1);
-      const low=LAB.lowS, high=LAB.highS;
-      rig.root.position.y -= 0.22*s*low;
-      rig.J.LEFT_HIP.rotation.x += -0.9*low;  rig.J.RIGHT_HIP.rotation.x += -0.9*low;
-      rig.J.LEFT_KNEE.rotation.x += 1.3*low;  rig.J.RIGHT_KNEE.rotation.x += 1.3*low;
-      rig.J.LEFT_ANKLE.rotation.x += -0.4*low; rig.J.RIGHT_ANKLE.rotation.x += -0.4*low;
-      rig.J.PELVIS.rotation.x += 0.30*low;     rig.J.TORSO.rotation.x += 0.45*low;
+      const high=LAB.highS, low=0;
       rig.J.TORSO.rotation.x += -0.25*high; rig.J.LEFT_KNEE.rotation.x -= 0.12*high; rig.J.RIGHT_KNEE.rotation.x -= 0.12*high;
       /* корпус тягнеться ЛИШЕ коли рука не дістає: спершу нахил (до 0.45 рад), потім обрізання */
       /* опора для «дістає / не дістає» — НЕРУХОМА точка плеча в системі кореня (не залежить від пози),
@@ -6023,11 +6020,11 @@ function labFrame(now){
         LAB.needS=(LAB.needS||0)+(needRaw-(LAB.needS||0))*clamp(dt*(needRaw>LAB.needS?6:2),0,1);
         if(LAB.needS>0.01){
           const need=LAB.needS;
-          if(anchor.y<S0.y-0.25*s){                                  // не дістає ВНИЗ — присідає
-            rig.root.position.y -= 0.22*s*need;
-            rig.J.LEFT_HIP.rotation.x += -0.7*need;  rig.J.RIGHT_HIP.rotation.x += -0.7*need;
-            rig.J.LEFT_KNEE.rotation.x += 1.1*need;  rig.J.RIGHT_KNEE.rotation.x += 1.1*need;
-            rig.J.LEFT_ANKLE.rotation.x += -0.35*need; rig.J.RIGHT_ANKLE.rotation.x += -0.35*need;
+          if(anchor.y<S0.y-0.25*s){                                  // не дістає ВНИЗ — присідає (до −35 см)
+            rig.root.position.y -= 0.35*s*need;
+            rig.J.LEFT_HIP.rotation.x += -0.9*need;  rig.J.RIGHT_HIP.rotation.x += -0.9*need;
+            rig.J.LEFT_KNEE.rotation.x += 1.4*need;  rig.J.RIGHT_KNEE.rotation.x += 1.4*need;
+            rig.J.LEFT_ANKLE.rotation.x += -0.45*need; rig.J.RIGHT_ANKLE.rotation.x += -0.45*need;
           }
           rig.J.PELVIS.rotation.x += 0.15*need; rig.J.TORSO.rotation.x += 0.45*need;
           /* доворот за рукою: обмежений ±22° і згладжений — жодних кидків на 60-120° */
@@ -6254,9 +6251,15 @@ const VB_RESYNC={ assist:0.15, pull:1.6 };   // pull — як сильно ті�
 const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:520, drainRate:0.9 };   // mass кг-умовних, strength 0.5…2
 window.VB_WEAPON=VB_WEAPON;
 window.VB_RESYNC=VB_RESYNC;
-const VB_ARM={ on:true, gain:1.0, gainY:1.15, dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
-  moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07,
-  lim:{x:0.45, yMin:-0.50, yMax:0.60, zMin:-0.25, zMax:0.55} };   // додаток до дуги руки, а не вся висота
+/* (09-16) ДВА НЕЗАЛЕЖНІ КАНАЛИ. Кутовий: орієнтація телефона → ЛИШЕ напрям клинка (VB_ANG —
+   множники по осях). Лінійний: прискорення → ЛИШЕ положення руків'я (VB_ARM — посилення окремо
+   на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
+const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
+window.VB_ANG=VB_ANG;
+const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.15,
+  dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
+  moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
+  lim:{x:0.60, yMin:-0.90, yMax:0.80, zMin:-0.40, zMax:0.70} };
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -6279,7 +6282,11 @@ function labArmTick(I,N,bodyRel,dt){
         /* м'яка зона замість жорсткого порога: біля межі сигнал згасає плавно, без перемикань */
         const m=a.length();
         const w = m<=VB_ARM.dead ? 0 : clamp((m-VB_ARM.dead)/VB_ARM.soft,0,1);
-        a.multiplyScalar(w*VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain; }
+        a.multiplyScalar(w*VB_ARM.gain); a.y*=VB_ARM.gainY/VB_ARM.gain;
+        // посилення по напрямках (у системі тіла: вперед +z, праворуч -x, вгору +y)
+        a.z*= a.z>0 ? VB_ARM.gFwd : VB_ARM.gBack;
+        a.x*= a.x<0 ? VB_ARM.gRight : VB_ARM.gLeft;
+        a.y*= a.y>0 ? VB_ARM.gUp : VB_ARM.gDown; }
   const moving=a.lengthSq()>1e-6; A.still=moving?0:A.still+dt;
   /* пружина є ЗАВЖДИ (легка) — інакше швидкість накопичується і зсув «пливе» повз реальний рух */
   let k=VB_ARM.kHold, c=VB_ARM.moveDamp;
@@ -6480,7 +6487,7 @@ function labBuildPanel(){
     '<div>'+labBtn('hap:START','START 80мс')+labBtn('hap:IMPACT','IMPACT 120мс')+labBtn('hap:PRESSURE','PRESSURE 250мс')+labBtn('hap:SLIDE','SLIDE 50/50')+labBtn('hap:STRONG','STRONG 300мс')+labBtn('hap:END','END')+labBtn('hap:FREE','FREE')+'</div>'+
     '<div id="labHapLabel" style="font-size:14px;font-weight:bold;color:#fbbf24;padding:6px 0">ВІБРАЦІЯ: —</div>'+
     '<div style="color:#64748b;font-size:9px;line-height:1.5">Якщо RAW 1000мс показує vibrate()=true, а телефон мовчить — це не код: Android → Звук і вібрація → «Вібрація системи / дотику» має бути увімкнена; Chrome не має бути у режимі «Версія для ПК».</div>'+
-    '<h3>ПАРАМЕТРИ (VB_SENS)</h3>'+Object.keys(LAB_PRESETS).map(n=>labBtn('preset:'+n,n)).join('')+
+    '<h3>ПАРАМЕТРИ (VB_SENS)</h3>'+labBtn('senscfg','🎚 ЧУТЛИВІСТЬ (повзунки)','warn')+Object.keys(LAB_PRESETS).map(n=>labBtn('preset:'+n,n)).join('')+
     '<h3>RESET · EXPORT</h3>'+['CHARACTER','POSE','ANIMATION','CAMERA','OBJECT','ALL'].map(n=>labBtn('reset:'+n,n)).join('')+labBtn('export','JSON')+
     '<h3>ІНФО</h3><div id="labInfo">—</div>';
   document.body.appendChild(p);
@@ -6538,6 +6545,7 @@ function labAct(act){
   }
   else if(k==='export') labExportJSON();
   else if(k==='neutral') labCalibrateNeutral();
+  else if(k==='senscfg') sensSettingsOpen();
   else if(k==='armtoggle'){ VB_ARM.on=!VB_ARM.on; logE('VB_ARM: '+(VB_ARM.on?'УВІМК':'ВИМК')); }
   else if(k==='rec'){ if(!LAB.flags.sensor && !(LAB.play&&LAB.play.on)){ LAB.flags.sensor=true; labRefreshFlags(); } labRecStart(); }
   else if(k==='recstop') labRecStop();
@@ -6578,7 +6586,9 @@ function labInfo(hits,relTxt,ctTxt,mark){
   if(ctTxt) L.push(ctTxt);
   if(LAB.flags.sensor||(LAB.play&&LAB.play.on)){ const B=LAB.liveBlade||{};
     L.push((LAB.play&&LAB.play.on?'PLAY REC «'+LAB.play.clip.name+'» t '+LAB.play.t.toFixed(2)+' кадр '+(LAB.play.i||0)+' · ':'LIVE · ')+'клинок yaw '+Math.round(B.yaw||0)+'° pitch '+Math.round(B.pitch||0)+'° roll '+Math.round(B.roll||0)+'° · корпус '+Math.round(B.body||0)+'° (lag '+Math.round(B.lag||0)+'°) · v '+(LAB.bladeSpeed||0).toFixed(2)+' м/с');
-    if(LAB.arm) L.push('РУКА (VB_ARM): вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
+    if(LAB.arm) L.push('ЛІНІЙНИЙ: вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
+    if(LAB.rig&&LAB.swordFree){ const gp=LAB.rig.sword.root.position; L.push('КИСТЬ: висота '+(gp.y*100).toFixed(0)+'см · виніс '+(Math.hypot(gp.x,gp.z)*100).toFixed(0)+'см · клинок '+Math.round(B.pitch||0)+'°'+
+      ' · розвʼязувач: присід/нахил '+Math.round((LAB.needS||0)*100)+'% · доворот '+Math.round((LAB.leanYS||0)*180/Math.PI)+'°'); }
     if(LAB.ctl) L.push('КОНТРОЛЬ: '+(LAB.ctl.state==='SYNC'?('тіло за телефоном · мах '+Math.round(LAB.swingRate||0)+'°/с'):
       ('РОЗСИНХРОН '+(LAB.ctl.mis?LAB.ctl.mis.level:'')+' '+LAB.ctl.t.toFixed(1)+'с · кут '+(LAB.ctl.mis?Math.round(LAB.ctl.mis.dYaw):'—')+'° / '+(LAB.ctl.mis?(LAB.ctl.mis.dPos*100).toFixed(0):'—')+'см · близькість '+(LAB.ctl.mis?Math.round(Math.max(0,LAB.ctl.mis.near)*100):0)+'% · авто через '+(LAB.ctl.mis?LAB.ctl.mis.left.toFixed(1):'—')+'с'))+
       ' · меч '+VB_WEAPON.mass+'кг / сила '+VB_WEAPON.strength);
@@ -6628,6 +6638,66 @@ function labExit(){
   try{ openMenu(); }catch(e){}
 }
 window.labEnter=labEnter;
+
+/* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
+   копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON};
+const SENS_SLIDERS=[
+  ['ЛІНІЙНИЙ РУХ (рукоять)'],
+  ['VB_ARM.gFwd','Вперед ×',0,3,0.05],['VB_ARM.gBack','Назад ×',0,3,0.05],
+  ['VB_ARM.gRight','Праворуч ×',0,3,0.05],['VB_ARM.gLeft','Ліворуч ×',0,3,0.05],
+  ['VB_ARM.gUp','Вгору ×',0,3,0.05],['VB_ARM.gDown','Вниз ×',0,3,0.05],
+  ['VB_ARM.dead','Мертва зона, м/с²',0,1.5,0.01],['VB_ARM.holdT','Утримання пози, с',0,8,0.1],
+  ['VB_ARM.kReturn','Швидкість повернення',0,5,0.1],['VB_ARM.tiltCouple','Нахил клинка ↓ опускає руку',0,1,0.05],
+  ['КУТОВИЙ РУХ (клинок)'],
+  ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил ×',0.2,2,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
+  ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],
+  ['ТІЛО ЗА КЛИНКОМ'],
+  ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
+  ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
+  ['SENSCFG.SWING_GYRO_THRESHOLD','Поріг маху, °/с',60,500,10],['SENSCFG.SWING_ACCEL_THRESHOLD','Поріг маху, м/с²',4,30,0.5],
+  ['РОЗСИНХРОН · ЗБРОЯ'],
+  ['VB_RESYNC.pull','Тіло збирається до душі',0,4,0.1],['VB_WEAPON.mass','Маса меча',0.3,4,0.1],['VB_WEAPON.strength','Сила героя',0.3,3,0.1]
+];
+function sensGet(path){ const [r,k]=path.split('.'); return SENS_ROOTS[r][k]; }
+function sensSet(path,v){ const [r,k]=path.split('.'); SENS_ROOTS[r][k]=v; }
+function sensSnapshot(){ const o={}; for(const it of SENS_SLIDERS) if(it.length>1) o[it[0]]=+(sensGet(it[0])).toFixed(3); return o; }
+const SENS_DEFAULTS=sensSnapshot();
+function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d_sens_cfg')||'null'); if(sv){ for(const p in sv) if(p in SENS_DEFAULTS) sensSet(p,+sv[p]); logE('ЧУТЛИВІСТЬ: завантажено збережені налаштування ('+Object.keys(sv).length+')'); } }catch(e){} }
+function sensSettingsSave(){ try{ localStorage.setItem('vb3d_sens_cfg',JSON.stringify(sensSnapshot())); logE('ЧУТЛИВІСТЬ: збережено'); }catch(e){} }
+function sensSettingsReset(){ for(const p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]); try{ localStorage.removeItem('vb3d_sens_cfg'); }catch(e){} sensSettingsRefresh(); logE('ЧУТЛИВІСТЬ: скинуто до типових'); }
+function sensSettingsCopy(){ const txt='VB_SENS_CFG '+JSON.stringify(sensSnapshot()); try{ navigator.clipboard.writeText(txt); }catch(e){} logE(txt); const b=$('sensCopyBtn'); if(b) b.textContent='✔ скопійовано'; }
+function sensSettingsRefresh(){ document.querySelectorAll('#sensPanel input[data-path]').forEach(inp=>{ const v=sensGet(inp.dataset.path); inp.value=v; const o=inp.nextElementSibling; if(o) o.textContent=(+v).toFixed(2); }); }
+function sensSettingsOpen(){
+  let p=$('sensPanel');
+  if(!p){
+    const st=document.createElement('style'); st.textContent=
+      '#sensPanel{position:fixed;left:0;right:0;bottom:0;max-height:62vh;overflow:auto;z-index:90;background:rgba(3,8,18,0.94);border-top:1px solid #1e3a5f;padding:8px 10px;color:#c5d8f0;font:10px "Courier New",monospace}'+
+      '#sensPanel h4{color:#3a6a9f;font-size:9px;letter-spacing:.14em;margin:8px 0 3px}'+
+      '#sensPanel .sr{display:grid;grid-template-columns:44% 1fr 46px;align-items:center;gap:6px;margin:2px 0}'+
+      '#sensPanel input[type=range]{width:100%;margin:0}'+
+      '#sensPanel .sv{color:#22d3ee;text-align:right;font-variant-numeric:tabular-nums}'+
+      '#sensPanel .sb{background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:10px "Courier New",monospace;padding:5px 8px;border-radius:4px;margin:2px}';
+    document.head.appendChild(st);
+    p=document.createElement('div'); p.id='sensPanel';
+    let html='<div style="display:flex;justify-content:space-between;align-items:center"><b style="color:#60a5fa">🎚 ЧУТЛИВІСТЬ</b><span>'+
+      '<button class="sb" id="sensSaveBtn">ЗБЕРЕГТИ</button><button class="sb" id="sensResetBtn">СКИНУТИ</button><button class="sb" id="sensCopyBtn">КОПІЮВАТИ</button><button class="sb" id="sensCloseBtn" style="color:#fbbf24">✕</button></span></div>';
+    for(const it of SENS_SLIDERS){
+      if(it.length===1){ html+='<h4>'+it[0]+'</h4>'; continue; }
+      const [path,label,mn,mx,stp]=it; const v=sensGet(path);
+      html+='<div class="sr"><span>'+label+'</span><input type="range" data-path="'+path+'" min="'+mn+'" max="'+mx+'" step="'+stp+'" value="'+v+'"><span class="sv">'+(+v).toFixed(2)+'</span></div>';
+    }
+    html+='<div style="margin-top:6px;color:#64748b">Пресети: '+['DEFAULT','FAST BLADE','SLOW BODY','COMBAT','DEBUG'].map(n=>'<button class="sb" data-preset="'+n+'">'+n+'</button>').join('')+'</div>'+
+      '<div style="color:#64748b;margin-top:4px">Значення діють одразу. ЗБЕРЕГТИ — переживе перезавантаження; КОПІЮВАТИ — надішли мені рядок VB_SENS_CFG, і він стане типовим у наступній збірці.</div>';
+    p.innerHTML=html; document.body.appendChild(p);
+    p.addEventListener('input',e=>{ const inp=e.target; if(!inp.dataset||!inp.dataset.path) return; const v=+inp.value; sensSet(inp.dataset.path,v); const o=inp.nextElementSibling; if(o) o.textContent=v.toFixed(2); });
+    p.addEventListener('click',e=>{ const t=e.target; if(t.id==='sensSaveBtn') sensSettingsSave(); else if(t.id==='sensResetBtn') sensSettingsReset(); else if(t.id==='sensCopyBtn') sensSettingsCopy(); else if(t.id==='sensCloseBtn') p.style.display='none';
+      else if(t.dataset&&t.dataset.preset){ const pr=LAB_PRESETS[t.dataset.preset]; if(pr){ Object.assign(SENSCFG,pr); sensSettingsRefresh(); logE('пресет «'+t.dataset.preset+'»'); } } });
+  }
+  p.style.display='block'; sensSettingsRefresh();
+}
+window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
+try{ sensSettingsLoad(); }catch(e){}
 
 requestAnimationFrame(frame);
 
