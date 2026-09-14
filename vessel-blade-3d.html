@@ -4428,7 +4428,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-15c · прибрано коливання присіду (джерело дрижання), КИСТЬ/РУКА не забирають корпус, широкий допуск ресинку з доведенням · розсинхрон КИСТЬ/РУКА/ТІЛО, сам завершується, тіло збирається до душі · маса зброї vs сила героя · прибрано покадрове тремтіння · ВТРАТА КОНТРОЛЮ: тіло з інерцією, душа за телефоном, ресинк повертає контроль; удар вибиває контроль і розвертає тіло · АСТРАЛЬНЕ ТІЛО (повна напівпрозора копія, плавно, без миготіння) + зустрічний ресинк · LIVE від бойової стійки · присід, коли рука не дістає · рикошет за матеріалом і відбитою траєкторією · руки відходять від тіла (винос ~55% руки, у махові — повний), корпус тягнеться лише коли не дістає · рикошет після удару · привид розсинхрону в LAB · рука по дузі від орієнтації (вниз/вгору — від телефона, не від дрейфу), прискорення не читається під час нахилу, тіло — колайдер для власного меча, межі природних поз · LAB: панель ховається (☰), тіло присідає й нахиляється за рукояттю, меч завжди в руках · VB_ARM: зняття залишку гравітації, середнє посилення, повернення 3 с · ЗАЧЕП у грі · SWORD_COLLIDERS + swept-контакт · VB_HAPTIC · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-15d · прибрано другий контур зворотного зв·язку (нахил↔досяжність): опора — нерухоме плече, доворот обмежений ±22° · розсинхрон КИСТЬ/РУКА/ТІЛО з широким допуском · маса зброї · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6012,26 +6012,32 @@ function labFrame(now){
       rig.J.PELVIS.rotation.x += 0.30*low;     rig.J.TORSO.rotation.x += 0.45*low;
       rig.J.TORSO.rotation.x += -0.25*high; rig.J.LEFT_KNEE.rotation.x -= 0.12*high; rig.J.RIGHT_KNEE.rotation.x -= 0.12*high;
       /* корпус тягнеться ЛИШЕ коли рука не дістає: спершу нахил (до 0.45 рад), потім обрізання */
-      LAB.obj.updateMatrixWorld(true);
-      { let S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
-        let T=rig.root.localToWorld(anchor.clone()); let d=T.distanceTo(S);
-        const needRaw=d>reach ? clamp((d-reach)/(0.35*s),0,1) : 0;
-        LAB.needS=(LAB.needS||0)+(needRaw-(LAB.needS||0))*clamp(dt*(needRaw>LAB.needS?6:2),0,1);   // гістерезис: присід не блимає
+      /* опора для «дістає / не дістає» — НЕРУХОМА точка плеча в системі кореня (не залежить від пози),
+         тож нахил корпусу більше не впливає на власну причину */
+      const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s, hipY+0.22*s+dm.torsoH-0.05*s, 0);
+      { const d0=anchor.distanceTo(S0);
+        const needRaw=d0>reach ? clamp((d0-reach)/(0.35*s),0,1) : 0;
+        LAB.needS=(LAB.needS||0)+(needRaw-(LAB.needS||0))*clamp(dt*(needRaw>LAB.needS?6:2),0,1);
         if(LAB.needS>0.01){
           const need=LAB.needS;
-          if(T.y<S.y-0.25*s){                                        // не дістає ВНИЗ — присідає, плече опускається до руки
+          if(anchor.y<S0.y-0.25*s){                                  // не дістає ВНИЗ — присідає
             rig.root.position.y -= 0.22*s*need;
             rig.J.LEFT_HIP.rotation.x += -0.7*need;  rig.J.RIGHT_HIP.rotation.x += -0.7*need;
             rig.J.LEFT_KNEE.rotation.x += 1.1*need;  rig.J.RIGHT_KNEE.rotation.x += 1.1*need;
             rig.J.LEFT_ANKLE.rotation.x += -0.35*need; rig.J.RIGHT_ANKLE.rotation.x += -0.35*need;
           }
           rig.J.PELVIS.rotation.x += 0.15*need; rig.J.TORSO.rotation.x += 0.45*need;
-          rig.J.TORSO.rotation.y += -Math.atan2(anchor.x,Math.max(anchor.z,0.05))*0.5*need;
-          LAB.obj.updateMatrixWorld(true);
-          S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3()); T=rig.root.localToWorld(anchor.clone()); d=T.distanceTo(S);
-          if(d>reach){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); }
-        } }
-      LAB.anchorS.copy(anchor);                                       // фільтр веде вже скориговану точку — без биття між кадрами
+          /* доворот за рукою: обмежений ±22° і згладжений — жодних кидків на 60-120° */
+          const yawRaw=clamp(Math.atan2(anchor.x-S0.x, Math.max(anchor.z,0.25*s))*0.35*need, -0.38, 0.38);
+          LAB.leanYS=(LAB.leanYS||0)+(yawRaw-(LAB.leanYS||0))*clamp(dt*6,0,1);
+          rig.J.TORSO.rotation.y += -LAB.leanYS;
+        } else { LAB.leanYS=(LAB.leanYS||0)*Math.max(0,1-dt*4); rig.J.TORSO.rotation.y += -LAB.leanYS; }
+      }
+      /* остання страховка: рука фізично не довша за себе — але це НЕ впливає на позу й на фільтр */
+      LAB.obj.updateMatrixWorld(true);
+      { const S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
+        const T=rig.root.localToWorld(anchor.clone()); const d=T.distanceTo(S);
+        if(d>reach*1.02){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); } }
       const dq=THREE.Quaternion, ax=new THREE.Vector3(1,0,0), ay=new THREE.Vector3(0,1,0);
       const mkQ=(yw,pt,rl)=>new dq().setFromAxisAngle(ay,-yw*dr).multiply(new dq().setFromAxisAngle(ax,(-90-pt)*dr)).multiply(new dq().setFromAxisAngle(ay,rl*dr));
       const qI=mkQ(lagI,pitchA,rollA); LAB.intendQ=qI.clone();
