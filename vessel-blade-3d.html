@@ -4430,7 +4430,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-16a · канали розділено (орієнтація → клинок, прискорення → рукоять), поза лише з досяжності, повзунки чутливості зі збереженням і копіюванням · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-16b · панель ховається, повзунки у вузькій колонці, персонаж у вільній частині екрана · канали розділено (орієнтація → клинок, прискорення → рукоять), поза лише з досяжності, повзунки чутливості зі збереженням і копіюванням · розсинхрон КИСТЬ/РУКА/ТІЛО · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5897,7 +5897,14 @@ function labCamUpdate(){
   const o=LAB.orbit, c=LAB.cam, p=o.pitch*Math.PI/180, y=o.yaw*Math.PI/180;
   c.position.set(Math.cos(p)*Math.sin(y)*o.dist, o.ty+Math.sin(p)*o.dist, Math.cos(p)*Math.cos(y)*o.dist);
   c.lookAt(0,o.ty,0);
-  const w=renderer.domElement.width, h=renderer.domElement.height; c.aspect=w/Math.max(1,h); c.updateProjectionMatrix();
+  const w=renderer.domElement.width, h=renderer.domElement.height; c.aspect=w/Math.max(1,h);
+  /* (09-16b) поки праворуч відкрита панель або повзунки — кадр зсувається, і персонаж стоїть
+     посеред ВІЛЬНОЇ частини екрана, а не під панеллю */
+  const lp=$('labPanel'), sp=$('sensPanel');
+  const open = (lp && lp.style.display!=='none') || (sp && sp.style.display==='block');
+  if(open){ const el=(sp&&sp.style.display==='block')?sp:lp; const pw=Math.round((el.getBoundingClientRect().width||0)*(w/Math.max(1,window.innerWidth))); c.setViewOffset(w+pw,h,pw,0,w,h); }
+  else c.clearViewOffset();
+  c.updateProjectionMatrix();
 }
 function labCamPreset(n){
   const o=LAB.orbit;
@@ -6509,9 +6516,13 @@ function labBuildPanel(){
 }
 function labPanelToggle(force){
   const p=$('labPanel'); if(!p) return;
-  const hide = force==null ? !p.classList.contains('hidden') : !!force;
-  p.classList.toggle('hidden',hide); LAB.panelHidden=hide;
-  const t=$('labTab'); if(t) t.textContent=hide?'☰ LAB':'✕';
+  const sp=$('sensPanel'), sensOpen = sp && sp.style.display==='block';
+  const anyOpen = (p.style.display!=='none') || sensOpen;
+  const hide = force==null ? anyOpen : !!force;
+  p.style.display = hide ? 'none' : 'block';                     // inline — саме він і вирішує
+  if(hide && sp) sp.style.display='none';
+  LAB.panelHidden=hide;
+  const t=$('labTab'); if(t) t.textContent=hide?'☰ LAB':'✕ панель';
 }
 function labAct(act){
   const i=act.indexOf(':'), k=i<0?act:act.slice(0,i), v=i<0?'':act.slice(i+1);
@@ -6629,7 +6640,7 @@ function labEnter(){
   logE('▶ CHARACTER & STRUCTURE LAB: вхід (гра на паузі, стан не змінюється)');
 }
 function labExit(){
-  LAB.on=false;
+  LAB.on=false; try{ LAB.cam.clearViewOffset(); const sp=$('sensPanel'); if(sp) sp.style.display='none'; }catch(e){}
   for(const [el,vis] of LAB.hidden) el.style.visibility=vis; LAB.hidden=[];
   $('labPanel').style.display='none'; $('labOverlay').style.display='none';
   try{ $('labTab').style.display='none'; $('labMini').style.display='none'; }catch(e){}
@@ -6672,9 +6683,12 @@ function sensSettingsOpen(){
   let p=$('sensPanel');
   if(!p){
     const st=document.createElement('style'); st.textContent=
-      '#sensPanel{position:fixed;left:0;right:0;bottom:0;max-height:62vh;overflow:auto;z-index:90;background:rgba(3,8,18,0.94);border-top:1px solid #1e3a5f;padding:8px 10px;color:#c5d8f0;font:10px "Courier New",monospace}'+
-      '#sensPanel h4{color:#3a6a9f;font-size:9px;letter-spacing:.14em;margin:8px 0 3px}'+
-      '#sensPanel .sr{display:grid;grid-template-columns:44% 1fr 46px;align-items:center;gap:6px;margin:2px 0}'+
+      '#sensPanel{position:fixed;right:0;top:0;bottom:0;width:44%;max-width:290px;overflow:auto;z-index:90;background:rgba(3,8,18,0.82);border-left:1px solid #1e3a5f;padding:6px 8px;color:#c5d8f0;font:9px "Courier New",monospace}'+
+      '#sensPanel h4{color:#3a6a9f;font-size:9px;letter-spacing:.14em;margin:7px 0 2px}'+
+      '#sensPanel .sr{display:grid;grid-template-columns:1fr 40px;grid-template-areas:"l v" "s s";align-items:center;gap:2px 6px;margin:1px 0 4px}'+
+      '#sensPanel .sr span:first-child{grid-area:l;color:#9fb3c8}'+
+      '#sensPanel .sr input{grid-area:s}'+
+      '#sensPanel .sr .sv{grid-area:v}'+
       '#sensPanel input[type=range]{width:100%;margin:0}'+
       '#sensPanel .sv{color:#22d3ee;text-align:right;font-variant-numeric:tabular-nums}'+
       '#sensPanel .sb{background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:10px "Courier New",monospace;padding:5px 8px;border-radius:4px;margin:2px}';
@@ -6691,10 +6705,11 @@ function sensSettingsOpen(){
       '<div style="color:#64748b;margin-top:4px">Значення діють одразу. ЗБЕРЕГТИ — переживе перезавантаження; КОПІЮВАТИ — надішли мені рядок VB_SENS_CFG, і він стане типовим у наступній збірці.</div>';
     p.innerHTML=html; document.body.appendChild(p);
     p.addEventListener('input',e=>{ const inp=e.target; if(!inp.dataset||!inp.dataset.path) return; const v=+inp.value; sensSet(inp.dataset.path,v); const o=inp.nextElementSibling; if(o) o.textContent=v.toFixed(2); });
-    p.addEventListener('click',e=>{ const t=e.target; if(t.id==='sensSaveBtn') sensSettingsSave(); else if(t.id==='sensResetBtn') sensSettingsReset(); else if(t.id==='sensCopyBtn') sensSettingsCopy(); else if(t.id==='sensCloseBtn') p.style.display='none';
+    p.addEventListener('click',e=>{ const t=e.target; if(t.id==='sensSaveBtn') sensSettingsSave(); else if(t.id==='sensResetBtn') sensSettingsReset(); else if(t.id==='sensCopyBtn') sensSettingsCopy(); else if(t.id==='sensCloseBtn'){ p.style.display='none'; const lp=$('labPanel'); if(lp && LAB.on){ lp.style.display='block'; } }
       else if(t.dataset&&t.dataset.preset){ const pr=LAB_PRESETS[t.dataset.preset]; if(pr){ Object.assign(SENSCFG,pr); sensSettingsRefresh(); logE('пресет «'+t.dataset.preset+'»'); } } });
   }
   p.style.display='block'; sensSettingsRefresh();
+  const lp=$('labPanel'); if(lp && LAB.on){ lp.style.display='none'; LAB.panelHidden=false; const t=$('labTab'); if(t) t.textContent='✕ панель'; }   // у LAB — замість панелі, не поверх сцени
 }
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 try{ sensSettingsLoad(); }catch(e){}
