@@ -455,6 +455,7 @@ function orientationFullQuat(alpha,beta,gamma){
 // только абсолютный источник появился, относительный к компасу не допускается.
 let haveAbsOrient=false;
 function onOrient(e){
+  sensor.tOrient=performance.now();                 // (09-17) мітка часу зразка — для прогнозу між кадрами
   // beta — запасной наклон (используется, только если нет гравитации)
   if(e.beta!=null && !sensor.haveGrav){ sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
     sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }   // елевація задньої кришки (fallback без грав.)
@@ -599,7 +600,7 @@ function bodyFollowTick(av, tgt, dt){
   }
   const k=clamp(SENSCFG.BODY_FOLLOW_SPEED*dt*(0.6+clamp(d/60,0,1.4)),0,1);
   av.visYaw=smoothAngle(av.visYaw||0, tgt, k);
-  if(Math.abs(angDiff(tgt,av.visYaw))<=2){ av.bodyTurning=false; av.bodyWait=0; }
+  if(Math.abs(angDiff(tgt,av.visYaw))<=1.2){ av.bodyTurning=false; av.bodyWait=0; }   // (09-17) вужче «дійшов», щоб не стрибати між станами
 }
 /* ── ГОЛОСОВА КАЛІБРОВКА ПРИРОДНОГО ПОЛОЖЕННЯ (ТЗ п.8) ────────────────── */
 function calibrateBlade(){
@@ -4430,7 +4431,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-16d · типові = ваш VB_SENS_CFG · без хибних самопорізів біля рукояті · підлога і тіло не карають розсинхроном · зачеп лише на неруйнівному · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-17a · прогноз орієнтації гіроскопом між зразками (без запізнення) · плавні ворота акселерометра · утримуваний контакт CONTACT_HOLD · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5333,8 +5334,13 @@ const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRE
     const correction=n.clone().multiplyScalar(depthGeo*Math.abs(bladeDir.dot(n)));   // виштовхування по нормалі рівно на глибину
     const key=c.id, was=S.contacts[key], now=performance.now();
     let ev;
-    if(!was){ ev = normalSpeed>this.cfg.IMPACT_NORMAL ? 'IMPACT' : 'CONTACT_START'; S.contacts[key]={t:now,pT:0,logT:0}; }
-    else { ev = tangentialSpeed>this.cfg.SLIDE_TANGENT ? 'CONTACT_SLIDE' : 'CONTACT_PRESSURE'; if(normalSpeed>this.cfg.IMPACT_NORMAL*1.35 && now-was.t>this.cfg.IMPACT_REPEAT_MS) ev='IMPACT'; }
+    if(!was){ ev = normalSpeed>this.cfg.IMPACT_NORMAL ? 'IMPACT' : 'CONTACT_START'; S.contacts[key]={t:now,pT:0,logT:0,stillT:now}; }
+    else {
+      ev = tangentialSpeed>this.cfg.SLIDE_TANGENT ? 'CONTACT_SLIDE' : 'CONTACT_PRESSURE';
+      if(normalSpeed>this.cfg.IMPACT_NORMAL*1.35 && now-was.t>this.cfg.IMPACT_REPEAT_MS) ev='IMPACT';
+      /* (09-17) УТРИМАННЯ: меч уперся і завмер — це стан, а не потік нових впливів */
+      if(relativeSpeed<0.2){ if(now-(was.stillT||now)>500) ev='CONTACT_HOLD'; } else was.stillT=now;
+    }
     for(const k of Object.keys(S.contacts)) if(k!==key) this._end(S,k,opt);
     const CT={id,object:key,type:c.type,surfaceType:c.surfaceType,position:p,normal:n,relativeSpeed,normalSpeed,tangentialSpeed,impulse,pressure,angle,edgeAngle,depth,f:t,
       preState:S.state,postState:ev,correction,collider:c};
@@ -5344,9 +5350,10 @@ const SWORD_CONTACT={ blades:{}, cfg:{IMPACT_NORMAL:2.2, SLIDE_TANGENT:0.35, PRE
     if(ev==='IMPACT'){ VB_HAPTIC.play('HAPTIC_IMPACT',Object.assign({intensity:clamp(normalSpeed/6+impulse*0.2,0.3,1)},H)); CONTACT_AUDIO.play('IMPACT',A); }
     else if(ev==='CONTACT_START'){ VB_HAPTIC.play('HAPTIC_CONTACT_START',Object.assign({intensity:clamp(0.25+normalSpeed*0.3,0.25,1)},H)); CONTACT_AUDIO.play('CONTACT_START',A); }
     else if(ev==='CONTACT_SLIDE'){ VB_HAPTIC.play('HAPTIC_CONTACT_SLIDE',Object.assign({intensity:clamp(tangentialSpeed/3,0.1,1)},H)); CONTACT_AUDIO.play('CONTACT_SLIDE',Object.assign({},A,{speed:tangentialSpeed})); }
-    else { const idleGame=(opt.source==='game' && normalSpeed<0.25 && tangentialSpeed<0.25);   // у грі: без руху — без гудіння
+    else if(ev==='CONTACT_HOLD'){ if(!was.holdLogged){ was.holdLogged=true; try{ if(opt.log!==false) logE((opt.tag||'SWORD_CONTACT')+' CONTACT_HOLD · '+key+' · утримуваний контакт (без нових подій до руху)'); }catch(e){} } }
+    else { was.holdLogged=false; const idleGame=(opt.source==='game' && normalSpeed<0.25 && tangentialSpeed<0.25);   // у грі: без руху — без гудіння
            if(!idleGame && pressure>0.08 && now-(was.pT||0)>this.cfg.PRESSURE_MS){ was.pT=now; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',Object.assign({intensity:pressure},H)); CONTACT_AUDIO.play('CONTACT_PRESSURE',A); } }
-    if(opt.log!==false && (!was || now-(was.logT||0)>this.cfg.LOG_MS)){
+    if(opt.log!==false && ev!=='CONTACT_HOLD' && (!was || now-(was.logT||0)>this.cfg.LOG_MS)){
       S.contacts[key].logT=now;
       try{ logE((opt.tag||'SWORD_CONTACT')+' '+(ev==='CONTACT_PRESSURE'||ev==='CONTACT_SLIDE'?'CONTACT_CONTINUE/'+ev.replace('CONTACT_',''):ev)+' · '+key+' · '+c.type+'/'+c.surfaceType+
         ' · p('+p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2)+') · n('+n.x+','+n.y+','+n.z+') · v '+relativeSpeed.toFixed(2)+' (n '+normalSpeed.toFixed(2)+' t '+tangentialSpeed.toFixed(2)+') · глибина '+(depth*100).toFixed(0)+'см · тиск '+pressure.toFixed(2)+' · імп '+impulse.toFixed(2)+' · кут '+angle.toFixed(0)+'°'+(opt.edge?' · кромка '+edgeAngle.toFixed(0)+'°':'')); }catch(e){}
@@ -6276,6 +6283,7 @@ window.VB_RESYNC=VB_RESYNC;
    множники по осях). Лінійний: прискорення → ЛИШЕ положення руків'я (VB_ARM — посилення окремо
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
 const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
+const VB_PRED={ k:1.0 };   // 0 — без прогнозу гіроскопом між зразками, 1 — повний
 window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
@@ -6291,7 +6299,10 @@ function labArmTick(I,N,bodyRel,dt){
   // прибрати g) — саме це «з'їжджало» вперед-назад при нахилах. Обертання → перенос не читаємо.
   const spin=Math.abs((I.gyro&&I.gyro[0])||0)+Math.abs((I.gyro&&I.gyro[1])||0)+Math.abs((I.gyro&&I.gyro[2])||0);
   const mag0=a.length();
-  if(!q || spin>VB_ARM.spinGate) a.set(0,0,0);
+  const gateRaw = spin>VB_ARM.spinGate ? 0 : 1;
+  A.gateS=(A.gateS==null?1:A.gateS)+(gateRaw-(A.gateS==null?1:A.gateS))*clamp(dt*(gateRaw<(A.gateS==null?1:A.gateS)?25:8),0,1);   // закривається швидко, відкривається плавно
+  a.multiplyScalar(A.gateS);
+  if(!q) a.set(0,0,0);
   else{ a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));                 // прилад → світ сенсора
         a.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
         a.applyAxisAngle(new THREE.Vector3(0,1,0),(bodyRel||0)*Math.PI/180);       // → система тіла
@@ -6365,7 +6376,11 @@ function labLiveInputs(dt){
     sensor.motion=f.motionState||'IDLE'; sensor.gesture=f.gesture||'';
     return {yaw:o.yaw||0,pitch:o.pitch||0,roll:o.roll||0,groll:o.groll,quat:f.q?{x:f.q[0],y:f.q[1],z:f.q[2],w:f.q[3]}:null,gyro:g,accel:ac,rec:true};
   }
-  return {yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll,quat:sensor.quatFull||sensor.quat,
+  const age=clamp((performance.now()-(sensor.tOrient||0))/1000,0,0.06);          // вік зразка, не більше 60 мс
+  const yawBase=(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused;
+  const yawPred=wrap360(yawBase+(sensor.yawRate||0)*age*VB_PRED.k);              // прогноз гіроскопом
+  const pitchPred=clamp((sensor.pitch||0)-Math.sin((sensor.pitchRate||0)*age*Math.PI/180)*VB_PRED.k,-1,1);
+  return {yaw:yawPred,pitch:pitchPred,roll:sensor.roll||0,groll:sensor.gRoll,quat:sensor.quatFull||sensor.quat,
     gyro:[sensor.yawRate||0,sensor.pitchRate||0,sensor.rollRate||0],accel:[sensor.ax||0,sensor.ay||0,sensor.az||0],rec:false};
 }
 function labCalibrateNeutral(){
@@ -6666,7 +6681,7 @@ window.labEnter=labEnter;
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED};
 const SENS_SLIDERS=[
   ['ЛІНІЙНИЙ РУХ (рукоять)'],
   ['VB_ARM.gFwd','Вперед ×',0,3,0.05],['VB_ARM.gBack','Назад ×',0,3,0.05],
@@ -6676,7 +6691,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.kReturn','Швидкість повернення',0,5,0.1],['VB_ARM.tiltCouple','Нахил клинка ↓ опускає руку',0,1,0.05],
   ['КУТОВИЙ РУХ (клинок)'],
   ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил ×',0.2,2,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
-  ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],
+  ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],['VB_PRED.k','Прогноз гіроскопом (проти ривків)',0,1,0.05],
   ['ТІЛО ЗА КЛИНКОМ'],
   ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
   ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
