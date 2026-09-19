@@ -590,6 +590,11 @@ function swingEnd(){ SWING.active=false; SWING.t=0; SWING.peak=0; }
 /* КОРПУС ДОГАНЯЄ РУКУ (ТЗ п.20): спершу йде клинок, тіло рушає з затримкою
    і плавно приходить у новий напрям. Саме тут живе вся «плавність». */
 function bodyFollowTick(av, tgt, dt){
+  /* (09-17c) ЦІЛЬ КОРПУСУ ЗГЛАДЖЕНА (~80 мс). Під час різкого повороту курс шумить на кілька
+     градусів, і корпус відпрацьовував кожне тремтіння: замість 180° він «намотував» до 250-270°
+     і смикався. Клинок тут ні до чого — він і далі миттєвий за сирим курсом. */
+  av.tgtS = av.tgtS==null ? tgt : wrap360(av.tgtS + angDiff(tgt, av.tgtS)*clamp(dt/0.08,0,1));
+  tgt = av.tgtS;
   const d=Math.abs(angDiff(tgt, av.visYaw||0));
   if(SWING.hold>0){ return; }                       // мах ще триває — тіло тримає стару позу
   if(!av.bodyTurning){
@@ -598,9 +603,12 @@ function bodyFollowTick(av, tgt, dt){
     if(av.bodyWait<SENSCFG.BODY_TURN_DELAY) return;
     av.bodyTurning=true;
   }
+  let dS=angDiff(tgt, av.visYaw||0);
+  if(av.turnDir==null || Math.abs(dS)<8) av.turnDir=Math.sign(dS)||1;                 // напрямок беремо один раз
+  else if(Math.sign(dS)!==av.turnDir && Math.abs(dS)>150) dS-=Math.sign(dS)*360;       // пройшли антипод — не перекидаємось
   const k=clamp(SENSCFG.BODY_FOLLOW_SPEED*dt*(0.6+clamp(d/60,0,1.4)),0,1);
-  av.visYaw=smoothAngle(av.visYaw||0, tgt, k);
-  if(Math.abs(angDiff(tgt,av.visYaw))<=1.2){ av.bodyTurning=false; av.bodyWait=0; }   // (09-17) вужче «дійшов», щоб не стрибати між станами
+  av.visYaw=wrap360((av.visYaw||0)+dS*k);
+  if(Math.abs(angDiff(tgt,av.visYaw))<=1.2){ av.bodyTurning=false; av.bodyWait=0; av.turnDir=null; }   // (09-17) вужче «дійшов», щоб не стрибати між станами
 }
 /* ── ГОЛОСОВА КАЛІБРОВКА ПРИРОДНОГО ПОЛОЖЕННЯ (ТЗ п.8) ────────────────── */
 function calibrateBlade(){
@@ -4431,7 +4439,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-17b · зупинка без дрижання: ворота акселерометра з витримкою після обертання, неперервне демпфування руки, прогноз лише в русі · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-17c · прибрано кивки корпусу (двійковий поріг маху → неперервний) · поворот на 180° без перекидання напрямку · лічильник обертання · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5994,7 +6002,8 @@ function labFrame(now){
       // участь корпусу (п.37,69): таз і плечі йдуть за клинком, ноги стабілізують
       { const t=clamp(dt*10,0,1); LAB.lagS=(LAB.lagS==null?lag:LAB.lagS+angDiff(lag,LAB.lagS)*t);      // корпус — без покадрового тремтіння
         rig.J.PELVIS.rotation.y += -clamp(LAB.lagS,-45,45)*0.25*dr; rig.J.TORSO.rotation.y += -clamp(LAB.lagS,-60,60)*0.4*dr; }
-      if(SWING.active||LAB.bladeSpeed>3){ rig.J.TORSO.rotation.x += 0.12; rig.J.LEFT_KNEE.rotation.x += 0.15; rig.J.RIGHT_KNEE.rotation.x += 0.12; }
+      { const sw=LAB.swingXS||0;                                          // 0…1, згладжена (без порогів і кивків)
+        rig.J.TORSO.rotation.x += 0.12*sw; rig.J.LEFT_KNEE.rotation.x += 0.15*sw; rig.J.RIGHT_KNEE.rotation.x += 0.12*sw; }
       // меч у просторі: хват попереду грудей у площині клинка, орієнтація — з телефона
       const sw=rig.sword.root;
       /* (09-14b) ДУГА РУКИ ВІД ОРІЄНТАЦІЇ — це те, що телефон знає точно й завжди: абсолютний
@@ -6119,6 +6128,11 @@ function labFrame(now){
         else { C.hapT=(C.hapT||0)-dt; if(C.hapT<=0){ C.hapT=lerp(0.6,0.25,clamp(dYaw/60,0,1)); VB_HAPTIC.lastT=0; VB_HAPTIC.play('HAPTIC_CONTACT_PRESSURE',{intensity:clamp(0.3+dYaw/70,0.3,1),source:'loose',object:'ASTRAL'}); } }
       }
       LAB.liveBlade={yaw:yawRel,pitch:pitchA,roll:rollA,body:bodyRel,lag};
+      /* (09-17c) лічильник обертання: сумарний пройдений кут телефона й корпусу від NEUTRAL —
+         щоб «180 чи 270» перевірялось числом, а не на око */
+      { const T=LAB.turnAcc||(LAB.turnAcc={ph:0,bd:0,pp:null,pb:null});
+        if(T.pp!=null) T.ph+=angDiff(I.yaw,T.pp); if(T.pb!=null) T.bd+=angDiff(LAB.body.visYaw||0,T.pb);
+        T.pp=I.yaw; T.pb=LAB.body.visYaw||0; }
       /* МАСА: кутова швидкість наміру × маса / сила — понад межу хват зривається */
       { const rate=Math.abs(angDiff(lagI,LAB.prevLagI==null?lagI:LAB.prevLagI))/Math.max(dt,0.001); LAB.prevLagI=lagI;
         LAB.swingRate=(LAB.swingRate||0)*0.7+rate*0.3;
@@ -6303,7 +6317,7 @@ function labArmTick(I,N,bodyRel,dt){
      гальмування). На зупинці обертання цей сплеск потрапляв у руку — рука смикалась і секунду
      поверталась пружиною. Ворота: закриті під час обертання, ще 0.25 с після нього, і лише тоді
      плавно відкриваються; при помірному обертанні — частково. */
-  if(spin>VB_ARM.spinGate) A.gateHold=0.25; else A.gateHold=Math.max(0,(A.gateHold||0)-dt);
+  if(spin>VB_ARM.spinGate) A.gateHold=0.35; else A.gateHold=Math.max(0,(A.gateHold||0)-dt);
   const gateRaw = A.gateHold>0 ? 0 : clamp(1.3-spin/VB_ARM.spinGate,0,1);
   A.gateS=(A.gateS==null?1:A.gateS)+(gateRaw-(A.gateS==null?1:A.gateS))*clamp(dt*(gateRaw<(A.gateS==null?1:A.gateS)?25:6),0,1);   // закривається швидко, відкривається плавно
   a.multiplyScalar(A.gateS);
@@ -6399,6 +6413,7 @@ function labCalibrateNeutral(){
   LAB.neutral={yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll};
   LAB.body.visYaw=LAB.neutral.yaw;
   if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); if(LAB.arm.bias) LAB.arm.bias.set(0,0,0); if(LAB.arm.outS) LAB.arm.outS.set(0,0,0); LAB.arm.still=0; }   // калібровка = чистий нуль руки
+  LAB.turnAcc=null; LAB.body.turnDir=null; LAB.body.tgtS=null;
   try{ ttsSpeak('Нейтральне положення збережено.',{critical:true}); }catch(e){}
   logE('LAB NEUTRAL: yaw '+Math.round(LAB.neutral.yaw)+'° · pitch '+LAB.neutral.pitch.toFixed(2)+' · roll(γ) '+Math.round(LAB.neutral.roll)+'° · roll(g) '+(LAB.neutral.groll==null?'—':Math.round(LAB.neutral.groll)+'°'));
 }
@@ -6641,6 +6656,7 @@ function labInfo(hits,relTxt,ctTxt,mark){
     if(LAB.arm) L.push('ЛІНІЙНИЙ: вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
     if(LAB.rig&&LAB.swordFree){ const gp=LAB.rig.sword.root.position; L.push('КИСТЬ: висота '+(gp.y*100).toFixed(0)+'см · виніс '+(Math.hypot(gp.x,gp.z)*100).toFixed(0)+'см · клинок '+Math.round(B.pitch||0)+'°'+
       ' · розвʼязувач: присід/нахил '+Math.round((LAB.needS||0)*100)+'% · доворот '+Math.round((LAB.leanYS||0)*180/Math.PI)+'°'); }
+    if(LAB.turnAcc) L.push('ОБЕРТАННЯ від NEUTRAL: телефон '+Math.round(LAB.turnAcc.ph)+'° · корпус '+Math.round(LAB.turnAcc.bd)+'°');
     if(LAB.ctl) L.push('КОНТРОЛЬ: '+(LAB.ctl.state==='SYNC'?('тіло за телефоном · мах '+Math.round(LAB.swingRate||0)+'°/с'):
       ('РОЗСИНХРОН '+(LAB.ctl.mis?LAB.ctl.mis.level:'')+' '+LAB.ctl.t.toFixed(1)+'с · кут '+(LAB.ctl.mis?Math.round(LAB.ctl.mis.dYaw):'—')+'° / '+(LAB.ctl.mis?(LAB.ctl.mis.dPos*100).toFixed(0):'—')+'см · близькість '+(LAB.ctl.mis?Math.round(Math.max(0,LAB.ctl.mis.near)*100):0)+'% · авто через '+(LAB.ctl.mis?LAB.ctl.mis.left.toFixed(1):'—')+'с'))+
       ' · меч '+VB_WEAPON.mass+'кг / сила '+VB_WEAPON.strength);
