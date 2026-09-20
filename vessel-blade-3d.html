@@ -561,6 +561,29 @@ function sensorYawTick(dt){
   if(sensor.headRaw==null) return;    // немає орієнтації (десктоп) — yaw правлять стрілки
   const tgt=wrap360(sensor.headRaw - (sensor.yawZero||0));
   const r=clamp(SENSCFG.BLADE_RESPONSE,0.02,1);
+  /* (09-17d) КОМПЛЕМЕНТАРНИЙ КУРС. VB_YAW.gyro=1 — кут веде гіроскоп (лінійний, без спотворень
+     магнітного поля), компас тільки повільно прибирає дрейф. 0 — як було, чистий компас. */
+  const G=VB_YAW;
+  if(G.gyro>0.01 && sensor.haveGyro){
+    if(sensor.yawG==null){ sensor.yawG=tgt; G.sgnAcc=0; G.sgnT=0; }
+    const rate=(sensor.yawRate||0)*G.sign;
+    sensor.yawG=wrap360(sensor.yawG + rate*dt);                        // інтегруємо
+    const err=angDiff(tgt, sensor.yawG);
+    /* Корекція компасом — ТІЛЬКИ У СПОКОЇ: під час обертання компас спотворений найсильніше,
+       і саме там він «недокручував». Рухаємось — ведемо гіроскопом, зупинились — за 12 с
+       компас тихо прибирає накопичений дрейф. */
+    if(Math.abs(sensor.yawRate||0)>G.holdRate) G.holdT=0.8; else G.holdT=Math.max(0,G.holdT-dt);
+    /* і тільки в межах невеликої нев'язки: велика — це спотворення компаса, а не дрейф гіроскопа */
+    if(G.holdT<=0 && Math.abs(err)<G.deadErr) sensor.yawG=wrap360(sensor.yawG + err*clamp(dt/G.tau,0,1));
+    sensor.yawDrift=err;
+    /* автовизначення знака: якщо компас і гіроскоп «не згодні» під час обертання — перевертаємо */
+    if(Math.abs(sensor.yawRate||0)>60){ G.sgnAcc += ((err>0?1:-1)*(rate>0?1:-1)); G.sgnT+=dt;
+      if(G.sgnT>1.2){ if(G.sgnAcc>25){ G.sign=-G.sign; sensor.yawG=tgt; try{ logE('КУРС: знак гіроскопа перевернуто (авто)'); }catch(e){} }
+        G.sgnAcc=0; G.sgnT=0; } }
+    sensor.yawFused = (G.gyro>=0.999) ? sensor.yawG : smoothAngle(tgt, sensor.yawG, G.gyro);
+    return;
+  }
+  sensor.yawG=null;
   // BLADE_RESPONSE=1 → ЖОДНОГО фільтра: телефон повернувся на 30° — клинок теж.
   sensor.yawFused = (r>=0.999) ? tgt : smoothAngle(sensor.yawFused, tgt, clamp(r*30*dt,0,1));
 }
@@ -4439,7 +4462,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-17c · прибрано кивки корпусу (двійковий поріг маху → неперервний) · поворот на 180° без перекидання напрямку · лічильник обертання · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
+const BUILD_TAG='2026-09-17d · курс веде гіроскоп із повільною корекцією компасом (лінійний поворот на будь-який кут) · корпус без кивків · канали розділено · повзунки чутливості · CHARACTER & STRUCTURE LAB';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6298,6 +6321,10 @@ window.VB_RESYNC=VB_RESYNC;
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
 const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
 const VB_PRED={ k:1.0 };   // 0 — без прогнозу гіроскопом між зразками, 1 — повний
+/* (09-17d) Курс: 1 — веде гіроскоп із повільною корекцією компасом (лінійний поворот),
+   0 — чистий компас (як раніше). tau — за скільки секунд компас забирає дрейф. */
+const VB_YAW={ gyro:1.0, tau:12.0, deadErr:25, sign:1, sgnAcc:0, sgnT:0, holdRate:25, holdT:0 };
+window.VB_YAW=VB_YAW;
 window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
@@ -6413,7 +6440,7 @@ function labCalibrateNeutral(){
   LAB.neutral={yaw:(typeof aimYawEff==='function')?aimYawEff():sensor.yawFused,pitch:sensor.pitch||0,roll:sensor.roll||0,groll:sensor.gRoll};
   LAB.body.visYaw=LAB.neutral.yaw;
   if(LAB.arm){ LAB.arm.off.set(0,0,0); LAB.arm.vel.set(0,0,0); if(LAB.arm.bias) LAB.arm.bias.set(0,0,0); if(LAB.arm.outS) LAB.arm.outS.set(0,0,0); LAB.arm.still=0; }   // калібровка = чистий нуль руки
-  LAB.turnAcc=null; LAB.body.turnDir=null; LAB.body.tgtS=null;
+  LAB.turnAcc=null; LAB.body.turnDir=null; LAB.body.tgtS=null; sensor.yawG=null;   // курс перезбереться від нової нейтралі
   try{ ttsSpeak('Нейтральне положення збережено.',{critical:true}); }catch(e){}
   logE('LAB NEUTRAL: yaw '+Math.round(LAB.neutral.yaw)+'° · pitch '+LAB.neutral.pitch.toFixed(2)+' · roll(γ) '+Math.round(LAB.neutral.roll)+'° · roll(g) '+(LAB.neutral.groll==null?'—':Math.round(LAB.neutral.groll)+'°'));
 }
@@ -6656,7 +6683,8 @@ function labInfo(hits,relTxt,ctTxt,mark){
     if(LAB.arm) L.push('ЛІНІЙНИЙ: вбік '+(LAB.arm.off.x*100).toFixed(0)+'см · вгору '+(LAB.arm.off.y*100).toFixed(0)+'см · вперед '+(LAB.arm.off.z*100).toFixed(0)+'см');
     if(LAB.rig&&LAB.swordFree){ const gp=LAB.rig.sword.root.position; L.push('КИСТЬ: висота '+(gp.y*100).toFixed(0)+'см · виніс '+(Math.hypot(gp.x,gp.z)*100).toFixed(0)+'см · клинок '+Math.round(B.pitch||0)+'°'+
       ' · розвʼязувач: присід/нахил '+Math.round((LAB.needS||0)*100)+'% · доворот '+Math.round((LAB.leanYS||0)*180/Math.PI)+'°'); }
-    if(LAB.turnAcc) L.push('ОБЕРТАННЯ від NEUTRAL: телефон '+Math.round(LAB.turnAcc.ph)+'° · корпус '+Math.round(LAB.turnAcc.bd)+'°');
+    if(LAB.turnAcc) L.push('ОБЕРТАННЯ від NEUTRAL: телефон '+Math.round(LAB.turnAcc.ph)+'° · корпус '+Math.round(LAB.turnAcc.bd)+'°'+
+      (VB_YAW.gyro>0.01?(' · курс: гіро'+(VB_YAW.sign<0?'(−)':'')+', розбіг із компасом '+Math.round(sensor.yawDrift||0)+'°'):' · курс: компас'));
     if(LAB.ctl) L.push('КОНТРОЛЬ: '+(LAB.ctl.state==='SYNC'?('тіло за телефоном · мах '+Math.round(LAB.swingRate||0)+'°/с'):
       ('РОЗСИНХРОН '+(LAB.ctl.mis?LAB.ctl.mis.level:'')+' '+LAB.ctl.t.toFixed(1)+'с · кут '+(LAB.ctl.mis?Math.round(LAB.ctl.mis.dYaw):'—')+'° / '+(LAB.ctl.mis?(LAB.ctl.mis.dPos*100).toFixed(0):'—')+'см · близькість '+(LAB.ctl.mis?Math.round(Math.max(0,LAB.ctl.mis.near)*100):0)+'% · авто через '+(LAB.ctl.mis?LAB.ctl.mis.left.toFixed(1):'—')+'с'))+
       ' · меч '+VB_WEAPON.mass+'кг / сила '+VB_WEAPON.strength);
@@ -6709,7 +6737,7 @@ window.labEnter=labEnter;
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW};
 const SENS_SLIDERS=[
   ['ЛІНІЙНИЙ РУХ (рукоять)'],
   ['VB_ARM.gFwd','Вперед ×',0,3,0.05],['VB_ARM.gBack','Назад ×',0,3,0.05],
@@ -6720,6 +6748,7 @@ const SENS_SLIDERS=[
   ['КУТОВИЙ РУХ (клинок)'],
   ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил ×',0.2,2,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
   ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],['VB_PRED.k','Прогноз гіроскопом (проти ривків)',0,1,0.05],
+  ['VB_YAW.gyro','Курс від гіроскопа (1) / компаса (0)',0,1,0.05],['VB_YAW.tau','Компас прибирає дрейф за, с',2,40,1],['VB_YAW.deadErr','Довіряти компасу лише в межах, °',5,90,5],
   ['ТІЛО ЗА КЛИНКОМ'],
   ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
   ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
