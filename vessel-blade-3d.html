@@ -833,6 +833,7 @@ function onMotion(e){
      клинок угору/вниз — gx≈0 → не набік; як фотоапарат — |gx|≈g → набік. γ тут не годиться. */
   if(gg){ const gm=Math.hypot(gg.x||0,gg.y||0,gg.z||0)||1; sensor.rollLand=Math.asin(clamp(Math.abs(gg.x||0)/gm,0,1))*180/Math.PI; sensor.rollSide=(gg.x||0)>=0?1:-1; }
   sensor.gMag=gg?Math.hypot(gg.x||0, gg.y||0, gg.z||0):9.8;
+  if(gg){ sensor.gX=gg.x||0; sensor.gY=gg.y||0; sensor.gZ=gg.z||0; }   // (09-22k) для рівня горизонту
   sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
   sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
   sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
@@ -1906,7 +1907,8 @@ function updateBlade2(){
   av.blade2.material.opacity=hot?1.0:0.9;
 }
 function updateBlade(av){
-  if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
+  if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }
+  if(av!==player && av._rigS && typeof VB_RIG!=='undefined' && VB_RIG.on){ av.blade.count=0; if(av.blade2) av.blade2.count=0; return; }   // (09-22k) риг має справжній меч   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
   const wname = av===player ? playerWpn : av.wpn;
   const wst = wname && WEAPON_FX[wname];
   if(wst && wst.hideBeam){ av.blade.count=0; if(av===player) return; }
@@ -2094,13 +2096,18 @@ function updateStanceAndCamera(dt){
   const ftx=px+fdx*6*_cc, fty=(fpPitch!=null ? TIER_H*1.95+6*Math.sin(fpPitch) : TIER_H*1.7 + _cp*5.2), ftz=pz+fdz*6*_cc;
   camTarget.set(lerp(ttx,ftx,fp), lerp(tty,fty,fp), lerp(ttz,ftz,fp));
   /* (09-21) режим ГРА: картинка МАЯКА повертається самою грою — горизонт рівний у руках */
+  /* (09-22k) ГОРИЗОНТ ЗАВЖДИ ЗБІГАЄТЬСЯ ЗІ СПРАВЖНІМ: на скільки градусів екран повернутий відносно
+     світу — на стільки ж, неперервно, повертається картинка. Не стрибок у 90°, а плавно разом із телефоном. */
   try{
-    const selfRot = (VB_ORI.force|0)===2 || (ORI.locked ? ORI.mode==='GAME' : ((VB_ORI.force|0)!==1 && oriAngle()===ORI.angle0));
-    if(fp>0.02 && selfRot && CAM.view!=='top' && CAM.view!=='fixed'){
+    const lv=clamp(VB_ORI.level??1,0,1);
+    if(lv>0 && CAM.view!=='top' && CAM.view!=='fixed'){
+      const phi=oriLevelAngle(dt), a=phi*Math.PI/180*lv;
       const f=new THREE.Vector3().subVectors(camTarget,camPos).normalize();
       const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0));
-      const sgn=ORI.locked?ORI.sign:((sensor.rollSide||1)*(VB_ORI.rollSign||1));
-      if(r.lengthSq()>0.3){ const up=new THREE.Vector3(0,1,0).lerp(r.normalize().multiplyScalar(sgn),fp).normalize(); camera.up.copy(up); oriHud(fp>0.5?-90*sgn:0); }
+      if(r.lengthSq()>1e-4){ r.normalize();
+        const up=new THREE.Vector3(0,1,0).multiplyScalar(Math.cos(a)).add(r.multiplyScalar(Math.sin(a)*(VB_ORI.rollSign||1)));
+        camera.up.copy(up.normalize()); }
+      oriHud(Math.abs(phi)>50 ? -Math.sign(phi)*90*(VB_ORI.rollSign||1) : 0);   // написи — сходинкою, щоб читались
     } else { camera.up.set(0,1,0); oriHud(0); }
   }catch(e){}
 }
@@ -5072,7 +5079,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22j · NPC: лише риг (без рожевого «таза» й променя) · сусідні кімнати — яскравий каркас · вороги за стінами ходять і звучать, при вході — на тих самих місцях · маса меча: ваша + повзуни окремо · рикошет один на удар · типові = ваш VB_SENS_CFG · безшовний світ · камери зверху/фіксована · МАЯК плавно';
+const BUILD_TAG='2026-09-22k · червоний стрижень (старий промінь NPC) прибрано назавжди · ГОРИЗОНТ = СПРАВЖНІЙ: картинка неперервно компенсує кут екрана · МАЯК: гістерезис ≥10° (без гойдалки) · типові = ваш VB_SENS_CFG, СКИНУТИ — до них';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7472,7 +7479,7 @@ function rigNpcFinalize(){
       if(o===av.auraRing) return;
       o.visible=false;
     });
-    if(!VB_RIG.npcBeam){ if(av.blade) av.blade.visible=false; if(av.blade2) av.blade2.visible=false; }
+    if(av.blade) av.blade.visible=false; if(av.blade2) av.blade2.visible=false;   // (09-22k) без винятків
   }
 }
 function rigNpcEnsure(av, profile, hue){
@@ -7496,7 +7503,7 @@ function rigNpcTick(av, dt, opts){
   S.rig.root.visible=true;
   for(const k in av.parts){ const p=av.parts[k]; if(p && p.visible) p.visible=false; }   // старий силует — сховано (allyTick вмикає його щокадру)
   if(av.mentorCloak) av.mentorCloak.visible=false; if(av.mentorCrest) av.mentorCrest.visible=false;
-  if(!VB_RIG.npcBeam && av.blade) av.blade.visible=false;
+  if(av.blade) av.blade.visible=false; if(av.blade2) av.blade2.visible=false;   // (09-22k) з ригом старого променя немає зовсім
   if(av.ally){ const hue={wise:0.74,weak:0.16,dumb:0.09,mad:0.02}[av.mode]; if(hue!=null) rigRecolor(S.rig,hue); }
   let P;
   if(av.dead) P=labResolve({p:'DEATH'});
@@ -7703,7 +7710,7 @@ function sonarEntityTick(av, dt){
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
 const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:45, exitDeg:35, holdS:0.25 };
-const VB_ORI={ force:0, rollSign:-1 };   // (09-22b) картинка МАЯКА була догори дриґом — знак навпаки
+const VB_ORI={ force:0, rollSign:-1, level:1 };   // (09-22b) картинка МАЯКА була догори дриґом — знак навпаки
 const BEACON={ state:'STANCE', t:0 };
 const CAMAIM={ on:false, yaw:0, pitch:0, prevH:null, prevE:null };
 const ORI={ mode:'—', locked:false, angle0:0, lastChange:-1e9, lockT:0, sign:1, hud:0, inited:false };
@@ -7726,12 +7733,26 @@ function oriDecide(){
 function oriRelease(){ ORI.locked=false; ORI.mode='—'; }
 function oriHud(rot){ if(ORI.hud===rot) return; ORI.hud=rot; try{ for(const id of ['hud','banner']){ const el=$(id); if(el){ el.style.transformOrigin='50% 50%'; el.style.transform=rot?('rotate('+rot+'deg)'):''; } } }catch(e){} }
 function camAxisVec(){ const q=sensor.quatFull; if(!q) return null; const v=((VB_CAM.axis|0)===1)?new THREE.Vector3(0,0,-1):new THREE.Vector3(0,1,0); return v.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w)); }
+/* (09-22k) КУТ ЕКРАНА ВІДНОСНО СПРАВЖНЬОГО ГОРИЗОНТУ — з гравітації в площині екрана.
+   0 — телефон рівно в портреті, ±90 — альбомна. Обертання навколо довгої осі (крен клинка) і нахил
+   уперед-назад його майже не змінюють, тож у стійці мечем картинка не гойдається. */
+function oriLevelAngle(dt){
+  const sg=IS_IOS?-1:1, gx=(sensor.gX||0)*sg, gy=(sensor.gY||0)*sg;
+  if(sensor.gX==null) return ORI.phi||0;
+  if(Math.hypot(gx,gy)>2.5){                                    // екран не лежить пласко — кут визначений
+    let phi=Math.atan2(gx,gy)*180/Math.PI;
+    const a=oriAngle(); if(a){ const d1=angDiff(phi,a), d2=angDiff(phi,-a); phi=Math.abs(d1)<Math.abs(d2)?d1:d2; }   // ОС уже повернула екран — лишок
+    const cur=ORI.phi||0; ORI.phi=wrap360(cur+angDiff(phi,cur)*clamp(dt/0.05,0,1)); if(ORI.phi>180) ORI.phi-=360;
+  }
+  return ORI.phi||0;
+}
 function beaconTick(dt){
   const roll=(sensor.rollLand!=null)?sensor.rollLand:Math.abs(sensor.roll||0), B=BEACON;
-  if(B.state==='STANCE'){ if(roll>VB_CAM.enterDeg){ B.state='ARMING'; B.t=0; } }
-  else if(B.state==='ARMING'){ if(roll<=VB_CAM.enterDeg) B.state='STANCE'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='BEACON'; beaconEnter(); } } }
-  else if(B.state==='BEACON'){ if(roll<VB_CAM.exitDeg){ B.state='DISARMING'; B.t=0; } }
-  else if(B.state==='DISARMING'){ if(roll>=VB_CAM.exitDeg) B.state='BEACON'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='STANCE'; beaconExit(); } } }
+  const EN=VB_CAM.enterDeg, EX=Math.min(VB_CAM.exitDeg, EN-10);            // (09-22k) гістерезис не менше 10°
+  if(B.state==='STANCE'){ if(roll>EN){ B.state='ARMING'; B.t=0; } }
+  else if(B.state==='ARMING'){ if(roll<=EN) B.state='STANCE'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='BEACON'; beaconEnter(); } } }
+  else if(B.state==='BEACON'){ if(roll<EX){ B.state='DISARMING'; B.t=0; } }
+  else if(B.state==='DISARMING'){ if(roll>=EX) B.state='BEACON'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='STANCE'; beaconExit(); } } }
   return (B.state==='BEACON'||B.state==='DISARMING')?1:0;
 }
 function beaconEnter(){
@@ -7780,10 +7801,11 @@ const SENS_SLIDERS=[
   ['VB_ROOMS.on','Кімнати: структуровані з дверима (1) / випадкові (0)',0,1,1],
   ['VB_WORLD.seamless','Безшовний світ: зсув кімнат + миттєві двері (1/0)',0,1,1],['VB_WORLD.range','Сусіди-тіні: радіус кімнат (0–2)',0,2,1],
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,3,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
-  ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_RIG.npcBeam','Промінь клинка в NPC (1/0)',0,1,1],
+  ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.enterDeg','Вхід у МАЯК від крену, °',30,70,1],['VB_CAM.exitDeg','Вихід із МАЯКА до крену, °',20,60,1],['VB_CAM.holdS','Утримання перед перемиканням, с',0.1,0.6,0.05],
+  ['VB_ORI.level','Горизонт = справжній (1) / без компенсації (0)',0,1,0.05],
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
   ['СОНАР · МУЗИКА'],
   ['VB_SONAR.on','Ехо-сонар (1) / звичайна картинка (0)',0,1,1],['VB_SONAR.gain','Сонар: яскравість',0,2,0.05],['VB_SONAR.decay','Сонар: швидкість згасання',0.3,3,0.05],
@@ -7850,8 +7872,8 @@ function sensSettingsOpen(){
 }
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 
-/* (09-22j) типові = VB_SENS_CFG від 22.09 (без променя NPC — з ригом він дублює меч) */
-try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 1, "VB_ARM.gAll": 2.5, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 1, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1.9, "VB_CAM.enterDeg": 55, "VB_CAM.exitDeg": 35, "VB_CAM.holdS": 0.25, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 2.45, "VB_SONAR.memory": 0.26, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.7, "VB_SONAR.shadow": 3, "VB_MUSIC.gain": 0.3, "VB_ARM.gFwd": 2, "VB_ARM.gBack": 2.2, "VB_ARM.gRight": 2.3, "VB_ARM.gLeft": 2.3, "VB_ARM.gUp": 2, "VB_ARM.gDown": 2.6, "VB_ARM.dead": 0.34, "VB_ARM.holdT": 7, "VB_ARM.kReturn": 1, "VB_ARM.tiltCouple": 0.5, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 70, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.19, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 180, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 3.8, "VB_WEAPON.mass": 3, "VB_WEAPON.strength": 1}; for(const k in D){ try{ sensSet(k,D[k]); }catch(e){} } }catch(e){}
+/* (09-22k) типові = ваш останній VB_SENS_CFG; «СКИНУТИ» повертає саме до них */
+try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 3, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 70, "VB_CAM.exitDeg": 50, "VB_CAM.holdS": 0.25, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 1, "VB_ARM.gBack": 1, "VB_ARM.gRight": 1, "VB_ARM.gLeft": 1, "VB_ARM.gUp": 1.15, "VB_ARM.gDown": 1.65, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ORI.level": 1}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
 try{ sensSettingsLoad(); }catch(e){}
 
 requestAnimationFrame(frame);
