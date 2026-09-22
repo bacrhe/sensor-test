@@ -1113,7 +1113,7 @@ const AUDIO={
       }
       if(best){
         R.entPan.positionX.value=worldX(best.gx); R.entPan.positionY.value=1.2; R.entPan.positionZ.value=worldZ(best.gy);
-        ST(R.entG.gain, clamp(1-bd/6,0,1)*0.9, 0.15);
+        ST(R.entG.gain, clamp(1-bd/6,0,1)*0.9*((window.VB_SONAR&&VB_SONAR.on)?0.35:1), 0.15);
         ST(R.tremG.gain, bkind==='evil'?1:0, 0.15);
         ST(R.chorG.gain, bkind==='good'?1:0, 0.15);
         ST(R.voxG.gain,  bkind==='soul'?1:0, 0.15);
@@ -1487,6 +1487,7 @@ function makePhantom(i, kind){
   const c = freeSpawnCell(s[0],s[1],ph); ph.gx=c[0]; ph.gy=c[1];
   ph.ai = { moveT:Math.random()*0.6, swingT:1+Math.random()*2, windT:0 };
   ph.aware = !!(typeof MENTOR!=='undefined' && MENTOR.tatamiMode);   // у навчанні ворог одразу знає про гравця
+  ph.swingSpeed = {fighter:1.0, boss:0.6, gunner:0.9}[ph.kind]||1.0;   // (09-22d) швидкість маху — має значення при зіткненні
   ph.voiceT = Math.random();
   if(ph.kind==='crawler'){ ph.hp=40; ph.noBlade=true;
     try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
@@ -3922,6 +3923,45 @@ function clingTick(dt){
     ph.voiceT=(ph.voiceT||0)-dt; if(ph.voiceT<=0){ ph.voiceT=0.45; try{ if(tip) spatialBlip(tip.x,tip.y,tip.z, 380+Math.random()*250, 0.06, 'square', 0.14); }catch(e){} }
   }
 }
+/* (09-22d) ЗІТКНЕННЯ КЛИНКІВ — не клінч. Клинок гравця (риг) зустрічає клинок ворога: рахуємо
+   швидкості обох, гравець отримує відскік (сильний — розсинхрон кисті/руки), ворог — заціпеніння,
+   тим довше, чим повільніше він махав. Музика тут грає повністю. */
+function segSegClosest(p1,q1,p2,q2){
+  const d1=q1.clone().sub(p1), d2=q2.clone().sub(p2), r=p1.clone().sub(p2);
+  const a=d1.dot(d1), e=d2.dot(d2), f=d2.dot(r); let sN,tN;
+  if(a<=1e-9&&e<=1e-9) return {dist:r.length(),p:p1.clone(),q:p2.clone()};
+  if(a<=1e-9){ sN=0; tN=clamp(f/e,0,1); }
+  else { const c=d1.dot(r); if(e<=1e-9){ tN=0; sN=clamp(-c/a,0,1); }
+    else { const b=d1.dot(d2), den=a*e-b*b; sN=den!==0?clamp((b*f-c*e)/den,0,1):0; tN=(b*sN+f)/e;
+      if(tN<0){ tN=0; sN=clamp(-c/a,0,1); } else if(tN>1){ tN=1; sN=clamp((b-c)/a,0,1); } } }
+  const p=p1.clone().add(d1.multiplyScalar(sN)), q=p2.clone().add(d2.multiplyScalar(tN));
+  return {dist:p.distanceTo(q),p,q};
+}
+function swordClashTick(dt){
+  const S=VB_RIG.player; if(!VB_RIG.on||!S||!S.rig||player.dead||player.disarmed) return;
+  const sw=S.rig.sword; if(!sw.root.visible) return;
+  const g=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), t=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+  for(const ph of phantoms){
+    if(!ph||ph.dead||ph.noBlade||ph.disarmed||ph.clinging||(ph.ally&&!ph.allyMad)) continue;
+    if(Math.max(Math.abs(ph.gx-player.gx),Math.abs(ph.gy-player.gy))>3) continue;
+    ph.clashCd=Math.max(0,(ph.clashCd||0)-dt); if(ph.clashCd>0) continue;
+    let H; try{ H=handInfo(ph); }catch(e){ continue; }
+    const a=new THREE.Vector3(H.hx,H.hy,H.hz), b=new THREE.Vector3(H.tipX,H.tipY,H.tipZ);
+    const c=segSegClosest(g,t,a,b);
+    if(c.dist>0.14) continue;
+    const vP=S.speedS||0, vE=(ph.strikeT>0?5.5*(ph.swingSpeed||1):0.8), rel=vP+vE, imp=clamp(rel/8,0.1,1.5);
+    const away=c.p.clone().sub(c.q); if(away.lengthSq()<1e-6) away.set(0,0.3,1); away.normalize();
+    try{ const A=S.arm; if(A&&A.vel) A.vel.add(away.clone().multiplyScalar(0.8+imp*1.4)); S.kickT=0.22; }catch(e){}
+    if(imp>0.6 && S.ctl && S.ctl.state!=='LOOSE'){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', imp, imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
+    try{ MUSICFX.hit('SWORD', clamp(0.5+imp*0.5,0,1), c.p.x,c.p.y,c.p.z); }catch(e){}
+    try{ spatialBlip(c.p.x,c.p.y,c.p.z, 1800+Math.random()*600, 0.09, 'sawtooth', 0.22); }catch(e){}
+    try{ VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:clamp(imp,0.3,1),obj:'CLASH',surface:'METAL'}); }catch(e){}
+    try{ REVEAL.pulse(c.p.x,c.p.z,2,0.9,'METAL',5); }catch(e){}
+    ph.clashCd=0.35;
+    logE('ЗІТКНЕННЯ КЛИНКІВ: '+rel.toFixed(1)+' м/с (мій '+vP.toFixed(1)+' / його '+vE.toFixed(1)+') · ворог завмер '+ph.ai.stunT.toFixed(2)+'с');
+  }
+}
 function nearestTarget(ph){
   let best=null, bd=1e9;
   if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
@@ -4010,6 +4050,7 @@ function updatePhantoms(dt){
     const tgt = nearestTarget(ph);
     if(ph.clinging){ ph.hitActive=false; continue; }                       // (09-22b) сидить на клинку — AI мовчить
     if(!ph.aware && !ph.allyMad && !ph.boss){ phantomWander(ph, dt, tgt); continue; }   // (09-22b) ще не помітив — шукає (бос і збожеволілий наставник знають завжди)
+    if(ai.stunT>0){ ai.stunT-=dt; ph.hitActive=false; continue; }                        // (09-22d) заціпеніння після зіткнення клинків
     if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
     // ── НЕСТАНДАРТНЫЕ ВИДЫ: своя логика, мимо меч-конвейера ──
     /* (09-22c) ЛІТУН — комар: найменше здоров'я, найшвидший, заходить ЗІ СПИНИ. Якщо ціль
@@ -4639,7 +4680,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22c · літун-комар: найменше HP, найшвидший, заходить зі спини, жалить лише ззаду · вороги чутно й далеко · сонар · повзуни на клинку · перехід між кімнатами після відходу від краю';
+const BUILD_TAG='2026-09-22d · МУЗИКА = голос матеріалу (сухий трек мовчить; камінь/дерево/метал/земля — свій фільтр з точки дотику; повністю — лише клинок об клинок) · ЗІТКНЕННЯ КЛИНКІВ (швидкості, відскік, заціпеніння ворога) · плавні махи NPC · стеля 3.8 м';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5421,6 +5462,7 @@ function frame(now){
     if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
+  try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   renderRemotes(now, dt);              // чужие игроки
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
@@ -5594,7 +5636,7 @@ function gameBuildColliders(){
   const sig=alive.length+':'+alive.map(o=>o.gx*13+o.gy).join(',');
   if(sig===GAMEC.sig) return GAMEC.list;
   const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-20,-2,-20],[20,0,20]),
-           SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-20,TIER_H*3.4,-20],[20,TIER_H*4.4,20])];
+           SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-20,3.8,-20],[20,4.8,20])];   // (09-22d) 3.8 м, як у LAB
   for(const o of alive){
     if(o._hW==null){ try{ const b=new THREE.Box3().setFromObject(o.mesh); o._hW=Math.max(0.3,b.max.y); }catch(e){ o._hW=TIER_H*2; } }
     const cx=worldX(o.gx), cz=worldZ(o.gy), half=CELL*0.48;
@@ -7029,8 +7071,11 @@ function rigNpcTick(av, dt, opts){
   else if(av.strikeT>0){ const t=clamp(1-(av.strikeT/(typeof STRIKE_DUR!=='undefined'?STRIKE_DUR:0.32)),0,1); P=labAnimAt('COMBAT_CHAIN',0.28+t*0.9)||labResolve({p:'COMBAT_READY'}); }
   else if(av.painT>0) P=labResolve({p:'HIT'});
   else P=labResolve({p:'COMBAT_READY'});
+  /* (09-22d) плавність: поза не стрибає, а доганяє ціль — бос неповороткий, боєць швидкий, наставник між ними */
+  const rate=clamp(dt*(av.boss?6:(av.ally?9:12))*(av.swingSpeed||1),0,1);
+  S.poseS = S.poseS ? labLerpPose(S.poseS,P,rate) : P;
   const prev=LAB; LAB=S;
-  try{ S.warn=[]; labSetPose(P); }catch(e){} finally{ LAB=prev; }
+  try{ S.warn=[]; labSetPose(S.poseS); }catch(e){} finally{ LAB=prev; }
 }
 
 /* ═══════════════════════ ЕХО-СОНАР (2026-09-21) ═══════════════════════
@@ -7040,15 +7085,51 @@ function rigNpcTick(av, dt, opts){
 const VB_SONAR={ on:1, gain:1.0, decay:1.0, memory:0.08, floor:0.0, self:0.25, shadow:2 };   // (09-22b) сонар — основа; підлога чорна; тінь істоти в межах 2 клітинок
 const VB_MUSIC={ gain:0.7, react:1.0 };
 window.VB_SONAR=VB_SONAR; window.VB_MUSIC=VB_MUSIC;
+const MUSICFX={ b:{}, cur:null, _main:null,
+  alias(m){ return {STONE:'STONE',SOLID:'STONE',WOOD:'WOOD',METAL:'METAL',GROUND:'GROUND',BODY:'BODY',SWORD:'SWORD'}[m]||'STONE'; },
+  shaper(k){ const w=AC.createWaveShaper(); const N=512, c=new Float32Array(N); for(let i=0;i<N;i++){ const x=i/(N-1)*2-1; c[i]=Math.tanh(k*x); } w.curve=c; return w; },
+  filt(type,f,q,gain){ const b=AC.createBiquadFilter(); b.type=type; b.frequency.value=f; if(q!=null) b.Q.value=q; if(gain!=null) b.gain.value=gain; return b; },
+  ensure(){
+    const R=AUDIO.ritual; if(!R||!AC||!R.lp) return false; if(this.b.STONE) return true;
+    const chain=(nodes)=>{ for(let i=0;i<nodes.length-1;i++) nodes[i].connect(nodes[i+1]); return {inp:nodes[0],out:nodes[nodes.length-1]}; };
+    const mk=(name,nodes,hold,rel)=>{ const g=AC.createGain(); g.gain.value=0; const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=1.5; p.rolloffFactor=1.0;
+      const ch=nodes.length?chain(nodes):null; if(ch){ R.lp.connect(ch.inp); ch.out.connect(p); } else R.lp.connect(p);
+      p.connect(g); g.connect(R.limiter); this.b[name]={g,p,hold,rel}; };
+    // камінь: хрускіт, глухо, коротко
+    mk('STONE',[this.shaper(7), this.filt('lowpass',480,3)],0.04,0.16);
+    // дерево: без найнижчих і без верху, м'яко
+    mk('WOOD',[this.filt('highpass',220,0.8), this.filt('lowpass',2000,1), this.shaper(2)],0.06,0.30);
+    // метал: деренчить пилкою, довгий хвіст, чути мелодію
+    mk('METAL',[this.shaper(4), this.filt('highpass',450,0.9), this.filt('peaking',2600,5,9)],0.25,1.3);
+    mk('GROUND',[this.filt('lowpass',240,1)],0.03,0.10);
+    mk('BODY',[this.filt('lowpass',420,1)],0.05,0.20);
+    // клинок об клинок: сухий трек, повністю, довго
+    mk('SWORD',[],0.4,2.0);
+    logE('МУЗИКА: гілки матеріалів зібрано (камінь/дерево/метал/земля/тіло/клинок)');
+    return true;
+  },
+  pos(b,x,y,z){ try{ if(b.p.positionX){ b.p.positionX.value=x; b.p.positionY.value=y; b.p.positionZ.value=z; } else b.p.setPosition(x,y,z); }catch(e){} },
+  hit(mat,amp,x,y,z){ if(!this.ensure()) return; const b=this.b[this.alias(mat)]; if(!b) return; this.pos(b,x,y,z);
+    const t=AC.currentTime, g=b.g.gain; try{ g.cancelScheduledValues(t); g.setValueAtTime(g.value,t); g.linearRampToValueAtTime(clamp(amp,0,1)*VB_MUSIC.gain, t+0.02); g.setTargetAtTime(0, t+0.02+b.hold, b.rel); }catch(e){} },
+  sustain(mat,level,x,y,z){ if(!this.ensure()) return; const name=this.alias(mat); if(this.cur&&this.cur!==name) this.release(); const b=this.b[name]; if(!b) return; this.pos(b,x,y,z);
+    const t=AC.currentTime; try{ b.g.gain.cancelScheduledValues(t); b.g.gain.setTargetAtTime(clamp(level,0,1)*VB_MUSIC.gain, t, 0.06); }catch(e){} this.cur=name; this.curT=performance.now(); },
+  release(){ if(!this.cur||!this.b[this.cur]) { this.cur=null; return; } const b=this.b[this.cur]; try{ b.g.gain.setTargetAtTime(0, AC.currentTime, b.rel); }catch(e){} this.cur=null; },
+  tick(){ const R=AUDIO.ritual; if(!R||!AC||!R.mainG) return;
+    const want = VB_SONAR.on ? 0 : 1;                                   // сонар: сухий трек мовчить — світ співає лише від дотику
+    if(this._main!==want){ this._main=want; try{ R.mainG.gain.setTargetAtTime(want, AC.currentTime, 0.4); }catch(e){} }
+    if(this.cur && performance.now()-(this.curT||0)>250) this.release(); } // ковзання скінчилось — відпускаємо
+};
+window.MUSICFX=MUSICFX;
 const REVEAL={
   I:new Float32Array(G*G), fronts:[], beatT:0, E:0, Es:0, on:false, floorBase:null, grid:null, ring:null, slideT:0, logT:0,
   bg0:null, fog0:null,
   pulse(wx,wz,R,amp,mat,v){ if(this.fronts.length>=8) this.fronts.shift(); this.fronts.push({x:wx,z:wz,R,amp:amp*VB_SONAR.gain,r:0,t:0,T:0.35+R*0.25,v:v||(R>=3?5:3),mat:mat||'STONE'}); },
   contact(CT){
     if(!CT||!CT.position) return; const p=CT.position, st=CT.postState||'', mat=CT.surfaceType||'STONE';
-    if(st==='IMPACT'){ this.pulse(p.x,p.z,3+clamp(CT.impulse||0,0,2),1.0,mat,5); this.evt='удар · '+mat; }
-    else if(st==='CONTACT_START'){ this.pulse(p.x,p.z,1.2,0.6,mat,3); this.evt='дотик · '+mat; }
-    else if(st==='CONTACT_SLIDE'){ this.slideT+=0.016; if(this.slideT>0.08){ this.slideT=0; this.pulse(p.x,p.z,0.7,0.45,mat,2.5); } }
+    if(st==='IMPACT'){ this.pulse(p.x,p.z,3+clamp(CT.impulse||0,0,2),1.0,mat,5); this.evt='удар · '+mat; MUSICFX.hit(mat, clamp(0.45+(CT.impulse||0)/4,0,1), p.x,p.y,p.z); }
+    else if(st==='CONTACT_START'){ this.pulse(p.x,p.z,1.2,0.6,mat,3); this.evt='дотик · '+mat; MUSICFX.hit(mat, clamp(0.25+(CT.pressure||0)*0.3,0,0.7), p.x,p.y,p.z); }
+    else if(st==='CONTACT_SLIDE'){ this.slideT+=0.016; if(this.slideT>0.08){ this.slideT=0; this.pulse(p.x,p.z,0.7,0.45,mat,2.5); } MUSICFX.sustain(mat, clamp(0.2+(CT.tangentialSpeed||0)/8,0,0.6), p.x,p.y,p.z); }
+    else if(st==='CONTACT_PRESSURE'||st==='CONTACT_HOLD'){ MUSICFX.sustain(mat, 0.12, p.x,p.y,p.z); }
   },
   charged(wx,wz){ this.pulse(wx,wz,6,1.0,'SOLID',6); this.evt='заряджений удар'; },
   captureFloor(){ try{ if(floor.instanceColor){ this.floorBase=Float32Array.from(floor.instanceColor.array); } }catch(e){} },
@@ -7072,7 +7153,7 @@ const REVEAL={
         if(this.ring) this.ring.material.opacity=0;
         if(this.floorBase && floor.instanceColor){ floor.instanceColor.array.set(this.floorBase); floor.instanceColor.needsUpdate=true; }
         for(const o of obstacles){ if(!o.mesh) continue; o.mesh.traverse(m=>{ if(m.isMesh&&m.material&&m.material.userData.sonarBase) m.material.color.copy(m.material.userData.sonarBase); }); }
-        try{ const g=AUDIO.bus&&AUDIO.bus('music'); if(g) g.gain.value=AUDIO.vol.music; }catch(e){}
+        try{ MUSICFX.tick(); }catch(e){}
         logE('СОНАР: вимкнено');
       }
     }catch(e){ logE('СОНАР: '+e.message); }
@@ -7122,7 +7203,8 @@ const REVEAL={
     // музика: скільки світиться — стільки й звучить
     let sum=0; for(let i=0;i<I.length;i++) sum+=I[i]; this.E=clamp(sum/10,0,1);
     this.Es+=(this.E-this.Es)*clamp(dt/(this.E>this.Es?0.12:0.9),0,1);
-    try{ const g=AUDIO.bus&&AUDIO.bus('music'); if(g&&AC){ g.gain.setTargetAtTime(VB_MUSIC.gain*(0.06+0.94*clamp(this.Es*VB_MUSIC.react,0,1)), AC.currentTime, 0.05); } }catch(e){}
+    /* (09-22d) музика більше не «дихає» освітленням: сухий трек мовчить, звучать лише голоси матеріалів з точки дотику */
+    try{ MUSICFX.tick(); }catch(e){}
     this.logT+=dt; if(this.evt && this.logT>1.0){ this.logT=0; logE('СОНАР: '+this.evt+' · E='+this.Es.toFixed(2)+' · фронтів '+this.fronts.length); this.evt=null; }
   },
   cellIdx(gx,gy){ gx=Math.round(gx); gy=Math.round(gy); if(gx<0||gx>=G||gy<0||gy>=G) return -1; return gy*G+gx; }
@@ -7232,7 +7314,7 @@ const SENS_SLIDERS=[
   ['СОНАР · МУЗИКА'],
   ['VB_SONAR.on','Ехо-сонар (1) / звичайна картинка (0)',0,1,1],['VB_SONAR.gain','Сонар: яскравість',0,2,0.05],['VB_SONAR.decay','Сонар: швидкість згасання',0.3,3,0.05],
   ['VB_SONAR.memory','Сонар: пам\'ять світла',0,0.3,0.01],['VB_SONAR.floor','Сонар: сітка підлоги від Ритму',0,0.3,0.01],['VB_SONAR.self','Сонар: власне тіло (тест)',0,1,0.05],['VB_SONAR.shadow','Сонар: тінь істоти в межах, кл.',0,5,1],
-  ['VB_MUSIC.gain','Музика: загальний рівень',0,1,0.05],['VB_MUSIC.react','Музика: чутливість до освітлення',0.3,3,0.05],
+  ['VB_MUSIC.gain','Музика: загальний рівень',0,1,0.05],
   ['ЛІНІЙНИЙ РУХ (рукоять)'],
   ['VB_ARM.gFwd','Вперед ×',0,3,0.05],['VB_ARM.gBack','Назад ×',0,3,0.05],
   ['VB_ARM.gRight','Праворуч ×',0,3,0.05],['VB_ARM.gLeft','Ліворуч ×',0,3,0.05],
