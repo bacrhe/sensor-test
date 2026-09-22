@@ -1482,9 +1482,12 @@ function applyKindModel(ph){
 function makePhantom(i, kind){
   const ph = makeAvatar(0.92);        // пурпур/красный спектр
   ph.kind = kind||'fighter';
-  const s = PH_STARTS[i%PH_STARTS.length];
+  /* (09-22b) далеко від гравця (≥5 кл.), ближче до центру — щоб було чути, як вони йдуть */
+  const s = spawnCellFar(i);
   const c = freeSpawnCell(s[0],s[1],ph); ph.gx=c[0]; ph.gy=c[1];
   ph.ai = { moveT:Math.random()*0.6, swingT:1+Math.random()*2, windT:0 };
+  ph.aware = !!(typeof MENTOR!=='undefined' && MENTOR.tatamiMode);   // у навчанні ворог одразу знає про гравця
+  ph.voiceT = Math.random();
   if(ph.kind==='crawler'){ ph.hp=40; ph.noBlade=true;
     try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
   else if(ph.kind==='flyer'){ ph.hp=35; ph.noBlade=true; ph.hover=TIER_H*1.7;
@@ -1496,6 +1499,15 @@ function makePhantom(i, kind){
     try{ ph.mesh.scale.setScalar(1.35); }catch(e){} }   // модель титана и так крупная
   applyKindModel(ph);
   return ph;
+}
+function spawnCellFar(i){
+  const px=(player&&player.gx!=null)?player.gx:6, py=(player&&player.gy!=null)?player.gy:6;
+  const cands=PH_STARTS.concat([[6,6],[4,6],[8,6],[6,4],[6,8],[4,4],[8,8],[4,8],[8,4]]);
+  const scored=cands.map(c=>{ const d=Math.max(Math.abs(c[0]-px),Math.abs(c[1]-py)); const toC=Math.max(Math.abs(c[0]-6),Math.abs(c[1]-6)); return {c,d,toC}; })
+    .filter(o=>o.d>=5).sort((a,b)=>(a.toC-b.toC)||(b.d-a.d));
+  if(!scored.length) return [6,6];
+  const k=Math.min(scored.length-1, i%Math.max(1,Math.min(4,scored.length)));
+  return scored[k].c;
 }
 function spawnPhantoms(n, kinds){
   if(typeof watcherMode==='function' && watcherMode()) n=0;   // (07-18g) глядач нікого не спавнить
@@ -3597,8 +3609,12 @@ function spawnObstaclesSeededSafe(rx,ry,home){
     tint=c.getHex(); }catch(e){}
   buildRoomStructures(rng, st.weight, tint);
 }
+function advEdgeOf(x,y){ if((x===0||x===12)&&(y===0||y===12)) return null; if(y===0)return'N'; if(y===12)return'S'; if(x===0)return'W'; if(x===12)return'E'; return null; }
 function updateAdventure(dt){
   if(!ADV.on || player.dead || mode!=='fighter') return;
+  /* (09-22b) щойно увійшов — стоїш на кромці нової кімнати. Раніше порожня кімната вважалась зачищеною
+     і через 3 с кидала назад. Тепер: поки не відійшов від краю, переходів немає. */
+  if(ADV.mustLeave){ if(advEdgeOf(player.gx,player.gy)==null){ ADV.mustLeave=false; logE('пригода: відійшов від краю — переходи знову відкриті'); } else { ADV.edgeT=0; ADV.edgeDir=null; return; } }
   // (07-22b) СОЮЗНИК — НЕ ВОРОГ: кімната вважається зачищеною, навіть коли він живий.
   // Також мають скінчитися хвилі — інакше вихід відкривався між хвилями.
   const foesLeft = phantoms.some(p=>!p.dead && !p.ally);
@@ -3638,6 +3654,7 @@ function updateAdventure(dt){
     // входим с противоположной кромки новой комнаты
     const opp={N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]}[from];
     const c=freeSpawnCell(opp[0],opp[1],player); player.gx=c[0]; player.gy=c[1];
+    ADV.mustLeave=true; ADV.enterT=performance.now();       // (09-22b) назад — лише відійшовши й повернувшись до краю
     NET.advPub();                                           // консенсус комнаты для всех
   }
 }
@@ -3758,6 +3775,7 @@ function clearClinch(){
   if(navigator.vibrate) navigator.vibrate(0);
 }
 function handleDeath(av, dt){
+  if(av.clinging && av.hp<=0){ av.clinging=false; try{ const i=CLING.list.indexOf(av); if(i>=0) CLING.list.splice(i,1); VB_WEAPON.mass=1+0.5*CLING.list.length; }catch(e){} }
   if(av.dead){
     av.respawnT -= dt;
     if(av.respawnT<=0) respawn(av);
@@ -3824,6 +3842,85 @@ function respawn(av){
 /* ════════════════════ ФАНТОМЫ (ИИ) ══════════════════════════ */
 function phantomBlocks(gx,gy,self){ return phantoms.some(p=>p!==self && !p.dead
   && gx>=p.gx && gx<p.gx+(p.size||1) && gy>=p.gy && gy<p.gy+(p.size||1)); }
+/* (09-22b) ШУМ ГРАВЦЯ: кроки, махи, удари об світ — усе це чують. Радіус виявлення = база виду + шум. */
+const NOISE={ level:0, lastGx:null, lastGy:null };
+function playerNoiseTick(dt){
+  if(NOISE.lastGx!==player.gx||NOISE.lastGy!==player.gy){ NOISE.lastGx=player.gx; NOISE.lastGy=player.gy; NOISE.level=Math.min(4,NOISE.level+1.0); }
+  if(typeof SWING!=='undefined' && SWING.active) NOISE.level=Math.min(4,NOISE.level+dt*1.5);
+  if(player.strikeT>0) NOISE.level=Math.min(4,NOISE.level+dt*4);
+  NOISE.level=Math.max(0,NOISE.level-dt*1.1);
+}
+const DETECT_R={fighter:3,crawler:2,flyer:4,gunner:5,boss:3};
+function phantomWander(ph, dt, tgt){
+  const ai=ph.ai; ph.hitActive=false;
+  if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5);
+  if(ai.moveT<=0){                                                     // повільний випадковий крок — «шукає»
+    ai.moveT=(1.1+Math.random()*0.6)*(ph.slow||1);
+    const d=DIRV[(Math.random()*8)|0];
+    const nx=clamp(ph.gx+d[0],0,12), ny=clamp(ph.gy+d[1],0,12);
+    if(!isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; ph.dirIdx=DIRV.indexOf(d)>=0?DIRV.indexOf(d):ph.dirIdx; }
+  }
+  if(!tgt) return;
+  const d=Math.max(Math.abs(tgt.gx-ph.gx),Math.abs(tgt.gy-ph.gy));
+  const R=(DETECT_R[ph.kind]||3)+(tgt.local?NOISE.level:1);
+  if(d<=R || ph.painT>0){ phantomAlert(ph, d<=R?'почув':'відчув удар'); }
+}
+function phantomAlert(ph, why){
+  if(ph.aware) return; ph.aware=true; ph._showT=0.4;
+  const x=worldX(ph.gx), z=worldZ(ph.gy), y=ph.kind==='flyer'?1.7:(ph.kind==='crawler'?0.2:1.2);
+  try{ spatialBlip(x,y,z, ph.kind==='crawler'?160:(ph.kind==='flyer'?1300:520), 0.22, 'square', 0.22); }catch(e){}
+  try{ REVEAL.pulse(x,z,1.5,0.6,'BODY',4); }catch(e){}
+  logE('ворог '+(ph.kind||'')+' '+why+' тебе (шум '+NOISE.level.toFixed(1)+')');
+}
+/* ГОЛОСИ ІСТОТ (09-22b): кожен вид чутно по-своєму і на своїй висоті — це і є їхній сонар */
+function entVoiceTick(ph, dt){
+  if(!ph || ph.dead || ph.ally || ph.remote || ph.clinging) return;
+  const x=worldX(ph.gx), z=worldZ(ph.gy);
+  const d=Math.max(Math.abs(ph.gx-player.gx),Math.abs(ph.gy-player.gy));
+  const moved=(ph._vgx!==ph.gx||ph._vgy!==ph.gy); ph._vgx=ph.gx; ph._vgy=ph.gy;
+  ph.voiceT=(ph.voiceT||0)-dt;
+  const k=ph.kind||'fighter';
+  try{
+    if(k==='crawler'){ if(ph.voiceT<=0){ ph.voiceT=ph.aware?0.3:0.55; spatialBlip(x,0.15,z, 90+Math.random()*60, 0.05, 'square', 0.16); } }
+    else if(k==='flyer'){ if(ph.voiceT<=0){ ph.voiceT=0.14; spatialBlip(x,1.7,z, 1100+Math.random()*300, 0.12, 'sawtooth', 0.045); } }
+    else if(k==='boss'){ if(moved) spatialBlip(x,0.3,z, 55, 0.35, 'triangle', 0.35); if(ph.voiceT<=0){ ph.voiceT=2.2; spatialBlip(x,1.8,z, 140, 0.5, 'sawtooth', 0.14); } }
+    else if(k==='gunner'){ if(moved) spatialBlip(x,0.2,z, 130, 0.09, 'triangle', 0.14); if(ph.shootT!=null && ph.shootT<1.0 && ph.voiceT<=0){ ph.voiceT=0.25; spatialBlip(x,1.0,z, 600+(1-ph.shootT)*900, 0.12, 'sine', 0.1); } }
+    else { if(moved) spatialBlip(x,0.2,z, 110+Math.random()*30, 0.1, 'triangle', 0.16);          // крок гуманоїда
+           if(ph.voiceT<=0){ ph.voiceT=1.6+Math.random()*0.6; spatialBlip(x,1.3,z, 190, 0.28, 'sine', ph.aware?0.09:0.06); } }   // дихання
+  }catch(e){}
+  if(moved){ try{ REVEAL.pulse(x,z,1.0,0.3,'BODY',3); }catch(e){} }
+}
+/* ПОВЗУНИ ЧІПЛЯЮТЬСЯ ЗА КЛИНОК (09-22b): укус може лишити тварюку на лезі — вона обтяжує меч,
+   тягне витривалість і скрегоче; струшується ударом об будь-що. */
+const CLING={ list:[] };
+function clingAttach(ph){
+  if(ph.clinging||CLING.list.length>=3) return false;
+  ph.clinging=true; CLING.list.push(ph); ph.hitActive=false;
+  VB_WEAPON.mass=1+0.5*CLING.list.length;
+  logE('повзун вчепився у клинок ('+CLING.list.length+') — струси ударом об щось');
+  try{ showBanner('🪲 ПОВЗУН НА КЛИНКУ — струси ударом','#f59e0b'); buzz([0,60,40,60]); }catch(e){}
+  return true;
+}
+function clingShake(CT){
+  const ph=CLING.list.shift(); if(!ph) return;
+  ph.clinging=false; VB_WEAPON.mass=1+0.5*CLING.list.length;
+  const p=CT&&CT.position; if(p){ const gx=clamp(Math.round((p.x/CELL)+6),0,12), gy=clamp(Math.round((p.z/CELL)+6),0,12); const c=freeSpawnCell(gx,gy,ph); ph.gx=c[0]; ph.gy=c[1]; }
+  damageTier(ph,1,18); ph.painT=0.4; ph._showT=0.5; ph.aware=true;
+  logE('повзуна струшено з клинка'+(ph.hp<=0?' — розчавлено':''));
+  try{ spatialBlip(worldX(ph.gx),0.2,worldZ(ph.gy), 220, 0.15, 'square', 0.2); }catch(e){}
+}
+function clingTick(dt){
+  if(!CLING.list.length) return;
+  if(player.dead||player.disarmed){ for(const ph of CLING.list.slice()){ ph.clinging=false; } CLING.list.length=0; VB_WEAPON.mass=1; return; }
+  let tip=null;
+  try{ const S=VB_RIG.player; if(VB_RIG.on&&S&&S.rig){ const sw=S.rig.sword; tip=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL*0.7,0)); } }catch(e){}
+  if(!tip){ try{ const H=handInfo(player); tip=new THREE.Vector3(lerp(H.hx,H.tipX,0.7),lerp(H.hy,H.tipY,0.7),lerp(H.hz,H.tipZ,0.7)); }catch(e){} }
+  for(const ph of CLING.list){
+    if(tip && ph.mesh){ ph.mesh.position.copy(tip); ph.gx=clamp(Math.round(tip.x/CELL+6),0,12); ph.gy=clamp(Math.round(tip.z/CELL+6),0,12); ph.vgx=ph.gx; ph.vgy=ph.gy; }
+    player.stamina=Math.max(0,(player.stamina||0)-dt*2.5);
+    ph.voiceT=(ph.voiceT||0)-dt; if(ph.voiceT<=0){ ph.voiceT=0.45; try{ if(tip) spatialBlip(tip.x,tip.y,tip.z, 380+Math.random()*250, 0.06, 'square', 0.14); }catch(e){} }
+  }
+}
 function nearestTarget(ph){
   let best=null, bd=1e9;
   if(mode==='fighter' && !player.dead){ bd=Math.abs(ph.gx-player.gx)+Math.abs(ph.gy-player.gy); best={gx:player.gx,gy:player.gy,local:true}; }
@@ -3910,6 +4007,8 @@ function updatePhantoms(dt){
     ai.moveT -= dt; ai.swingT -= dt;
     ai.burnCd = Math.max(0, (ai.burnCd||0)-dt);
     const tgt = nearestTarget(ph);
+    if(ph.clinging){ ph.hitActive=false; continue; }                       // (09-22b) сидить на клинку — AI мовчить
+    if(!ph.aware && !ph.allyMad && !ph.boss){ phantomWander(ph, dt, tgt); continue; }   // (09-22b) ще не помітив — шукає (бос і збожеволілий наставник знають завжди)
     if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
     // ── НЕСТАНДАРТНЫЕ ВИДЫ: своя логика, мимо меч-конвейера ──
     if(ph.kind==='crawler' || ph.kind==='flyer'){
@@ -3933,6 +4032,7 @@ function updatePhantoms(dt){
         const dmg = ph.kind==='flyer'?8:13;       // укус повзуна ощутимее: реген его не съедает
         if(tgt.local && !player.dead){
           damageTier(player, bt, dmg); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
+          if(ph.kind==='crawler' && Math.random()<0.35) clingAttach(ph);   // (09-22b) чіпляється за клинок
           if(bt===0) addExhaustion(player, 12);   // укусы утомляют → реген глохнет → дренаж копится
           logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВИТР ')
             + Math.round(bt===0?player.stamina:player.hp));
@@ -4511,7 +4611,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22a · КЕРУВАННЯ ЯК БУЛО: курс у грі — компас (гіроскоп лише в LAB), самоперевірка осі без перевертань, МАЯК за гравітацією (не за γ) · новий риг у грі · сонар за тумблером';
+const BUILD_TAG='2026-09-22b · МАЯК: картинка не догори дриґом · СОНАР увімк: істоти — тінь поруч, видно лише у взаємодії · вороги спавняться далеко, спершу не знають про гравця, блукають і ЗВУЧАТЬ (крок/дихання/жук/літун/бос) · виявлення за шумом · перехід між кімнатами лише після відходу від краю · повзуни чіпляються за клинок';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5287,11 +5387,12 @@ function frame(now){
     ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
     updateAvatarMesh(ph, now);
     updateBlade(ph);
-    try{ rigNpcTick(ph, dt); sonarEntityTick(ph, dt); }catch(e){}   // (09-21) риг ворога + видимість за звуком
+    try{ rigNpcTick(ph, dt); sonarEntityTick(ph, dt); entVoiceTick(ph, dt); }catch(e){}   // (09-21/22b) риг ворога + видимість за звуком + голос
     // (09-10b, ТЗ п.14-18) ВИДИМІСТЬ навчального ворога вирішує ОДНА функція,
     // і робить це ОСТАННЬОЮ в кадрі — після AI, моделі та клинка, перед render.
     if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
+  try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   renderRemotes(now, dt);              // чужие игроки
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
@@ -6328,6 +6429,7 @@ function labContactTick(dt){
   const edgeW=new THREE.Vector3(1,0,0).applyQuaternion(sw.blade.getWorldQuaternion(new THREE.Quaternion())); LAB.edgeDir=edgeW;
   const CT=SWORD_CONTACT.step(LAB.cid||'lab',a,b,dt,LAB.colliders.concat(labBodyColliders()),{source:LAB.csrc||'lab',tag:LAB.ctag||'LAB SWORD_CONTACT',edge:edgeW,pressureDepth:LAB.swordFree?LAB.intendedDepth:null});
   try{ if(CT && LAB.isGame && window.REVEAL) REVEAL.contact(CT); }catch(e){}
+  try{ if(CT && LAB.isGame && CT.postState==='IMPACT' && CT.normalSpeed>3.0 && typeof CLING!=='undefined' && CLING.list.length) clingShake(CT); }catch(e){}
   if(!CT){ sw.blade.scale.y=1; LAB.contactState='FREE'; LAB.contact=null; return ''; }
   sw.blade.scale.y=Math.max(0.02,CT.f);                             // STOP: клинок закінчується на поверхні
   LAB.helpers.contact.position.copy(CT.position); LAB.helpers.contact.visible=true;
@@ -6907,7 +7009,7 @@ function rigNpcTick(av, dt, opts){
    Екран чорний, поки ніщо не звучить. Кожна звукова подія — фронт світла по клітинках:
    Ритм (кільце навколо гравця), рух клинка, контакт (дотик/удар/ковзання). Підлога, сітка,
    блоки, істоти — усе світиться лише інтенсивністю поля REVEAL. Музика відповідає освітленню. */
-const VB_SONAR={ on:0, gain:1.0, decay:1.0, memory:0.08, floor:0.05, self:0.25 };   // (09-22) сонар — за тумблером, поки не прийнято керування
+const VB_SONAR={ on:1, gain:1.0, decay:1.0, memory:0.08, floor:0.0, self:0.25, shadow:2 };   // (09-22b) сонар — основа; підлога чорна; тінь істоти в межах 2 клітинок
 const VB_MUSIC={ gain:0.7, react:1.0 };
 window.VB_SONAR=VB_SONAR; window.VB_MUSIC=VB_MUSIC;
 const REVEAL={
@@ -7003,19 +7105,25 @@ function sonarEntityTick(av, dt){
   if(!av||!av.mesh) return;
   if(!VB_SONAR.on){ if(av._sonarOn){ av._sonarOn=false; av.mesh.traverse(m=>{ if(m.isMesh&&m.material&&m.material.userData.sonarT){ m.material.opacity=1; } }); } return; }
   av._sonarOn=true;
-  if(av._sgx!==av.gx||av._sgy!==av.gy){ av._sgx=av.gx; av._sgy=av.gy; av._noise=1; try{ REVEAL.pulse(worldX(av.gx),worldZ(av.gy),1.2,0.35,'BODY',3); }catch(e){} }
-  if(av.strikeT>0||av.painT>0) av._noise=1;
-  av._noise=Math.max(0,(av._noise||0)-dt/1.2);
+  /* (09-22b) ІСТОТИ У СОНАРІ: свій звук світить лише їхню КЛІТИНКУ на підлозі; сама модель —
+     тінь, що мерехтить, коли істота зовсім поруч (≤2 кл.), і видима повністю лише у взаємодії:
+     вона б'є, її б'ють, клінч, укус. Наставник — власне рівне світло (переривчасте, коли його їсть Шум). */
+  if(av._sgx!==av.gx||av._sgy!==av.gy){ av._sgx=av.gx; av._sgy=av.gy; try{ REVEAL.pulse(worldX(av.gx),worldZ(av.gy),1.0,0.3,'BODY',3); }catch(e){} }
+  if(av.strikeT>0||av.painT>0||av.clinging||(av.ai&&av.ai.burnCd>0.6)) av._showT=0.5;
+  av._showT=Math.max(0,(av._showT||0)-dt);
   let fl=0;
   if(av.ally){ const duty={wise:0.9,weak:0.6,dumb:0.35,mad:0.2}[av.mode]??0.9; const ph=(performance.now()/300)%1; fl = (ph<duty)?0.85:0.15; }
-  const op=clamp(av._noise+fl,0.02,1);
+  else if(av.remote){ fl=0.35; }
+  let near=0;
+  try{ const d=Math.max(Math.abs((av.gx||0)-player.gx),Math.abs((av.gy||0)-player.gy)); if(d<=VB_SONAR.shadow){ const fk=(performance.now()/160)%1; near=(fk<0.5)?0.28:0.08; } }catch(e){}
+  const op=clamp(Math.max(av._showT>0?1:0, near, fl),0.0,1);
   av.mesh.traverse(m=>{ if(!m.isMesh||!m.material) return; const mt=m.material; if(!mt.userData.sonarT){ mt.userData.sonarT=true; mt.transparent=true; } if(av._rigS && (mt===av._rigS.rig.sword.blade.material||mt===av._rigS.rig.sword.edge.material)){ mt.opacity=clamp(op+0.2,0.05,1); return; } mt.opacity=op; });
   if(av.blade&&av.blade.material){ av.blade.material.transparent=true; av.blade.material.opacity=Math.max(0.15,op); }
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
 const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:45, exitDeg:35, holdS:0.25 };
-const VB_ORI={ force:0, rollSign:1 };
+const VB_ORI={ force:0, rollSign:-1 };   // (09-22b) картинка МАЯКА була догори дриґом — знак навпаки
 const BEACON={ state:'STANCE', t:0 };
 const CAMAIM={ on:false, yaw:0, pitch:0, prevH:null, prevE:null };
 const ORI={ mode:'—', locked:false, angle0:0, lastChange:-1e9, lockT:0, sign:1, hud:0, inited:false };
@@ -7095,7 +7203,7 @@ const SENS_SLIDERS=[
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
   ['СОНАР · МУЗИКА'],
   ['VB_SONAR.on','Ехо-сонар (1) / звичайна картинка (0)',0,1,1],['VB_SONAR.gain','Сонар: яскравість',0,2,0.05],['VB_SONAR.decay','Сонар: швидкість згасання',0.3,3,0.05],
-  ['VB_SONAR.memory','Сонар: пам\'ять світла',0,0.3,0.01],['VB_SONAR.floor','Сонар: сітка підлоги від Ритму',0,0.3,0.01],['VB_SONAR.self','Сонар: власне тіло (тест)',0,1,0.05],
+  ['VB_SONAR.memory','Сонар: пам\'ять світла',0,0.3,0.01],['VB_SONAR.floor','Сонар: сітка підлоги від Ритму',0,0.3,0.01],['VB_SONAR.self','Сонар: власне тіло (тест)',0,1,0.05],['VB_SONAR.shadow','Сонар: тінь істоти в межах, кл.',0,5,1],
   ['VB_MUSIC.gain','Музика: загальний рівень',0,1,0.05],['VB_MUSIC.react','Музика: чутливість до освітлення',0.3,3,0.05],
   ['ЛІНІЙНИЙ РУХ (рукоять)'],
   ['VB_ARM.gFwd','Вперед ×',0,3,0.05],['VB_ARM.gBack','Назад ×',0,3,0.05],
