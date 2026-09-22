@@ -2864,6 +2864,7 @@ function resolveBurn(dt){
         }
       }
       damageTier(ph, tier, dmg); burnCd = 0.3; ph.hitGlow = 0.3;
+      if(ph.kind==='crawler' && ph.hp>0 && !ph.clinging && Math.random()<0.45) clingAttach(ph);   // (09-22g) вдарив — він учепився в лезо
       player.strikeT = Math.max(player.strikeT, STRIKE_DUR);   // видимый удар при попадании
       doFlash('#22c55e'); buzz(40);
       try{ const _tp=burnTip(cx,cy); _tp.y=TIER_H*(0.4+tier*0.7);   // ШМАТКИ тіла з місця дотику (07-14)
@@ -2984,7 +2985,7 @@ const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
    між кімнатами — лабіринт: не всі сусіди з'єднані. Закриті двері — кристалічна печать (дзвенить).
    var — щоб ранні виклики (isCellOccupied під час ініціалізації) не впали в TDZ. */
 var VB_ROOMS={ on:1, loops:0.18, seed:20260922 };
-var ROOM_LAYOUT_V=2;
+var ROOM_LAYOUT_V=3;   // (09-22g) кільце — на кромці, кімнати більші
 var ROOMMAZE={ open:null };
 window.VB_ROOMS=VB_ROOMS;
 function roomMazeBuild(){
@@ -3009,6 +3010,16 @@ function structEdgeBlocked(gx,gy){
   if(!(VB_ROOMS&&VB_ROOMS.on&&ADV.on)) return false;
   if(!(gx===0||gx===12||gy===0||gy===12)) return false;
   return !((gx===6&&(gy===0||gy===12))||(gy===6&&(gx===0||gx===12)));   // по кромці ходити не можна — лише двері
+}
+/* (09-22g) матеріал СПІЛЬНОЇ стіни між двома кімнатами — однаковий з обох боків */
+function edgeWallMat(rx,ry,side){
+  const d={N:[0,-1],S:[0,1],W:[-1,0],E:[1,0]}[side]; const nx=rx+d[0], ny=ry+d[1];
+  const inb=(nx>=0&&nx<=12&&ny>=0&&ny<=12);
+  const w=Math.max(roomStyle(rx,ry).weight, inb?roomStyle(nx,ny).weight:0);
+  const a=inb?((rx<nx||ry<ny)?[rx,ry,nx,ny]:[nx,ny,rx,ry]):[rx,ry,rx,ry];
+  const h=mulberry32(a[0]*733+a[1]*151+a[2]*37+a[3]*11+5)();
+  const iron = w>=0.7 || (w>=0.35 && h<0.5);
+  return iron ? {t:'Fe',tint:0x565f6b} : {t:'Si',tint:(h<0.5?0x7d8796:0x6f7a88)};
 }
 const ROOMTYPE_NAME={home:'Дім',grove:'Гай',shop:'Торговий двір',quarry:"Кар'єр",shrine:'Святилище',hall:'Зал колон',cross:'Хрест',gallery:'Галерея',cells:'Келії',keep:'Цитадель'};
 function roomTypeOf(rx,ry){
@@ -3495,7 +3506,8 @@ const ELEM_GAS=['H','O','Cl','co2'];                 // газоподібні �
 const ELEM_SOLID=['C','Si','Na','Fe','sand','salt','glass','steel']; // тверді елементи/продукти: блокують, руйнівні
 function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY,fs){   // fs: true — незнищенний, false — руйнівний, інакше — за типом
   const key=gx+','+gy;
-  if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
+  const _lo=(VB_ROOMS&&VB_ROOMS.on&&ADV.on)?0:1, _hi=12-_lo;                 // (09-22g) структуровані кімнати: стіни на самій кромці
+  if(gx<_lo||gx>_hi||gy<_lo||gy>_hi||taken.has(key)) return;
   taken.add(key);
   // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
   let solid=(type==='wall'||type==='crawl'||type==='base'||type==='Si'||type==='Fe'||type==='steel'||type==='glass');   // (09-22e) мінерали — міцні
@@ -3646,47 +3658,48 @@ function buildStructuredRoom(rx,ry,rng,st){
   obstacles.forEach(o=>{ if(o.mesh){ scene.remove(o.mesh); try{ freeMesh(o.mesh); }catch(e){} } }); obstacles.length=0;
   const type=roomTypeOf(rx,ry), w=st.weight||0;
   const taken=new Set();
-  const ringMat=w<0.45?'Si':'Fe', ringTint=ringMat==='Si'?0x7d8796:0x565f6b;
   const inMat=w<0.3?'Si':'Fe', inTint=inMat==='Si'?0x8d99ae:0x5b6470;
-  const doorIn={N:[6,1],S:[6,11],W:[1,6],E:[11,6]};
+  const doorIn={N:[6,0],S:[6,12],W:[0,6],E:[12,6]};                       // (09-22g) двері — у самій стіні на кромці
   const gapDir=(x,y)=>{ for(const d in doorIn){ const c=doorIn[d]; if(c[0]===x&&c[1]===y) return d; } return null; };
   const openDirs=[];
-  // КІЛЬЦЕ СТІН з дверима
-  for(let i=1;i<=11;i++) for(const [x,y] of [[i,1],[i,11],[1,i],[11,i]]){
+  // СПІЛЬНІ СТІНИ на крайніх клітинках: з обох боків межі — той самий матеріал і ті самі двері
+  for(let i=0;i<=12;i++) for(const [x,y,side] of [[i,0,'N'],[i,12,'S'],[0,i,'W'],[12,i,'E']]){
     const k=x+','+y; if(taken.has(k)) continue;
     const d=gapDir(x,y);
     if(d){ if(doorOpen(rx,ry,d)){ taken.add(k); if(!openDirs.includes(d)) openDirs.push(d); }
-           else addObstacle(x,y,'fragile',taken,0xb07cff,1.1,'cube',0,0.85,0,true);          // кристалічна печать — дзвенить
+           else addObstacle(x,y,'fragile',taken,0xb07cff,1.1,'cube',0,0.85,0,true);          // кристалічна печать
            continue; }
-    addObstacle(x,y,ringMat,taken,ringTint,1.0,'cube',0,null,0);
+    if((x===0||x===12)&&(y===0||y===12)){ addObstacle(x,y,'Si',taken,0x5b6472,1.1,'cube',0,null,0); continue; }   // кутові колони — завжди камінь
+    const m=edgeWallMat(rx,ry,side); addObstacle(x,y,m.t,taken,m.tint,1.0,'cube',0,null,0);
   }
-  const R=new Set(['6,6','6,2','6,10','2,6','10,6']);
-  const put=(x,y,mat,tint,shape,tall,fs)=>{ const k=x+','+y; if(x<2||x>10||y<2||y>10||R.has(k)||taken.has(k)) return; addObstacle(x,y,mat,taken,tint,tall||1,shape||'cube',0,null,0,fs); };
-  const tree=(x,y)=>{ const k=x+','+y; if(x<2||x>10||y<2||y>10||R.has(k)||taken.has(k)||obstacleAt(x,y)) return; taken.add(k); plantTree(x,y,rng); };
-  if(type==='hall'){ for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,inMat,inTint,'post',1.1);
-    if(w>0.35) for(const [x,y] of [[6,4],[4,6],[8,6],[6,8]]) put(x,y,inMat,inTint,'post',1.0); }
-  else if(type==='cross'){ for(const [ax,ay] of [[3,3],[8,3],[3,8],[8,8]]) for(let dx=0;dx<2;dx++) for(let dy=0;dy<2;dy++) put(ax+dx,ay+dy,inMat,inTint,'cube',1.0); }
-  else if(type==='gallery'){ for(let x=2;x<=8;x++) put(x,4,inMat,inTint,'cube',1.0); for(let x=4;x<=10;x++) put(x,8,inMat,inTint,'cube',1.0); }
-  else if(type==='cells'){ for(const x of [4,8]) for(const y of [2,3,4,8,9,10]) put(x,y,inMat,inTint,'cube',1.0); }
-  else if(type==='keep'){ for(let i=4;i<=8;i++) for(const [x,y] of [[i,4],[i,8],[4,i],[8,i]]){ if((x===6&&(y===4||y===8))||(y===6&&(x===4||x===8))) continue; put(x,y,inMat,inTint,'cube',1.1); }
-    for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,'fragile',0xb07cff,'post',1.2,true); }
+  const ringMat=edgeWallMat(rx,ry,'N').t;
+  const R=new Set(['6,6','6,1','6,11','1,6','11,6']);
+  const put=(x,y,mat,tint,shape,tall,fs)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)) return; addObstacle(x,y,mat,taken,tint,tall||1,shape||'cube',0,null,0,fs); };
+  const tree=(x,y)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)||obstacleAt(x,y)) return; taken.add(k); plantTree(x,y,rng); };
+  if(type==='hall'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,inMat,inTint,'post',1.1);
+    if(w>0.35) for(const [x,y] of [[6,3],[3,6],[9,6],[6,9]]) put(x,y,inMat,inTint,'post',1.0); }
+  else if(type==='cross'){ for(const [ax,ay] of [[2,2],[8,2],[2,8],[8,8]]) for(let dx=0;dx<3;dx++) for(let dy=0;dy<3;dy++) put(ax+dx,ay+dy,inMat,inTint,'cube',1.0); }
+  else if(type==='gallery'){ for(let x=1;x<=8;x++) put(x,4,inMat,inTint,'cube',1.0); for(let x=4;x<=11;x++) put(x,8,inMat,inTint,'cube',1.0); }
+  else if(type==='cells'){ for(const x of [4,8]) for(const y of [1,2,3,9,10,11]) put(x,y,inMat,inTint,'cube',1.0); for(const y of [4,8]) for(const x of [1,2,10,11]) put(x,y,inMat,inTint,'cube',1.0); }
+  else if(type==='keep'){ for(let i=3;i<=9;i++) for(const [x,y] of [[i,3],[i,9],[3,i],[9,i]]){ if((x===6&&(y===3||y===9))||(y===6&&(x===3||x===9))) continue; put(x,y,inMat,inTint,'cube',1.1); }
+    for(const [x,y] of [[2,2],[10,2],[2,10],[10,10]]) put(x,y,'fragile',0xb07cff,'post',1.2,true); }
   else if(type==='grove'){ const n=5+Math.round(w*3);
-    for(let c=0;c<n;c++){ const cx=2+Math.floor(rng()*9), cy=2+Math.floor(rng()*9);
-      for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) if(rng()<0.6) tree(cx+dx,cy+dy); } }
-  else if(type==='quarry'){ const sides=[[2,null],[10,null],[null,2],[null,10]];
-    for(let c=0;c<4;c++){ const sd=sides[c]; const off=[3,4,8,9][Math.floor(rng()*4)];
+    for(let c=0;c<n;c++){ const cx=1+Math.floor(rng()*11), cy=1+Math.floor(rng()*11);
+      for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) if(rng()<0.5) tree(cx+dx,cy+dy); } }
+  else if(type==='quarry'){ const sides=[[1,null],[11,null],[null,1],[null,11]];
+    for(let c=0;c<4;c++){ const sd=sides[c]; const off=[2,3,4,8,9,10][Math.floor(rng()*6)];
       const bx=sd[0]??off, by=sd[1]??off;
-      for(let b=0;b<2+Math.floor(rng()*3);b++){ const x=clamp(bx+(sd[0]==null?Math.floor(rng()*3)-1:0),2,10), y=clamp(by+(sd[1]==null?Math.floor(rng()*3)-1:0),2,10);
+      for(let b=0;b<2+Math.floor(rng()*3);b++){ const x=clamp(bx+(sd[0]==null?Math.floor(rng()*3)-1:0),1,11), y=clamp(by+(sd[1]==null?Math.floor(rng()*3)-1:0),1,11);
         const k=x+','+y; if(R.has(k)||taken.has(k)) continue; taken.add(k);
         if(rng()<0.55) plantRock(x,y,rng); else addObstacle(x,y,'Fe',new Set(),null,0.7+rng()*0.4,'cube'); } }
-    for(let i=0;i<3;i++) tree(2+Math.floor(rng()*9),2+Math.floor(rng()*9)); }
-  else if(type==='shop'){ for(const [x,y] of [[5,5],[7,5],[5,7],[7,7]]) put(x,y,'fragile',0xfbbf24,'post',0.7,true); for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) tree(x,y); }
-  else if(type==='shrine'){ for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,'fragile',0xb07cff,'post',1.3,true); for(let i=0;i<4;i++) tree(2+Math.floor(rng()*9),2+Math.floor(rng()*9)); }
+    for(let i=0;i<3;i++) tree(1+Math.floor(rng()*11),1+Math.floor(rng()*11)); }
+  else if(type==='shop'){ for(const [x,y] of [[5,5],[7,5],[5,7],[7,7]]) put(x,y,'fragile',0xfbbf24,'post',0.7,true); for(const [x,y] of [[2,2],[10,2],[2,10],[10,10]]) tree(x,y); }
+  else if(type==='shrine'){ for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,'fragile',0xb07cff,'post',1.3,true); for(let i=0;i<4;i++) tree(1+Math.floor(rng()*11),1+Math.floor(rng()*11)); }
   // ПЕРЕВІРКА: від центру до кожних відкритих дверей є шлях (міцні блоки — перешкода, дерева — ні)
   const ok=()=>{ const seen=new Set(['6,6']), q=[[6,6]], blk=(x,y)=>{ const o=obstacleAt(x,y); return !!(o&&o.solid); };
-    while(q.length){ const [x,y]=q.shift(); for(const [ox,oy] of DIRV){ const nx=x+ox, ny=y+oy; if(nx<1||nx>11||ny<1||ny>11) continue; const k=nx+','+ny; if(seen.has(k)||blk(nx,ny)) continue; seen.add(k); q.push([nx,ny]); } }
+    while(q.length){ const [x,y]=q.shift(); for(const [ox,oy] of DIRV){ const nx=x+ox, ny=y+oy; if(nx<0||nx>12||ny<0||ny>12) continue; const k=nx+','+ny; if(seen.has(k)||blk(nx,ny)) continue; seen.add(k); q.push([nx,ny]); } }
     return openDirs.every(d=>seen.has(doorIn[d][0]+','+doorIn[d][1])); };
-  if(!ok()){ for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i]; if(o.solid&&o.gx>=2&&o.gx<=10&&o.gy>=2&&o.gy<=10){ if(o.mesh){ scene.remove(o.mesh); try{ freeMesh(o.mesh); }catch(e){} } obstacles.splice(i,1); } }
+  if(!ok()){ for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i]; if(o.solid&&o.gx>=1&&o.gx<=11&&o.gy>=1&&o.gy<=11){ if(o.mesh){ scene.remove(o.mesh); try{ freeMesh(o.mesh); }catch(e){} } obstacles.splice(i,1); } }
     logE('КІМНАТА-план: шлях до дверей перекрито — внутрішні стіни прибрано'); }
   ADV.rtype=type;
   logE('КІМНАТА-план: '+ROOMTYPE_NAME[type]+' · двері '+(openDirs.join('')||'—')+' · стіни '+(ringMat==='Si'?'камінь':'залізо'));
@@ -3869,7 +3882,7 @@ function clearClinch(){
   if(navigator.vibrate) navigator.vibrate(0);
 }
 function handleDeath(av, dt){
-  if(av.clinging && av.hp<=0){ av.clinging=false; try{ const i=CLING.list.indexOf(av); if(i>=0) CLING.list.splice(i,1); VB_WEAPON.mass=1+0.5*CLING.list.length; }catch(e){} }
+  if(av.clinging && av.hp<=0){ av.clinging=false; try{ const i=CLING.list.indexOf(av); if(i>=0) CLING.list.splice(i,1); VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length; }catch(e){} }
   if(av.dead){
     av.respawnT -= dt;
     if(av.respawnT<=0) respawn(av);
@@ -3980,10 +3993,58 @@ function entVoiceTick(ph, dt){
       spatialBlip(x,1.7,z, (behind?1500:1100)+Math.random()*300, 0.12, 'sawtooth', behind?0.06:0.045); } }
     else if(k==='boss'){ if(moved) spatialBlip(x,0.3,z, 55, 0.35, 'triangle', 0.35); if(ph.voiceT<=0){ ph.voiceT=2.2; spatialBlip(x,1.8,z, 140, 0.5, 'sawtooth', 0.14); } }
     else if(k==='gunner'){ if(moved) spatialBlip(x,0.2,z, 130, 0.09, 'triangle', 0.14); if(ph.shootT!=null && ph.shootT<1.0 && ph.voiceT<=0){ ph.voiceT=0.25; spatialBlip(x,1.0,z, 600+(1-ph.shootT)*900, 0.12, 'sine', 0.1); } }
-    else { if(moved) spatialBlip(x,0.2,z, 110+Math.random()*30, 0.1, 'triangle', 0.16);          // крок гуманоїда
-           if(ph.voiceT<=0){ ph.voiceT=1.6+Math.random()*0.6; spatialBlip(x,1.3,z, 190, 0.28, 'sine', ph.aware?0.09:0.06); } }   // дихання
+    else { if(moved){ spatialNoise(x,0.1,z, 180, 1.4, 0.09, 0.16); spatialBlip(x,0.1,z, 70, 0.07, 'sine', 0.1); }    // (09-22g) крок: глухий удар стопи
+           if(ph.voiceT<=0){ ph.voiceT=1.5+Math.random()*0.6; spatialNoise(x,1.55,z, 520+Math.random()*180, 0.9, 0.55, ph.aware?0.06:0.04); }   // дихання — повітря, не тон
+           ph.heartT=(ph.heartT||0)-dt;
+           if(d<=4 && ph.heartT<=0){ ph.heartT=ph.aware?0.62:0.95; const v=0.11*(1-d/5); spatialBlip(x,1.3,z, 52, 0.09, 'sine', v); setTimeout(()=>{ try{ spatialBlip(x,1.3,z, 46, 0.08, 'sine', v*0.7); }catch(e){} },170); }   // серцебиття — чути лише поруч
+           ph.coughT=(ph.coughT==null?8+Math.random()*10:ph.coughT)-dt;
+           if(!ph.aware && ph.coughT<=0){ ph.coughT=10+Math.random()*10; spatialNoise(x,1.65,z, 750, 1.2, 0.16, 0.13); setTimeout(()=>{ try{ spatialNoise(x,1.65,z, 700, 1.2, 0.14, 0.1); }catch(e){} },220); } }   // кашель — видає себе
   }catch(e){}
   if(moved){ try{ REVEAL.pulse(x,z,1.0,0.3,'BODY',3); }catch(e){} }
+}
+/* (09-22g) ЖИВІ ЗВУКИ: шумовий буфер для кроків/дихання/кашлю; гул клинка для трьох найближчих мечників */
+const ENTAUD={ nb:null };
+function entNoiseBuf(){ if(ENTAUD.nb||!AC) return ENTAUD.nb; const b=AC.createBuffer(1,AC.sampleRate,AC.sampleRate), d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; ENTAUD.nb=b; return b; }
+function spatialNoise(x,y,z,f,q,dur,vol){
+  if(!AC) return;
+  try{ const src=AC.createBufferSource(); src.buffer=entNoiseBuf(); const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=f; bp.Q.value=q;
+    const g=AC.createGain(), p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=1.4; p.maxDistance=26; p.rolloffFactor=1.15;
+    if(p.positionX){ p.positionX.value=x; p.positionY.value=y; p.positionZ.value=z; } else p.setPosition(x,y,z);
+    src.connect(bp); bp.connect(g); g.connect(p); p.connect(worldFilter||AC.destination);
+    const t=AC.currentTime; g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(vol,t+Math.min(0.06,dur*0.3)); g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+    src.start(t, Math.random()*0.5); src.stop(t+dur+0.05); }catch(e){}
+}
+function entHumEnsure(ph){
+  if(ph._hum||!AC) return ph._hum;
+  try{ const o=AC.createOscillator(); o.type='sawtooth'; o.frequency.value=90;
+    const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=900; bp.Q.value=6;
+    const tr=AC.createGain(); tr.gain.value=0.6; const lfo=AC.createOscillator(); lfo.type='square'; lfo.frequency.value=18; const lg=AC.createGain(); lg.gain.value=0; lfo.connect(lg); lg.connect(tr.gain);
+    const g=AC.createGain(); g.gain.value=0; const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=1.3; p.maxDistance=24; p.rolloffFactor=1.2;
+    o.connect(bp); bp.connect(tr); tr.connect(g); g.connect(p); p.connect(worldFilter||AC.destination); o.start(); lfo.start();
+    ph._hum={o,bp,lfo,lg,g,p,prev:null}; }catch(e){ ph._hum=null; }
+  return ph._hum;
+}
+function entHumStop(ph){ const H=ph&&ph._hum; if(!H) return; try{ const t=AC.currentTime; H.g.gain.cancelScheduledValues(t); H.g.gain.setTargetAtTime(0,t,0.05); H.o.stop(t+0.4); H.lfo.stop(t+0.4); }catch(e){} ph._hum=null; }
+function entAudioFrame(dt){
+  if(!AC) return;
+  const armed=phantoms.filter(p=>p&&!p.dead&&!p.ally&&!p.noBlade&&!p.clinging&&(p.kind==='fighter'||p.kind==='boss'));
+  armed.sort((a,b)=>Math.hypot(a.gx-player.gx,a.gy-player.gy)-Math.hypot(b.gx-player.gx,b.gy-player.gy));
+  const act=new Set(armed.filter(p=>Math.max(Math.abs(p.gx-player.gx),Math.abs(p.gy-player.gy))<=7).slice(0,3));
+  for(const p of phantoms){ if(p&&p._hum&&!act.has(p)) entHumStop(p); }
+  const t=AC.currentTime;
+  for(const ph of act){
+    const H=entHumEnsure(ph); if(!H) continue;
+    let tip; try{ const I=handInfo(ph); tip=new THREE.Vector3(I.tipX,I.tipY,I.tipZ); }catch(e){ tip=new THREE.Vector3(worldX(ph.gx),1.2,worldZ(ph.gy)); }
+    const sp=H.prev?Math.min(20,tip.distanceTo(H.prev)/Math.max(dt,0.001)):0; H.prev=tip.clone();
+    const swing=ph.strikeT>0?1:((ph.ai&&ph.ai.windT>0)?0.6:0.12);
+    try{ if(H.p.positionX){ H.p.positionX.value=tip.x; H.p.positionY.value=tip.y; H.p.positionZ.value=tip.z; } else H.p.setPosition(tip.x,tip.y,tip.z); }catch(e){}
+    H.o.frequency.setTargetAtTime(clamp(70+sp*55,70,720),t,0.03);
+    H.bp.frequency.setTargetAtTime(clamp(500+sp*380,400,6000),t,0.03);
+    H.lfo.frequency.setTargetAtTime(12+sp*5,t,0.05);
+    H.lg.gain.setTargetAtTime(swing>0.5?0.6:0.12,t,0.04);                          // у маху — рваний, «лазерний»
+    H.g.gain.cancelScheduledValues(t); H.g.gain.setTargetAtTime((0.012+swing*0.07)*(ph.aware?1:0.6),t,0.05);
+    H.g.gain.setTargetAtTime(0,t+0.3,0.1);                                         // кадри зупинились (пауза) — гул сам згасне
+  }
 }
 /* ПОВЗУНИ ЧІПЛЯЮТЬСЯ ЗА КЛИНОК (09-22b): укус може лишити тварюку на лезі — вона обтяжує меч,
    тягне витривалість і скрегоче; струшується ударом об будь-що. */
@@ -3991,14 +4052,14 @@ const CLING={ list:[] };
 function clingAttach(ph){
   if(ph.clinging||CLING.list.length>=3) return false;
   ph.clinging=true; CLING.list.push(ph); ph.hitActive=false;
-  VB_WEAPON.mass=1+0.5*CLING.list.length;
-  logE('повзун вчепився у клинок ('+CLING.list.length+') — струси ударом об щось');
+  VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
+  logE('повзун вчепився у клинок ('+CLING.list.length+') — струси ударом об стіну, чужий клинок або підлогу (присядь)');
   try{ showBanner('🪲 ПОВЗУН НА КЛИНКУ — струси ударом','#f59e0b'); buzz([0,60,40,60]); }catch(e){}
   return true;
 }
 function clingShake(CT){
   const ph=CLING.list.shift(); if(!ph) return;
-  ph.clinging=false; VB_WEAPON.mass=1+0.5*CLING.list.length;
+  ph.clinging=false; VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
   const p=CT&&CT.position; if(p){ const gx=clamp(Math.round((p.x/CELL)+6),0,12), gy=clamp(Math.round((p.z/CELL)+6),0,12); const c=freeSpawnCell(gx,gy,ph); ph.gx=c[0]; ph.gy=c[1]; }
   damageTier(ph,1,18); ph.painT=0.4; ph._showT=0.5; ph.aware=true;
   logE('повзуна струшено з клинка'+(ph.hp<=0?' — розчавлено':''));
@@ -4006,7 +4067,7 @@ function clingShake(CT){
 }
 function clingTick(dt){
   if(!CLING.list.length) return;
-  if(player.dead||player.disarmed){ for(const ph of CLING.list.slice()){ ph.clinging=false; } CLING.list.length=0; VB_WEAPON.mass=1; return; }
+  if(player.dead||player.disarmed){ for(const ph of CLING.list.slice()){ ph.clinging=false; } CLING.list.length=0; VB_WEAPON.mass=1; VB_WEAPON.sag=0; return; }
   let tip=null;
   try{ const S=VB_RIG.player; if(VB_RIG.on&&S&&S.rig){ const sw=S.rig.sword; tip=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL*0.7,0)); } }catch(e){}
   if(!tip){ try{ const H=handInfo(player); tip=new THREE.Vector3(lerp(H.hx,H.tipX,0.7),lerp(H.hy,H.tipY,0.7),lerp(H.hz,H.tipZ,0.7)); }catch(e){} }
@@ -4030,6 +4091,21 @@ function segSegClosest(p1,q1,p2,q2){
   const p=p1.clone().add(d1.multiplyScalar(sN)), q=p2.clone().add(d2.multiplyScalar(tN));
   return {dist:p.distanceTo(q),p,q};
 }
+const VB_CLASH={ kick:1.6 };   // (09-22g) тимчасово підкручено, щоб відкидання відчувалось
+window.VB_CLASH=VB_CLASH;
+function clashImpulse(S, away, rel){
+  const sw=S.rig.sword.root, B=S.liveBlade||{lag:0,pitch:0,roll:0};
+  const dr=Math.PI/180, Q=THREE.Quaternion, AX=new THREE.Vector3(1,0,0), AY=new THREE.Vector3(0,1,0);
+  const mkQ=(yw,pt,rl)=>new Q().setFromAxisAngle(AY,-yw*dr).multiply(new Q().setFromAxisAngle(AX,(-90-pt)*dr)).multiply(new Q().setFromAxisAngle(AY,rl*dr));
+  const pq=sw.parent?sw.parent.getWorldQuaternion(new Q()):new Q();
+  const dir=(yw,pt)=>new THREE.Vector3(0,-1,0).applyQuaternion(mkQ(yw,pt,B.roll||0)).applyQuaternion(pq);
+  const d0=dir(B.lag||0,B.pitch||0), dY=dir((B.lag||0)+5,B.pitch||0).sub(d0), dP=dir(B.lag||0,(B.pitch||0)+5).sub(d0);
+  const mag=clamp(rel*40,150,600)*(VB_CLASH.kick||1);
+  const yawV=(dY.lengthSq()>1e-8?away.dot(dY.normalize()):0)*mag;          // куди полетить вістря — числова похідна, без вгадування знаків
+  const pitchV=(dP.lengthSq()>1e-8?away.dot(dP.normalize()):0)*mag;
+  const vel=away.clone().applyQuaternion(pq.clone().invert()).multiplyScalar(clamp(0.5+rel*0.12,0.5,2.0)*(VB_CLASH.kick||1));
+  return {yawV,pitchV,vel,bodyV:(rel>10?Math.sign(yawV||1)*80:0)};
+}
 function swordClashTick(dt){
   const S=VB_RIG.player; if(!VB_RIG.on||!S||!S.rig||player.dead||player.disarmed) return;
   const sw=S.rig.sword; if(!sw.root.visible) return;
@@ -4052,10 +4128,14 @@ function swordClashTick(dt){
       const A=S.arm||(S.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
       A.vel.add(away.clone().applyAxisAngle(Y,rot).multiplyScalar(clamp(0.6+rel*0.18,0.6,2.4))); A.still=0;
       const bd=t.clone().sub(g).normalize(), axis=new THREE.Vector3().crossVectors(bd,away);
-      if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*3.5,12,50)*Math.PI/180); S.kickT=1; }
+      if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*6*(VB_CLASH.kick||1),20,80)*Math.PI/180); S.kickT=1; }
       S.recoil=clamp(0.45+rel*0.06,0.45,1);
     }catch(e){}
-    if((enemyStrikes || imp>0.6) && S.ctl && S.ctl.state!=='LOOSE'){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', Math.max(imp,0.5), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    if(enemyStrikes || imp>0.6){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', clashImpulse(S,away,rel), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    try{ if(ph._rigS) ph._rigS.recoil=1; }catch(e){}                                              // ворога теж відкидає — видно
+    if(vP>vE+2){ const sx=Math.sign(ph.gx-player.gx), sy=Math.sign(ph.gy-player.gy); const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+      if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; logE('ворога відкинуло на клітинку'); } }
+    try{ if(CLING.list.length) clingShake({position:c.p}); }catch(e){}                           // об чужий клинок струшується повзун
     if(typeof clinch!=='undefined' && clinch.active && enemyStrikes){ try{ endClinch('clash'); }catch(e){} }   // його удар розриває клінч — тримати телефон нерухомо більше не «перемога»
     ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
     try{ MUSICFX.hit('SWORD', clamp(0.5+imp*0.5,0,1), c.p.x,c.p.y,c.p.z); }catch(e){}
@@ -4206,7 +4286,7 @@ function updatePhantoms(dt){
         const dmg = ph.kind==='flyer'?8:13;       // укус повзуна ощутимее: реген его не съедает
         if(tgt.local && !player.dead){
           damageTier(player, bt, dmg); ai.burnCd=0.8; doFlash('#f97316'); buzz(40);
-          if(ph.kind==='crawler' && Math.random()<0.35) clingAttach(ph);   // (09-22b) чіпляється за клинок
+
           if(bt===0) addExhaustion(player, 12);   // укусы утомляют → реген глохнет → дренаж копится
           logE((ph.kind==='flyer'?'літун жалить ярус 2 → HP ':'повзун кусає ярус 0 → ВИТР ')
             + Math.round(bt===0?player.stamina:player.hp));
@@ -4809,7 +4889,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22f · КІМНАТИ: кільце стін, 4 двері посередині сторін, лабіринт між кімнатами (закриті — кристалічна печать), шаблони (зал/хрест/галерея/келії/цитадель · гай/двір/кар\'єр/святилище), двері на мінімапі · будь-який блок може бути незнищенним · видимий відскік при зіткненні клинків · джойстик у меню паузи';
+const BUILD_TAG='2026-09-22g · стіни на крайніх клітинках, спільні з сусідом (двері — у стіні) · зіткнення клинків відкидає по-справжньому · голоси матеріалів сильніші + вібрація за матеріалом + зачинені двері впізнавані · гуманоїд: гул клинка, дихання, серцебиття, кашель · повзун чіпляється, коли його б\'єш · лінійний рух ×1.5';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5591,6 +5671,7 @@ function frame(now){
     if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
   try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
+  try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   renderRemotes(now, dt);              // чужие игроки
@@ -6515,7 +6596,7 @@ function labLiveStep(dt){
         if(d>reach*1.02){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); } }
       const dq=THREE.Quaternion, ax=new THREE.Vector3(1,0,0), ay=new THREE.Vector3(0,1,0);
       const mkQ=(yw,pt,rl)=>new dq().setFromAxisAngle(ay,-yw*dr).multiply(new dq().setFromAxisAngle(ax,(-90-pt)*dr)).multiply(new dq().setFromAxisAngle(ay,rl*dr));
-      const qI=mkQ(lagI,pitchA,rollA); LAB.intendQ=qI.clone();
+      const qI=mkQ(lagI,pitchA-(LAB.isGame?(VB_WEAPON.sag||0):0),rollA); LAB.intendQ=qI.clone();   // (09-22g) повзун на лезі — вістря провисає
       const resolvePen=()=>{                                              // меч не входить у неруйнівне: виштовхування по нормалі
         LAB.intendedDepth=0;
         for(let it=0;it<3;it++){
@@ -6529,7 +6610,9 @@ function labLiveStep(dt){
           sw.position.add(new THREE.Vector3().copy(h.n).multiplyScalar(push));
         } };
       if(C.state==='SYNC'){
-        sw.position.copy(anchor); sw.quaternion.copy(qI);
+        sw.position.copy(anchor);
+        if(LAB.isGame && (VB_WEAPON.mass||1)>1.05){ LAB.qLag=LAB.qLag?LAB.qLag.slerp(qI,clamp(dt*14/(VB_WEAPON.mass||1),0,1)):qI.clone(); sw.quaternion.copy(LAB.qLag); }   // важкий — відстає
+        else { LAB.qLag=null; sw.quaternion.copy(qI); }
         if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
         resolvePen();
         const ctType=LAB.contact?LAB.contact.type:'';
@@ -6710,7 +6793,7 @@ const VB_PRED={ k:1.0 };   // 0 — без прогнозу гіроскопом
 const VB_YAW={ gyro:1.0, inGame:0, tau:12.0, deadErr:25, sign:1, holdRate:25, holdT:0, winC:0, winG:0, winA:0, winT:0, prevC:null, bad:0, agree:0, disagree:0, decided:false, lostT:0 };
 window.VB_YAW=VB_YAW;
 window.VB_ANG=VB_ANG;
-const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
+const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
   moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
   lim:{x:0.60, yMin:-0.90, yMax:0.80, zMin:-0.40, zMax:0.70} };
@@ -6748,7 +6831,7 @@ function labArmTick(I,N,bodyRel,dt){
         // посилення по напрямках (у системі тіла: вперед +z, праворуч -x, вгору +y)
         a.z*= a.z>0 ? VB_ARM.gFwd : VB_ARM.gBack;
         a.x*= a.x<0 ? VB_ARM.gRight : VB_ARM.gLeft;
-        a.y*= a.y>0 ? VB_ARM.gUp : VB_ARM.gDown; }
+        a.y*= a.y>0 ? VB_ARM.gUp : VB_ARM.gDown; a.multiplyScalar(VB_ARM.gAll||1); }   // (09-22g) загальна чутливість лінійного руху
   const wMove=clamp(a.length()/Math.max(VB_ARM.gain,0.1)/1.5,0,1);                 // 0 — спокій, 1 — упевнений рух
   A.wS=(A.wS==null?wMove:A.wS)+(wMove-(A.wS==null?wMove:A.wS))*clamp(dt/0.09,0,1);   // згладжена вага (~90 мс)
   A.still = A.wS>0.08 ? 0 : A.still+dt;
@@ -7215,6 +7298,7 @@ function rigNpcTick(av, dt, opts){
   else if(av.painT>0) P=labResolve({p:'HIT'});
   else P=labResolve({p:'COMBAT_READY'});
   /* (09-22d) плавність: поза не стрибає, а доганяє ціль — бос неповороткий, боєць швидкий, наставник між ними */
+  S.recoil=Math.max(0,(S.recoil||0)-dt*2.5);                                   // (09-22g) віддача після зіткнення згасає
   const rate=clamp(dt*(av.boss?6:(av.ally?9:12))*(av.swingSpeed||1),0,1);
   S.poseS = S.poseS ? labLerpPose(S.poseS,P,rate) : P;
   const prev=LAB; LAB=S;
@@ -7235,25 +7319,27 @@ const MUSICFX={ b:{}, cur:null, _main:null,
   ensure(){
     const R=AUDIO.ritual; if(!R||!AC||!R.lp) return false; if(this.b.STONE) return true;
     const chain=(nodes)=>{ for(let i=0;i<nodes.length-1;i++) nodes[i].connect(nodes[i+1]); return {inp:nodes[0],out:nodes[nodes.length-1]}; };
-    const mk=(name,nodes,hold,rel)=>{ const g=AC.createGain(); g.gain.value=0; const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=1.5; p.rolloffFactor=1.0;
-      const ch=nodes.length?chain(nodes):null; if(ch){ R.lp.connect(ch.inp); ch.out.connect(p); } else R.lp.connect(p);
-      p.connect(g); g.connect(R.limiter); this.b[name]={g,p,hold,rel}; };
-    // камінь: хрускіт, глухо, коротко
-    mk('STONE',[this.shaper(7), this.filt('lowpass',480,3)],0.04,0.16);
-    // дерево: без найнижчих і без верху, м'яко
-    mk('WOOD',[this.filt('highpass',220,0.8), this.filt('lowpass',2000,1), this.shaper(2)],0.06,0.30);
-    // метал: деренчить пилкою, довгий хвіст, чути мелодію
-    mk('METAL',[this.shaper(4), this.filt('highpass',450,0.9), this.filt('peaking',2600,5,9)],0.25,1.3);
-    mk('GROUND',[this.filt('lowpass',240,1)],0.03,0.10);
-    // листя: лише верх, шелест, миттєво
-    mk('LEAF',[this.filt('highpass',1800,0.7), this.filt('lowpass',7000,0.7)],0.02,0.12);
-    // кристал: дзвінкий вузький пік, довгий хвіст
-    mk('CRYSTAL',[this.filt('bandpass',3200,12)],0.1,1.6);
-    // скло: тонкий дзвін, коротше за кристал
-    mk('GLASS',[this.filt('bandpass',4200,8)],0.05,0.6);
-    mk('BODY',[this.filt('lowpass',420,1)],0.05,0.20);
+    const mk=(name,nodes,hold,rel,mu)=>{ const g=AC.createGain(); g.gain.value=0; const p=AC.createPanner(); p.panningModel='HRTF'; p.distanceModel='inverse'; p.refDistance=1.5; p.rolloffFactor=1.0;
+      const m=AC.createGain(); m.gain.value=mu||1;
+      const ch=Array.isArray(nodes)?(nodes.length?chain(nodes):null):nodes; if(ch){ R.lp.connect(ch.inp); ch.out.connect(m); } else R.lp.connect(m);
+      m.connect(p); p.connect(g); g.connect(R.limiter); this.b[name]={g,p,hold,rel}; };
+    const crush=(steps)=>{ const w=AC.createWaveShaper(); const N=1024,c=new Float32Array(N); for(let i=0;i<N;i++){ const x=i/(N-1)*2-1; c[i]=Math.round(x*steps)/steps; } w.curve=c; return w; };
+    const par=(list)=>{ const inp=AC.createGain(), out=AC.createGain(); for(const n of list){ inp.connect(n); n.connect(out); } return {inp,out}; };
+    // (09-22g) камінь: хрускіт — жорстке перевантаження + «сходинки» + глухий низ
+    mk('STONE',[this.shaper(30), crush(4), this.filt('lowpass',380,8)],0.05,0.14,1.4);
+    // дерево: порожнистий стук — резонанс корпусу 520 Гц, без низу й верху
+    mk('WOOD',[this.filt('bandpass',520,5), this.shaper(4), this.filt('lowpass',1500,1)],0.07,0.28,2.2);
+    // метал: деренчить — перевантаження, два гострі резонанси, довгий хвіст
+    mk('METAL',[this.shaper(10), this.filt('highpass',700,0.9), this.filt('peaking',2600,18,18), this.filt('peaking',5200,12,10)],0.3,1.8,1.1);
+    mk('GROUND',[this.filt('lowpass',140,2), this.shaper(3)],0.03,0.10,2.0);
+    // листя: шелест — лише верх, шум сходинок
+    mk('LEAF',[this.filt('highpass',3500,0.7), this.shaper(20), crush(3)],0.02,0.10,1.6);
+    // кристал: дзвін квінтою — два дуже вузькі піки паралельно, довгий хвіст
+    mk('CRYSTAL',par([this.filt('bandpass',3150,30), this.filt('bandpass',4720,30)]),0.12,2.5,6);
+    mk('GLASS',[this.filt('bandpass',5200,25)],0.05,0.6,5);
+    mk('BODY',[this.filt('bandpass',260,3), this.shaper(2)],0.05,0.20,2.5);
     // клинок об клинок: сухий трек, повністю, довго
-    mk('SWORD',[],0.4,2.0);
+    mk('SWORD',[],0.4,2.0,1);
     logE('МУЗИКА: гілки матеріалів зібрано (камінь/дерево/метал/земля/тіло/клинок)');
     return true;
   },
@@ -7269,12 +7355,30 @@ const MUSICFX={ b:{}, cur:null, _main:null,
     if(this.cur && performance.now()-(this.curT||0)>250) this.release(); } // ковзання скінчилось — відпускаємо
 };
 window.MUSICFX=MUSICFX;
+/* (09-22g) ВІБРАЦІЯ МАТЕРІАЛУ: у кожного свій ритм — на дотик можна впізнати, що перед клинком */
+const HAPT_MAT={STONE:[45],WOOD:[25,35,25],METAL:[12,10,12,10,12,10,12],LEAF:[8,25,8,25,8],CRYSTAL:[15,70,15,70,15],GLASS:[10,40,10],GROUND:[60],BODY:[35,20,20],SOLID:[45]};
+function hapticMaterial(mat, strong){
+  const p=(HAPT_MAT[mat]||[40]).slice(); if(strong) p[0]=Math.round(p[0]*2.2);
+  try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){}
+}
+const SEAL={ t:0 };
+function sealedDoorCheck(CT){
+  const m=/^OBST_(\d+)_(\d+)$/.exec(CT.object||''); if(!m) return;
+  const gx=+m[1], gy=+m[2]; const door=(gx===6&&(gy===0||gy===12))||(gy===6&&(gx===0||gx===12)); if(!door) return;
+  const o=obstacleAt(gx,gy); if(!o||o.mtype!=='fragile') return;
+  const now=performance.now(); if(now-SEAL.t<3500) return; SEAL.t=now;
+  try{ const x=worldX(gx), z=worldZ(gy); spatialBlip(x,1.2,z,1320,0.9,'sine',0.14); setTimeout(()=>spatialBlip(x,1.2,z,1980,0.9,'sine',0.1),120); setTimeout(()=>spatialBlip(x,1.2,z,2640,1.1,'sine',0.07),240); }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate([80,60,80,60,80]); }catch(e){}
+  try{ ttsSpeak('Двері зачинені',{}); }catch(e){}
+  logE('ДВЕРІ ЗАЧИНЕНІ: кристалічна печать ('+gx+','+gy+')');
+}
 const REVEAL={
   I:new Float32Array(G*G), fronts:[], beatT:0, E:0, Es:0, on:false, floorBase:null, grid:null, ring:null, slideT:0, logT:0,
   bg0:null, fog0:null,
   pulse(wx,wz,R,amp,mat,v){ if(this.fronts.length>=8) this.fronts.shift(); this.fronts.push({x:wx,z:wz,R,amp:amp*VB_SONAR.gain,r:0,t:0,T:0.35+R*0.25,v:v||(R>=3?5:3),mat:mat||'STONE'}); },
   contact(CT){
     if(!CT||!CT.position) return; const p=CT.position, st=CT.postState||'', mat=CT.surfaceType||'STONE';
+    if(st==='IMPACT'||st==='CONTACT_START'){ try{ hapticMaterial(mat, st==='IMPACT'); sealedDoorCheck(CT); }catch(e){} }
     if(st==='IMPACT'){ this.pulse(p.x,p.z,3+clamp(CT.impulse||0,0,2),1.0,mat,5); this.evt='удар · '+mat; MUSICFX.hit(mat, clamp(0.45+(CT.impulse||0)/4,0,1), p.x,p.y,p.z); }
     else if(st==='CONTACT_START'){ this.pulse(p.x,p.z,1.2,0.6,mat,3); this.evt='дотик · '+mat; MUSICFX.hit(mat, clamp(0.25+(CT.pressure||0)*0.3,0,0.7), p.x,p.y,p.z); }
     else if(st==='CONTACT_SLIDE'){ this.slideT+=0.016; if(this.slideT>0.08){ this.slideT=0; this.pulse(p.x,p.z,0.7,0.45,mat,2.5); } MUSICFX.sustain(mat, clamp(0.2+(CT.tangentialSpeed||0)/8,0,0.6), p.x,p.y,p.z); }
@@ -7452,11 +7556,12 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH};
 const SENS_SLIDERS=[
   ['РИГ · МАЯК · ОРІЄНТАЦІЯ (09-21)'],
   ['VB_MOVE.joy','Рух: джойстик (1) / свайпи (0) — проба',0,1,1],
   ['VB_ROOMS.on','Кімнати: структуровані з дверима (1) / випадкові (0)',0,1,1],
+  ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,3,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_RIG.npcBeam','Промінь клинка в NPC (1/0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
