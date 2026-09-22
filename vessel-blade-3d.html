@@ -1490,7 +1490,7 @@ function makePhantom(i, kind){
   ph.voiceT = Math.random();
   if(ph.kind==='crawler'){ ph.hp=40; ph.noBlade=true;
     try{ ph.mesh.scale.set(0.55,0.35,0.55); }catch(e){} }
-  else if(ph.kind==='flyer'){ ph.hp=35; ph.noBlade=true; ph.hover=TIER_H*1.7;
+  else if(ph.kind==='flyer'){ ph.hp=22; ph.noBlade=true; ph.hover=TIER_H*1.7;   // (09-22c) комар: найменше HP, найшвидший
     try{ ph.mesh.scale.set(0.45,0.45,0.45); }catch(e){} }
   else if(ph.kind==='gunner'){ ph.hp=55; ph.noBlade=true; ph.wpn='blaster'; ph.shootT=1.6+Math.random();
     try{ ph.mesh.scale.set(0.8,0.85,0.8); }catch(e){} }
@@ -3882,7 +3882,8 @@ function entVoiceTick(ph, dt){
   const k=ph.kind||'fighter';
   try{
     if(k==='crawler'){ if(ph.voiceT<=0){ ph.voiceT=ph.aware?0.3:0.55; spatialBlip(x,0.15,z, 90+Math.random()*60, 0.05, 'square', 0.16); } }
-    else if(k==='flyer'){ if(ph.voiceT<=0){ ph.voiceT=0.14; spatialBlip(x,1.7,z, 1100+Math.random()*300, 0.12, 'sawtooth', 0.045); } }
+    else if(k==='flyer'){ if(ph.voiceT<=0){ ph.voiceT=0.14; const fd=DIRV[player.dirIdx||0]||[0,1]; const behind=((ph.gx-player.gx)*fd[0]+(ph.gy-player.gy)*fd[1])<0 && d<=2;
+      spatialBlip(x,1.7,z, (behind?1500:1100)+Math.random()*300, 0.12, 'sawtooth', behind?0.06:0.045); } }
     else if(k==='boss'){ if(moved) spatialBlip(x,0.3,z, 55, 0.35, 'triangle', 0.35); if(ph.voiceT<=0){ ph.voiceT=2.2; spatialBlip(x,1.8,z, 140, 0.5, 'sawtooth', 0.14); } }
     else if(k==='gunner'){ if(moved) spatialBlip(x,0.2,z, 130, 0.09, 'triangle', 0.14); if(ph.shootT!=null && ph.shootT<1.0 && ph.voiceT<=0){ ph.voiceT=0.25; spatialBlip(x,1.0,z, 600+(1-ph.shootT)*900, 0.12, 'sine', 0.1); } }
     else { if(moved) spatialBlip(x,0.2,z, 110+Math.random()*30, 0.1, 'triangle', 0.16);          // крок гуманоїда
@@ -4011,7 +4012,34 @@ function updatePhantoms(dt){
     if(!ph.aware && !ph.allyMad && !ph.boss){ phantomWander(ph, dt, tgt); continue; }   // (09-22b) ще не помітив — шукає (бос і збожеволілий наставник знають завжди)
     if(!tgt){ ph.hitActive=false; if(ai.windT<=0) ph.swordLen=lerp(ph.swordLen,1,dt*1.5); continue; }
     // ── НЕСТАНДАРТНЫЕ ВИДЫ: своя логика, мимо меч-конвейера ──
-    if(ph.kind==='crawler' || ph.kind==='flyer'){
+    /* (09-22c) ЛІТУН — комар: найменше здоров'я, найшвидший, заходить ЗІ СПИНИ. Якщо ціль
+       дивиться на нього — не лізе в лоб, а облітає боком; жалить лише ззаду або збоку. */
+    if(ph.kind==='flyer'){
+      ph.hitActive=false;
+      const d0=Math.max(Math.abs(tgt.gx-ph.gx),Math.abs(tgt.gy-ph.gy));
+      const fdir = tgt.local ? (DIRV[player.dirIdx||0]||[0,1]) : [0,1];
+      const toMe=[ph.gx-tgt.gx, ph.gy-tgt.gy];
+      const inFront=(toMe[0]*fdir[0]+toMe[1]*fdir[1])>0;
+      if(ai.moveT<=0){
+        ai.moveT=0.3*(0.8+Math.random()*0.4);
+        if(ai.side===undefined) ai.side=Math.random()<0.5?1:-1;
+        let goal=[clamp(tgt.gx-fdir[0],0,12), clamp(tgt.gy-fdir[1],0,12)];                 // клітинка за спиною
+        if(inFront && d0<=2){ goal=[clamp(tgt.gx-fdir[1]*ai.side*2,0,12), clamp(tgt.gy+fdir[0]*ai.side*2,0,12)]; if(Math.random()<0.15) ai.side=-ai.side; }   // на нього дивляться — облітає боком
+        const sx=Math.sign(goal[0]-ph.gx), sy=Math.sign(goal[1]-ph.gy);
+        const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
+        const free=!(phantomAtCell(nx,ny)&&phantomAtCell(nx,ny)!==ph) && !(player.gx===nx&&player.gy===ny);
+        if(free && (nx!==ph.gx||ny!==ph.gy)){ ph.gx=nx; ph.gy=ny; }
+        else { const ax=clamp(ph.gx+(Math.random()<0.5?1:-1),0,12), ay=clamp(ph.gy+(Math.random()<0.5?1:-1),0,12);
+               if(!(phantomAtCell(ax,ay)&&phantomAtCell(ax,ay)!==ph) && !(player.gx===ax&&player.gy===ay)){ ph.gx=ax; ph.gy=ay; } }
+      }
+      if(ai.burnCd<=0 && d0<=1 && !inFront){
+        if(tgt.local && !player.dead){ damageTier(player, 2, 6); ai.burnCd=0.6; doFlash('#f97316'); buzz(30);
+          logE('літун жалить у спину → HP '+Math.round(player.hp)); }
+        else if(!tgt.local){ NET.sendHit(tgt.id, 2, 6, 'phantom'); ai.burnCd=0.6; }
+      }
+      continue;
+    }
+    if(ph.kind==='crawler'){
       ph.hitActive=false;
       const d0=Math.max(Math.abs(tgt.gx-ph.gx),Math.abs(tgt.gy-ph.gy));
       if(ai.moveT<=0){
@@ -4611,7 +4639,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22b · МАЯК: картинка не догори дриґом · СОНАР увімк: істоти — тінь поруч, видно лише у взаємодії · вороги спавняться далеко, спершу не знають про гравця, блукають і ЗВУЧАТЬ (крок/дихання/жук/літун/бос) · виявлення за шумом · перехід між кімнатами лише після відходу від краю · повзуни чіпляються за клинок';
+const BUILD_TAG='2026-09-22c · літун-комар: найменше HP, найшвидший, заходить зі спини, жалить лише ззаду · вороги чутно й далеко · сонар · повзуни на клинку · перехід між кімнатами після відходу від краю';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
