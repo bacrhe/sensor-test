@@ -3448,7 +3448,8 @@ function applyAdvRoom(rx,ry){
   ADV.rx=rx; ADV.ry=ry; ADV.edgeT=0; ADV.edgeDir=null;
   try{ worldAnchorsUpdate(); }catch(e){}
   try{ if(typeof WAVES!=='undefined'){ WAVES.left=0; WAVES.total=0; WAVES.betweenT=0; } }catch(e){}   // (09-22h) хвилі старої кімнати тут не спавнять
-  try{ if(typeof CLING!=='undefined'){ for(const p of CLING.list) p.clinging=false; CLING.list.length=0; VB_WEAPON.mass=1; VB_WEAPON.sag=0; } }catch(e){}
+  try{ if(typeof CLING!=='undefined'){ for(const p of CLING.list) p.clinging=false; CLING.list.length=0; VB_WEAPON.clingMass=0; VB_WEAPON.sag=0; } }catch(e){}
+  try{ if(typeof NGH!=='undefined') setTimeout(()=>{ try{ if(ADV.rx===rx&&ADV.ry===ry) neighborLifeBuild(rx,ry); }catch(e){} }, 50); }catch(e){}
   clearRacks(); clearShots();
   while(DROPS.length) removeDrop(DROPS[0]);   // оружие не путешествует между комнатами
   while(PICKUPS.length) removePickup(PICKUPS[0]);
@@ -3703,29 +3704,92 @@ function roomPlanOf(rx,ry){
   return list;
 }
 function neighborGhostsBuild(rx,ry){
-  if(GHOST.group){ scene.remove(GHOST.group); try{ GHOST.mesh.geometry.dispose(); GHOST.mesh.material.dispose(); }catch(e){} GHOST.group=null; GHOST.mesh=null; }
+  if(GHOST.group){ scene.remove(GHOST.group); GHOST.group.traverse(o=>{ try{ o.geometry&&o.geometry.dispose(); o.material&&o.material.dispose(); }catch(e){} }); GHOST.group=null; GHOST.mesh=null; }
   const R=(VB_WORLD.seamless?VB_WORLD.range:0)|0; if(!R || !(VB_ROOMS&&VB_ROOMS.on)) return;
-  const geo=new THREE.BoxGeometry(0.9,1,0.9);
-  const mat=new THREE.MeshBasicMaterial({color:0x2a3a55,transparent:true,opacity:0.55});
-  const mesh=new THREE.InstancedMesh(geo,mat,GHOST.cap); mesh.frustumCulled=false; mesh.count=0;
-  const M=new THREE.Matrix4(), col=new THREE.Color(); let n=0, rooms=0;
+  const pos=[], col=[], boxes=[]; let rooms=0;
+  const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
   for(let dx=-R;dx<=R;dx++) for(let dy=-R;dy<=R;dy++){
     if(!dx&&!dy) continue; const nx=rx+dx, ny=ry+dy; if(nx<0||nx>12||ny<0||ny>12) continue;
     const plan=roomPlanOf(nx,ny); rooms++;
     const ox=(nx-6)*12*CELL, oz=(ny-6)*12*CELL;
     for(const b of plan){
-      if(b.baseY>0) continue;
       const cx=(b.gx-CX)*CELL+ox, cz=(b.gy-CY)*CELL+oz;
-      // спільна стіна вже є у нашій кімнаті — не дублюємо
-      if(Math.abs(cx-WORLD.ox)<=6*CELL+0.01 && Math.abs(cz-WORLD.oz)<=6*CELL+0.01) continue;
-      const h=b.solid?TIER_H*2.2*(b.tall||1):TIER_H*1.2*(b.tall||1);
-      M.makeScale(1,h,1); M.setPosition(cx,h*0.5-0.45,cz); mesh.setMatrixAt(n,M);
-      col.set(b.solid?0x35507a:0x4a6a3a); mesh.setColorAt(n,col); n++; if(n>=GHOST.cap) break;
+      if(Math.abs(cx-WORLD.ox)<=6*CELL+0.01 && Math.abs(cz-WORLD.oz)<=6*CELL+0.01) continue;     // спільна стіна вже наша
+      const crown=b.baseY>0, h=crown?TIER_H*0.7:(b.solid?TIER_H*2.2*(b.tall||1):TIER_H*1.4*(b.tall||1));
+      const y0=crown?b.baseY-0.45:-0.45, y1=y0+h, w=crown?0.4:0.45;
+      const d=Math.hypot(cx-WORLD.ox, cz-WORLD.oz), k=clamp(1.25-d/30,0.25,1);
+      const c=new THREE.Color(crown?0x3fae54 : b.type==='fragile'?0xb07cff : b.type==='C'?0xa0703a : b.type==='Fe'?0x9fb3c8 : 0x5f86c0).multiplyScalar(k);
+      const V=[[cx-w,y0,cz-w],[cx+w,y0,cz-w],[cx+w,y0,cz+w],[cx-w,y0,cz+w],[cx-w,y1,cz-w],[cx+w,y1,cz-w],[cx+w,y1,cz+w],[cx-w,y1,cz+w]];
+      for(const [a,bb] of E){ pos.push(...V[a],...V[bb]); col.push(c.r,c.g,c.b,c.r,c.g,c.b); }
+      boxes.push([cx,y0,cz,h,crown]);
     }
   }
-  mesh.count=n; mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
-  const g=new THREE.Group(); g.add(mesh); scene.add(g); GHOST.group=g; GHOST.mesh=mesh;
-  logE('сусіди-тіні: кімнат '+rooms+' · блоків '+n+' · радіус '+R);
+  const g=new THREE.Group(); g.frustumCulled=false;
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  const lines=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:0.8,fog:false,depthWrite:false,blending:THREE.AdditiveBlending}));
+  lines.frustumCulled=false; g.add(lines);
+  const fill=new THREE.InstancedMesh(new THREE.BoxGeometry(0.9,1,0.9), new THREE.MeshBasicMaterial({color:0x0c1830,transparent:true,opacity:0.5,fog:false}), Math.max(1,boxes.length));
+  const M=new THREE.Matrix4(); boxes.forEach((b,i)=>{ M.makeScale(b[4]?0.8:1,b[3],b[4]?0.8:1); M.setPosition(b[0],b[1]+b[3]/2,b[2]); fill.setMatrixAt(i,M); });
+  fill.count=boxes.length; fill.frustumCulled=false; g.add(fill);
+  scene.add(g); GHOST.group=g; GHOST.mesh=fill;
+  logE('сусіди: кімнат '+rooms+' · блоків '+boxes.length+' · радіус '+R);
+}
+/* (09-22j) ЖИВІ СУСІДИ: у бойових кімнатах поруч вороги вже є — ходять і їх чутно крізь стіну (приглушено).
+   Заходиш — вони там, де ходили. */
+const NGH={ list:[], mesh:null, cleared:new Map() };
+function neighborLifeBuild(rx,ry){
+  NGH.list.length=0;
+  if(NGH.mesh){ scene.remove(NGH.mesh); try{ NGH.mesh.geometry.dispose(); NGH.mesh.material.dispose(); }catch(e){} NGH.mesh=null; }
+  if(!(VB_WORLD.seamless&&VB_ROOMS&&VB_ROOMS.on&&ADV.on)) return;
+  for(const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const nx=rx+dx, ny=ry+dy; if(nx<0||nx>12||ny<0||ny>12) continue;
+    if(chessWhite(nx,ny)||(nx===6&&ny===6)) continue;
+    const ck=nx+','+ny, ct=NGH.cleared.get(ck); if(ct && performance.now()-ct<120000) continue;
+    const kinds=composeRoomEnemies(nx,ny).slice(0,3);
+    const plan=roomPlanOf(nx,ny), blk=new Set(plan.filter(b=>b.solid&&!b.baseY).map(b=>b.gx+','+b.gy));
+    const r=mulberry32(nx*71+ny*13+Math.floor(performance.now()/1000));
+    for(const k of kinds){ let gx=6,gy=6; for(let t=0;t<20;t++){ gx=2+Math.floor(r()*9); gy=2+Math.floor(r()*9); if(!blk.has(gx+','+gy)) break; }
+      NGH.list.push({rx:nx,ry:ny,gx,gy,kind:k,t:r()*1.5,blk}); }
+  }
+  const geo=new THREE.BoxGeometry(0.34,1,0.34);
+  const mesh=new THREE.InstancedMesh(geo,new THREE.MeshBasicMaterial({color:0xb04050,transparent:true,opacity:0.55,fog:false}),Math.max(1,NGH.list.length));
+  mesh.count=NGH.list.length; mesh.frustumCulled=false; scene.add(mesh); NGH.mesh=mesh;
+  neighborLifeDraw();
+  if(NGH.list.length) logE('сусіди: ворогів за стінами '+NGH.list.length+' (їх чутно приглушено)');
+}
+function nghWorld(g){ return [(g.gx-CX)*CELL+(g.rx-6)*12*CELL, (g.gy-CY)*CELL+(g.ry-6)*12*CELL]; }
+function neighborLifeDraw(){
+  if(!NGH.mesh) return; const M=new THREE.Matrix4();
+  NGH.list.forEach((g,i)=>{ const [x,z]=nghWorld(g); const h=g.kind==='crawler'?0.35:(g.kind==='boss'?2.4:1.6), y=g.kind==='flyer'?1.5:h/2-0.45;
+    M.makeScale(g.kind==='boss'?2:1,h,g.kind==='boss'?2:1); M.setPosition(x,y,z); NGH.mesh.setMatrixAt(i,M); });
+  NGH.mesh.instanceMatrix.needsUpdate=true;
+}
+function neighborLifeTick(dt){
+  if(!NGH.list.length) return;
+  let moved=false;
+  for(const g of NGH.list){
+    g.t-=dt; if(g.t>0) continue;
+    g.t=(g.kind==='crawler'?0.55:g.kind==='flyer'?0.35:g.kind==='boss'?1.6:1.0)*(0.8+Math.random()*0.5);
+    const d=DIRV[(Math.random()*8)|0], nx=clamp(g.gx+d[0],1,11), ny=clamp(g.gy+d[1],1,11);
+    if(!g.blk.has(nx+','+ny)){ g.gx=nx; g.gy=ny; moved=true; }
+    const [x,z]=nghWorld(g);
+    try{                                                                     // приглушено — крізь стіну
+      if(g.kind==='crawler') spatialBlip(x,0.15,z,420+Math.random()*80,0.04,'square',0.05);
+      else if(g.kind==='flyer') spatialBlip(x,1.6,z,850+Math.random()*150,0.12,'sawtooth',0.025);
+      else if(g.kind==='boss') spatialNoise(x,0.2,z,380,1.5,0.3,0.14);
+      else spatialNoise(x,0.1,z,420,2,0.09,0.09);
+    }catch(e){}
+  }
+  if(moved) neighborLifeDraw();
+}
+function neighborHandOver(rx,ry){                                   // зайшов — вороги там, де ходили за стіною
+  const carry=NGH.list.filter(g=>g.rx===rx&&g.ry===ry); if(!carry.length) return;
+  let n=0;
+  for(const ph of phantoms){ if(ph.dead||ph.ally) continue;
+    const i=carry.findIndex(c=>c.kind===ph.kind); if(i<0) continue; const c=carry.splice(i,1)[0];
+    if(Math.max(Math.abs(c.gx-player.gx),Math.abs(c.gy-player.gy))<4) continue;
+    if(!isCellOccupied(c.gx,c.gy,ph)){ ph.gx=c.gx; ph.gy=c.gy; ph.vgx=c.gx; ph.vgy=c.gy; n++; } }
+  if(n) logE('вороги на місцях, де їх було чути: '+n);
 }
 function ensureStructRing(rx,ry){
   if(!(VB_ROOMS&&VB_ROOMS.on&&ADV.on)) return 0;
@@ -3859,6 +3923,7 @@ function updateAdventure(dt){
     // входим с противоположной кромки новой комнаты (структуровані — точно в протилежні двері)
     const opp=((VB_ROOMS&&VB_ROOMS.on)?{N:[6,12],S:[6,0],W:[12,6],E:[0,6]}:{N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]})[from];
     const c=freeSpawnCell(opp[0],opp[1],player); player.gx=c[0]; player.gy=c[1];
+    try{ neighborHandOver(nrx,nry); neighborLifeBuild(nrx,nry); }catch(e){}   // (09-22j) вороги, яких було чути, — на місцях; нові сусіди
     ADV.mustLeave=true; ADV.enterT=performance.now();       // (09-22b) назад — лише відійшовши й повернувшись до краю
     NET.advPub();                                           // консенсус комнаты для всех
   }
@@ -3980,7 +4045,7 @@ function clearClinch(){
   if(navigator.vibrate) navigator.vibrate(0);
 }
 function handleDeath(av, dt){
-  if(av.clinging && av.hp<=0){ av.clinging=false; try{ const i=CLING.list.indexOf(av); if(i>=0) CLING.list.splice(i,1); VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length; }catch(e){} }
+  if(av.clinging && av.hp<=0){ av.clinging=false; try{ const i=CLING.list.indexOf(av); if(i>=0) CLING.list.splice(i,1); VB_WEAPON.clingMass=0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length; }catch(e){} }
   if(av.dead){
     av.respawnT -= dt;
     if(av.respawnT<=0) respawn(av);
@@ -4150,14 +4215,14 @@ const CLING={ list:[] };
 function clingAttach(ph){
   if(ph.clinging||CLING.list.length>=3) return false;
   ph.clinging=true; CLING.list.push(ph); ph.hitActive=false;
-  VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
+  VB_WEAPON.clingMass=0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
   logE('повзун вчепився у клинок ('+CLING.list.length+') — струси ударом об стіну, чужий клинок або підлогу (присядь)');
   try{ showBanner('🪲 ПОВЗУН НА КЛИНКУ — струси ударом','#f59e0b'); buzz([0,60,40,60]); }catch(e){}
   return true;
 }
 function clingShake(CT){
   const ph=CLING.list.shift(); if(!ph) return;
-  ph.clinging=false; VB_WEAPON.mass=1+0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
+  ph.clinging=false; VB_WEAPON.clingMass=0.6*CLING.list.length; VB_WEAPON.sag=9*CLING.list.length;
   const p=CT&&CT.position; if(p){ const gx=clamp(cellOfX(p.x),0,12), gy=clamp(cellOfZ(p.z),0,12); const c=freeSpawnCell(gx,gy,ph); ph.gx=c[0]; ph.gy=c[1]; }
   damageTier(ph,1,18); ph.painT=0.4; ph._showT=0.5; ph.aware=true;
   logE('повзуна струшено з клинка'+(ph.hp<=0?' — розчавлено':''));
@@ -4165,7 +4230,7 @@ function clingShake(CT){
 }
 function clingTick(dt){
   if(!CLING.list.length) return;
-  if(player.dead||player.disarmed){ for(const ph of CLING.list.slice()){ ph.clinging=false; } CLING.list.length=0; VB_WEAPON.mass=1; VB_WEAPON.sag=0; return; }
+  if(player.dead||player.disarmed){ for(const ph of CLING.list.slice()){ ph.clinging=false; } CLING.list.length=0; VB_WEAPON.clingMass=0; VB_WEAPON.sag=0; return; }
   let tip=null;
   try{ const S=VB_RIG.player; if(VB_RIG.on&&S&&S.rig){ const sw=S.rig.sword; tip=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL*0.7,0)); } }catch(e){}
   if(!tip){ try{ const H=handInfo(player); tip=new THREE.Vector3(lerp(H.hx,H.tipX,0.7),lerp(H.hy,H.tipY,0.7),lerp(H.hz,H.tipZ,0.7)); }catch(e){} }
@@ -4999,7 +5064,7 @@ try{ $('mVib').onclick=()=>{ let r='API_ABSENT'; try{ if('vibrate' in navigator)
   logE('ВІБРО-ТЕСТ з меню: navigator.vibrate(500) → '+r+' · API='+('vibrate' in navigator)+' · UA='+navigator.userAgent.slice(0,80)); }; }catch(e){}
 $('mAdv').onclick=()=>{ ADV.on=!ADV.on;
   $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): '+(ADV.on?'УВІМК':'ВИМК');
-  if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); }   // новый забег — чистые моды
+  if(ADV.on){ player.mods={dmg:1,charge:1,reach:0}; applyAdvRoom(6,6); NET.advPub(); try{ neighborLifeBuild(6,6); }catch(e){} }   // новый забег — чистые моды
   else { clearRacks(); clearShots(); try{scene.background=new THREE.Color(0x050510);}catch(e){} spawnObstacles(); spawnPhantoms(phantomCount=1); $('mPhan').textContent='☠ ФАНТОМОВ: 1'; }
   logE('пригода: '+(ADV.on?'ВКЛ (метасетка 13×13)':'ВЫКЛ')); };
 $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
@@ -5007,7 +5072,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22i · БЕЗШОВНИЙ СВІТ: кімнати на одній карті (зсув 12 кл.), двері миттєві без стрибка камери, сусіди-тіні з радіусом · голоси матеріалів для динаміка телефона + транзієнти · наставник б\'ється видимо, парирує, клинок об клинок · камери: зверху (північ угорі), фіксована; рух відносно екрана · МАЯК плавно за креном · кромка перевіряється кожні 2 с';
+const BUILD_TAG='2026-09-22j · NPC: лише риг (без рожевого «таза» й променя) · сусідні кімнати — яскравий каркас · вороги за стінами ходять і звучать, при вході — на тих самих місцях · маса меча: ваша + повзуни окремо · рикошет один на удар · типові = ваш VB_SENS_CFG · безшовний світ · камери зверху/фіксована · МАЯК плавно';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5790,6 +5855,7 @@ function frame(now){
   }
   try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
   try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
+  try{ neighborLifeTick(dt); }catch(e){}                     // (09-22j) вороги за стінами ходять і звучать
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   try{ npcClashTick(dt); }catch(e){}                                                                    // (09-22i) наставник × ворог
@@ -5845,6 +5911,7 @@ function frame(now){
   if(introT>0){ introT-=dt; if(introT<=0){ $('intro').style.opacity='0'; setTimeout(()=>$('intro').style.display='none',700);} }
 
   updateSparks(dt);
+  try{ rigNpcFinalize(); }catch(e){}                   // (09-22j) лише риг у NPC
   composer.render();
 }
 
@@ -6730,7 +6797,7 @@ function labLiveStep(dt){
         } };
       if(C.state==='SYNC'){
         sw.position.copy(anchor);
-        if(LAB.isGame && (VB_WEAPON.mass||1)>1.05){ LAB.qLag=LAB.qLag?LAB.qLag.slerp(qI,clamp(dt*14/(VB_WEAPON.mass||1),0,1)):qI.clone(); sw.quaternion.copy(LAB.qLag); }   // важкий — відстає
+        if(LAB.isGame && (VB_WEAPON.clingMass||0)>0.05){ LAB.qLag=LAB.qLag?LAB.qLag.slerp(qI,clamp(dt*14/(1+VB_WEAPON.clingMass),0,1)):qI.clone(); sw.quaternion.copy(LAB.qLag); }   // повзуни на лезі — відстає
         else { LAB.qLag=null; sw.quaternion.copy(qI); }
         if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
         resolvePen();
@@ -6778,7 +6845,7 @@ function labLiveStep(dt){
       /* МАСА: кутова швидкість наміру × маса / сила — понад межу хват зривається */
       { const rate=Math.abs(angDiff(lagI,LAB.prevLagI==null?lagI:LAB.prevLagI))/Math.max(dt,0.001); LAB.prevLagI=lagI;
         LAB.swingRate=(LAB.swingRate||0)*0.7+rate*0.3;
-        const limit=VB_WEAPON.maxRate*VB_WEAPON.strength/Math.max(VB_WEAPON.mass,0.2);
+        const limit=VB_WEAPON.maxRate*VB_WEAPON.strength/Math.max(VB_WEAPON.mass+(VB_WEAPON.clingMass||0),0.2);
         if(C.state==='SYNC' && LAB.swingRate>limit){
           LAB.overT=(LAB.overT||0)+dt;
           if(LAB.overT>0.12) labLoseControl('ривок важким клинком ('+Math.round(LAB.swingRate)+'°/с > '+Math.round(limit)+')',
@@ -6850,7 +6917,8 @@ function labContactTick(dt){
   LAB.helpers.contact.position.copy(CT.position); LAB.helpers.contact.visible=true;
   LAB.contactState=CT.postState; LAB.contact=CT;
   if(CT.postState==='IMPACT'){ LAB.recoil=clamp(0.4+CT.normalSpeed*0.15,0.4,1); labCycleMark('IMPACT');
-    if(LAB.swordFree){                                               // (09-14c) РИКОШЕТ: швидкий удар — меч відскакує, не прилипає
+    const _rn=performance.now(), _rOk=(_rn-(LAB.ricoT||0))>250; if(_rOk) LAB.ricoT=_rn;   // (09-22j) один рикошет на удар
+    if(LAB.swordFree && _rOk){                                               // (09-14c) РИКОШЕТ: швидкий удар — меч відскакує, не прилипає
       const bodyRel=(LAB.liveBlade&&LAB.liveBlade.body)||0;
       const nL=CT.normal.clone().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);   // нормаль у системі тіла
       const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -7331,7 +7399,7 @@ window.labEnter=labEnter;
    Гравець: той самий LIVE-крок, що в лабораторії (labLiveStep + labContactTick), над станом
    PLAYER_RIG — LAB підміняється на нього на час кроку. Наставник, фантоми-бійці, інші гравці:
    риг у позі (COMBAT_READY / ланцюг удару / HIT / DEATH), причеплений у їхній av.mesh. */
-const VB_RIG={ on:1, npcBeam:0, player:null };
+const VB_RIG={ on:1, npcBeam:0, player:null };   // промінь NPC вимкнено: риг має справжній клинок
 window.VB_RIG=VB_RIG;
 function rigStateNew(profile,obj){
   return { rig:null, obj, profile, flags:{sensor:true}, swordFree:false, warn:[], recoil:0, body:{visYaw:0},
@@ -7387,6 +7455,25 @@ function rigPlayerTick(dt){
   // сонар: тіло — слабке власне світло (тест), клинок — за швидкістю та контактом
   if(VB_SONAR.on){ const sp=S.speedS||0; rigSetOpacity(S.rig, VB_SONAR.self, clamp(0.15+sp/2.5+(S.contact?0.5:0),0.15,1)); }
   else rigSetOpacity(S.rig,1,1);
+}
+/* (09-22j) Старе блочне тіло інколи вмикається назад іншим кодом (allyTick, анімації) — рожевий «таз» і
+   промінь поверх рига. Тепер перед КОЖНИМ кадром: у NPC з ригом видно лише риг і ауру наставника. */
+function rigNpcFinalize(){
+  if(!VB_RIG.on) return;
+  const all=[...phantoms, ...(ALLY&&ALLY.ph&&!phantoms.includes(ALLY.ph)?[ALLY.ph]:[])];
+  try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(r&&r.av) all.push(r.av); } }catch(e){}
+  for(const av of all){
+    const S=av&&av._rigS; if(!S||!av.mesh) continue;
+    const rigRoot=S.rig.root;
+    av.mesh.traverse(o=>{
+      if(!o.isMesh&&!o.isLineSegments) return;
+      let p=o, inRig=false; while(p&&p!==av.mesh){ if(p===rigRoot){ inRig=true; break; } p=p.parent; }
+      if(inRig) return;
+      if(o===av.auraRing) return;
+      o.visible=false;
+    });
+    if(!VB_RIG.npcBeam){ if(av.blade) av.blade.visible=false; if(av.blade2) av.blade2.visible=false; }
+  }
 }
 function rigNpcEnsure(av, profile, hue){
   if(av._rigS) return av._rigS;
@@ -7763,6 +7850,8 @@ function sensSettingsOpen(){
 }
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 
+/* (09-22j) типові = VB_SENS_CFG від 22.09 (без променя NPC — з ригом він дублює меч) */
+try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 1, "VB_ARM.gAll": 2.5, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 1, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1.9, "VB_CAM.enterDeg": 55, "VB_CAM.exitDeg": 35, "VB_CAM.holdS": 0.25, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 2.45, "VB_SONAR.memory": 0.26, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.7, "VB_SONAR.shadow": 3, "VB_MUSIC.gain": 0.3, "VB_ARM.gFwd": 2, "VB_ARM.gBack": 2.2, "VB_ARM.gRight": 2.3, "VB_ARM.gLeft": 2.3, "VB_ARM.gUp": 2, "VB_ARM.gDown": 2.6, "VB_ARM.dead": 0.34, "VB_ARM.holdT": 7, "VB_ARM.kReturn": 1, "VB_ARM.tiltCouple": 0.5, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 70, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.19, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 180, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 3.8, "VB_WEAPON.mass": 3, "VB_WEAPON.strength": 1}; for(const k in D){ try{ sensSet(k,D[k]); }catch(e){} } }catch(e){}
 try{ sensSettingsLoad(); }catch(e){}
 
 requestAnimationFrame(frame);
@@ -9858,6 +9947,7 @@ function wavesTick(dt){
   WAVES.betweenT=0; WAVES.left--;
   if(WAVES.left<=0){
     logE('хвилі: кімнату зачищено (R'+WAVES.R+')');
+    try{ NGH.cleared.set(ADV.rx+','+ADV.ry, performance.now()); }catch(e){}
     if(WAVES.R>=7) allyGoMad();                       // край: супутник стає босом
     return;
   }
