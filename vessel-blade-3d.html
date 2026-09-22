@@ -211,6 +211,7 @@ h1 span{color:#1e3a5f;font-size:10px}
   <button id="mVib">🔔 ВІБРО-ТЕСТ 500мс (прямо з кліку)</button>
   <button id="mSensCfg">🎚 ЧУТЛИВІСТЬ СЕНСОРІВ</button>
   <button id="mFull">⛶ ПОВНИЙ ЕКРАН</button>
+  <button id="mJoy">🕹 РУХ: СВАЙПИ</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
@@ -1505,7 +1506,7 @@ function spawnCellFar(i){
   const px=(player&&player.gx!=null)?player.gx:6, py=(player&&player.gy!=null)?player.gy:6;
   const cands=PH_STARTS.concat([[6,6],[4,6],[8,6],[6,4],[6,8],[4,4],[8,8],[4,8],[8,4]]);
   const scored=cands.map(c=>{ const d=Math.max(Math.abs(c[0]-px),Math.abs(c[1]-py)); const toC=Math.max(Math.abs(c[0]-6),Math.abs(c[1]-6)); return {c,d,toC}; })
-    .filter(o=>o.d>=5).sort((a,b)=>(a.toC-b.toC)||(b.d-a.d));
+    .filter(o=>o.d>=5 && (!(VB_ROOMS&&VB_ROOMS.on) || (o.c[0]>=2&&o.c[0]<=10&&o.c[1]>=2&&o.c[1]<=10))).sort((a,b)=>(a.toC-b.toC)||(b.d-a.d));
   if(!scored.length) return [6,6];
   const k=Math.min(scored.length-1, i%Math.max(1,Math.min(4,scored.length)));
   return scored[k].c;
@@ -2979,6 +2980,44 @@ function roomStyle(rx,ry){
 }
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
+/* (09-22f) СТРУКТУРОВАНІ КІМНАТИ: кільце стін, 4 двері посередині сторін (завжди в тих самих місцях),
+   між кімнатами — лабіринт: не всі сусіди з'єднані. Закриті двері — кристалічна печать (дзвенить).
+   var — щоб ранні виклики (isCellOccupied під час ініціалізації) не впали в TDZ. */
+var VB_ROOMS={ on:1, loops:0.18, seed:20260922 };
+var ROOM_LAYOUT_V=2;
+var ROOMMAZE={ open:null };
+window.VB_ROOMS=VB_ROOMS;
+function roomMazeBuild(){
+  const open=new Set(), rng=mulberry32(VB_ROOMS.seed|0);
+  const K=(ax,ay,bx,by)=>(ax<bx||ay<by)?(ax+','+ay+'|'+bx+','+by):(bx+','+by+'|'+ax+','+ay);
+  const seen=new Set(['6,6']), stack=[[6,6]];
+  while(stack.length){ const [x,y]=stack[stack.length-1];
+    const nb=[[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>[x+dx,y+dy]).filter(([a,b])=>a>=0&&a<=12&&b>=0&&b<=12&&!seen.has(a+','+b));
+    if(!nb.length){ stack.pop(); continue; }
+    const [nx,ny]=nb[Math.floor(rng()*nb.length)]; open.add(K(x,y,nx,ny)); seen.add(nx+','+ny); stack.push([nx,ny]); }
+  for(let x=0;x<13;x++) for(let y=0;y<13;y++){ if(x<12&&rng()<VB_ROOMS.loops) open.add(K(x,y,x+1,y)); if(y<12&&rng()<VB_ROOMS.loops) open.add(K(x,y,x,y+1)); }
+  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) open.add(K(6,6,6+dx,6+dy));    // дім — усі 4 двері
+  ROOMMAZE.open=open;
+}
+function doorOpen(rx,ry,dir){
+  if(!ROOMMAZE.open) roomMazeBuild();
+  const d={N:[0,-1],S:[0,1],W:[-1,0],E:[1,0]}[dir]; if(!d) return false;
+  const nx=rx+d[0], ny=ry+d[1]; if(nx<0||nx>12||ny<0||ny>12) return false;
+  return ROOMMAZE.open.has((rx<nx||ry<ny)?(rx+','+ry+'|'+nx+','+ny):(nx+','+ny+'|'+rx+','+ry));
+}
+function structEdgeBlocked(gx,gy){
+  if(!(VB_ROOMS&&VB_ROOMS.on&&ADV.on)) return false;
+  if(!(gx===0||gx===12||gy===0||gy===12)) return false;
+  return !((gx===6&&(gy===0||gy===12))||(gy===6&&(gx===0||gx===12)));   // по кромці ходити не можна — лише двері
+}
+const ROOMTYPE_NAME={home:'Дім',grove:'Гай',shop:'Торговий двір',quarry:"Кар'єр",shrine:'Святилище',hall:'Зал колон',cross:'Хрест',gallery:'Галерея',cells:'Келії',keep:'Цитадель'};
+function roomTypeOf(rx,ry){
+  if(rx===6&&ry===6) return 'home';
+  const r=mulberry32(rx*977+ry*131+3)();
+  if(chessWhite(rx,ry)) return r<0.5?'grove':r<0.7?'shop':r<0.85?'quarry':'shrine';
+  if(roomStyle(rx,ry).weight>0.6 && r<0.35) return 'keep';
+  return ['hall','cross','gallery','cells','keep'][Math.floor(r*5)%5];
+}
 /* ── СНАРЯДЫ стрельцов: медленные, ОТБИВАЮТСЯ мечом (зона клинка) обратно в хозяина ── */
 const SHOTS=[];
 /* ═══ ФИЗИКА И МОДЕЛИ ОРУЖИЯ ИГРОКА ══════════════════════════════
@@ -3326,21 +3365,21 @@ function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','
 function snapshotRoom(){
   if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17i) рука не пише світ
   if(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map') return;   // (07-17v) глядач лише дивиться
-  NET.roomDirty=true; roomEdits.set(curRoomKey(), {
-  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0})),
+  NET.roomDirty=true; roomEdits.set(curRoomKey(), { lv:((VB_ROOMS&&VB_ROOMS.on)?ROOM_LAYOUT_V:1),
+  blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0,fs:o.fs??null,tm:o.tm||1})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
 // ── ОБЩИЙ МИР: снимки комнат синхронизируются через Firebase (blade/{room}/roomEdits/{key}) ──
 function rebuildFromSnapshot(v){
   obstacles.forEach(o=>{ if(o.mesh){ scene.remove(o.mesh); freeMesh(o.mesh); } }); obstacles.length=0;
   clearMicro();
-  const taken=new Set();
-  for(const b of Object.values(v.blocks||{})) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
+  for(const b of Object.values(v.blocks||{})) addObstacle(b.gx,b.gy,b.type,new Set(),(b.tint??null),(b.tm??((b.type==='wall')?1.2:1)),b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0),(b.fs??undefined));
   for(const m of Object.values(v.micro||{})) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
 }
 function applyRemoteRoomIfNewer(key){
   const _isHand = window.LINK && (LINK.role==='sword'||LINK.role==='swordL');
   const v=NET.roomRemote && NET.roomRemote[key];
   if(!v || v.by===NET.myId) return false;
+  if(VB_ROOMS&&VB_ROOMS.on && (v.lv||1)<ROOM_LAYOUT_V) return false;   // (09-22f) чужий старий план не накриває новий
   if((NET._reApplied[key]||0) >= (v.t||0)) return false;
   // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
   const now=Date.now();
@@ -3358,10 +3397,10 @@ function applyRemoteRoomIfNewer(key){
 }
 function restoreRoomEdits(rx,ry){
   const ed = roomEdits.get(rx+','+ry); if(!ed) return false;
+  if(VB_ROOMS&&VB_ROOMS.on && (ed.lv||1)<ROOM_LAYOUT_V) return false;     // (09-22f) старий випадковий план — генеруємо новий
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   clearMicro();
-  const taken=new Set();
-  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,taken,(b.tint??null),(b.type==='wall')?1.2:1,b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0));
+  for(const b of ed.blocks) addObstacle(b.gx,b.gy,b.type,new Set(),(b.tint??null),(b.tm??((b.type==='wall')?1.2:1)),b.shape||null,b.rotY||0,(b.alpha??null),(b.baseY||0),(b.fs??undefined));   // new Set: крона над стовбуром не губиться
   for(const m of (ed.micro||[])) addMicro(m.gx,m.gy,m.n,m.sx,m.sy,m.sz,m.type,m.tint,m.alpha,m.shape||null,m.rotY||0,m.y0,m.hgt);
   return true;
 }
@@ -3454,17 +3493,18 @@ function composeRoomEnemies(rx,ry){
    pillar — разрушаемый кристалл; rubble — низкий разрушаемый завал (хрупче).        */
 const ELEM_GAS=['H','O','Cl','co2'];                 // газоподібні елементи: прохідні, світні
 const ELEM_SOLID=['C','Si','Na','Fe','sand','salt','glass','steel']; // тверді елементи/продукти: блокують, руйнівні
-function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
+function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY,fs){   // fs: true — незнищенний, false — руйнівний, інакше — за типом
   const key=gx+','+gy;
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
   // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
-  const solid=(type==='wall'||type==='crawl'||type==='base'||type==='Si'||type==='Fe'||type==='steel'||type==='glass');   // (09-22e) мінерали — міцні
+  let solid=(type==='wall'||type==='crawl'||type==='base'||type==='Si'||type==='Fe'||type==='steel'||type==='glass');   // (09-22e) мінерали — міцні
+  if(fs===true) solid=true; else if(fs===false) solid=false;                              // (09-22f) статус незнищенності — будь-якому блоку
   const crawl=(type==='crawl');
   const passel=(type==='liquid'||type==='gas'||type==='plasma'||ELEM_GAS.includes(type));      // проходимые элементы
   const pass = crawl?'crawl' : (type==='liquid'?'liquid' : type==='plasma'?'plasma' : passel?'gas' : null);
   const mineral=(type==='Si'||type==='Fe'||type==='steel'||type==='glass');          // (09-22e) камінь/руда/сталь/скло — не мечем
-  const destr=(type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type)) && !mineral;
+  const destr=!solid && (type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type)) && (!mineral || fs===false);
   const low = (type==='rubble'||type==='gas'||ELEM_GAS.includes(type));   // низкие блоки
   const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
   let h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
@@ -3493,7 +3533,7 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
   if(alpha!=null){ mat.transparent=true; mat.opacity=alpha; mat.depthWrite=false; }   // прозрачность от творца
   grp.position.set(worldX(gx), (baseY||0)+h*0.5-0.45, worldZ(gy)); if(rotY) grp.rotation.y=rotY; scene.add(grp);
-  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,baseY:baseY||0,h,
+  obstacles.push({gx,gy,solid,pass,mtype:type||'amber',shape:shape||null,rotY:rotY||0,tint:tint??null,alpha:alpha??null,baseY:baseY||0,h,fs:(fs===true||fs===false)?fs:null,tm:tallMul||1,
     hp: solid?Infinity : (destr?(type==='fragile'?16:(ELEM_SOLID.includes(type)?22:24)):40), alive:true, mesh:grp, mat});
 }
 function roomReachable(){
@@ -3602,8 +3642,58 @@ function buildRoomStructures(rng, weight, tintHex){
     +' крихких '+obstacles.filter(o=>!o.solid).length
     +(houses?(' будиночків '+houses):'')+(guard?(' пробито:'+guard):''));
 }
+function buildStructuredRoom(rx,ry,rng,st){
+  obstacles.forEach(o=>{ if(o.mesh){ scene.remove(o.mesh); try{ freeMesh(o.mesh); }catch(e){} } }); obstacles.length=0;
+  const type=roomTypeOf(rx,ry), w=st.weight||0;
+  const taken=new Set();
+  const ringMat=w<0.45?'Si':'Fe', ringTint=ringMat==='Si'?0x7d8796:0x565f6b;
+  const inMat=w<0.3?'Si':'Fe', inTint=inMat==='Si'?0x8d99ae:0x5b6470;
+  const doorIn={N:[6,1],S:[6,11],W:[1,6],E:[11,6]};
+  const gapDir=(x,y)=>{ for(const d in doorIn){ const c=doorIn[d]; if(c[0]===x&&c[1]===y) return d; } return null; };
+  const openDirs=[];
+  // КІЛЬЦЕ СТІН з дверима
+  for(let i=1;i<=11;i++) for(const [x,y] of [[i,1],[i,11],[1,i],[11,i]]){
+    const k=x+','+y; if(taken.has(k)) continue;
+    const d=gapDir(x,y);
+    if(d){ if(doorOpen(rx,ry,d)){ taken.add(k); if(!openDirs.includes(d)) openDirs.push(d); }
+           else addObstacle(x,y,'fragile',taken,0xb07cff,1.1,'cube',0,0.85,0,true);          // кристалічна печать — дзвенить
+           continue; }
+    addObstacle(x,y,ringMat,taken,ringTint,1.0,'cube',0,null,0);
+  }
+  const R=new Set(['6,6','6,2','6,10','2,6','10,6']);
+  const put=(x,y,mat,tint,shape,tall,fs)=>{ const k=x+','+y; if(x<2||x>10||y<2||y>10||R.has(k)||taken.has(k)) return; addObstacle(x,y,mat,taken,tint,tall||1,shape||'cube',0,null,0,fs); };
+  const tree=(x,y)=>{ const k=x+','+y; if(x<2||x>10||y<2||y>10||R.has(k)||taken.has(k)||obstacleAt(x,y)) return; taken.add(k); plantTree(x,y,rng); };
+  if(type==='hall'){ for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,inMat,inTint,'post',1.1);
+    if(w>0.35) for(const [x,y] of [[6,4],[4,6],[8,6],[6,8]]) put(x,y,inMat,inTint,'post',1.0); }
+  else if(type==='cross'){ for(const [ax,ay] of [[3,3],[8,3],[3,8],[8,8]]) for(let dx=0;dx<2;dx++) for(let dy=0;dy<2;dy++) put(ax+dx,ay+dy,inMat,inTint,'cube',1.0); }
+  else if(type==='gallery'){ for(let x=2;x<=8;x++) put(x,4,inMat,inTint,'cube',1.0); for(let x=4;x<=10;x++) put(x,8,inMat,inTint,'cube',1.0); }
+  else if(type==='cells'){ for(const x of [4,8]) for(const y of [2,3,4,8,9,10]) put(x,y,inMat,inTint,'cube',1.0); }
+  else if(type==='keep'){ for(let i=4;i<=8;i++) for(const [x,y] of [[i,4],[i,8],[4,i],[8,i]]){ if((x===6&&(y===4||y===8))||(y===6&&(x===4||x===8))) continue; put(x,y,inMat,inTint,'cube',1.1); }
+    for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,'fragile',0xb07cff,'post',1.2,true); }
+  else if(type==='grove'){ const n=5+Math.round(w*3);
+    for(let c=0;c<n;c++){ const cx=2+Math.floor(rng()*9), cy=2+Math.floor(rng()*9);
+      for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) if(rng()<0.6) tree(cx+dx,cy+dy); } }
+  else if(type==='quarry'){ const sides=[[2,null],[10,null],[null,2],[null,10]];
+    for(let c=0;c<4;c++){ const sd=sides[c]; const off=[3,4,8,9][Math.floor(rng()*4)];
+      const bx=sd[0]??off, by=sd[1]??off;
+      for(let b=0;b<2+Math.floor(rng()*3);b++){ const x=clamp(bx+(sd[0]==null?Math.floor(rng()*3)-1:0),2,10), y=clamp(by+(sd[1]==null?Math.floor(rng()*3)-1:0),2,10);
+        const k=x+','+y; if(R.has(k)||taken.has(k)) continue; taken.add(k);
+        if(rng()<0.55) plantRock(x,y,rng); else addObstacle(x,y,'Fe',new Set(),null,0.7+rng()*0.4,'cube'); } }
+    for(let i=0;i<3;i++) tree(2+Math.floor(rng()*9),2+Math.floor(rng()*9)); }
+  else if(type==='shop'){ for(const [x,y] of [[5,5],[7,5],[5,7],[7,7]]) put(x,y,'fragile',0xfbbf24,'post',0.7,true); for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) tree(x,y); }
+  else if(type==='shrine'){ for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,'fragile',0xb07cff,'post',1.3,true); for(let i=0;i<4;i++) tree(2+Math.floor(rng()*9),2+Math.floor(rng()*9)); }
+  // ПЕРЕВІРКА: від центру до кожних відкритих дверей є шлях (міцні блоки — перешкода, дерева — ні)
+  const ok=()=>{ const seen=new Set(['6,6']), q=[[6,6]], blk=(x,y)=>{ const o=obstacleAt(x,y); return !!(o&&o.solid); };
+    while(q.length){ const [x,y]=q.shift(); for(const [ox,oy] of DIRV){ const nx=x+ox, ny=y+oy; if(nx<1||nx>11||ny<1||ny>11) continue; const k=nx+','+ny; if(seen.has(k)||blk(nx,ny)) continue; seen.add(k); q.push([nx,ny]); } }
+    return openDirs.every(d=>seen.has(doorIn[d][0]+','+doorIn[d][1])); };
+  if(!ok()){ for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i]; if(o.solid&&o.gx>=2&&o.gx<=10&&o.gy>=2&&o.gy<=10){ if(o.mesh){ scene.remove(o.mesh); try{ freeMesh(o.mesh); }catch(e){} } obstacles.splice(i,1); } }
+    logE('КІМНАТА-план: шлях до дверей перекрито — внутрішні стіни прибрано'); }
+  ADV.rtype=type;
+  logE('КІМНАТА-план: '+ROOMTYPE_NAME[type]+' · двері '+(openDirs.join('')||'—')+' · стіни '+(ringMat==='Si'?'камінь':'залізо'));
+}
 function spawnObstaclesSeededSafe(rx,ry,home){
   const rng=mulberry32(rx*131+ry*17+7);
+  if(VB_ROOMS&&VB_ROOMS.on){ buildStructuredRoom(rx,ry,rng,roomStyle(rx,ry)); return; }   // (09-22f)
   if(home){ spawnObstacles(rng,0); return; }
   const st=roomStyle(rx,ry);
   // цвет стен: тёмная смесь фона комнаты с её акцентом — у каждого архетипа своя кладка
@@ -3625,10 +3715,11 @@ function updateAdventure(dt){
   const cleared = advHome() || (!foesLeft && !wavesLeft);
   const edgeOf=(x,y)=>{
     if((x===0||x===12)&&(y===0||y===12)) return null;      // углы неоднозначны — как в 2D-каноне
+    if(VB_ROOMS&&VB_ROOMS.on){ if(x===6&&y===0)return'N'; if(x===6&&y===12)return'S'; if(x===0&&y===6)return'W'; if(x===12&&y===6)return'E'; return null; }   // (09-22f) лише поріг дверей
     if(y===0)return'N'; if(y===12)return'S'; if(x===0)return'W'; if(x===12)return'E'; return null;
   };
   const myE=cleared ? edgeOf(player.gx,player.gy) : null;
-  let all = myE!=null;
+  let all = myE!=null && (!(VB_ROOMS&&VB_ROOMS.on) || doorOpen(ADV.rx,ADV.ry,myE));
   if(all) for(const id in NET.remotes){ const r=NET.remotes[id];
     if(r.spec || !remoteFresh(r) || (r.hp??100)<=0) continue;   // мёртвые/призраки не голосуют
     if(edgeOf(r.gx,r.gy)!==myE){ all=false; break; }
@@ -3646,16 +3737,16 @@ function updateAdventure(dt){
   if(ADV.edgeDir!==myE){                                    // ПОДСКАЗКА: что впереди + право отступить
     ADV.edgeDir=myE; ADV.edgeT=0;
     const st=roomStyle(nrx,nry), wht=chessWhite(nrx,nry);
-    showBanner('⏳ ПОПЕРЕДУ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стій 3с або відійди',
+    showBanner('⏳ ПОПЕРЕДУ: '+(wht?'⬜ безпечно · ':'⬛ бій · ')+st.sym+' '+st.name+' ('+Math.round(st.weight*100)+'%) — стій '+((VB_ROOMS&&VB_ROOMS.on)?'1.5':'3')+'с або відійди',
       wht?'#e2e8f0':st.accent);
     blip(440,0.12,'sine',0.12);
   }
   ADV.edgeT+=dt;
-  if(ADV.edgeT>=3){
+  if(ADV.edgeT>=((VB_ROOMS&&VB_ROOMS.on)?1.5:3)){
     const from=myE;
     applyAdvRoom(nrx,nry);
-    // входим с противоположной кромки новой комнаты
-    const opp={N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]}[from];
+    // входим с противоположной кромки новой комнаты (структуровані — точно в протилежні двері)
+    const opp=((VB_ROOMS&&VB_ROOMS.on)?{N:[6,12],S:[6,0],W:[12,6],E:[0,6]}:{N:[player.gx,12],S:[player.gx,0],W:[12,player.gy],E:[0,player.gy]})[from];
     const c=freeSpawnCell(opp[0],opp[1],player); player.gx=c[0]; player.gy=c[1];
     ADV.mustLeave=true; ADV.enterT=performance.now();       // (09-22b) назад — лише відійшовши й повернувшись до краю
     NET.advPub();                                           // консенсус комнаты для всех
@@ -3956,7 +4047,14 @@ function swordClashTick(dt){
     if(!(flat<=0.30 && dy<=0.70) || !(enemyStrikes||meSwing)) continue;
     const vP=S.speedS||0, vE=(enemyStrikes?5.5*(ph.swingSpeed||1):0.8), rel=vP+vE, imp=clamp(rel/8,0.1,1.5);
     const away=c.p.clone().sub(c.q); if(away.lengthSq()<1e-6) away.set(0,0.3,1); away.normalize();
-    try{ const A=S.arm; if(A&&A.vel) A.vel.add(away.clone().multiplyScalar(0.8+imp*1.4)); S.kickT=0.22; }catch(e){}
+    try{                                                                  // (09-22f) відскік видно: клинок повертає, руку відкидає, корпус смикає
+      const bodyRel=(S.liveBlade&&S.liveBlade.body)||0, rot=bodyRel*Math.PI/180, Y=new THREE.Vector3(0,1,0);
+      const A=S.arm||(S.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
+      A.vel.add(away.clone().applyAxisAngle(Y,rot).multiplyScalar(clamp(0.6+rel*0.18,0.6,2.4))); A.still=0;
+      const bd=t.clone().sub(g).normalize(), axis=new THREE.Vector3().crossVectors(bd,away);
+      if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*3.5,12,50)*Math.PI/180); S.kickT=1; }
+      S.recoil=clamp(0.45+rel*0.06,0.45,1);
+    }catch(e){}
     if((enemyStrikes || imp>0.6) && S.ctl && S.ctl.state!=='LOOSE'){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', Math.max(imp,0.5), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
     if(typeof clinch!=='undefined' && clinch.active && enemyStrikes){ try{ endClinch('clash'); }catch(e){} }   // його удар розриває клінч — тримати телефон нерухомо більше не «перемога»
     ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
@@ -3979,6 +4077,7 @@ function nearestTarget(ph){
 // Возвращает null если свободна; иначе объект-описание (задел под ярусы/астральное прохождение).
 function isCellOccupied(gx,gy,ignore){
   if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
+  if(structEdgeBlocked(gx,gy)) return {layer0:true, kind:'edge'};          // (09-22f) кромка за стіною — лише двері
   { const o=obstacleAt(gx,gy);
     if(o && o.pass!=='liquid' && o.pass!=='gas' && o.pass!=='plasma'
        && !(ignore && ignore.kind==='crawler' && o.pass==='crawl'))
@@ -4308,6 +4407,10 @@ $('cv').addEventListener('touchend',e=>{
 const VB_MOVE={ joy:0, dead:18, span:90 };
 window.VB_MOVE=VB_MOVE;
 const JOY={ on:false, ox:0, oy:0, x:0, y:0, t:0, el:null, knob:null };
+try{ const v=localStorage.getItem('vb_move_joy'); if(v!=null) VB_MOVE.joy=+v; }catch(e){}
+function joyLabel(){ try{ const b=$('mJoy'); if(b) b.textContent='🕹 РУХ: '+(VB_MOVE.joy?'ДЖОЙСТИК':'СВАЙПИ'); }catch(e){} }
+try{ joyLabel(); $('mJoy').onclick=()=>{ VB_MOVE.joy=VB_MOVE.joy?0:1; try{ localStorage.setItem('vb_move_joy',String(VB_MOVE.joy)); }catch(e){} joyLabel();
+  showBanner(VB_MOVE.joy?'🕹 ДЖОЙСТИК: поклади палець і тягни — чим далі, тим швидше':'👆 СВАЙПИ: один свайп — один крок','#60a5fa'); logE('рух: '+(VB_MOVE.joy?'джойстик':'свайпи')); }; }catch(e){}
 function joyUI(){ if(JOY.el) return; const el=document.createElement('div'); el.id='joy'; el.style.cssText='position:fixed;width:120px;height:120px;border-radius:50%;border:1px solid rgba(124,200,255,.45);background:rgba(10,20,40,.25);pointer-events:none;display:none;z-index:60;transform:translate(-50%,-50%)';
   const k=document.createElement('div'); k.style.cssText='position:absolute;left:50%;top:50%;width:40px;height:40px;border-radius:50%;background:rgba(124,200,255,.55);transform:translate(-50%,-50%)'; el.appendChild(k); document.body.appendChild(el); JOY.el=el; JOY.knob=k; }
 function joyStart(x,y){ joyUI(); JOY.on=true; JOY.ox=x; JOY.oy=y; JOY.x=0; JOY.y=0; JOY.t=0; JOY.el.style.display='block'; JOY.el.style.left=x+'px'; JOY.el.style.top=y+'px'; JOY.knob.style.transform='translate(-50%,-50%)'; }
@@ -4706,7 +4809,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22e · зіткнення клинків СПРАЦЬОВУЄ (удар ворога по клинку = розсинхрон, розриває клінч) · камінь/руда — мечем не рубаються, свої голоси; листя/стовбур/кристал/скло — свої фільтри · наставник пропускає · джойстик (проба, тумблер)';
+const BUILD_TAG='2026-09-22f · КІМНАТИ: кільце стін, 4 двері посередині сторін, лабіринт між кімнатами (закриті — кристалічна печать), шаблони (зал/хрест/галерея/келії/цитадель · гай/двір/кар\'єр/святилище), двері на мінімапі · будь-який блок може бути незнищенним · видимий відскік при зіткненні клинків · джойстик у меню паузи';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5074,7 +5177,7 @@ const NET = {
       this.roomDirty=false; this._rePub=Date.now();
       const key=curRoomKey(), ed=roomEdits.get(key);
       if(ed){ const t=Date.now(); this._reApplied[key]=t;
-        set(ref(this.db,`blade/${this.room}/roomEdits/${key}`), {t, by:this.myId, blocks:ed.blocks||[], micro:ed.micro||[]}).catch(()=>{}); }
+        set(ref(this.db,`blade/${this.room}/roomEdits/${key}`), {t, by:this.myId, lv:ed.lv||1, blocks:ed.blocks||[], micro:ed.micro||[]}).catch(()=>{}); }
     }
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
@@ -7349,10 +7452,11 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS};
 const SENS_SLIDERS=[
   ['РИГ · МАЯК · ОРІЄНТАЦІЯ (09-21)'],
   ['VB_MOVE.joy','Рух: джойстик (1) / свайпи (0) — проба',0,1,1],
+  ['VB_ROOMS.on','Кімнати: структуровані з дверима (1) / випадкові (0)',0,1,1],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_RIG.npcBeam','Промінь клинка в NPC (1/0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
@@ -8343,6 +8447,10 @@ function miniMapDraw(){
     g.fillRect(1+rx*7, 1+ry*7, 6, 6);
     if(!wht && ring<=1){ g.fillStyle=seen?'#b03040':'#3a1620'; g.fillRect(1+rx*7+2, 1+ry*7+2, 2, 2); }  // край: боси
   }
+  if(VB_ROOMS&&VB_ROOMS.on){ g.fillStyle='#fbbf24';                   // (09-22f) відкриті двері — там, де хоч одну з кімнат бачили
+    for(let rx=0;rx<13;rx++) for(let ry=0;ry<13;ry++){ const s1=MM.seen.has(rx+','+ry);
+      if(rx<12 && (s1||MM.seen.has((rx+1)+','+ry)) && doorOpen(rx,ry,'E')) g.fillRect(1+rx*7+6, 1+ry*7+2, 1, 2);
+      if(ry<12 && (s1||MM.seen.has(rx+','+(ry+1))) && doorOpen(rx,ry,'S')) g.fillRect(1+rx*7+2, 1+ry*7+6, 2, 1); } }
   g.fillStyle='#38bdf8'; g.fillRect(1+6*7+2, 1+6*7+2, 2, 2);          // дім
   try{ for(const id in NET.remotes){ const r=NET.remotes[id];          // (07-17b) де інші гравці
     if(!r || r.spec) continue;
@@ -8379,7 +8487,8 @@ function advRoomExtras(rx,ry,st){
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
   // ПРИРОДА лише на ПЕРШИХ відвідинах (потім кімната живе у snapshot/Firebase — зрубане не відростає)
-  if(!roomEdits.has(rx+','+ry)){
+  { const _ed=roomEdits.get(rx+','+ry); if(VB_ROOMS&&VB_ROOMS.on && (!_ed || (_ed.lv||1)<ROOM_LAYOUT_V)) snapshotRoom(); }   // (09-22f) план з шаблону — одразу знімок
+  if(!(VB_ROOMS&&VB_ROOMS.on) && !roomEdits.has(rx+','+ry)){
     // ГАРАНТОВАНЕ розміщення: шукаємо вільну клітинку до 14 спроб (раніше колізія = пропуск,
     // і в тісних кімнатах природа «не з'являлась»). Глибше від дому — БІЛЬШЕ і густіше.
     const freeCell=()=>{ for(let t=0;t<14;t++){ const gx=1+Math.floor(rng()*11), gy=1+Math.floor(rng()*11);
@@ -8415,10 +8524,12 @@ function advRoomExtras(rx,ry,st){
     spawnPickup(gx,gy,pool[Math.floor(rng()*pool.length)]);
   }
   if(rng()<0.28) spawnPickup(2+Math.floor(rng()*9), 2+Math.floor(rng()*9), 'scroll');   // 📜 сувій рецепта
-  if(rng()<0.3+st.weight*0.35) makeQuestPlate(rx,ry,rng,st);       // 🎯 квестова плита
-  if(rng()<0.3+st.weight*0.5){                                    // глибше — частіше торговець
+  const _rt=(VB_ROOMS&&VB_ROOMS.on)?roomTypeOf(rx,ry):null;
+  if(_rt ? _rt==='shrine' : rng()<0.3+st.weight*0.35) makeQuestPlate(rx,ry,rng,st);       // 🎯 квестова плита (святилище)
+  if(_rt ? _rt==='shop' : rng()<0.3+st.weight*0.5){                                    // торговець (торговий двір)
     let gx,gy,tries=0;
-    do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
+    if(_rt){ gx=6; gy=6; }
+    else do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
     const geo=new THREE.BoxGeometry(0.9,0.12,0.9);
     const mat=new THREE.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
     const m=new THREE.Mesh(geo,mat); m.frustumCulled=false;
@@ -9757,6 +9868,7 @@ function allySpawn(R){
     ph.maxHp=ph.hp;                                    // (07-24) планка для % здоров'я наставника
     const _tat = (typeof MENTOR!=='undefined' && MENTOR.tatamiMode);
     ph.gx=clamp(player.gx+(_tat?3:1),0,12); ph.gy=clamp(player.gy+(_tat?1:0),0,12);   // (09-10) 3-4 клітинки, ТЗ п.8
+    if(VB_ROOMS&&VB_ROOMS.on&&ADV.on){ const c=freeSpawnCell(clamp(ph.gx,2,10),clamp(ph.gy,2,10),ph); ph.gx=c[0]; ph.gy=c[1]; }   // (09-22f) не в стіні й не на кромці
     phantoms.push(ph); ALLY.ph=ph; ALLY.mode=ph.mode;
     MENTOR.arc=ph.mode; MENTOR.hpPct=1; MENTOR.isBoss=false;
     mentorSetState(MENTOR._metOnce?'FOLLOW':'INTRO', 'з\'явився R'+R); MENTOR._metOnce=true;
@@ -9859,7 +9971,7 @@ function allyTick(dt){
     if(a.mode==='dumb' && Math.random()<0.45){ dx=Math.round(Math.random()*2-1); dy=Math.round(Math.random()*2-1); }
     const nx=clamp(a.gx+dx,0,12), ny=clamp(a.gy+dy,0,12);
     if(nx===player.gx && ny===player.gy) return;         // клітинка гравця — свята
-    if(!obstacleAt(nx,ny)){ a.gx=nx; a.gy=ny; }
+    if(!obstacleAt(nx,ny) && !structEdgeBlocked(nx,ny)){ a.gx=nx; a.gy=ny; }
   }
   // атака
   if(MENTOR.tatamiMode) return;      // (09-10, ТЗ п.43) татамі: спостерігач — жодних атак
