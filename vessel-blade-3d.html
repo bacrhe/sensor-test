@@ -2099,7 +2099,7 @@ function updateStanceAndCamera(dt){
   /* (09-22k) ГОРИЗОНТ ЗАВЖДИ ЗБІГАЄТЬСЯ ЗІ СПРАВЖНІМ: на скільки градусів екран повернутий відносно
      світу — на стільки ж, неперервно, повертається картинка. Не стрибок у 90°, а плавно разом із телефоном. */
   try{
-    const _rl=(sensor.rollLand!=null)?sensor.rollLand:0, _w0=clamp((_rl-8)/27,0,1), _w=_w0*_w0*(3-2*_w0);
+    const _rl=(sensor.rollLand!=null)?sensor.rollLand:0, _w0=clamp((_rl-3)/17,0,1), _w=_w0*_w0*(3-2*_w0);   // (09-22m) іде за горизонтом уже з малого нахилу
     const lv=clamp(VB_ORI.level??1,0,1)*_w*(CAM.view==='third'?0:1);          // (09-22l) лише «набік», не в стійці мечем
     if(lv>0.001 && CAM.view!=='top' && CAM.view!=='fixed'){
       const phi=oriLevelAngle(dt), a=phi*Math.PI/180*lv;
@@ -5080,7 +5080,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22l · горизонт компенсується лише коли телефон набік (у стійці мечем не перевертає) · лінійний рух: ширший діапазон, тіло робить випад/крок/встає на носки, свист повітря за швидкістю руки, клац на повній досяжності · типові = ваш VB_SENS_CFG';
+const BUILD_TAG='2026-09-22m · горизонт без перевороту: кут екрана від верхнього краю (незалежно від знаку датчика), іде за нахилом із 3° · лінійний рух: випад/крок тілом, свист руки, клац на повній досяжності';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7770,10 +7770,13 @@ function camAxisVec(){ const q=sensor.quatFull; if(!q) return null; const v=((VB
    0 — телефон рівно в портреті, ±90 — альбомна. Обертання навколо довгої осі (крен клинка) і нахил
    уперед-назад його майже не змінюють, тож у стійці мечем картинка не гойдається. */
 function oriLevelAngle(dt){
-  const sg=IS_IOS?-1:1, gx=(sensor.gX||0)*sg, gy=(sensor.gY||0)*sg;
   if(sensor.gX==null) return ORI.phi||0;
+  const gx=sensor.gX||0, gy=sensor.gY||0;
   if(Math.hypot(gx,gy)>2.5){                                    // екран не лежить пласко — кут визначений
-    let phi=Math.atan2(gx,gy)*180/Math.PI;
+    /* (09-22m) кут від ВЕРХНЬОГО краю, без знаку gy: у різних телефонах gy у портреті має різний знак —
+       на вашому він від'ємний, atan2(gx,gy) давав ~180° і картинка ставала догори дриґом. Знак — як у
+       перевіреному альбомному режимі (rollSide = знак gx), тож 0…±90° — неперервно, без перевороту. */
+    let phi=(gx>=0?1:-1)*Math.atan2(Math.abs(gx),Math.abs(gy))*180/Math.PI;
     const a=oriAngle(); if(a){ const d1=angDiff(phi,a), d2=angDiff(phi,-a); phi=Math.abs(d1)<Math.abs(d2)?d1:d2; }   // ОС уже повернула екран — лишок
     const cur=ORI.phi||0; ORI.phi=wrap360(cur+angDiff(phi,cur)*clamp(dt/0.05,0,1)); if(ORI.phi>180) ORI.phi-=360;
   }
