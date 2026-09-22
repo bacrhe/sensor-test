@@ -1671,7 +1671,7 @@ function updateAvatarMesh(av, t){
   if(av.vgx==null || Math.abs(av.vgx-av.gx)>2.5 || Math.abs(av.vgy-av.gy)>2.5){ av.vgx=av.gx; av.vgy=av.gy; }
   // (07-22) згладжування, стале за часом: не залежить від FPS і стрибків пінгу
   {
-    const kBase = av.remote ? 9.5 : 14;              // чужих ведемо трохи м'якше
+    const kBase = (av.remote ? 9.5 : 14) * ((typeof VB_MOVE!=='undefined'&&VB_MOVE.joy)?0.55:1);   // чужих ведемо трохи м'якше; з джойстиком — плавніше всім
     const k = 1-Math.pow(0.001, Math.max(dt2,0.001)*kBase/6);
     av.vgx += (av.gx-av.vgx)*k; av.vgy += (av.gy-av.vgy)*k;
   }
@@ -2833,6 +2833,7 @@ function resolveBurn(dt){
     }
     if(burnCd<=0 && burnVoxelsAt(cx,cy,burnTip(cx,cy))){   // мікровокселі: пропал точки дотику
       burnCd=0.25; buzz(25);
+      try{ const oo=obstacleAt(cx,cy); if(oo && window.MUSICFX){ const sf=obstSurface(oo); MUSICFX.hit(sf, sf==='LEAF'?0.35:0.5, worldX(cx), TIER_H, worldZ(cy)); } }catch(e){}   // (09-22e) зріз: листя шелестить, стовбур глухо
       emitSparks(worldX(cx), TIER_H*0.6, worldZ(cy), '#ffb454', 10, 2.6);
       logE('зрізано мікровоксель ('+cx+','+cy+')');
       continue;
@@ -3458,11 +3459,12 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY){
   if(gx<1||gx>11||gy<1||gy>11||taken.has(key)) return;
   taken.add(key);
   // базовые: wall/crawl/rubble  +  ЭЛЕМЕНТНЫЕ (Раздел 6): base/fragile/liquid/gas/plasma
-  const solid=(type==='wall'||type==='crawl'||type==='base');
+  const solid=(type==='wall'||type==='crawl'||type==='base'||type==='Si'||type==='Fe'||type==='steel'||type==='glass');   // (09-22e) мінерали — міцні
   const crawl=(type==='crawl');
   const passel=(type==='liquid'||type==='gas'||type==='plasma'||ELEM_GAS.includes(type));      // проходимые элементы
   const pass = crawl?'crawl' : (type==='liquid'?'liquid' : type==='plasma'?'plasma' : passel?'gas' : null);
-  const destr=(type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type));
+  const mineral=(type==='Si'||type==='Fe'||type==='steel'||type==='glass');          // (09-22e) камінь/руда/сталь/скло — не мечем
+  const destr=(type==='rubble'||type==='fragile'||ELEM_SOLID.includes(type)) && !mineral;
   const low = (type==='rubble'||type==='gas'||ELEM_GAS.includes(type));   // низкие блоки
   const flat= (type==='liquid'||type==='plasma');                      // «лужи» вровень с полом
   let h = (type==='base'?TIER_H*1.0 : flat?TIER_H*0.5 : low?TIER_H*0.9 : solid?TIER_H*2.4 : TIER_H*1.8)*(tallMul||1);   // база — КУБИК
@@ -3948,11 +3950,15 @@ function swordClashTick(dt){
     let H; try{ H=handInfo(ph); }catch(e){ continue; }
     const a=new THREE.Vector3(H.hx,H.hy,H.hz), b=new THREE.Vector3(H.tipX,H.tipY,H.tipZ);
     const c=segSegClosest(g,t,a,b);
-    if(c.dist>0.14) continue;
-    const vP=S.speedS||0, vE=(ph.strikeT>0?5.5*(ph.swingSpeed||1):0.8), rel=vP+vE, imp=clamp(rel/8,0.1,1.5);
+    const flat=Math.hypot(c.p.x-c.q.x, c.p.z-c.q.z), dy=Math.abs(c.p.y-c.q.y);
+    const enemyStrikes = ph.strikeT>0 || (ph.ai&&ph.ai.windT>0);
+    const meSwing = (S.speedS||0)>2.0;
+    if(!(flat<=0.30 && dy<=0.70) || !(enemyStrikes||meSwing)) continue;
+    const vP=S.speedS||0, vE=(enemyStrikes?5.5*(ph.swingSpeed||1):0.8), rel=vP+vE, imp=clamp(rel/8,0.1,1.5);
     const away=c.p.clone().sub(c.q); if(away.lengthSq()<1e-6) away.set(0,0.3,1); away.normalize();
     try{ const A=S.arm; if(A&&A.vel) A.vel.add(away.clone().multiplyScalar(0.8+imp*1.4)); S.kickT=0.22; }catch(e){}
-    if(imp>0.6 && S.ctl && S.ctl.state!=='LOOSE'){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', imp, imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    if((enemyStrikes || imp>0.6) && S.ctl && S.ctl.state!=='LOOSE'){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', Math.max(imp,0.5), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    if(typeof clinch!=='undefined' && clinch.active && enemyStrikes){ try{ endClinch('clash'); }catch(e){} }   // його удар розриває клінч — тримати телефон нерухомо більше не «перемога»
     ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
     try{ MUSICFX.hit('SWORD', clamp(0.5+imp*0.5,0,1), c.p.x,c.p.y,c.p.z); }catch(e){}
     try{ spatialBlip(c.p.x,c.p.y,c.p.z, 1800+Math.random()*600, 0.09, 'sawtooth', 0.22); }catch(e){}
@@ -4287,14 +4293,34 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
   tryPickupBlade(); blip(520,0.05,'sine',0.06);
 }
 let touchStart=null;
-$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY}; },{passive:true});
+$('cv').addEventListener('touchstart',e=>{ const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY}; if(VB_MOVE.joy) joyStart(t.clientX,t.clientY); },{passive:true});
+$('cv').addEventListener('touchmove',e=>{ if(!VB_MOVE.joy||!touchStart) return; const t=e.touches[0]; joyMove(t.clientX,t.clientY); },{passive:true});
 $('cv').addEventListener('touchend',e=>{
   if(!touchStart) return;
   const t=e.changedTouches[0];
   const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  if(VB_MOVE.joy){ joyEnd(); touchStart=null; return; }                       // (09-22e) джойстик: крок дає тік, не відпускання
   if(Math.max(Math.abs(dx),Math.abs(dy))>=28) stepRelative(dx,dy);
   touchStart=null;
 },{passive:true});
+/* (09-22e) АДАПТИВНИЙ ДЖОЙСТИК — режим для проби. Вісь там, де ліг палець; вектор тяги задає напрям
+   (відносно погляду, як свайп) і темп кроків: ледь потягнув — крок раз на 0.6 с, витягнув — раз на 0.18 с. */
+const VB_MOVE={ joy:0, dead:18, span:90 };
+window.VB_MOVE=VB_MOVE;
+const JOY={ on:false, ox:0, oy:0, x:0, y:0, t:0, el:null, knob:null };
+function joyUI(){ if(JOY.el) return; const el=document.createElement('div'); el.id='joy'; el.style.cssText='position:fixed;width:120px;height:120px;border-radius:50%;border:1px solid rgba(124,200,255,.45);background:rgba(10,20,40,.25);pointer-events:none;display:none;z-index:60;transform:translate(-50%,-50%)';
+  const k=document.createElement('div'); k.style.cssText='position:absolute;left:50%;top:50%;width:40px;height:40px;border-radius:50%;background:rgba(124,200,255,.55);transform:translate(-50%,-50%)'; el.appendChild(k); document.body.appendChild(el); JOY.el=el; JOY.knob=k; }
+function joyStart(x,y){ joyUI(); JOY.on=true; JOY.ox=x; JOY.oy=y; JOY.x=0; JOY.y=0; JOY.t=0; JOY.el.style.display='block'; JOY.el.style.left=x+'px'; JOY.el.style.top=y+'px'; JOY.knob.style.transform='translate(-50%,-50%)'; }
+function joyMove(x,y){ if(!JOY.on) return; JOY.x=x-JOY.ox; JOY.y=y-JOY.oy; const m=Math.min(1,Math.hypot(JOY.x,JOY.y)/(VB_MOVE.dead+VB_MOVE.span)); const a=Math.atan2(JOY.y,JOY.x); JOY.knob.style.transform='translate(-50%,-50%) translate('+(Math.cos(a)*m*40)+'px,'+(Math.sin(a)*m*40)+'px)'; }
+function joyEnd(){ JOY.on=false; if(JOY.el) JOY.el.style.display='none'; }
+function joyTick(dt){
+  if(!VB_MOVE.joy||!JOY.on||mode!=='fighter'||player.dead) return;
+  const len=Math.hypot(JOY.x,JOY.y); if(len<VB_MOVE.dead){ JOY.t=0; return; }
+  const m=clamp((len-VB_MOVE.dead)/VB_MOVE.span,0,1);
+  JOY.t-=dt; if(JOY.t>0) return;
+  JOY.t=lerp(0.6,0.18,m);
+  stepRelative(JOY.x,JOY.y);
+}
 // мышь — для теста на десктопе
 let mDown=null;
 $('cv').addEventListener('mousedown',e=>{mDown={x:e.clientX,y:e.clientY};});
@@ -4680,7 +4706,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22d · МУЗИКА = голос матеріалу (сухий трек мовчить; камінь/дерево/метал/земля — свій фільтр з точки дотику; повністю — лише клинок об клинок) · ЗІТКНЕННЯ КЛИНКІВ (швидкості, відскік, заціпеніння ворога) · плавні махи NPC · стеля 3.8 м';
+const BUILD_TAG='2026-09-22e · зіткнення клинків СПРАЦЬОВУЄ (удар ворога по клинку = розсинхрон, розриває клінч) · камінь/руда — мечем не рубаються, свої голоси; листя/стовбур/кристал/скло — свої фільтри · наставник пропускає · джойстик (проба, тумблер)';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5461,6 +5487,7 @@ function frame(now){
     // і робить це ОСТАННЬОЮ в кадрі — після AI, моделі та клинка, перед render.
     if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
+  try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   renderRemotes(now, dt);              // чужие игроки
@@ -5631,6 +5658,18 @@ window.SWORD_CONTACT=SWORD_CONTACT;
 
 /* ── КОЛАЙДЕРИ ГРИ: перешкоди кімнати + підлога + стеля ─────────────────────── */
 const GAMEC={ sig:'', list:[], playerClamp:1 };
+/* (09-22e) ГОЛОС БЛОКА за матеріалом: стіна/камінь — STONE, руда/сталь — METAL, стовбур — WOOD,
+   крона — LEAF, кристал — CRYSTAL, скло — GLASS, завал — GROUND. */
+function obstSurface(o){
+  const t=o.mtype||'';
+  if(t==='Fe'||t==='steel') return 'METAL';
+  if(t==='Si'||t==='wall'||t==='crawl'||t==='base'||t==='sand'||t==='salt') return 'STONE';
+  if(t==='glass') return 'GLASS';
+  if(t==='C') return 'WOOD';
+  if(t==='fragile') return (o.baseY&&o.baseY>0.5)?'LEAF':'CRYSTAL';
+  if(t==='rubble') return 'GROUND';
+  return o.solid?'STONE':'WOOD';
+}
 function gameBuildColliders(){
   const alive=obstacles.filter(o=>o.alive && !o.pass);
   const sig=alive.length+':'+alive.map(o=>o.gx*13+o.gy).join(',');
@@ -5640,7 +5679,8 @@ function gameBuildColliders(){
   for(const o of alive){
     if(o._hW==null){ try{ const b=new THREE.Box3().setFromObject(o.mesh); o._hW=Math.max(0.3,b.max.y); }catch(e){ o._hW=TIER_H*2; } }
     const cx=worldX(o.gx), cz=worldZ(o.gy), half=CELL*0.48;
-    L.push(SWORD_COLLIDERS.make('OBST_'+o.gx+'_'+o.gy, o.solid?'WALL':'STRUCTURE', o.solid?'STONE':'WOOD',[cx-half,0,cz-half],[cx+half,o._hW,cz+half]));
+    const surf = obstSurface(o);
+    L.push(SWORD_COLLIDERS.make('OBST_'+o.gx+'_'+o.gy, o.solid?'WALL':'STRUCTURE', surf,[cx-half,0,cz-half],[cx+half,o._hW,cz+half]));
   }
   GAMEC.sig=sig; GAMEC.list=L; SWORD_COLLIDERS.set('game',L);
   return L;
@@ -7086,7 +7126,7 @@ const VB_SONAR={ on:1, gain:1.0, decay:1.0, memory:0.08, floor:0.0, self:0.25, s
 const VB_MUSIC={ gain:0.7, react:1.0 };
 window.VB_SONAR=VB_SONAR; window.VB_MUSIC=VB_MUSIC;
 const MUSICFX={ b:{}, cur:null, _main:null,
-  alias(m){ return {STONE:'STONE',SOLID:'STONE',WOOD:'WOOD',METAL:'METAL',GROUND:'GROUND',BODY:'BODY',SWORD:'SWORD'}[m]||'STONE'; },
+  alias(m){ return {STONE:'STONE',SOLID:'STONE',WOOD:'WOOD',METAL:'METAL',GROUND:'GROUND',BODY:'BODY',SWORD:'SWORD',LEAF:'LEAF',CRYSTAL:'CRYSTAL',GLASS:'GLASS'}[m]||'STONE'; },
   shaper(k){ const w=AC.createWaveShaper(); const N=512, c=new Float32Array(N); for(let i=0;i<N;i++){ const x=i/(N-1)*2-1; c[i]=Math.tanh(k*x); } w.curve=c; return w; },
   filt(type,f,q,gain){ const b=AC.createBiquadFilter(); b.type=type; b.frequency.value=f; if(q!=null) b.Q.value=q; if(gain!=null) b.gain.value=gain; return b; },
   ensure(){
@@ -7102,6 +7142,12 @@ const MUSICFX={ b:{}, cur:null, _main:null,
     // метал: деренчить пилкою, довгий хвіст, чути мелодію
     mk('METAL',[this.shaper(4), this.filt('highpass',450,0.9), this.filt('peaking',2600,5,9)],0.25,1.3);
     mk('GROUND',[this.filt('lowpass',240,1)],0.03,0.10);
+    // листя: лише верх, шелест, миттєво
+    mk('LEAF',[this.filt('highpass',1800,0.7), this.filt('lowpass',7000,0.7)],0.02,0.12);
+    // кристал: дзвінкий вузький пік, довгий хвіст
+    mk('CRYSTAL',[this.filt('bandpass',3200,12)],0.1,1.6);
+    // скло: тонкий дзвін, коротше за кристал
+    mk('GLASS',[this.filt('bandpass',4200,8)],0.05,0.6);
     mk('BODY',[this.filt('lowpass',420,1)],0.05,0.20);
     // клинок об клинок: сухий трек, повністю, довго
     mk('SWORD',[],0.4,2.0);
@@ -7169,7 +7215,7 @@ const REVEAL={
     const m=new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:1,blending:THREE.AdditiveBlending,depthWrite:false}));
     m.frustumCulled=false; scene.add(m); this.grid=m;
   },
-  matCol(mat){ return {STONE:[0.55,0.75,1.0],WOOD:[1.0,0.72,0.35],METAL:[0.85,0.9,1.0],GROUND:[0.5,0.7,0.5],BODY:[1.0,0.55,0.6],SOLID:[0.6,0.8,1.0]}[mat]||[0.6,0.8,1.0]; },
+  matCol(mat){ return {STONE:[0.55,0.75,1.0],WOOD:[1.0,0.72,0.35],METAL:[0.85,0.9,1.0],GROUND:[0.5,0.7,0.5],BODY:[1.0,0.55,0.6],SOLID:[0.6,0.8,1.0],LEAF:[0.45,1.0,0.5],CRYSTAL:[0.8,0.6,1.0],GLASS:[0.7,0.95,1.0]}[mat]||[0.6,0.8,1.0]; },
   tick(dt){
     const on=!!VB_SONAR.on; if(on!==this.on){ this.on=on; this.apply(on); }
     if(!on) return;
@@ -7303,9 +7349,10 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE};
 const SENS_SLIDERS=[
   ['РИГ · МАЯК · ОРІЄНТАЦІЯ (09-21)'],
+  ['VB_MOVE.joy','Рух: джойстик (1) / свайпи (0) — проба',0,1,1],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_RIG.npcBeam','Промінь клинка в NPC (1/0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
@@ -9797,7 +9844,15 @@ function allyTick(dt){
     let dx=Math.sign((tgt.gx||6)-a.gx), dy=Math.sign((tgt.gy||6)-a.gy);
     const dPl=Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy);
     if(tgt===player){                                    // (07-22) НЕ лізе на клітинку гравця
-      const _keepD = MENTOR.tatamiMode ? 3 : 1;           // (07-26) татамі тримає 3-4 клітинки
+      const _keepD = MENTOR.tatamiMode ? 3 : 2;           // (09-22e) у вільній грі — 2 клітинки, не впритул
+      /* (09-22e) ГРАВЕЦЬ ІДЕ НА НЬОГО — ПРОПУСКАЄ: крок убік (перпендикуляр до погляду гравця) або назад */
+      if(dPl<=1){
+        const fd=DIRV[player.dirIdx||0]||[0,1];
+        const cands=[[a.gx-fd[1],a.gy+fd[0]],[a.gx+fd[1],a.gy-fd[0]],[a.gx+fd[0],a.gy+fd[1]]];
+        for(const [cx,cy] of cands){ const nx=clamp(cx,0,12), ny=clamp(cy,0,12);
+          if((nx!==a.gx||ny!==a.gy) && !(nx===player.gx&&ny===player.gy) && !isCellOccupied(nx,ny,a)){ a.gx=nx; a.gy=ny; a.moveT=0.35; return; } }
+        a.moveT=0.3; return;
+      }
       if(dPl<=_keepD){ a.moveT=0.5; return; }             // достатньо близько — стоїмо
       if(dPl<=_keepD+1 && a.mode!=='mad'){ a.moveT=0.4; return; }
     }
