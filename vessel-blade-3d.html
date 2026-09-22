@@ -567,7 +567,11 @@ function sensorYawTick(dt){
   /* (09-17d) КОМПЛЕМЕНТАРНИЙ КУРС. VB_YAW.gyro=1 — кут веде гіроскоп (лінійний, без спотворень
      магнітного поля), компас тільки повільно прибирає дрейф. 0 — як було, чистий компас. */
   const G=VB_YAW;
-  if(G.gyro>0.01 && sensor.haveGyro){
+  /* (09-22) у грі телефон дивиться вгору/вниз/убік частіше, ніж у LAB, і самоперевірка осі
+     помилково перевертала гіроскоп кожні ~30 с → курс крутився навпаки. Тому в грі — компас
+     (як до 09-17d), гіроскоп веде курс лише в лабораторії або за тумблером VB_YAW.inGame. */
+  const inLab = !!(window.LABG ? LABG.on : (window.LAB && LAB.on));
+  if(G.gyro>0.01 && sensor.haveGyro && (inLab || G.inGame)){
     if(sensor.yawG==null){ sensor.yawG=tgt; G.sgnAcc=0; G.sgnT=0; }
     const rate=(sensor.yawRateFull||0)*G.sign;
     sensor.yawG=wrap360(sensor.yawG + rate*dt);                        // інтегруємо
@@ -578,15 +582,22 @@ function sensorYawTick(dt){
     if(Math.abs(sensor.yawRateFull||0)>G.holdRate) G.holdT=0.8; else G.holdT=Math.max(0,G.holdT-dt);
     /* і тільки в межах невеликої нев'язки: велика — це спотворення компаса, а не дрейф гіроскопа */
     if(G.holdT<=0 && Math.abs(err)<G.deadErr) sensor.yawG=wrap360(sensor.yawG + err*clamp(dt/G.tau,0,1));
+    /* курс «загубився»: у спокої нев'язка з компасом більша за мертву зону довше 1.5 с — заякорюємось наново */
+    if(G.holdT<=0 && Math.abs(err)>=G.deadErr){ G.lostT+=dt; if(G.lostT>1.5){ sensor.yawG=tgt; G.lostT=0; try{ logE('КУРС: розбіг із компасом '+Math.round(err)+'° у спокої — курс заякорено наново'); }catch(e){} } } else G.lostT=0;
     sensor.yawDrift=err;
     /* САМОПЕРЕВІРКА (09-17e): за вікно 1 с порівнюємо, скільки намотав компас і скільки гіроскоп.
        Знаки різні — перевертаємо вісь. Гіроскоп майже нічого не дає, а компас крутиться —
        вісь не та (або гіроскопа немає): чесно вертаємось на компас, щоб керування не зникало. */
     G.winC=(G.winC||0)+angDiff(tgt,G.prevC==null?tgt:G.prevC); G.prevC=tgt;
     G.winG=(G.winG||0)+rate*dt; G.winA=(G.winA||0)+Math.abs(sensor.gyroMag||0)*dt; G.winT=(G.winT||0)+dt;
+    G.winSteep = G.winSteep || Math.abs(sensor.pitch||0)>0.7;                     // клинок майже вертикально — компас тут дзеркалиться
     if(G.winT>1.0){
-      const c=G.winC, g=G.winG, a=G.winA;
-      if(Math.abs(c)>25 && Math.abs(g)>25 && Math.sign(c)!==Math.sign(g)){ G.sign=-G.sign; sensor.yawG=tgt; try{ logE('КУРС: вісь гіроскопа перевернуто (авто)'); }catch(e){} G.bad=0; }
+      const c=G.winC, g=G.winG, a=G.winA, steep=G.winSteep; G.winSteep=false;
+      if(!steep && Math.abs(c)>25 && Math.abs(g)>25){
+        if(Math.sign(c)!==Math.sign(g)){ G.disagree++; G.agree=0; } else { G.agree++; G.disagree=0; }
+        if(!G.decided && (G.agree>=1 || G.disagree>=2)){ G.decided=true; if(G.disagree>=2){ G.sign=-G.sign; sensor.yawG=tgt; G.disagree=0; try{ logE('КУРС: вісь гіроскопа визначено: перевернута'); }catch(e){} } else try{ logE('КУРС: вісь гіроскопа визначено: пряма'); }catch(e){} }
+        else if(G.decided && G.disagree>=3){ G.sign=-G.sign; sensor.yawG=tgt; G.disagree=0; try{ logE('КУРС: вісь гіроскопа перевернуто (3 вікна поспіль)'); }catch(e){} }
+      }
       /* «гіроскоп мовчить» рахуємо лише якщо телефон реально крутили (a — сумарний кут обертання
          по всіх осях). Компас, що блукає у спокої, більше не вимикає гіроскоп. */
       else if(Math.abs(c)>40 && a>60 && Math.abs(g)<Math.abs(c)*0.35){ G.bad=(G.bad||0)+1;
@@ -812,6 +823,9 @@ function onMotion(e){
   // (09-13b) КРЕН НАВКОЛО ОСІ КЛИНКА з вектора гравітації: atan2(gx,gz) безперервний на 360°,
   // вироджується лише коли вістря дивиться строго вгору/вниз (тоді крен і не визначений).
   if(gg && (Math.abs(gg.x||0)+Math.abs(gg.z||0))>1.5) sensor.gRoll=Math.atan2(gg.x||0,gg.z||0)*180/Math.PI;
+  /* (09-22) «телефон набік» = гравітація лягла на вісь X приладу. Однозначно в будь-якому нахилі:
+     клинок угору/вниз — gx≈0 → не набік; як фотоапарат — |gx|≈g → набік. γ тут не годиться. */
+  if(gg){ const gm=Math.hypot(gg.x||0,gg.y||0,gg.z||0)||1; sensor.rollLand=Math.asin(clamp(Math.abs(gg.x||0)/gm,0,1))*180/Math.PI; sensor.rollSide=(gg.x||0)>=0?1:-1; }
   sensor.gMag=gg?Math.hypot(gg.x||0, gg.y||0, gg.z||0):9.8;
   sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
   sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
@@ -4497,7 +4511,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-21a · НОВИЙ РИГ У ГРІ (гравець LIVE-фізика, наставник, фантоми, інші гравці) · ЕХО-СОНАР · музика за освітленням · МАЯК: камера за задньою камерою, гіро-приціл · орієнтація екрана ПРИСТРІЙ/ГРА · дисклеймер + повний екран';
+const BUILD_TAG='2026-09-22a · КЕРУВАННЯ ЯК БУЛО: курс у грі — компас (гіроскоп лише в LAB), самоперевірка осі без перевертань, МАЯК за гравітацією (не за γ) · новий риг у грі · сонар за тумблером';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6378,7 +6392,7 @@ window.VB_NORTH=VB_NORTH;
 const VB_PRED={ k:1.0 };   // 0 — без прогнозу гіроскопом між зразками, 1 — повний
 /* (09-17d) Курс: 1 — веде гіроскоп із повільною корекцією компасом (лінійний поворот),
    0 — чистий компас (як раніше). tau — за скільки секунд компас забирає дрейф. */
-const VB_YAW={ gyro:1.0, tau:12.0, deadErr:25, sign:1, holdRate:25, holdT:0, winC:0, winG:0, winA:0, winT:0, prevC:null, bad:0 };
+const VB_YAW={ gyro:1.0, inGame:0, tau:12.0, deadErr:25, sign:1, holdRate:25, holdT:0, winC:0, winG:0, winA:0, winT:0, prevC:null, bad:0, agree:0, disagree:0, decided:false, lostT:0 };
 window.VB_YAW=VB_YAW;
 window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
@@ -6893,7 +6907,7 @@ function rigNpcTick(av, dt, opts){
    Екран чорний, поки ніщо не звучить. Кожна звукова подія — фронт світла по клітинках:
    Ритм (кільце навколо гравця), рух клинка, контакт (дотик/удар/ковзання). Підлога, сітка,
    блоки, істоти — усе світиться лише інтенсивністю поля REVEAL. Музика відповідає освітленню. */
-const VB_SONAR={ on:1, gain:1.0, decay:1.0, memory:0.08, floor:0.05, self:0.25 };
+const VB_SONAR={ on:0, gain:1.0, decay:1.0, memory:0.08, floor:0.05, self:0.25 };   // (09-22) сонар — за тумблером, поки не прийнято керування
 const VB_MUSIC={ gain:0.7, react:1.0 };
 window.VB_SONAR=VB_SONAR; window.VB_MUSIC=VB_MUSIC;
 const REVEAL={
@@ -7018,14 +7032,14 @@ function oriDecide(){
   const now=performance.now(), f=VB_ORI.force|0;
   const turned=(oriAngle()!==ORI.angle0)||(now-ORI.lastChange<1500);
   ORI.mode = f===1?'DEVICE' : f===2?'GAME' : (turned?'DEVICE':'GAME');
-  ORI.locked=true; ORI.lockT=now; ORI.sign=((sensor.roll||0)>=0?1:-1)*(VB_ORI.rollSign||1);
-  logE('ОРІЄНТАЦІЯ: крен '+Math.round(Math.abs(sensor.gRoll!=null?sensor.gRoll:(sensor.roll||0)))+'° · кут екрана '+oriAngle()+'° → '+(ORI.mode==='GAME'?'ГРА':'ПРИСТРІЙ')+' · LOCKED');
+  ORI.locked=true; ORI.lockT=now; ORI.sign=(sensor.rollSide||((sensor.roll||0)>=0?1:-1))*(VB_ORI.rollSign||1);
+  logE('ОРІЄНТАЦІЯ: набік '+Math.round(sensor.rollLand!=null?sensor.rollLand:Math.abs(sensor.roll||0))+'° · кут екрана '+oriAngle()+'° → '+(ORI.mode==='GAME'?'ГРА':'ПРИСТРІЙ')+' · LOCKED');
 }
 function oriRelease(){ ORI.locked=false; ORI.mode='—'; }
 function oriHud(rot){ if(ORI.hud===rot) return; ORI.hud=rot; try{ for(const id of ['hud','banner']){ const el=$(id); if(el){ el.style.transformOrigin='50% 50%'; el.style.transform=rot?('rotate('+rot+'deg)'):''; } } }catch(e){} }
 function camAxisVec(){ const q=sensor.quatFull; if(!q) return null; const v=((VB_CAM.axis|0)===1)?new THREE.Vector3(0,0,-1):new THREE.Vector3(0,1,0); return v.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w)); }
 function beaconTick(dt){
-  const roll=Math.abs(sensor.roll||0), B=BEACON;
+  const roll=(sensor.rollLand!=null)?sensor.rollLand:Math.abs(sensor.roll||0), B=BEACON;
   if(B.state==='STANCE'){ if(roll>VB_CAM.enterDeg){ B.state='ARMING'; B.t=0; } }
   else if(B.state==='ARMING'){ if(roll<=VB_CAM.enterDeg) B.state='STANCE'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='BEACON'; beaconEnter(); } } }
   else if(B.state==='BEACON'){ if(roll<VB_CAM.exitDeg){ B.state='DISARMING'; B.t=0; } }
@@ -7093,7 +7107,7 @@ const SENS_SLIDERS=[
   ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил ×',0.2,2,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
   ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],['VB_PRED.k','Прогноз гіроскопом (проти ривків)',0,1,0.05],
   ['VB_NORTH.lock','«Вперед» = північ (1) / де телефон (0)',0,1,1],['VB_NORTH.offset','Зсув від півночі, °',0,355,5],
-  ['VB_YAW.gyro','Курс від гіроскопа (1) / компаса (0)',0,1,0.05],['VB_YAW.tau','Компас прибирає дрейф за, с',2,40,1],['VB_YAW.deadErr','Довіряти компасу лише в межах, °',5,90,5],
+  ['VB_YAW.gyro','LAB: курс від гіроскопа (1) / компаса (0)',0,1,0.05],['VB_YAW.inGame','ГРА: курс від гіроскопа (1) / компаса (0)',0,1,1],['VB_YAW.tau','Компас прибирає дрейф за, с',2,40,1],['VB_YAW.deadErr','Довіряти компасу лише в межах, °',5,90,5],
   ['ТІЛО ЗА КЛИНКОМ'],
   ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
   ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
