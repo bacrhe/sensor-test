@@ -1734,11 +1734,26 @@ function updateAvatarMesh(av, t){
   {
     const kBase = (av.remote ? 9.5 : 14) * ((typeof VB_MOVE!=='undefined'&&VB_MOVE.joy)?0.55:1);   // чужих ведемо трохи м'якше; з джойстиком — плавніше всім
     const k = 1-Math.pow(0.001, Math.max(dt2,0.001)*kBase/6);
+    const _nowF=performance.now();
+    if(av._lgx!==av.gx || av._lgy!==av.gy){                                 // (09-22s) нова клітинка — міряємо темп кроків
+      if(av._lgt){ const d=(_nowF-av._lgt)/1000; if(d>0.05 && d<2.5) av._stepDt = av._stepDt ? av._stepDt*0.6+d*0.4 : d; }
+      av._lgt=_nowF; av._lgx=av.gx; av._lgy=av.gy; }
     if(av._cont && av.cx!=null){ av.vgx=av.cx; av.vgy=av.cy; }            // (09-22p) плавний біг — модель там, де безперервна позиція
+    else if(av.remote && av._rcx!=null){ av.vgx += (av._rcx-av.vgx)*k; av.vgy += (av._rcy-av.vgy)*k; }   // (09-22s) чужий гравець — його безперервна позиція
+    else if(typeof VB_MOVE!=='undefined' && VB_MOVE.flow){                  // (09-22s) хода з постійною швидкістю
+      const dx=av.gx-av.vgx, dy=av.gy-av.vgy, dist=Math.hypot(dx,dy);
+      let v=clamp(1.03/clamp(av._stepDt||0.45,0.14,1.6),0.8,7);           // приходить якраз до наступного кроку — без пауз
+      if((av._knockT||0)>0){ av._knockT-=dt2; v=Math.max(v,7); }            // відкинуло — летить швидко
+      if(dist>1.2) v*=1+(dist-1.2)*1.5;                                     // відстав — наздоганяє
+      const st=Math.min(dist, v*Math.max(dt2,0.001));
+      if(dist>1e-4){ av.vgx+=dx/dist*st; av.vgy+=dy/dist*st; }
+    }
     else { av.vgx += (av.gx-av.vgx)*k; av.vgy += (av.gy-av.vgy)*k; }
+    { const mv=Math.hypot(av.vgx-(av._pvx??av.vgx), av.vgy-(av._pvy??av.vgy)); av._pvx=av.vgx; av._pvy=av.vgy;   // швидкість і фаза ходи
+      av._vs=(av._vs||0)*0.8+(mv/Math.max(dt2,1e-3))*0.2; av._gaitPh=((av._gaitPh||0)+mv/1.4*2*Math.PI)%(2*Math.PI); }
   }
   const _trans=Math.min(Math.abs(av.gx-av.vgx)+Math.abs(av.gy-av.vgy),1);
-  const _hop=Math.sin(_trans*Math.PI)*0.14;   // маленький підскок під час кроку
+  const _hop=(typeof VB_MOVE!=='undefined'&&VB_MOVE.flow)?0:Math.sin(_trans*Math.PI)*0.14;   // (09-22s) з ходою — без підскоку
   g.position.set(worldX(av.vgx+_fo), (av.hover||0)+_hop, worldZ(av.vgy+_fo));
   g.rotation.y = Math.PI - av.visYaw*Math.PI/180;   // локальный +Z смотрит в сторону движения
   // КАСТОМНАЯ МОДЕЛЬ зверя (повзун/літун/стрілець/босс): своя анимация, мимо гуманоида
@@ -4367,7 +4382,7 @@ function swordClashTick(dt){
     if(enemyStrikes || imp>0.6){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', clashImpulse(S,away,rel), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
     try{ if(ph._rigS) ph._rigS.recoil=1; }catch(e){}                                              // ворога теж відкидає — видно
     if(vP>vE+2){ const sx=Math.sign(ph.gx-player.gx), sy=Math.sign(ph.gy-player.gy); const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
-      if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; logE('ворога відкинуло на клітинку'); } }
+      if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; ph._knockT=0.3; logE('ворога відкинуло на клітинку'); } }
     try{ if(CLING.list.length) clingShake({position:c.p}); }catch(e){}                           // об чужий клинок струшується повзун
     if(typeof clinch!=='undefined' && clinch.active && enemyStrikes){ try{ endClinch('clash'); }catch(e){} }   // його удар розриває клінч — тримати телефон нерухомо більше не «перемога»
     ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
@@ -4750,7 +4765,7 @@ $('cv').addEventListener('touchend',e=>{
 },{passive:true});
 /* (09-22e) АДАПТИВНИЙ ДЖОЙСТИК — режим для проби. Вісь там, де ліг палець; вектор тяги задає напрям
    (відносно погляду, як свайп) і темп кроків: ледь потягнув — крок раз на 0.6 с, витягнув — раз на 0.18 с. */
-const VB_MOVE={ joy:1, dead:18, span:90, smooth:1, vmin:1.2, vmax:3.2 };   // (09-22h) джойстик — типово
+const VB_MOVE={ joy:1, dead:18, span:90, smooth:1, vmin:1.2, vmax:3.2, flow:1 };   // (09-22h) джойстик — типово
 window.VB_MOVE=VB_MOVE;
 const JOY={ on:false, ox:0, oy:0, x:0, y:0, t:0, el:null, knob:null };
 try{ const v=localStorage.getItem('vb_move_joy'); if(v!=null) VB_MOVE.joy=+v; }catch(e){}
@@ -5182,7 +5197,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22r · ЛІВША/ПРАВША: стійка й меч переходять у руку, до чийого вуха схиляєш телефон · ЗАХИСНА СТІЙКА в альбомній: меч біля вуха, удари спереду відбиваються · ярість: довга стрічка САМЕ ЛЕЗА · стрічки бачать усі гравці · джойстик: перший поштовх = крок · видно хітбокс леза · калібрування датчиків';
+const BUILD_TAG='2026-09-22s · ПЛАВНИЙ РУХ УСІХ: гравці, наставник і вороги ідуть з постійною швидкістю за своїм темпом, без стрибків і підскоку, ноги крокують · чужий гравець — безперервна позиція · стрічка лише від маху (біг не будує стіни) · лівша/правша · захисна стійка · стрічки для всіх';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5353,6 +5368,7 @@ const NET = {
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
       isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
       cl:clinch.active?1:0,
+      cx:(player._cont&&player.cx!=null)?+player.cx.toFixed(2):null, cy:(player._cont&&player.cy!=null)?+player.cy.toFixed(2):null,   // (09-22s) плавний біг — для інших
       rb:(typeof RIB!=='undefined'&&RIB.out&&RIB.out.length)?RIB.out.splice(0):null, rf:(typeof TRAIL!=='undefined'&&TRAIL.active)?1:0,   // (09-22r) стрічка леза для інших                                            // флаг клинча — для экшн-камеры и спектатора
       bt:(ORI.landS||0)>0.8?1:0,                                       // (09-22o) «повільний час»: я повністю набік — світ кімнати сповільнюється
       spec:false, t:Date.now() }; },
@@ -5617,6 +5633,7 @@ function upsertRemote(id, p){
   }
   if(r.spec){ r.group.position.set(worldX(clamp(p.x|0,0,12)),0,worldZ(clamp(p.y|0,0,12))); return; }
   r.latest = p;                              // тело обновим в renderRemotes каждый кадр
+  try{ if(r.av){ r.av._rcx=(p.cx!=null)?+p.cx:null; r.av._rcy=(p.cy!=null)?+p.cy:null; } }catch(e){}   // (09-22s)
   try{ remoteRibbonIngest(r, p); }catch(e){}  // (09-22r)
   r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
 }
@@ -6937,6 +6954,7 @@ function labLiveStep(dt){
         const upE=Math.max(0,anchor.y-(S0.y+0.5*s)); LAB.toeS=(LAB.toeS||0)+(Math.min(upE*0.35,0.09*s)-(LAB.toeS||0))*clamp(dt*6,0,1);
         rig.root.position.y+=LAB.toeS;
         LAB.lungeLen=B.length();
+        if(LAB.isGame) rigGait(rig.J, player._vs||0, player._gaitPh||0, rig.root, s);   // (09-22s) хода гравця
       }
       /* остання страховка: рука фізично не довша за себе — але це НЕ впливає на позу й на фільтр */
       LAB.obj.updateMatrixWorld(true);
@@ -7258,8 +7276,9 @@ function labLiveInputs(dt){
     if(P.py!=null && Math.abs(yr)>60){ const d=angDiff(yf,P.py); if(Math.abs(d)>0.5){ P.ya+=Math.sign(d*yr); P.yn++; } }
     if(P.pp!=null && Math.abs(pr)>60){ const d=pf-P.pp; if(Math.abs(d)>0.005){ P.pa+=Math.sign(-d*pr); P.pn++; } }
     P.py=yf; P.pp=pf;
-    if(P.yn>=60){ P.ys=(P.ya<0)?-1:1; P.ya=0; P.yn=0; if(P.ys!==P.lastYs){ P.lastYs=P.ys; try{ logE('ПРОГНОЗ: знак курсу '+(P.ys>0?'прямий':'обернений')); }catch(e){} } }
-    if(P.pn>=60){ P.ps=(P.pa<0)?-1:1; P.pa=0; P.pn=0; } }
+    if(P.yn>=120){ if(P.ya<-P.yn*0.45) P.ys=-1; else if(P.ya>P.yn*0.45) P.ys=1; P.ya=0; P.yn=0;   // (09-22s) гістерезис
+      if(P.ys!==P.lastYs){ P.lastYs=P.ys; try{ logE('ПРОГНОЗ: знак курсу '+(P.ys>0?'прямий':'обернений')); }catch(e){} } }
+    if(P.pn>=120){ if(P.pa<-P.pn*0.45) P.ps=-1; else if(P.pa>P.pn*0.45) P.ps=1; P.pa=0; P.pn=0; } }
   const dY=clamp(yr*age*VB_PRED.k*gY*PREDCAL.ys,-6,6), dP=clamp(pr*age*VB_PRED.k*gP*PREDCAL.ps,-6,6);    // і не більше 6°
   const yawPred=wrap360(yawBase+dY);
   const pitchPred=clamp((sensor.pitch||0)-Math.sin(dP*Math.PI/180),-1,1);
@@ -7657,11 +7676,15 @@ function ribbonTick(dt){
   const sw=S.rig.sword; try{ S.obj.updateMatrixWorld(true); }catch(e){}
   const g=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), t=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
   const a=g.clone().lerp(t,0.3), b=t;
-  const sp = RIB.prevB ? b.distanceTo(RIB.prevB)/Math.max(dt,1e-3) : 0;
-  RIB.spd += (Math.min(sp,30)-RIB.spd)*clamp(dt/0.04,0,1);
+  const bp=player.mesh.position.clone(), idt=1/Math.max(dt,1e-3);
+  const bv = RIB.prevBody ? bp.clone().sub(RIB.prevBody).multiplyScalar(idt) : new THREE.Vector3();
+  const tv = RIB.prevB ? b.clone().sub(RIB.prevB).multiplyScalar(idt) : new THREE.Vector3();
+  const sp = tv.length(), rel = (bv.length()<15) ? tv.clone().sub(bv).length() : 0;     // (09-22s) мах = вістря відносно тіла
+  RIB.prevBody=bp; RIB.bodyV=Math.min(bv.length(),15);
+  RIB.spd += (Math.min(rel,30)-RIB.spd)*clamp(dt/0.04,0,1);
   const loose = S.ctl && S.ctl.state==='LOOSE';
   const on = RIB.spd>VB_RIBBON.minSpeed && !loose && sp<40;                 // стрибок >40 м/с — телепорт (двері), не мах
-  const P = RIB.spd*(sw.bladeL||1.35)*(1+((VB_WEAPON.mass||1)-1)*0.2);
+  const P = (RIB.spd+0.5*(RIB.bodyV||0))*(sw.bladeL||1.35)*(1+((VB_WEAPON.mass||1)-1)*0.2);   // біг додає силі, але стрічку малює лише мах
   RIB.E = RIB.E*Math.exp(-dt/0.35) + (on? P*dt*2 : 0);
   if(on && !RIB.lastOn) RIB.stroke++;
   RIB.lastOn=on;
@@ -7903,6 +7926,16 @@ function rigNpcEnsure(av, profile, hue){
   av._rigS=S; S.av=av;
   return S;
 }
+/* (09-22s) ХОДА: фаза — від пройденого шляху (крок ≈0.7 клітинки), амплітуда — від швидкості */
+function rigGait(J, vs, ph, root, s){
+  const a=clamp(vs/2.5,0,1); if(a<0.04||!J) return;
+  const A=0.5*a, sn=Math.sin(ph);
+  if(J.LEFT_HIP)  J.LEFT_HIP.rotation.x  += A*sn;
+  if(J.RIGHT_HIP) J.RIGHT_HIP.rotation.x += -A*sn;
+  if(J.LEFT_KNEE)  J.LEFT_KNEE.rotation.x  += Math.max(0,-Math.sin(ph+0.8))*A*1.3;
+  if(J.RIGHT_KNEE) J.RIGHT_KNEE.rotation.x += Math.max(0, Math.sin(ph+0.8))*A*1.3;
+  if(root) root.position.y += Math.abs(Math.sin(ph))*0.035*a*(s||1);
+}
 function rigNpcTick(av, dt, opts){
   if(!av || !av.mesh) return;
   if(!VB_RIG.on){ if(av._rigS){ av._rigS.rig.root.visible=false; for(const k in av.parts){ try{ av.parts[k].visible=true; }catch(e){} } if(av.blade) av.blade.visible=true; } return; }
@@ -7925,7 +7958,7 @@ function rigNpcTick(av, dt, opts){
   const rate=clamp(dt*(av.boss?6:(av.ally?9:12))*(av.swingSpeed||1),0,1);
   S.poseS = S.poseS ? labLerpPose(S.poseS,P,rate) : P;
   const prev=LAB; LAB=S;
-  try{ S.warn=[]; labSetPose(S.poseS); }catch(e){} finally{ LAB=prev; }
+  try{ S.warn=[]; labSetPose(S.poseS); if(!av.dead) rigGait(S.rig.J, av._vs||0, av._gaitPh||0, S.rig.root, 1); }catch(e){} finally{ LAB=prev; }   // (09-22s) хода
 }
 
 /* ═══════════════════════ ЕХО-СОНАР (2026-09-21) ═══════════════════════
@@ -8236,7 +8269,7 @@ const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_RIBBON.on','Стрічка клинка: різ і світіння (1/0)',0,1,1],['VB_RIBBON.minSpeed','Стрічка: мін. швидкість вістря, м/с',1,8,0.1],
   ['VB_RIBBON.dmgK','Стрічка: шкода ×',0.2,3,0.05],['VB_RIBBON.life','Стрічка: тривалість світіння ×',0.3,3,0.05],['VB_RIBBON.cutK','Стрічка: поріг пробиття блоків ×',0.3,3,0.05],
-  ['VB_MOVE.smooth','Джойстик: плавний біг (1) / кроки (0)',0,1,1],['VB_MOVE.vmax','Біг: макс. швидкість, кл/с',1,6,0.1],
+  ['VB_MOVE.smooth','Джойстик: плавний біг (1) / кроки (0)',0,1,1],['VB_MOVE.flow','Рух усіх істот: плавна хода (1) / як раніше (0)',0,1,1],['VB_MOVE.vmax','Біг: макс. швидкість, кл/с',1,6,0.1],
   ['VB_HAND.auto','Рука: визначати самому (1/0)',0,1,1],['VB_HAND.force','Рука: авто (0) / права (1) / ліва (2)',0,2,1],['VB_HAND.sign','Рука: знак нахилу (1/−1)',-1,1,2],
   ['VB_TRAIL.ribLife','Ярість: довжина стрічки леза, с',1,10,0.5],
   ['VB_TRAIL.on','Ярість-шлейф (1/0)',0,1,1],['VB_TRAIL.needE','Ярість: потрібна енергія махів',2,30,0.5],['VB_TRAIL.needV','Ярість: потрібна тяга джойстика',0.3,1,0.05],['VB_TRAIL.maxLen','Шлейф: макс. довжина, кл.',4,30,1],
