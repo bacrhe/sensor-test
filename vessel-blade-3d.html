@@ -833,7 +833,12 @@ function onMotion(e){
      клинок угору/вниз — gx≈0 → не набік; як фотоапарат — |gx|≈g → набік. γ тут не годиться. */
   if(gg){ const gm=Math.hypot(gg.x||0,gg.y||0,gg.z||0)||1; sensor.rollLand=Math.asin(clamp(Math.abs(gg.x||0)/gm,0,1))*180/Math.PI; sensor.rollSide=(gg.x||0)>=0?1:-1; }
   sensor.gMag=gg?Math.hypot(gg.x||0, gg.y||0, gg.z||0):9.8;
-  if(gg){ sensor.gX=gg.x||0; sensor.gY=gg.y||0; sensor.gZ=gg.z||0; }   // (09-22k) для рівня горизонту
+  if(gg){ sensor.gX=gg.x||0; sensor.gY=gg.y||0; sensor.gZ=gg.z||0;     // (09-22k) для рівня горизонту
+    /* (09-22o) гравітація без ривків: різкий рух — це прискорення руки, а не нахил; тоді оцінку тримаємо */
+    const _m=Math.hypot(sensor.gX,sensor.gY,sensor.gZ), _now=performance.now(), _dt=clamp((_now-(sensor._gT||_now))/1000,0,0.1); sensor._gT=_now;
+    const _calm=Math.abs(_m-9.81)<1.2 && (sensor.gyroMag||0)<140, _k=_calm?clamp(_dt/0.22,0,1):0;
+    if(sensor.gXs==null){ sensor.gXs=sensor.gX; sensor.gYs=sensor.gY; sensor.gZs=sensor.gZ; }
+    else { sensor.gXs+=(sensor.gX-sensor.gXs)*_k; sensor.gYs+=(sensor.gY-sensor.gYs)*_k; sensor.gZs+=(sensor.gZ-sensor.gZs)*_k; } }
   sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
   sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
   sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
@@ -2101,7 +2106,7 @@ function updateStanceAndCamera(dt){
   try{
     /* (09-22n) поворот картинки йде тією ж кривою: до 45° — нуль, далі плавно до 90° на 90° */
     const lvOn=clamp(VB_ORI.level??1,0,1)*(CAM.view==='third'?0:1);
-    const land=ORI.landS||0, side=((sensor.gX||0)>=0?1:-1);
+    const land=ORI.landS||0, side=((sensor.gXs??sensor.gX??0)>=0?1:-1);
     if(lvOn>0.001 && land>0.001 && CAM.view!=='top' && CAM.view!=='fixed'){
       let rot=side*90*land*lvOn;
       const osA=oriAngle(); if(osA){ const d1=angDiff(rot,osA), d2=angDiff(rot,-osA); rot=Math.abs(d1)<Math.abs(d2)?d1:d2; }   // ОС уже повернула екран — лишок
@@ -5083,7 +5088,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22n · перехід в альбомну: до 45° нічого, далі плавно до повного на 90° — камера, поворот картинки й стійка по одній кривій · лінійний рух: випад/крок тілом, свист руки';
+const BUILD_TAG='2026-09-22o · перехід в альбомну лише біля 90° (70°→88°), без смикань від різких рухів (гравітація без ривків) · легкий крен зсуває меч убік · повільний час світу в повній альбомній (і для інших у кімнаті) · лінійний рух 2.6';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5254,6 +5259,7 @@ const NET = {
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
       isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
       cl:clinch.active?1:0,                                            // флаг клинча — для экшн-камеры и спектатора
+      bt:(ORI.landS||0)>0.8?1:0,                                       // (09-22o) «повільний час»: я повністю набік — світ кімнати сповільнюється
       spec:false, t:Date.now() }; },
   async start(){
     try{
@@ -5848,10 +5854,11 @@ function frame(now){
     camTarget.set(0, 0, 0);
   }
   // ── ОБЩИЙ МИР (во всех режимах): свои фантомы + чужие тела/фантомы ──
-  if(mode!=='creator') updatePhantoms(dt);   // в творце враги заморожены — не рушат постройки
+  const dtW = dt*worldTimeScale();            // (09-22o) світ у повільному часі, коли хтось у кімнаті повністю набік
+  if(mode!=='creator') updatePhantoms(dtW);   // в творце враги заморожены — не рушат постройки
   for(const ph of phantoms){
-    handleDeath(ph, dt);
-    if(ph.painT>0) ph.painT-=dt;
+    handleDeath(ph, dtW);
+    if(ph.painT>0) ph.painT-=dtW;
     ph.crouch = lerp(ph.crouch||0, clamp(-(ph.pitch||0),0,1), clamp(dt*6,0,1));  // присед по прицелу — иначе руки/клинок уходят в пах
     { const oc=obstacleAt(ph.gx,ph.gy);                                          // материал↔моб: плазма жжёт и ботов
       if(oc && oc.pass==='plasma' && !ph.dead){ ph.plasmaCd=(ph.plasmaCd||0)-dt;
@@ -5859,23 +5866,23 @@ function frame(now){
     ph.visYaw = smoothAngle(ph.visYaw, ph.dirIdx*45, dt*7);
     updateAvatarMesh(ph, now);
     updateBlade(ph);
-    try{ rigNpcTick(ph, dt); sonarEntityTick(ph, dt); entVoiceTick(ph, dt); }catch(e){}   // (09-21/22b) риг ворога + видимість за звуком + голос
+    try{ rigNpcTick(ph, dtW); sonarEntityTick(ph, dtW); entVoiceTick(ph, dtW); }catch(e){}   // (09-21/22b) риг ворога + видимість за звуком + голос
     // (09-10b, ТЗ п.14-18) ВИДИМІСТЬ навчального ворога вирішує ОДНА функція,
     // і робить це ОСТАННЬОЮ в кадрі — після AI, моделі та клинка, перед render.
     if(ph.tatFirstEnemy) tatEnemyVisibility(ph);
   }
   try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
   try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
-  try{ neighborLifeTick(dt); }catch(e){}                     // (09-22j) вороги за стінами ходять і звучать
+  try{ neighborLifeTick(dtW); }catch(e){}                    // (09-22j) вороги за стінами ходять і звучать
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
-  try{ npcClashTick(dt); }catch(e){}                                                                    // (09-22i) наставник × ворог
+  try{ npcClashTick(dtW); }catch(e){}                                                                   // (09-22i) наставник × ворог
   renderRemotes(now, dt);              // чужие игроки
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
   updateAdventure(dt);                 // сбор на кромке → переход между комнатами
   try{ updateRacks(dt); }catch(e){}    // стойки оружия в ДОМЕ (кадр невмирущий)
-  updateShots(dt);                     // снаряды стрельцов (и отбитые)
+  updateShots(dtW);                    // снаряды стрельцов (и отбитые) — у повільному часі
   updateWeaponFX(dt);                  // физика/модель оружия игрока (маятник, хвост, наконечники)
   updateDropPickup(dt);                // подбор чужого оружия (выдержка 0.6с, кулдаун)
   updatePickupCollect();               // сбор апгрейдов
@@ -6749,6 +6756,12 @@ function labLiveStep(dt){
       const anchor=S0.clone().add(dirArm.multiplyScalar(ext).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr));
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
+      /* (09-22o) крен до початку переходу в альбомну зсуває рукоять убік (не картинку) */
+      if(LAB.isGame && typeof landAngle==='function' && VB_ARM.rollShift){
+        const la=landAngle(), side=((sensor.gXs??sensor.gX??0)>=0?1:-1), k=clamp(la/Math.max(10,VB_CAM.tStart),0,1);
+        LAB.rollShS=(LAB.rollShS||0)+(side*k*VB_ARM.rollShift*s-(LAB.rollShS||0))*clamp(dt*8,0,1);
+        anchor.x-=LAB.rollShS;                                            // −X у ригу — праворуч гравця
+      }
       anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
         if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
@@ -7009,7 +7022,7 @@ window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
   moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
-  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0 };   // (09-22l) ширше + тіло за рукою
+  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.25 };   // (09-22l) ширше + тіло за рукою; (09-22o) крен → зсув меча
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -7745,7 +7758,7 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:45, exitDeg:35, holdS:0.25, tStart:45, tEnd:90 };
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88 };
 const VB_ORI={ force:0, rollSign:-1, level:1 };   // (09-22b) картинка МАЯКА була догори дриґом — знак навпаки
 const BEACON={ state:'STANCE', t:0 };
 const CAMAIM={ on:false, yaw:0, pitch:0, prevH:null, prevE:null };
@@ -7775,15 +7788,24 @@ function camAxisVec(){ const q=sensor.quatFull; if(!q) return null; const v=((VB
 /* (09-22n) ПЕРЕХІД В АЛЬБОМНУ — одна крива для всього: камери 3-я→1-ша особа, повороту картинки й стійки.
    Кут — у площині екрана (від верхнього краю, без знаку датчика), тож нахил назад/уперед його не псує.
    До tStart (45°) нічого не відбувається; далі плавно — повністю на tEnd (90°). */
+/* (09-22o) УПОВІЛЬНЕННЯ СВІТУ: телефон повністю набік (клинок біля обличчя — дивишся у відображення,
+   пишеш на лезі, наговорюєш) — світ сповільнюється для всіх у кімнаті. Твоя рука і меч — у реальному часі. */
+const VB_SLOW={ k:0.4 };
+window.VB_SLOW=VB_SLOW;
+function worldTimeScale(){
+  let ts=1-(1-VB_SLOW.k)*Math.pow(ORI.landS||0,1.5);
+  try{ for(const id in NET.remotes){ const p=NET.remotes[id]&&NET.remotes[id].latest; if(p&&p.bt&&(!ADV.on||(p.rx===ADV.rx&&p.ry===ADV.ry))) ts=Math.min(ts,VB_SLOW.k); } }catch(e){}
+  return ts;
+}
 function landAngle(){
-  if(sensor.gX==null) return 0;
-  const gx=sensor.gX||0, gy=sensor.gY||0, gz=sensor.gZ||0, g=Math.hypot(gx,gy,gz)||9.8;
+  if(sensor.gXs==null) return 0;
+  const gx=sensor.gXs||0, gy=sensor.gYs||0, gz=sensor.gZs||0, g=Math.hypot(gx,gy,gz)||9.8;   // (09-22o) згладжена, без ривків
   const plane=Math.hypot(gx,gy)/g;                                         // 1 — екран стоїть, 0 — лежить
   return Math.atan2(Math.abs(gx),Math.abs(gy))*180/Math.PI*clamp((plane-0.35)/0.25,0,1);
 }
 function landSmooth(dt){
   const a=landAngle(), t0=clamp((a-VB_CAM.tStart)/Math.max(5,VB_CAM.tEnd-VB_CAM.tStart),0,1), t=t0*t0*(3-2*t0);
-  ORI.landS=(ORI.landS||0)+(t-(ORI.landS||0))*clamp(dt/0.08,0,1);
+  ORI.landS=(ORI.landS||0)+(t-(ORI.landS||0))*clamp(dt/0.12,0,1);
   return ORI.landS;
 }
 function oriLevelAngle(dt){
@@ -7801,7 +7823,7 @@ function oriLevelAngle(dt){
 }
 function beaconTick(dt){
   const roll=(sensor.gX!=null)?landAngle():Math.abs(sensor.roll||0), B=BEACON;
-  const EN=Math.max(VB_CAM.enterDeg, VB_CAM.tStart+(VB_CAM.tEnd-VB_CAM.tStart)*0.4), EX=Math.min(VB_CAM.exitDeg, EN-10);   // (09-22n) стійка — не раніше середини переходу; гістерезис ≥10°
+  const EN=Math.max(VB_CAM.enterDeg, VB_CAM.tStart+(VB_CAM.tEnd-VB_CAM.tStart)*0.4), EX=clamp(VB_CAM.exitDeg, VB_CAM.tStart-5, EN-10);   // (09-22o) стійка — у межах переходу; гістерезис ≥10°
   if(B.state==='STANCE'){ if(roll>EN){ B.state='ARMING'; B.t=0; } }
   else if(B.state==='ARMING'){ if(roll<=EN) B.state='STANCE'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='BEACON'; beaconEnter(); } } }
   else if(B.state==='BEACON'){ if(roll<EX){ B.state='DISARMING'; B.t=0; } }
@@ -7809,6 +7831,7 @@ function beaconTick(dt){
   return (B.state==='BEACON'||B.state==='DISARMING')?1:0;
 }
 function beaconEnter(){
+  try{ logE('СВІТ: повільний час ×'+VB_SLOW.k+' (телефон повністю набік)'); }catch(e){}
   CAMAIM.on=true; CAMAIM.yaw=sensor.yawFused||0; CAMAIM.pitch=-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI;
   const v=camAxisVec(); CAMAIM.prevH=v?Math.atan2(v.x,-v.z)*180/Math.PI:null; CAMAIM.prevE=v?Math.asin(clamp(v.y,-1,1))*180/Math.PI:null;
   try{ oriInit(); oriDecide(); }catch(e){}
@@ -7847,7 +7870,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW};
 const SENS_SLIDERS=[
   ['РИГ · МАЯК · ОРІЄНТАЦІЯ (09-21)'],
   ['VB_MOVE.joy','Рух: джойстик (1) / свайпи (0) — проба',0,1,1],
@@ -7857,7 +7880,8 @@ const SENS_SLIDERS=[
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
-  ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,80,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
+  ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
+  ['VB_ARM.rollShift','Крен до переходу: зсув меча вбік, м (± — напрям)',-0.6,0.6,0.05],['VB_SLOW.k','Повільний час у повній альбомній (1 — вимк)',0.15,1,0.05],
   ['VB_CAM.enterDeg','Вхід у МАЯК від крену, ° (не раніше середини переходу)',30,85,1],['VB_CAM.exitDeg','Вихід із МАЯКА до крену, °',20,75,1],['VB_CAM.holdS','Утримання перед перемиканням, с',0.1,0.6,0.05],
   ['VB_ORI.level','Горизонт = справжній (1) / без компенсації (0)',0,1,0.05],
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
@@ -7927,8 +7951,13 @@ function sensSettingsOpen(){
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 
 /* (09-22l) типові = ваш останній VB_SENS_CFG; «СКИНУТИ» повертає саме до них */
-try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 3, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 70, "VB_CAM.exitDeg": 55, "VB_CAM.tStart": 45, "VB_CAM.tEnd": 90, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 3, "VB_ARM.gBack": 3, "VB_ARM.gRight": 3, "VB_ARM.gLeft": 3, "VB_ARM.gUp": 3, "VB_ARM.gDown": 3, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 1}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
+try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 2.6, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 78, "VB_CAM.exitDeg": 66, "VB_CAM.tStart": 70, "VB_CAM.tEnd": 88, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 2.6, "VB_ARM.gBack": 2.6, "VB_ARM.gRight": 2.6, "VB_ARM.gLeft": 2.6, "VB_ARM.gUp": 2.6, "VB_ARM.gDown": 2.6, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 1}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
 try{ sensSettingsLoad(); }catch(e){}
+/* (09-22o) разова поправка: лінійний рух на повну (3.0) → трохи менше (2.6); перехід в альбомну — біля 90° */
+try{ if(!localStorage.getItem('vb_mig_0922o')){ let ch=0;
+  for(const k of ['VB_ARM.gFwd','VB_ARM.gBack','VB_ARM.gRight','VB_ARM.gLeft','VB_ARM.gUp','VB_ARM.gDown','VB_ARM.gAll']){ if(+sensGet(k)>=2.95){ sensSet(k,2.6); ch++; } }
+  if(+sensGet('VB_CAM.enterDeg')<78){ sensSet('VB_CAM.enterDeg',78); ch++; } if(+sensGet('VB_CAM.exitDeg')<66){ sensSet('VB_CAM.exitDeg',66); ch++; }
+  localStorage.setItem('vb_mig_0922o','1'); if(ch){ sensSettingsSave(); logE('ЧУТЛИВІСТЬ: разова поправка ('+ch+') — лінійний рух 2.6, МАЯК біля 90°'); } } }catch(e){}
 
 requestAnimationFrame(frame);
 
@@ -8431,8 +8460,8 @@ setInterval(()=>{
     NET._watchPull=true;
     setTimeout(()=>{ try{ applyRemoteRoomIfNewer(ADV.rx+','+ADV.ry); NET._watchPull=false; }catch(e){ NET._watchPull=false; } }, 300);
   } }catch(e){}
-  try{ wavesTick(0.16); }catch(e){}
-  try{ allyTick(0.16); }catch(e){}
+  try{ wavesTick(0.16*worldTimeScale()); }catch(e){}
+  try{ allyTick(0.16*worldTimeScale()); }catch(e){}
   try{ sayTick(0.16); }catch(e){}
   try{ tatamiTick(0.16); }catch(e){}      // (09-10) сценарій навчання — подієвий, не таймерний
   try{ sensDiagTick(0.16); }catch(e){}    // (09-10b) діагностика сенсорів у лог (ТЗ п.9)
