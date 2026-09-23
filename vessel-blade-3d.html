@@ -1967,7 +1967,7 @@ function updateStanceAndCamera(dt){
     : (mode==='creator') ? 1
     : CAM.view==='fp' ? 1
     : (CAM.view==='third'||CAM.view==='top'||CAM.view==='fixed') ? 0
-    : Math.max(autoB, clamp(((sensor.rollLand!=null?sensor.rollLand:Math.abs(sensor.roll||0))-25)/40,0,1));   // (09-22i) камера їде за креном плавно, стан — за автоматом
+    : landSmooth(dt);   // (09-22n) камера — за єдиною кривою 45°→90°
   camAimTick(dt);
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
   const fp = player.fpSmooth;
@@ -2099,16 +2099,19 @@ function updateStanceAndCamera(dt){
   /* (09-22k) ГОРИЗОНТ ЗАВЖДИ ЗБІГАЄТЬСЯ ЗІ СПРАВЖНІМ: на скільки градусів екран повернутий відносно
      світу — на стільки ж, неперервно, повертається картинка. Не стрибок у 90°, а плавно разом із телефоном. */
   try{
-    const _rl=(sensor.rollLand!=null)?sensor.rollLand:0, _w0=clamp((_rl-3)/17,0,1), _w=_w0*_w0*(3-2*_w0);   // (09-22m) іде за горизонтом уже з малого нахилу
-    const lv=clamp(VB_ORI.level??1,0,1)*_w*(CAM.view==='third'?0:1);          // (09-22l) лише «набік», не в стійці мечем
-    if(lv>0.001 && CAM.view!=='top' && CAM.view!=='fixed'){
-      const phi=oriLevelAngle(dt), a=phi*Math.PI/180*lv;
+    /* (09-22n) поворот картинки йде тією ж кривою: до 45° — нуль, далі плавно до 90° на 90° */
+    const lvOn=clamp(VB_ORI.level??1,0,1)*(CAM.view==='third'?0:1);
+    const land=ORI.landS||0, side=((sensor.gX||0)>=0?1:-1);
+    if(lvOn>0.001 && land>0.001 && CAM.view!=='top' && CAM.view!=='fixed'){
+      let rot=side*90*land*lvOn;
+      const osA=oriAngle(); if(osA){ const d1=angDiff(rot,osA), d2=angDiff(rot,-osA); rot=Math.abs(d1)<Math.abs(d2)?d1:d2; }   // ОС уже повернула екран — лишок
+      const a=rot*Math.PI/180;
       const f=new THREE.Vector3().subVectors(camTarget,camPos).normalize();
       const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0));
       if(r.lengthSq()>1e-4){ r.normalize();
         const up=new THREE.Vector3(0,1,0).multiplyScalar(Math.cos(a)).add(r.multiplyScalar(Math.sin(a)*(VB_ORI.rollSign||1)));
         camera.up.copy(up.normalize()); }
-      oriHud((lv>0.5 && Math.abs(phi)>50) ? -Math.sign(phi)*90*(VB_ORI.rollSign||1) : 0);   // написи — сходинкою, щоб читались
+      oriHud(Math.abs(rot)>45 ? -Math.sign(rot)*90*(VB_ORI.rollSign||1) : 0);   // написи — сходинкою, щоб читались
     } else { camera.up.set(0,1,0); oriHud(0); }
   }catch(e){}
 }
@@ -5080,7 +5083,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22m · горизонт без перевороту: кут екрана від верхнього краю (незалежно від знаку датчика), іде за нахилом із 3° · лінійний рух: випад/крок тілом, свист руки, клац на повній досяжності';
+const BUILD_TAG='2026-09-22n · перехід в альбомну: до 45° нічого, далі плавно до повного на 90° — камера, поворот картинки й стійка по одній кривій · лінійний рух: випад/крок тілом, свист руки';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7742,7 +7745,7 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:45, exitDeg:35, holdS:0.25 };
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:45, exitDeg:35, holdS:0.25, tStart:45, tEnd:90 };
 const VB_ORI={ force:0, rollSign:-1, level:1 };   // (09-22b) картинка МАЯКА була догори дриґом — знак навпаки
 const BEACON={ state:'STANCE', t:0 };
 const CAMAIM={ on:false, yaw:0, pitch:0, prevH:null, prevE:null };
@@ -7769,6 +7772,20 @@ function camAxisVec(){ const q=sensor.quatFull; if(!q) return null; const v=((VB
 /* (09-22k) КУТ ЕКРАНА ВІДНОСНО СПРАВЖНЬОГО ГОРИЗОНТУ — з гравітації в площині екрана.
    0 — телефон рівно в портреті, ±90 — альбомна. Обертання навколо довгої осі (крен клинка) і нахил
    уперед-назад його майже не змінюють, тож у стійці мечем картинка не гойдається. */
+/* (09-22n) ПЕРЕХІД В АЛЬБОМНУ — одна крива для всього: камери 3-я→1-ша особа, повороту картинки й стійки.
+   Кут — у площині екрана (від верхнього краю, без знаку датчика), тож нахил назад/уперед його не псує.
+   До tStart (45°) нічого не відбувається; далі плавно — повністю на tEnd (90°). */
+function landAngle(){
+  if(sensor.gX==null) return 0;
+  const gx=sensor.gX||0, gy=sensor.gY||0, gz=sensor.gZ||0, g=Math.hypot(gx,gy,gz)||9.8;
+  const plane=Math.hypot(gx,gy)/g;                                         // 1 — екран стоїть, 0 — лежить
+  return Math.atan2(Math.abs(gx),Math.abs(gy))*180/Math.PI*clamp((plane-0.35)/0.25,0,1);
+}
+function landSmooth(dt){
+  const a=landAngle(), t0=clamp((a-VB_CAM.tStart)/Math.max(5,VB_CAM.tEnd-VB_CAM.tStart),0,1), t=t0*t0*(3-2*t0);
+  ORI.landS=(ORI.landS||0)+(t-(ORI.landS||0))*clamp(dt/0.08,0,1);
+  return ORI.landS;
+}
 function oriLevelAngle(dt){
   if(sensor.gX==null) return ORI.phi||0;
   const gx=sensor.gX||0, gy=sensor.gY||0;
@@ -7783,8 +7800,8 @@ function oriLevelAngle(dt){
   return ORI.phi||0;
 }
 function beaconTick(dt){
-  const roll=(sensor.rollLand!=null)?sensor.rollLand:Math.abs(sensor.roll||0), B=BEACON;
-  const EN=VB_CAM.enterDeg, EX=Math.min(VB_CAM.exitDeg, EN-10);            // (09-22k) гістерезис не менше 10°
+  const roll=(sensor.gX!=null)?landAngle():Math.abs(sensor.roll||0), B=BEACON;
+  const EN=Math.max(VB_CAM.enterDeg, VB_CAM.tStart+(VB_CAM.tEnd-VB_CAM.tStart)*0.4), EX=Math.min(VB_CAM.exitDeg, EN-10);   // (09-22n) стійка — не раніше середини переходу; гістерезис ≥10°
   if(B.state==='STANCE'){ if(roll>EN){ B.state='ARMING'; B.t=0; } }
   else if(B.state==='ARMING'){ if(roll<=EN) B.state='STANCE'; else { B.t+=dt; if(B.t>=VB_CAM.holdS){ B.state='BEACON'; beaconEnter(); } } }
   else if(B.state==='BEACON'){ if(roll<EX){ B.state='DISARMING'; B.t=0; } }
@@ -7840,7 +7857,8 @@ const SENS_SLIDERS=[
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
-  ['VB_CAM.enterDeg','Вхід у МАЯК від крену, °',30,70,1],['VB_CAM.exitDeg','Вихід із МАЯКА до крену, °',20,60,1],['VB_CAM.holdS','Утримання перед перемиканням, с',0.1,0.6,0.05],
+  ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,80,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
+  ['VB_CAM.enterDeg','Вхід у МАЯК від крену, ° (не раніше середини переходу)',30,85,1],['VB_CAM.exitDeg','Вихід із МАЯКА до крену, °',20,75,1],['VB_CAM.holdS','Утримання перед перемиканням, с',0.1,0.6,0.05],
   ['VB_ORI.level','Горизонт = справжній (1) / без компенсації (0)',0,1,0.05],
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
   ['СОНАР · МУЗИКА'],
@@ -7909,7 +7927,7 @@ function sensSettingsOpen(){
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 
 /* (09-22l) типові = ваш останній VB_SENS_CFG; «СКИНУТИ» повертає саме до них */
-try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 3, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 70, "VB_CAM.exitDeg": 50, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 3, "VB_ARM.gBack": 3, "VB_ARM.gRight": 3, "VB_ARM.gLeft": 3, "VB_ARM.gUp": 3, "VB_ARM.gDown": 3, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 1}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
+try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 3, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 70, "VB_CAM.exitDeg": 55, "VB_CAM.tStart": 45, "VB_CAM.tEnd": 90, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": -1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 3, "VB_ARM.gBack": 3, "VB_ARM.gRight": 3, "VB_ARM.gLeft": 3, "VB_ARM.gUp": 3, "VB_ARM.gDown": 3, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 1}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
 try{ sensSettingsLoad(); }catch(e){}
 
 requestAnimationFrame(frame);
