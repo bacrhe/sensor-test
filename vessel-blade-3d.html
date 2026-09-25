@@ -870,6 +870,7 @@ function onMotion(e){
   sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
   sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
   sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
+  if(r){ sensor.rrX=r.beta||0; sensor.rrY=r.gamma||0; sensor.rrZ=r.alpha||0; }   // (09-24a) для жестів ТАК/НІ
 }
 
 function bindSensors(){
@@ -4387,9 +4388,9 @@ function swordClashTick(dt){
     try{                                                                  // (09-22f) відскік видно: клинок повертає, руку відкидає, корпус смикає
       const bodyRel=(S.liveBlade&&S.liveBlade.body)||0, rot=bodyRel*Math.PI/180, Y=new THREE.Vector3(0,1,0);
       const A=S.arm||(S.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
-      { const _aw=away.clone().applyAxisAngle(Y,rot); if(S.mirror) _aw.x=-_aw.x; A.vel.add(_aw.multiplyScalar(clamp(0.6+rel*0.18,0.6,2.4))); } A.still=0;
+      A.vel.add(away.clone().applyAxisAngle(Y,rot).multiplyScalar(clamp(0.6+rel*0.18,0.6,2.4))); A.still=0;
       const bd=t.clone().sub(g).normalize(), axis=new THREE.Vector3().crossVectors(bd,away);
-      if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); if(S.mirror){ axis.y=-axis.y; axis.z=-axis.z; } S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*6*(VB_CLASH.kick||1),20,80)*Math.PI/180); S.kickT=1; }
+      if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*6*(VB_CLASH.kick||1),20,80)*Math.PI/180); S.kickT=1; }
       S.recoil=clamp(0.45+rel*0.06,0.45,1);
     }catch(e){}
     if(enemyStrikes || imp>0.6){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', clashImpulse(S,away,rel), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
@@ -5218,7 +5219,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-22u · ВІЛЬНИЙ РУХ: тіла істот і гравця живуть поза сіткою — ідуть неперервно, розштовхуються, стоять де зупинились, свайп — ривок; удари за справжньою відстанню; клітинки лишились рішеннями ШІ · піхви · різ по видимому лезу';
+const BUILD_TAG='2026-09-24a · ДІАЛОГ РУХОМ: наставник питає — ТАК кивком (угору-униз двічі), НІ похитуванням (ліворуч-праворуч двічі); «Ти мене чуєш?» на початку; мовчання → перепитує, дивується, екзистенційні питання, повільна поетична мова; емодзі на обличчі; хмарка — лише коли дивишся на нього; екскурсія за відповідями · руків\'я завжди в руках';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6035,6 +6036,7 @@ function frame(now){
   try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
   try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
   try{ neighborLifeTick(dtW); }catch(e){}                    // (09-22j) вороги за стінами ходять і звучать
+  try{ gestTick(dt); dlgTick(dt); tourTick(dt); mentorFaceTick(); }catch(e){ if(!window.__dlgErr){ window.__dlgErr=1; logE('ДІАЛОГ: '+e.message); } }   // (09-24a) діалог рухом
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   try{ npcClashTick(dtW); }catch(e){}                                                                   // (09-22i) наставник × ворог
@@ -6713,6 +6715,33 @@ function labSetPose(P){
 /* Двуручний хват (п.22-25): права кисть веде меч (FK або LIVE), ліва завжди тягнеться
    IK-ом до GRIP_LOWER тієї самої рукояті. Вона не декорація — при недосяжності
    піднімається попередження LEFT_HAND_OFF_GRIP. */
+/* (09-22v) ХВАТ У ДОСЯЖНОСТІ: верхній хват (права рука; у лівші — дзеркально) не далі, ніж рука дістає від плеча.
+   Меч зсувається до руки цілим — лезо зберігає напрям, рукоять лишається в долонях. */
+function labGripReachFix(rig){
+  if(!rig||!rig.sword||!rig.sword.sockets||!rig.sword.sockets.GRIP_UPPER) return 0;
+  const sw=rig.sword.root, dm=rig.dims; if(!sw.parent) return 0;
+  const arm=(dm.upper+dm.fore+dm.hand*0.6)*0.96;
+  LAB.obj.updateMatrixWorld(true);
+  const S=rig.J[(LAB.isGame&&LAB.mirror)?'LEFT_SHOULDER':'RIGHT_SHOULDER'].getWorldPosition(new THREE.Vector3());
+  const up=rig.sword.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3());
+  const d=up.distanceTo(S); if(d<=arm) return 0;
+  const target=up.clone().sub(S).multiplyScalar(arm/d).add(S);
+  const pW=sw.getWorldPosition(new THREE.Vector3()).add(target.sub(up));
+  sw.position.copy(sw.parent.worldToLocal(pW)); LAB.obj.updateMatrixWorld(true);
+  return d-arm;
+}
+/* після IK: якщо права рука все одно не дістала (межі суглобів) — меч іде за кистю, а не висить окремо */
+function labGripHandLock(rig){
+  const r=LAB.ikR; if(!r || r.reach!==false || !rig.sword.sockets.GRIP_UPPER) return;
+  const sw=rig.sword.root; if(!sw.parent) return;
+  LAB.obj.updateMatrixWorld(true);
+  const w=rig.J[(LAB.isGame&&LAB.mirror)?'LEFT_WRIST':'RIGHT_WRIST'].getWorldPosition(new THREE.Vector3()), up=rig.sword.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3());
+  const e=w.distanceTo(up); if(e<0.06) return;
+  const pull=up.clone().sub(w).normalize().multiplyScalar(e-0.05);                 // лишаємо ~долоню між зап'ястям і хватом
+  const pW=sw.getWorldPosition(new THREE.Vector3()).sub(pull);
+  sw.position.copy(sw.parent.worldToLocal(pW)); LAB.obj.updateMatrixWorld(true);
+  LAB.gripLockN=(LAB.gripLockN||0)+1;
+}
 function labTwoHandGrip(rigArg,quiet){
   const rig=rigArg||LAB.rig; if(!rig) return;
   LAB.warn=LAB.warn||[];
@@ -6724,17 +6753,19 @@ function labTwoHandGripCore(rig){
   const sw=rig.sword, dm=rig.dims, P=rig.P, s=P.scale;
   const rootQ=rig.root.getWorldQuaternion(new THREE.Quaternion());
   const tipW=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+  const LH=!!(LAB.isGame&&LAB.mirror);             // (09-22v) лівша: ролі рук міняються
+  const MA=LH?'LEFT':'RIGHT', SA=LH?'RIGHT':'LEFT', px=LH?1:-1;
   if(LAB.swordFree||rig.isAstral){                // LIVE: меч у просторі, ОБИДВІ руки IK
     const upW=sw.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3());
-    const r=labIK2(rig.J.RIGHT_SHOULDER,rig.J.RIGHT_ELBOW,rig.J.RIGHT_WRIST,upW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3(-0.7,-0.6,-0.3).applyQuaternion(rootQ),tipW);
-    LAB.ikR=r; if(!r.reach) LAB.warn.push('RIGHT_HAND_OFF_GRIP'); if(r.stretch>0.97) LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); if(r.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
+    const r=labIK2(rig.J[MA+'_SHOULDER'],rig.J[MA+'_ELBOW'],rig.J[MA+'_WRIST'],upW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3(0.7*px,-0.6,-0.3).applyQuaternion(rootQ),tipW);
+    LAB.ikR=r; if(!r.reach) LAB.warn.push(MA+'_HAND_OFF_GRIP'); if(r.stretch>0.97) LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); if(r.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
   }
   LAB.obj.updateMatrixWorld(true);
   const lowW=sw.sockets.GRIP_LOWER.getWorldPosition(new THREE.Vector3());
-  const l=labIK2(rig.J.LEFT_SHOULDER,rig.J.LEFT_ELBOW,rig.J.LEFT_WRIST,lowW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3(0.7,-0.6,-0.3).applyQuaternion(rootQ),tipW);
-  LAB.ikL=l; if(!l.reach) LAB.warn.push('LEFT_HAND_OFF_GRIP'); if(l.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
+  const l=labIK2(rig.J[SA+'_SHOULDER'],rig.J[SA+'_ELBOW'],rig.J[SA+'_WRIST'],lowW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3(-0.7*px,-0.6,-0.3).applyQuaternion(rootQ),tipW);
+  LAB.ikL=l; if(!l.reach) LAB.warn.push(SA+'_HAND_OFF_GRIP'); if(l.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
   LAB.obj.updateMatrixWorld(true);
-  const lw=rig.J.LEFT_WRIST.getWorldPosition(new THREE.Vector3());
+  const lw=rig.J[SA+'_WRIST'].getWorldPosition(new THREE.Vector3());
   LAB.gripErrL=lw.distanceTo(lowW);
   if(LAB.gripErrL>0.12) LAB.warn.push('BAD_GRIP');
 }
@@ -6865,12 +6896,15 @@ function labFrame(now){
 function labLiveStep(dt){
       const rig=LAB.rig, s=rig.P.scale, dr=Math.PI/180;
       if(!LAB.anim) labSetPose(labResolve({p:'COMBAT_READY'}));   // LIVE завжди від бойової стійки: руки — IK, тіло — за рукою; обрана поза тут ні до чого
+      if(LAB.isGame && LAB.mirror){ const J=LAB.rig.J;                                  // (09-22v) лівша: стійка дзеркальна — права нога вперед
+        for(const [a,b] of [['LEFT_HIP','RIGHT_HIP'],['LEFT_KNEE','RIGHT_KNEE'],['LEFT_ANKLE','RIGHT_ANKLE']]){ const ra=J[a].rotation, rb=J[b].rotation; const t=[ra.x,-ra.y,-ra.z]; ra.set(rb.x,-rb.y,-rb.z); rb.set(t[0],t[1],t[2]); }
+        if(J.PELVIS) J.PELVIS.rotation.y=-J.PELVIS.rotation.y; }
       const I=labLiveInputs(dt);
       const N=LAB.neutral||{yaw:0,pitch:0,roll:0};
       // ігровий sensor.pitch = -sin(кута підйому): ярус 2 при від'ємному pitch. Тут — явно в градуси підйому.
       const elev=v=>-Math.asin(clamp(v,-1,1))*180/Math.PI;
       const yawRel=angDiff(I.yaw,N.yaw)*VB_ANG.yaw, pitchA=clamp((elev(I.pitch)-elev(N.pitch))*VB_ANG.pitch,-85,85);
-      const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1)*VB_ANG.roll*((LAB.isGame&&LAB.mirror)?-1:1);
+      const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1)*VB_ANG.roll;
       /* (09-15) ДВА ТІЛА. SYNC: телефон керує фізичним тілом. LOOSE (втрата контролю — за спробу
          протиснути меч крізь неруйнівне або за сильний удар): фізичне тіло рухається лише інерцією
          і саме взаємодіє зі світом, а телефон керує АСТРАЛОМ; контроль повертається, коли гравець
@@ -6885,7 +6919,7 @@ function labLiveStep(dt){
       const bodyRel=angDiff(LAB.body.visYaw||0,N.yaw);
       const bodyRelA = C.state==='SYNC' ? bodyRel : angDiff(LAB.astralBody.visYaw||0,N.yaw);
       rig.root.rotation.y=-bodyRel*dr;
-      const lagI=angDiff(yawRel,bodyRelA)*((LAB.isGame&&LAB.mirror)?-1:1);                                  // намір телефона відносно корпусу (астрального); (09-22r) лівша — дзеркально
+      const lagI=angDiff(yawRel,bodyRelA);                                  // намір телефона відносно корпусу (астрального)
       const lag = C.state==='SYNC' ? lagI : C.ph.yaw;                        // фізичний клинок відносно фізичного корпусу
       // участь корпусу (п.37,69): таз і плечі йдуть за клинком, ноги стабілізують
       { const t=clamp(dt*10,0,1); LAB.lagS=(LAB.lagS==null?lag:LAB.lagS+angDiff(lag,LAB.lagS)*t);      // корпус — без покадрового тремтіння
@@ -6912,18 +6946,19 @@ function labLiveStep(dt){
       /* ЯКІР ВІД ПЛЕЧА: рука висить від S0 у напрямку «вперед + вниз/вгору за дугою клинка»,
          повернутому навколо вертикалі на кут наміру. Відстань від плеча = ext, тож обрізання
          по досяжності більше не з'їдає зсув від акселерометра. */
-      const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s, hipY+0.22*s+dm.torsoH-0.05*s, 0);
+      const HS=((LAB.isGame&&LAB.mirror)?-1:1);                                                   // (09-22v) рука меча: 1 — права, −1 — ліва
+      const S0=new THREE.Vector3(-(rig.P.torsoW/2+0.07)*s*HS, hipY+0.22*s+dm.torsoH-0.05*s, 0);
       /* нахил клинка сам по собі руку НЕ рухає (канали розділені); зв'язка — лише через tiltCouple */
       const el=clamp(arc,-1,1)*1.35*VB_ARM.tiltCouple;
       const dirArm=new THREE.Vector3(0, Math.sin(el), Math.cos(el)).normalize();
       const anchor=S0.clone().add(dirArm.multiplyScalar(ext).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr));
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
-      { const _ao=armOff.clone(); _ao.x*=((LAB.isGame&&LAB.mirror)?-1:1); anchor.add(_ao.multiplyScalar(s)); }   // (09-22r) лінійний рух — у світі той самий бік
+      anchor.add(armOff.clone().multiplyScalar(s));
       /* (09-22o) крен до початку переходу в альбомну зсуває рукоять убік (не картинку) */
       if(LAB.isGame && typeof landAngle==='function' && VB_ARM.rollShift){
         const la=landAngle(), side=((sensor.gXs??sensor.gX??0)>=0?1:-1), k=clamp(la/Math.max(10,VB_CAM.tStart),0,1);
         LAB.rollShS=(LAB.rollShS||0)+(side*k*VB_ARM.rollShift*s-(LAB.rollShS||0))*clamp(dt*8,0,1);
-        anchor.x-=LAB.rollShS*((LAB.isGame&&LAB.mirror)?-1:1);                                            // −X у ригу — праворуч гравця
+        anchor.x-=LAB.rollShS;                                            // −X у ригу — праворуч гравця
       }
       anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
@@ -6966,7 +7001,7 @@ function labLiveStep(dt){
          (до 0.6 м), угору — пружинить на носках. Меч їде разом із тілом: лінійний рух видно й відчутно. */
       if(LAB.isGame || LAB.flags.sensor){
         const d0=anchor.distanceTo(S0), over=Math.max(0,d0-reach*0.92);
-        const dh=anchor.clone().sub(S0); dh.y=0; dh.x*=((LAB.isGame&&LAB.mirror)?-1:1); const L=dh.length(), tgt=new THREE.Vector3();
+        const dh=anchor.clone().sub(S0); dh.y=0; const L=dh.length(), tgt=new THREE.Vector3();
         if(L>1e-4 && over>0){ tgt.copy(dh).multiplyScalar(Math.min(over*1.25*(VB_ARM.bodyFollow??1), 0.6*s)/L); tgt.applyAxisAngle(new THREE.Vector3(0,1,0), rig.root.rotation.y); }
         const B=LAB.lungeS||(LAB.lungeS=new THREE.Vector3());
         B.lerp(tgt, clamp(dt*(tgt.lengthSq()>B.lengthSq()?10:4),0,1));
@@ -6980,18 +7015,19 @@ function labLiveStep(dt){
       }
       /* остання страховка: рука фізично не довша за себе — але це НЕ впливає на позу й на фільтр */
       LAB.obj.updateMatrixWorld(true);
-      { const S=rig.J.RIGHT_SHOULDER.getWorldPosition(new THREE.Vector3());
+      { const S=(HS>0?rig.J.RIGHT_SHOULDER:rig.J.LEFT_SHOULDER).getWorldPosition(new THREE.Vector3());   // (09-22v) плече руки меча
         const T=rig.root.localToWorld(anchor.clone()); const d=T.distanceTo(S);
         if(d>reach*1.02){ T.sub(S).multiplyScalar(reach/d).add(S); anchor.copy(rig.root.worldToLocal(T)); LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); } }
       const dq=THREE.Quaternion, ax=new THREE.Vector3(1,0,0), ay=new THREE.Vector3(0,1,0);
       const mkQ=(yw,pt,rl)=>new dq().setFromAxisAngle(ay,-yw*dr).multiply(new dq().setFromAxisAngle(ax,(-90-pt)*dr)).multiply(new dq().setFromAxisAngle(ay,rl*dr));
       const qI=mkQ(lagI,pitchA-(LAB.isGame?(VB_WEAPON.sag||0):0),rollA);   // (09-22g) повзун на лезі — вістря провисає
       const _gk=LAB.isGame?clamp(ORI.landS||0,0,1):0;                              // (09-22r) ЗАХИСНА СТІЙКА: телефон набік — меч підіймається до вуха
-      if(_gk>0.01){ qI.slerp(mkQ(12,58,0), _gk*0.8); anchor.lerp(new THREE.Vector3(-0.30*s, S0.y+0.26*s, 0.22*s), _gk*0.8); }
+      if(_gk>0.01){ qI.slerp(mkQ(12*HS,58,0), _gk*0.8); anchor.lerp(new THREE.Vector3(-0.30*s*HS, S0.y+0.26*s, 0.22*s), _gk*0.8); }
       LAB.guardK=_gk; LAB.intendQ=qI.clone();
-      const resolvePen=()=>{                                              // меч не входить у неруйнівне: виштовхування по нормалі
+      const resolvePen=()=>{                                              // меч не входить у неруйнівне
         LAB.intendedDepth=0;
-        for(let it=0;it<3;it++){
+        const _M4=THREE.Matrix4, _gameP=(LAB.isGame||LAB.flags.sensor);
+        for(let it=0;it<4;it++){
           LAB.obj.updateMatrixWorld(true);
           const g=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL,0)), t=sw.localToWorld(new THREE.Vector3(0,-rig.sword.gripL-rig.sword.bladeL,0));
           const h=sweepBladeContact(g,t,g,t,(LAB.colliders||labBuildColliders()).concat(labBodyColliders()),1); if(!h) break;
@@ -6999,7 +7035,20 @@ function labLiveStep(dt){
           const penN=(1-h.t)*len*Math.abs(bd.dot(h.n));
           LAB.intendedDepth=Math.max(LAB.intendedDepth,(1-h.t)*len);
           const push=Math.max(0,penN-0.015); if(push<1e-4) break;
-          sw.position.add(new THREE.Vector3().copy(h.n).multiplyScalar(push));
+          /* (09-22v) ЛЕЗО ВІДХИЛЯЄТЬСЯ НАВКОЛО ХВАТУ — руки тримають руків'я, стіна повертає клинок.
+             Раніше весь меч відштовхувався по нормалі (до метра при глибокому зануренні) — і висів поруч із руками. */
+          const Pv=(rig.sword.sockets&&rig.sword.sockets.GRIP_UPPER)?rig.sword.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3()):g.clone();
+          const axis=new THREE.Vector3().crossVectors(bd,h.n), lever=Math.max(0.15,t.distanceTo(Pv));
+          if(_gameP && h.t>0.12 && axis.lengthSq()>1e-6){
+            axis.normalize(); const th=Math.min(Math.asin(clamp(push/lever,0,1))*1.15, 1.2);
+            const Wn=new _M4().makeTranslation(Pv.x,Pv.y,Pv.z).multiply(new _M4().makeRotationAxis(axis,th)).multiply(new _M4().makeTranslation(-Pv.x,-Pv.y,-Pv.z)).multiply(sw.matrixWorld);
+            new _M4().copy(sw.parent.matrixWorld).invert().multiply(Wn).decompose(sw.position, sw.quaternion, new THREE.Vector3());
+            LAB.penRot=(LAB.penRot||0)+th;
+          } else {
+            const mv=_gameP?Math.min(push,0.12):push;                                   // упор біля самого хвату — мінімальний зсув
+            const pW=sw.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3().copy(h.n).multiplyScalar(mv));   // (09-22v) зсув у світі → у локальні батька
+            sw.position.copy(sw.parent.worldToLocal(pW));
+          }
         } };
       if(C.state==='SYNC'){
         sw.position.copy(anchor);
@@ -7007,6 +7056,7 @@ function labLiveStep(dt){
         else { LAB.qLag=null; sw.quaternion.copy(qI); }
         if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
         resolvePen();
+        if(LAB.isGame || LAB.flags.sensor){ const pulled=labGripReachFix(rig); if(pulled>0.02) LAB.warn.push('GRIP_PULLED_IN '+(pulled*100).toFixed(0)+'см'); }   // (09-22v) руків'я не «відлітає» від рук
         const ctType=LAB.contact?LAB.contact.type:'';
         const punishable = ctType && ctType!=='FLOOR' && ctType!=='BODY';    // підлога і власне тіло — не порушення
         C.deepT = (punishable && (LAB.intendedDepth||0)>0.30) ? C.deepT+dt : 0;   // ПОРУШЕННЯ: лише відверте продавлювання крізь стіну/структуру
@@ -7026,6 +7076,7 @@ function labLiveStep(dt){
         Pp.anchor.y=Math.max(Pp.anchor.y,0.36*s);
         sw.position.copy(Pp.anchor); sw.quaternion.copy(mkQ(Pp.yaw,Pp.pitch,Pp.roll));
         resolvePen();
+        if(LAB.isGame || LAB.flags.sensor) labGripReachFix(rig);                        // (09-22v) і в розсинхроні меч у руках
         Pp.anchor.copy(sw.position);
         /* РЕСИНК: астрал (намір) достатньо близько до фізичного — контроль повертається */
         const dYaw=Math.abs(angDiff(yawRel, bodyRel+Pp.yaw)), dPitch=Math.abs(pitchA-Pp.pitch);
@@ -7083,6 +7134,7 @@ function labLiveStep(dt){
       }
       if(Math.abs(lag)>70){ LAB.lagT=(LAB.lagT||0)+dt; if(LAB.lagT>0.4) LAB.warn.push('BODY_LAG_TOO_HIGH'); } else LAB.lagT=0;
       labTwoHandGrip();
+      if(LAB.isGame || LAB.flags.sensor){ labGripHandLock(rig); if(LAB.ikR && LAB.ikR.reach===false) labTwoHandGrip(null,true); }   // (09-22v) меч іде за кистю; ліва дотягується, як може
 }
 function labBuildColliders(){
   const R=3.5*CELL, H=3.8*CELL, T=1.0;
@@ -7129,7 +7181,6 @@ function labContactTick(dt){
     if(LAB.swordFree && _rOk && !(LAB.pierceT && performance.now()-LAB.pierceT<60)){            // (09-22t) пробив — відбою немає                                               // (09-14c) РИКОШЕТ: швидкий удар — меч відскакує, не прилипає
       const bodyRel=(LAB.liveBlade&&LAB.liveBlade.body)||0;
       const nL=CT.normal.clone().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);   // нормаль у системі тіла
-      if(LAB.isGame&&LAB.mirror) nL.x=-nL.x;                                                          // (09-22r) дзеркальний риг
       const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
       A.vel.add(nL.multiplyScalar(clamp(CT.normalSpeed*0.45,0.35,2.2))); A.still=0;                  // рука відлітає від поверхні
       const bd=b.clone().sub(a).normalize();
@@ -7140,7 +7191,7 @@ function labContactTick(dt){
       const vW=(LAB.prevTipVel||new THREE.Vector3()).clone();
       const r=vW.lengthSq()>1e-4 ? vW.sub(CT.normal.clone().multiplyScalar(2*vW.dot(CT.normal))).normalize() : CT.normal.clone();
       const axisW=new THREE.Vector3().crossVectors(bd,r);
-      if(axisW.lengthSq()>1e-6){ axisW.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180); if(LAB.isGame&&LAB.mirror){ axisW.y=-axisW.y; axisW.z=-axisW.z; }   // відбиття: S·a з кутом −θ ≡ (−S·a) з кутом θ
+      if(axisW.lengthSq()>1e-6){ axisW.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),bodyRel*Math.PI/180);
         LAB.kickQ=new THREE.Quaternion().setFromAxisAngle(axisW,clamp(CT.normalSpeed*6*e,6,40)*Math.PI/180); LAB.kickT=1; }
       logE('LAB РИКОШЕТ: '+CT.object+' ('+CT.surfaceType+', e='+e+') · v '+CT.normalSpeed.toFixed(1)+' м/с · відхил '+Math.round(clamp(CT.normalSpeed*6*e,6,40))+'° по відбитій траєкторії');
       /* сильний удар вибиває контроль: тіло дістає імпульс і довертається саме, душа виходить */
@@ -7904,6 +7955,8 @@ function hitStripTick(S){
    Звичайний стан — меч у піхвах: ним мацають світ (дотик, матеріал, вібрація), нічого не ріжуть і не ранять,
    шуму мало. Різкий мах (вістря швидше drawSpeed) — меч вихоплюється сам. Вістря прямо вниз і нерухомо
    1.5 с — меч ховається назад (тихо пройти повз, вузький прохід, велика зброя). */
+const VB_GEST={ amp:9, win:2.6, need:3, dom:1.35, rate:30, lookDeg:28 };   // (09-24a) ТАК/НІ рухом телефона
+window.VB_GEST=VB_GEST;
 const VB_SHEATH={ on:1, drawSpeed:4.5, sheatheHold:1.5 };
 var SHEATH={ drawn:false, stillT:0, lastDrawT:0 };
 window.VB_SHEATH=VB_SHEATH; window.SHEATH=SHEATH;
@@ -7982,7 +8035,7 @@ function rigPlayerTick(dt){
   S.body.visYaw=player.visYaw||S.body.visYaw;
   S.colliders=gameBuildColliders();
   try{ handTick(dt); }catch(e){}
-  { const m=(HAND.side==='L'); if(m!==S.mirror){ S.mirror=m; S.arm&&S.arm.vel&&S.arm.vel.set(0,0,0); LAB.qLag=null; } S.rig.root.scale.x=S.mirror?-1:1; }   // (09-22r) лівша — дзеркальна стійка
+  { const m=(HAND.side==='L'); if(m!==S.mirror){ S.mirror=m; S.arm&&S.arm.vel&&S.arm.vel.set(0,0,0); LAB.qLag=null; } S.rig.root.scale.x=1; }   // (09-22v) лівша — інші ролі рук, модель не віддзеркалюється
   const prev=LAB; LAB=S;
   try{ S.warn=[]; S.recoil=Math.max(0,(S.recoil||0)-dt*2.2); labLiveStep(dt); S.ctTxt=labContactTick(dt); }
   catch(e){ if(!S._err){ S._err=true; logE('VB_RIG крок: '+e.message); } }
@@ -8406,9 +8459,10 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST};
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
+  ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
   ['VB_SHEATH.on','Піхви: меч у піхвах, доки не махнеш (1/0)',0,1,1],['VB_SHEATH.drawSpeed','Піхви: швидкість вістря для вихоплення, м/с',2,10,0.1],
   ['VB_NOISE.spawn','Шум кличе ворогів (0 — вимк, 2 — удвічі частіше)',0,2,0.1],['VB_NOISE.cap','Шум: стеля живих ворогів',2,14,1],
   ['VB_RIBBON.on','Стрічка клинка: різ і світіння (1/0)',0,1,1],['VB_RIBBON.minSpeed','Стрічка: мін. швидкість вістря, м/с',1,8,0.1],
@@ -9781,7 +9835,7 @@ function ttsSpeak(text, opts){
     if(TTSQ.q.length>=3) TTSQ.q.shift();                         // очередь не растёт бесконечно
   }
   TTSQ.lastTxt=txt; TTSQ.lastT=now;
-  TTSQ.q.push({t:txt, critical:!!opts.critical});
+  TTSQ.q.push({t:txt, critical:!!opts.critical, rate:opts.rate, pitch:opts.pitch});
   ttsPump();
 }
 function ttsPump(){
@@ -9791,7 +9845,7 @@ function ttsPump(){
   try{
     const u=new SpeechSynthesisUtterance(item.t);
     if(TTS.v) u.voice=TTS.v;
-    u.lang=(TTS.v&&TTS.v.lang)||'uk-UA'; u.rate=1.0; u.pitch=0.95;
+    u.lang=(TTS.v&&TTS.v.lang)||'uk-UA'; u.rate=clamp(item.rate||1.0,0.5,1.5); u.pitch=clamp(item.pitch||0.95,0.5,1.5);
     const done=()=>{
       if(TTSQ.cur!==item) return;
       try{ clearTimeout(TTSQ._wd); }catch(e){}
@@ -9806,7 +9860,7 @@ function ttsPump(){
 }
 // Chrome/Android глушит синтез после ~15с — мягко будим, не отменяя реплику.
 setInterval(()=>{ try{ if(TTSQ.busy && speechSynthesis.paused) speechSynthesis.resume(); }catch(e){} }, 4000);
-function speakTut(html){ ttsSpeak(html, {}); }
+function speakTut(html, v){ ttsSpeak(html, v||{}); }
 
 /* ════ ГОЛОСОВИЙ ЧАТ «ПОРУЧ» (07-14, ЕКСПЕРИМЕНТ) ═══════════════════════════
    WebRTC-mesh між гравцями ОДНІЄЇ кімнати (у пригоді мета-кімната спільна за
@@ -10545,7 +10599,7 @@ function startTutorial(src){
   try{ clearClinch(); }catch(e){}
   player.hp=100; player.stamina=100;
   tatDiag('старт');
-  runPrologueIntro(()=>runTatamiScript());             // ТЗ п.11: audio-first, чорний екран
+  runPrologueIntro(()=>{ if(!DLG.openedOnce){ DLG.openedOnce=true; mentorOpening(()=>runTatamiScript(), {tatami:true}); } else runTatamiScript(); });   // ТЗ п.11 + (09-24a) спершу — «Ти мене чуєш?»
 }
 window.startTutorial=startTutorial;
 
@@ -10624,10 +10678,10 @@ function allyBubble(){
   }
   return SAY.el;
 }
-function allySay(text, hold){                    // одна репліка (черга — речення за реченням)
+function allySay(text, hold, voice){             // одна репліка (черга — речення за реченням); voice — {rate,pitch}
   if(!text) return;
   const parts=String(text).split(/(?<=[.!?…])\s+/).filter(Boolean);
-  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.0, p.length*0.07)});   // (07-23) темп мови
+  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.0, p.length*0.07/((voice&&voice.rate)||1)), v:voice||null});   // (07-23) темп мови
 }
 function allySayNow(text){ SAY.queue.length=0; SAY.cur=null; SAY.t=0; try{ ttsFlush(); }catch(e){} allySay(text); }
 function sayTick(dt){
@@ -10641,7 +10695,7 @@ function sayTick(dt){
     if(typeof ttsBusy==='function' && ttsBusy()) return;
     SAY.cur=SAY.queue.shift(); SAY.t=SAY.cur.hold;
     el.textContent=SAY.cur.t;
-    try{ if(typeof speakTut==='function') speakTut(SAY.cur.t); }catch(e){}   // (07-23) вчитель говорить
+    try{ if(typeof speakTut==='function') speakTut(SAY.cur.t, SAY.cur.v); }catch(e){}   // (07-23) вчитель говорить
     try{ blip(520,0.05,'sine',0.07); }catch(e){}
   }
   SAY.t-=dt;
@@ -10650,9 +10704,12 @@ function sayTick(dt){
   // хмарка тримається над головою вчителя
   try{
     if(!a || !a.mesh){ el.style.display='none'; return; }
-    _w3.set(0, TIER_H*2.6, 0); a.mesh.localToWorld(_w3); _w3.project(camera);
+    _w3.set(0, TIER_H*2.6, 0); a.mesh.localToWorld(_w3);
+    const _fw=new THREE.Vector3(); camera.getWorldDirection(_fw); const _to=_w3.clone().sub(camera.position); const _dist=_to.length(); _to.normalize();
+    const _look = _fw.dot(_to) > Math.cos((VB_GEST.lookDeg||28)*Math.PI/180) && _dist<16;   // (09-24a) лише коли дивишся на нього
+    _w3.project(camera);
     const x=(_w3.x*0.5+0.5)*window.innerWidth, y=(-_w3.y*0.5+0.5)*window.innerHeight;
-    const vis = _w3.z<1 && x>-100 && x<window.innerWidth+100;
+    const vis = _look && _w3.z<1 && x>-100 && x<window.innerWidth+100;
     el.style.display = vis?'block':'none';
     el.style.left=clamp(x, 90, window.innerWidth-90)+'px';
     el.style.top =clamp(y, 70, window.innerHeight-140)+'px';
@@ -10695,6 +10752,160 @@ function allyDemoTick(dt){
   }catch(e){}
   if(DEMO.t<=0){ DEMO.kind=null; try{ if(ALLY.ph) ALLY.ph._demoHome=null; }catch(e){} }
 }
+
+
+/* ═══════════════ (09-24a) ДІАЛОГ РУХОМ ТЕЛЕФОНА ═══════════════
+   ТАК — кивок: вістря/верх телефона угору-униз, двічі. НІ — похитування: ліворуч-праворуч, двічі
+   (поворот або нахил убік). Розпізнається за ПОСЛІДОВНІСТЮ обертань, не за положенням, і незалежно
+   від хвату: вісь кивка — горизонтальна, поперек напряму телефона; вісь «ні» — вертикаль або сам напрям. */
+const GEST={ V:{st:[],cur:null}, P:{st:[],cur:null}, F:{st:[],cur:null}, lastFire:0, lastMotionT:0 };
+function gestAxis(A, rate, dt, now){
+  if(Math.abs(rate)>VB_GEST.rate){ const sg=Math.sign(rate);
+    if(A.cur && A.cur.sg===sg){ A.cur.ang+=Math.abs(rate)*dt; A.cur.t1=now; }
+    else { gestClose(A); A.cur={sg, ang:Math.abs(rate)*dt, t0:now, t1:now}; } }
+  else if(A.cur && now-A.cur.t1>0.12) gestClose(A);
+  while(A.st.length && now-A.st[0].t1>VB_GEST.win) A.st.shift();
+}
+function gestClose(A){ if(A.cur && A.cur.ang>=VB_GEST.amp) A.st.push(A.cur); A.cur=null; }
+function gestRun(A){ let run=0, prev=0; for(const x of A.st){ run=(x.sg!==prev)?run+1:1; prev=x.sg; } return run; }
+function gestEnergy(A){ let e=0; for(const x of A.st) e+=x.ang; return e; }
+function gestTick(dt){
+  if(sensor.rrX==null) return;
+  const now=performance.now()/1000;
+  const gx=sensor.gXs??sensor.gX??0, gy=sensor.gYs??sensor.gY??-9.8, gz=sensor.gZs??sensor.gZ??0, gm=Math.hypot(gx,gy,gz)||9.8;
+  const G=[gx/gm,gy/gm,gz/gm], W=[sensor.rrX||0, sensor.rrY||0, sensor.rrZ||0];
+  const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2], cross=(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  const nrm=v=>{ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; };
+  // «куди дивиться» телефон: верхній край; якщо телефон стоїть вертикально — задня камера
+  const w=clamp((Math.abs(G[1])-0.65)/0.3,0,1), ws=w*w*(3-2*w);
+  let base=nrm([0, 1-ws, -ws]); let f=[base[0]-dot(base,G)*G[0], base[1]-dot(base,G)*G[1], base[2]-dot(base,G)*G[2]]; f=nrm(f);
+  const Pax=nrm(cross(f,G));
+  gestAxis(GEST.V, dot(W,G), dt, now); gestAxis(GEST.P, dot(W,Pax), dt, now); gestAxis(GEST.F, dot(W,f), dt, now);
+  if(now-GEST.lastFire<1.2) return;
+  const eV=gestEnergy(GEST.V), eP=gestEnergy(GEST.P), eF=gestEnergy(GEST.F);
+  const LR = eV>=eF ? GEST.V : GEST.F, eLR=Math.max(eV,eF);
+  const rP=gestRun(GEST.P), rLR=gestRun(LR);
+  let kind=null;
+  if(rP>=VB_GEST.need && eP>=VB_GEST.dom*eLR) kind='YES';
+  else if(rLR>=VB_GEST.need && eLR>=VB_GEST.dom*eP) kind='NO';
+  if(kind){
+    GEST.lastFire=now; const n=kind==='YES'?rP:rLR, amp=Math.round((kind==='YES'?eP:eLR)/Math.max(1,n));
+    for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; }
+    logE('ЖЕСТ: '+(kind==='YES'?'ТАК (кивок)':'НІ (похитування)')+' · рухів '+n+' · ~'+amp+'° на рух');
+    try{ if(navigator.vibrate) navigator.vibrate(kind==='YES'?[0,25,60,25]:[0,70]); }catch(e){}
+    try{ dlgOnGesture(kind); }catch(e){}
+    return;
+  }
+  if(eV+eP+eF > VB_GEST.amp*1.5) GEST.lastMotionT=now;
+}
+addEventListener('keydown', e=>{ if(!DLG.q) return; const k=(e.key||'').toLowerCase(); if(k==='y'||k==='н'){ logE('ЖЕСТ: ТАК (клавіша)'); dlgOnGesture('YES'); } else if(k==='n'||k==='т'){ logE('ЖЕСТ: НІ (клавіша)'); dlgOnGesture('NO'); } });
+
+/* ── ОБЛИЧЧЯ НАСТАВНИКА: емодзі на голові, повертається до нас ── */
+const FACES={ neutral:'🙂', happy:'😊', joy:'😄', curious:'🤔', surprised:'😮', awkward:'😅', worried:'😟', sad:'😔', skeptic:'🤨', blank:'😶', dreamy:'😌' };
+const FACE={ key:'neutral', spr:null, tex:null, cv:null, t:0, dirty:true };
+function mentorFace(k){ if(!FACES[k]||FACE.key===k){ FACE.t=performance.now(); return; } FACE.key=k; FACE.dirty=true; FACE.t=performance.now(); }
+function mentorFaceTick(){
+  const a=ALLY.ph; if(!a||!a.mesh||a.dead||a.allyMad){ if(FACE.spr) FACE.spr.visible=false; return; }
+  if(!FACE.spr){ const cv=document.createElement('canvas'); cv.width=cv.height=128; FACE.cv=cv; FACE.tex=new THREE.CanvasTexture(cv);
+    FACE.spr=new THREE.Sprite(new THREE.SpriteMaterial({map:FACE.tex, transparent:true, depthTest:true, fog:false})); FACE.spr.scale.set(0.44,0.44,0.44); FACE.spr.renderOrder=6; scene.add(FACE.spr); FACE.dirty=true; }
+  if(FACE.dirty){ const g=FACE.cv.getContext('2d'); g.clearRect(0,0,128,128);
+    g.font='100px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(FACES[FACE.key],64,72);
+    FACE.tex.needsUpdate=true; FACE.dirty=false; }
+  let hp=null; try{ const S=a._rigS; const J=S&&S.rig&&S.rig.J; if(J&&(J.HEAD||J.NECK)) hp=(J.HEAD||J.NECK).getWorldPosition(new THREE.Vector3()); }catch(e){}
+  if(!hp){ hp=new THREE.Vector3(0, TIER_H*2.2, 0); a.mesh.localToWorld(hp); }
+  const toCam=camera.position.clone().sub(hp), d=toCam.length(); toCam.normalize();
+  FACE.spr.position.copy(hp).addScaledVector(toCam, 0.16).add(new THREE.Vector3(0,0.05,0));
+  FACE.spr.visible = d<14;
+  if(FACE.key!=='neutral' && performance.now()-FACE.t>6500 && !DLG.q && !TOUR.on) mentorFace('neutral');
+}
+
+/* ── ДІАЛОГ: питання → голосом пояснює відповіді → гравець відповідає рухом → підтвердження → далі ── */
+const DLG={ q:null, silent:0, stage:0, unclearT:0, openedOnce:false };
+function dlgSpeaking(){ return (typeof ttsBusy==='function'&&ttsBusy()) || !!SAY.cur || SAY.queue.length>0; }
+function mentorLine(text, face, voice){ if(face) mentorFace(face); allySay(text, null, voice); try{ tatami('МАЙСТЕР','"'+text+'"'); }catch(e){} }
+function mentorAsk(q){
+  DLG.q=q; DLG.silent=0; DLG.stage=0; q._reasked=false;
+  mentorLine(q.text+(q.hint?(' '+q.hint):''), 'curious');
+  if(!ALLY.ph) try{ showBanner('❓ '+q.text+'  ·  ТАК — кивок двічі · НІ — похитати двічі','#86efac'); }catch(e){}
+  logE('ПИТАННЯ «'+q.id+'»: '+q.text);
+}
+/* якщо ніхто не відповідає: перепитує → дивується → екзистенційні питання → м'яка, повільна, наспівна мова */
+const SILENCE_LADDER=[
+  {at:8,  face:'curious',  text:'Ти мене чуєш? Якщо так — кивни телефоном: угору й униз, двічі.'},
+  {at:16, face:'surprised',text:'Сьогодні взагалі хтось прийшов?'},
+  {at:24, face:'awkward',  text:'Я що, сам із собою розмовляю?'},
+  {at:32, face:'worried',  text:'Тут узагалі хтось є?'},
+  {at:40, face:'skeptic',  text:'А що я тут роблю?..'},
+  {at:50, face:'blank',    text:'Якщо мене ніхто не чує — чи звучу я взагалі?', rate:0.95},
+  {at:62, face:'sad',      text:'Може, я — чийсь сон. А ти — той, хто спить.', rate:0.9, pitch:0.9},
+  {at:76, face:'dreamy',   text:'Тиша — теж відповідь. Вона тече, як вода між пальцями.', rate:0.86, pitch:0.88},
+  {at:92, face:'dreamy',   text:'Я почекаю. Світло не поспішає — воно просто приходить.', rate:0.83, pitch:0.87},
+  {at:110,face:'neutral',  text:'Коли будеш готовий — кивни. Я тут, між звуком і тишею.', rate:0.8, pitch:0.86},
+];
+const POETIC=['Кожен крок починається з тиші перед ним.','Навіть камінь колись навчився слухати дощ.','Я — лише голос. Ти — той, хто чує.','Тиша між нами — теж міст.','Вітер не питає дозволу. Він просто торкається.'];
+function dlgTick(dt){
+  const q=DLG.q; if(!q) return;
+  if(dlgSpeaking()) return;                                   // тиша рахується, коли він замовк
+  DLG.silent+=dt;
+  if(q.ladder){
+    const L=SILENCE_LADDER, nx=L[DLG.stage];
+    if(nx){ if(DLG.silent>=nx.at){ mentorLine(nx.text, nx.face, {rate:nx.rate||1, pitch:nx.pitch||0.95}); DLG.stage++; logE('ТИША '+Math.round(DLG.silent)+'с: '+nx.text); } }
+    else if(DLG.silent >= L[L.length-1].at + 20*(DLG.stage-L.length+1)){ mentorLine(POETIC[(DLG.stage-L.length)%POETIC.length], 'dreamy', {rate:0.78, pitch:0.86}); DLG.stage++; }
+  } else if(!q._reasked && DLG.silent>(q.reaskT||12)){ q._reasked=true; DLG.silent=0; mentorLine((q.reask||q.text)+' '+(q.hint||''), 'curious'); }
+  const now=performance.now()/1000;                          // рух був, але не склався у відповідь
+  if(GEST.lastMotionT && now-GEST.lastMotionT>0.9 && now-GEST.lastMotionT<1.6 && now-DLG.unclearT>9 && now-GEST.lastFire>2){
+    DLG.unclearT=now; mentorLine('Я не розчув тебе. Спокійно: угору й униз — двічі. Або ліворуч-праворуч — двічі.', 'curious'); }
+}
+function dlgOnGesture(kind){
+  const q=DLG.q; if(!q) return;
+  DLG.q=null;
+  if(q.ladder && DLG.stage>=2) mentorLine('О! Ти тут!', 'joy', {rate:1.05});
+  logE('ВІДПОВІДЬ «'+q.id+'»: '+(kind==='YES'?'ТАК':'НІ'));
+  const fn=(kind==='YES')?q.onYes:q.onNo; if(fn) fn();
+}
+function ttsLouder(){ try{ VB_MUSIC.gain=Math.max(0.12,(VB_MUSIC.gain||0.7)*0.5); logE('ГОЛОС: музику приглушено ('+VB_MUSIC.gain.toFixed(2)+') — голос чутніше'); }catch(e){} }
+/* ПЕРША СЦЕНА: «Ти мене чуєш?» — від відповіді залежить, що далі */
+function mentorOpening(then, o){
+  o=o||{};
+  mentorLine('Перш ніж ми почнемо, я хочу дізнатися одну річ.', 'neutral');
+  mentorAsk({ id:'HEAR', text:'Ти мене чуєш?', hint:'Якщо так — кивни мені телефоном: угору й униз, двічі. Якщо ні — похитай ліворуч-праворуч, двічі.', ladder:true,
+    onYes:()=>{ mentorLine('Добре. Я тебе чую.', 'happy'); dlgAfterHear(then,o); },
+    onNo:()=>{ mentorLine('Кажеш, що не чуєш… але ж відповів. Отже, щось таки долітає.', 'skeptic');
+      mentorAsk({ id:'LOUDER', text:'Зробити мій голос чутнішим?', hint:'Кивни — так. Похитай — ні.', reaskT:14,
+        onYes:()=>{ ttsLouder(); mentorLine('Так краще?', 'happy'); dlgAfterHear(then,o); },
+        onNo:()=>{ mentorLine('Тоді подивись на мене — я писатиму над головою.', 'neutral'); dlgAfterHear(then,o); } }); } });
+}
+function dlgAfterHear(then,o){
+  if(o.tatami){ if(then) then(); return; }
+  mentorAsk({ id:'TOUR', text:'Хочеш, я покажу, як тут усе влаштовано?', hint:'Кивни — так. Похитай — ні.', reaskT:14,
+    onYes:()=>{ mentorLine('Тоді слухай уважно.', 'happy'); tourStart(then); },
+    onNo:()=>{ mentorLine('Гаразд. Я буду поруч.', 'neutral'); if(then) then(); } });
+}
+/* ── ЕКСКУРСІЯ: кожен крок чекає на дію, наприкінці — «Усе зрозуміло?» ── */
+const TOUR={ on:false, step:0, t:0, x0:0, y0:0, hinted:false, pause:0, then:null, begun:false };
+function tourPos(){ return (player._cont&&player.cx!=null)?[player.cx,player.cy]:[player.gx,player.gy]; }
+const TOUR_STEPS=[
+  {say:'Спершу — меч. Зараз він у піхвах: ним можна обмацувати світ. Махни різко — і він вийде.', ok:()=>typeof SHEATH==='undefined'||SHEATH.drawn, done:'Так. Тепер він ріже.', hint:'Різкіше — ніби струшуєш краплю з леза.'},
+  {say:'Щоб іти — торкнись екрана й потягни, куди хочеш. Відпустиш — зупинишся.', ok:()=>{ const p=tourPos(); return Math.hypot(p[0]-TOUR.x0,p[1]-TOUR.y0)>=2; }, done:'Добре. Ти ходиш.', hint:'Торкнись екрана і тягни палець уперед.'},
+  {say:'Поверни телефон набік, як фотоапарат. Це захисна стійка — і світ сповільниться.', ok:()=>(ORI.landS||0)>0.8, done:'Відчуваєш? Час густішає.', hint:'Повільно клади телефон набік, до кінця.'},
+  {say:'Тепер сховай меч: вістрям униз — і завмри.', ok:()=>typeof SHEATH!=='undefined'&&!SHEATH.drawn, done:'Тихо. Так проходять повз ворогів.', hint:'Опусти вістря вниз і не рухайся секунду-дві.'},
+];
+function tourStart(then){ TOUR.on=true; TOUR.step=0; TOUR.then=then; TOUR.pause=0.6; TOUR.begun=false; logE('ЕКСКУРСІЯ: старт'); }
+function tourBegin(){ const S=TOUR_STEPS[TOUR.step]; TOUR.t=0; TOUR.hinted=false; const p=tourPos(); TOUR.x0=p[0]; TOUR.y0=p[1]; TOUR.begun=true; mentorLine(S.say,'curious'); logE('ЕКСКУРСІЯ: крок '+(TOUR.step+1)+'/'+TOUR_STEPS.length); }
+function tourTick(dt){
+  if(!TOUR.on || DLG.q) return;
+  if(TOUR.pause>0){ TOUR.pause-=dt; if(TOUR.pause<=0) tourBegin(); return; }
+  if(!TOUR.begun || dlgSpeaking()) return;
+  const S=TOUR_STEPS[TOUR.step]; TOUR.t+=dt;
+  if(S.ok()){ mentorLine(S.done,'happy'); TOUR.step++; TOUR.begun=false;
+    if(TOUR.step>=TOUR_STEPS.length){ TOUR.on=false; tourEnd(); } else TOUR.pause=1.0; return; }
+  if(TOUR.t>20 && !TOUR.hinted){ TOUR.hinted=true; mentorLine(S.hint,'curious'); }
+  if(TOUR.t>55){ mentorLine('Нічого, повернемось до цього пізніше.','neutral'); TOUR.step++; TOUR.begun=false;
+    if(TOUR.step>=TOUR_STEPS.length){ TOUR.on=false; tourEnd(); } else TOUR.pause=1.0; }
+}
+function tourEnd(){ mentorAsk({ id:'TOUR_OK', text:'Усе зрозуміло?', hint:'Кивни — так. Похитай — ні.', reaskT:14,
+  onYes:()=>{ mentorLine('Тоді йдемо. Я поруч.','joy'); logE('ЕКСКУРСІЯ: завершено'); const t=TOUR.then; TOUR.then=null; if(t) t(); },
+  onNo:()=>{ mentorLine('Нічого. Повторимо.','neutral'); TOUR.on=true; TOUR.step=0; TOUR.pause=1.2; TOUR.begun=false; } }); }
 
 /* ── MENTOR: стейт-машина наставника (ТЗ п.1-20) ──────────────────────── */
 const MENTOR={ state:'SPAWN', arc:'wise', hpPct:1, interventionLevel:2, isBoss:false, _metOnce:false, tatamiMode:false };
@@ -10867,7 +11078,8 @@ function allySpawn(R){
       weak:'Тут моя ясність тьмяніє… Битимусь, але вже не так певно.',
       dumb:'Голова гуде. Не відходь далеко, добре? Я можу заплутатись.',
       mad:'Чуєш цей шум? Він гучніший за мене. Стережись мене на цьому краю.'}[ph.mode];
-    allySayNow(greet);
+    if(!DLG.openedOnce && ph.mode==='wise'){ DLG.openedOnce=true; SAY.queue.length=0; mentorOpening(()=>{ allySay(greet); }); }   // (09-24a) спершу — чи чуєш
+    else allySayNow(greet);
   }catch(e){ logE('супутник: помилка '+e.message); }
 }
 function allyAlive(){ try{ return !!(ALLY.ph && phantoms.indexOf(ALLY.ph)>=0); }catch(e){ return false; } }
