@@ -5237,7 +5237,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-24c · ТРЕТЯ ВІДПОВІДЬ «НЕЗРОЗУМІЛО»: наставник пояснює, що не так (різко/мало/косо/не двічі), після двох — проводить рух угору-вниз або ліворуч-праворуч і перевіряє гіроскоп (якщо сліпий — жести з нахилу й компаса) · ВИХОР: простор на старті, коридор 4→3→2→1, зрізані кути · невдача лише при справжній втраті, розгін 2.5 с, усі дотики в результатах · власне тіло не забирає стрічку · неруйнівне не ріжеться; колони — лише неруйнівне й стіни кімнати';
+const BUILD_TAG='2026-09-24d · КРЕН = ЗСУВ РУКОЯТІ: піднятий правий край телефона — меч праворуч, лівий — ліворуч, від малих нахилів (мертва зона 4°, повністю на 30°), тримається до повної альбомної, стійка — на той самий бік · авто-рука за нахилом вимкнена · ЖЕСТИ ЗА ПОЛОЖЕННЯМ: кивок і «ні» рахуються з руху гравітації й компаса (без гіроскопа, повільний рух теж), гіроскоп із чужою віссю — вето · УРОК: міряє й під час мови, утримання 0.35 с, без залежності від знаку датчика, «ні» — поворот або нахил убік, під час уроку відповіді не приймаються';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6978,12 +6978,24 @@ function labLiveStep(dt){
       const anchor=S0.clone().add(dirArm.multiplyScalar(ext).applyAxisAngle(new THREE.Vector3(0,1,0),-lagI*dr));
       const armOff=labArmTick(I,N,bodyRel,dt);                       // лінійний рух руки (VB_ARM) — обмежений додаток
       anchor.add(armOff.clone().multiplyScalar(s));
-      /* (09-22o) крен до початку переходу в альбомну зсуває рукоять убік (не картинку) */
-      if(LAB.isGame && typeof landAngle==='function' && VB_ARM.rollShift){
-        const la=landAngle(), side=((sensor.gXs??sensor.gX??0)>=0?1:-1), k=clamp(la/Math.max(10,VB_CAM.tStart),0,1);
-        LAB.rollShS=(LAB.rollShS||0)+(side*k*VB_ARM.rollShift*s-(LAB.rollShS||0))*clamp(dt*8,0,1);
+      /* (09-24d) КРЕН = ЛІНІЙНИЙ ЗСУВ РУКОЯТІ. Піднятий правий край телефона → рукоять іде праворуч, піднятий лівий →
+         ліворуч (вістря нахиляється в протилежний бік, як у справжнього меча в руках). Починається з малих нахилів
+         (мертва зона rollDead°), повний зсув на rollFull°, далі — тримає той самий бік аж до повної альбомної.
+         Кут — нахил осі X приладу від горизонту (asin gx/g): не залежить від того, вістря вгору чи вперед. */
+      if(LAB.isGame && VB_ARM.rollShift && sensor.gXs!=null){
+        const gx=sensor.gXs||0, gy=sensor.gYs||0, gz=sensor.gZs||0, gm=Math.hypot(gx,gy,gz)||9.8;
+        const phi=Math.asin(clamp(Math.abs(gx)/gm,0,1))*180/Math.PI;
+        const d0=VB_ARM.rollDead??4, f0=Math.max(d0+2,VB_ARM.rollFull??30);
+        const k0=clamp((phi-d0)/(f0-d0),0,1), k=k0*k0*(3-2*k0);
+        /* датчик приведено до вигляду «вектор униз»: gx>0 → «униз» дивиться в правий край → піднято ЛІВИЙ край */
+        const raised=(gx>=0?-1:1)*((VB_ARM.rollDir||1)>=0?1:-1);           // +1 — піднято правий край, −1 — лівий
+        if(k>0.02) LAB.rollSide=raised; else if(k<=0.001) LAB.rollSide=0;   // між ними — тримаємо попередній бік
+        LAB.rollK=k; LAB.rollPhi=phi;
+        LAB.rollShS=(LAB.rollShS||0)+(raised*k*VB_ARM.rollShift*s-(LAB.rollShS||0))*clamp(dt*8,0,1);
         anchor.x-=LAB.rollShS;                                            // −X у ригу — праворуч гравця
-      }
+        if(k>0.3 && LAB.rollLogSide!==raised){ LAB.rollLogSide=raised; try{ logE('КРЕН: піднято '+(raised>0?'правий':'лівий')+' край ('+Math.round(phi)+'°) → рукоять '+(raised>0?'праворуч':'ліворуч')); }catch(e){} }
+        else if(k<0.05) LAB.rollLogSide=0;
+      } else { LAB.rollSide=0; LAB.rollK=0; }
       anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
       { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
         if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
@@ -7046,7 +7058,8 @@ function labLiveStep(dt){
       const mkQ=(yw,pt,rl)=>new dq().setFromAxisAngle(ay,-yw*dr).multiply(new dq().setFromAxisAngle(ax,(-90-pt)*dr)).multiply(new dq().setFromAxisAngle(ay,rl*dr));
       const qI=mkQ(lagI,pitchA-(LAB.isGame?(VB_WEAPON.sag||0):0),rollA);   // (09-22g) повзун на лезі — вістря провисає
       const _gk=LAB.isGame?clamp(ORI.landS||0,0,1):0;                              // (09-22r) ЗАХИСНА СТІЙКА: телефон набік — меч підіймається до вуха
-      if(_gk>0.01){ qI.slerp(mkQ(12*HS,58,0), _gk*0.8); anchor.lerp(new THREE.Vector3(-0.30*s*HS, S0.y+0.26*s, 0.22*s), _gk*0.8); }
+      const _gs=(LAB.rollSide||HS);                                                 // (09-24d) до вуха з боку ПІДНЯТОГО краю — меч лишається там, де його зсунув крен
+      if(_gk>0.01){ qI.slerp(mkQ(12*_gs,58,0), _gk*0.8); anchor.lerp(new THREE.Vector3(-0.30*s*_gs, S0.y+0.26*s, 0.22*s), _gk*0.8); }
       LAB.guardK=_gk; LAB.intendQ=qI.clone();
       const resolvePen=()=>{                                              // меч не входить у неруйнівне
         LAB.intendedDepth=0;
@@ -7268,7 +7281,7 @@ window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
   moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
-  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.3 };   // (09-22l) ширше + тіло за рукою; (09-22o) крен → зсув меча
+  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.4, rollDead:4, rollFull:30, rollDir:1 };   // (09-22l) ширше + тіло за рукою; (09-24d) крен → зсув рукояті вбік від малих нахилів
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -7972,7 +7985,7 @@ function trailDraw(){
 
 /* (09-22r) РУКА: телефон у правій руці схиляють до правого вуха, у лівій — до лівого. Постійний нахил
    в один бік (не альбомна) ≥2.5 с — стійка й меч переходять у ту руку. */
-const VB_HAND={ auto:1, force:0, thr:14, hold:2.5, sign:1 };
+const VB_HAND={ auto:0, force:0, thr:14, hold:2.5, sign:1 };   // (09-24d) авто-рука за нахилом вимкнена: нахил тепер зсуває рукоять
 var HAND={ side:'R', avg:0, t:0 };
 try{ const sv=localStorage.getItem('vb_hand'); if(sv==='L'||sv==='R') HAND.side=sv; }catch(e){}
 window.VB_HAND=VB_HAND;
@@ -8006,7 +8019,7 @@ function hitStripTick(S){
    Звичайний стан — меч у піхвах: ним мацають світ (дотик, матеріал, вібрація), нічого не ріжуть і не ранять,
    шуму мало. Різкий мах (вістря швидше drawSpeed) — меч вихоплюється сам. Вістря прямо вниз і нерухомо
    1.5 с — меч ховається назад (тихо пройти повз, вузький прохід, велика зброя). */
-const VB_GEST={ amp:9, win:2.6, need:3, dom:1.35, rate:30, lookDeg:28, maxAng:75, maxRate:450 };   // (09-24a/b) ТАК/НІ рухом телефона
+const VB_GEST={ amp:9, win:2.6, need:3, dom:1.35, rate:30, lookDeg:28, maxAng:75, maxRate:450, posAmp:16, posWin:4.0, posMaxT:2.4 };   // (09-24a/b) ТАК/НІ рухом телефона; (09-24d) posAmp — розмах руху за положенням
 window.VB_GEST=VB_GEST;
 /* (09-24b) НАКОПИЧЕННЯ СТРІЧКИ: поки лезо малює стрічку — росте накопичення (площа × швидкість),
    витрачається витривалість; перший дотик до чогось віддає накопичене в цей дотик. */
@@ -8548,7 +8561,8 @@ const SENS_SLIDERS=[
   ['VB_CAM.axis','Камера МАЯКА: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
-  ['VB_ARM.rollShift','Крен до переходу: зсув меча вбік, м (± — напрям)',-0.6,0.6,0.05],['VB_SLOW.k','Повільний час у повній альбомній (1 — вимк)',0.15,1,0.05],
+  ['VB_ARM.rollShift','Крен: зсув рукояті вбік, м (0 — вимк)',0,0.8,0.05],['VB_ARM.rollDead','Крен: мертва зона, °',0,15,1],['VB_ARM.rollFull','Крен: повний зсув на, °',10,80,1],['VB_ARM.rollDir','Крен: напрям (1 — до піднятого краю, −1 — навпаки)',-1,1,2],
+  ['VB_SLOW.k','Повільний час у повній альбомній (1 — вимк)',0.15,1,0.05],
   ['VB_CAM.enterDeg','Вхід у МАЯК від крену, ° (не раніше середини переходу)',30,85,1],['VB_CAM.exitDeg','Вихід із МАЯКА до крену, °',20,75,1],['VB_CAM.holdS','Утримання перед перемиканням, с',0.1,0.6,0.05],
   ['VB_ORI.level','Горизонт = справжній (1) / без компенсації (0)',0,1,0.05],['VB_ORI.autoFull','Вхід: повний екран + портрет (1/0)',0,1,1],
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
@@ -8578,8 +8592,12 @@ function sensGet(path){ const [r,k]=path.split('.'); return SENS_ROOTS[r][k]; }
 function sensSet(path,v){ const [r,k]=path.split('.'); SENS_ROOTS[r][k]=v; }
 function sensSnapshot(){ const o={}; for(const it of SENS_SLIDERS) if(it.length>1) o[it[0]]=+(sensGet(it[0])).toFixed(3); return o; }
 const SENS_DEFAULTS=sensSnapshot();
-function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d_sens_cfg')||'null'); if(sv){ for(const p in sv) if(p in SENS_DEFAULTS) sensSet(p,+sv[p]); logE('ЧУТЛИВІСТЬ: завантажено збережені налаштування ('+Object.keys(sv).length+')'); } }catch(e){} }
-function sensSettingsSave(){ try{ localStorage.setItem('vb3d_sens_cfg',JSON.stringify(sensSnapshot())); logE('ЧУТЛИВІСТЬ: збережено'); }catch(e){} }
+const SENS_MIG=1;   // (09-24d) міграція збережених налаштувань: авто-рука вимк, крен → новий зсув
+function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d_sens_cfg')||'null'); if(sv){ for(const p in sv) if(p in SENS_DEFAULTS) sensSet(p,+sv[p]); logE('ЧУТЛИВІСТЬ: завантажено збережені налаштування ('+Object.keys(sv).length+')');
+  if(!((+sv._mig||0)>=SENS_MIG)){ sensSet('VB_HAND.auto',0); if(Math.abs((+sv['VB_ARM.rollShift']||0)-0.3)<0.001) sensSet('VB_ARM.rollShift',SENS_DEFAULTS['VB_ARM.rollShift']);
+    try{ if(typeof HAND!=='undefined' && HAND.side!=='R'){ HAND.side='R'; localStorage.setItem('vb_hand','R'); logE('СТІЙКА: повернуто правшу (ліва рука вмикалась нахилом випадково)'); } }catch(e){}
+    sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-24d — авто-рука за нахилом вимкнена, крен зсуває рукоять'); } } }catch(e){} }
+function sensSettingsSave(){ try{ localStorage.setItem('vb3d_sens_cfg',JSON.stringify(Object.assign(sensSnapshot(),{_mig:SENS_MIG}))); logE('ЧУТЛИВІСТЬ: збережено'); }catch(e){} }
 function sensSettingsReset(){ for(const p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]); try{ localStorage.removeItem('vb3d_sens_cfg'); }catch(e){} sensSettingsRefresh(); logE('ЧУТЛИВІСТЬ: скинуто до типових'); }
 function sensSettingsCopy(){ const txt='VB_SENS_CFG '+JSON.stringify(sensSnapshot()); try{ navigator.clipboard.writeText(txt); }catch(e){} logE(txt); const b=$('sensCopyBtn'); if(b) b.textContent='✔ скопійовано'; }
 function sensSettingsRefresh(){ document.querySelectorAll('#sensPanel input[data-path]').forEach(inp=>{ const v=sensGet(inp.dataset.path); inp.value=v; const o=inp.nextElementSibling; if(o) o.textContent=(+v).toFixed(2); }); }
@@ -10848,6 +10866,52 @@ function gestGravRate(dt){
   if(GEST.gPrev){ const c=_gcross(GEST.gPrev,g1), k=-180/Math.PI/Math.max(dt,1e-3); W=[c[0]*k,c[1]*k,c[2]*k]; }
   GEST.gPrev=g1; return W;
 }
+/* (09-24d) ЖЕСТИ З ПОЛОЖЕННЯ — незалежно від гіроскопа й від швидкості руху (повільний кивок теж рахується).
+   Інтегруємо обертання вектора гравітації по осях приладу: X — кивок (верхній край угору-вниз), Z — похитування
+   верхнім краєм убік (телефон вертикально), Y — «крен екрана» (телефон плазом); курс із компаса — поворот
+   «як дверцята». Рахуються РОЗВОРОТИ руху з гістерезисом: угору → вниз → угору = три рухи = «двічі». */
+var GPOS={ ax:{P:{st:[],dir:0,ext:null,extT:0,a0:0,t0:0,v:0,nm:'P'}, Z:{st:[],dir:0,ext:null,extT:0,a0:0,t0:0,v:0,nm:'F'}, Y:{st:[],dir:0,ext:null,extT:0,a0:0,t0:0,v:0,nm:'F'}, C:{st:[],dir:0,ext:null,extT:0,a0:0,t0:0,v:0,nm:'V',wrap:true}}, badT:0, noiseT:0 };
+function gposReset(){ for(const k in GPOS.ax){ const A=GPOS.ax[k]; A.st.length=0; A.dir=0; A.ext=null; } }
+function gposClose(A, now){                                             // сегмент від a0 до ext завершено
+  const ang=Math.abs(A.wrap?angDiff(A.ext,A.a0):(A.ext-A.a0)), dur=A.extT-A.t0, a=GEST.att;
+  if(ang>VB_GEST.maxAng){ if(A===GPOS.ax.C){ A.st.length=0; return; }                                                       // стрибок компаса — не мах, просто не рахуємо
+    for(const k in GPOS.ax) GPOS.ax[k].st.length=0; GPOS.noiseT=now; if(a) a.noise=true; return; }   // змах — не жест
+  if(ang>=VB_GEST.posAmp*0.5){ if(!GEST.att && DLG.q && now-GEST.lastFire>1.5) GEST.att={t0:now, maxAng:0}; const at=GEST.att; if(at){ at.last=now; at.maxAng=Math.max(at.maxAng,ang); at['e'+A.nm]=(at['e'+A.nm]||0)+ang; } }
+  if(ang>=VB_GEST.posAmp && dur<=VB_GEST.posMaxT) A.st.push({sg:A.dir, ang, t0:A.t0, t1:A.extT});
+  else if(a && ang>=VB_GEST.posAmp*0.5) a.small=(a.small||0)+1;
+}
+function gposAxis(A, v, now){
+  const h=VB_GEST.posAmp*0.4;                                           // гістерезис розвороту
+  const df=(x,y)=>A.wrap?angDiff(x,y):(x-y);
+  if(A.ext==null){ A.ext=v; A.extT=now; A.dir=0; }
+  else { const d=df(v,A.ext);
+    if(A.dir===0){ if(Math.abs(d)>=h){ A.dir=Math.sign(d); A.a0=A.ext; A.t0=A.extT; A.ext=v; A.extT=now; } else if(now-A.extT>0.8){ A.ext=v; A.extT=now; } }
+    else if(d*A.dir>0){ A.ext=v; A.extT=now;                             // рух триває — крайня точка далі
+      if(GEST.att && Math.abs(df(A.ext,A.a0))>=VB_GEST.posAmp*0.5) GEST.att.last=now; }   // повільний рух іще триває — спроба не скінчилась
+    else if(-d*A.dir>=h){ gposClose(A,now); A.dir=-A.dir; A.a0=A.ext; A.t0=A.extT; A.ext=v; A.extT=now; }   // розворот
+    else if(now-A.extT>0.6){ gposClose(A,now); A.dir=0; A.ext=v; A.extT=now; }                              // завмер — сегмент закрито, чекаємо новий
+  }
+  while(A.st.length && now-A.st[0].t1>VB_GEST.posWin) A.st.shift();
+}
+function gposTick(dt, Wg, now){
+  const ok=sensor.gXr!=null && Math.abs((sensor.gMag||9.81)-9.81)<3.5;
+  if(!ok){ GPOS.badT+=dt; if(GPOS.badT>0.3){ gposReset(); GPOS.noiseT=now; } return; }
+  GPOS.badT=0;
+  if(Wg){ GPOS.ax.P.v+=Wg[0]*dt; GPOS.ax.Y.v+=Wg[1]*dt; GPOS.ax.Z.v+=Wg[2]*dt; }   // інтеграл (dt скорочується — це сума кутів)
+  GPOS.ax.C.v=sensor.yawFused||0;
+  for(const k in GPOS.ax) gposAxis(GPOS.ax[k], GPOS.ax[k].v, now);
+}
+function gposEnergy(A){ let e=gestEnergy(A); if(A.dir!==0 && A.ext!=null) e+=Math.abs(A.wrap?angDiff(A.ext,A.a0):(A.ext-A.a0)); return e; }   // і незавершений сегмент — щоб косий рух не виграв «на випередження»
+function gposDecide(){
+  const eP=gposEnergy(GPOS.ax.P);
+  let L=gposEnergy(GPOS.ax.Z)>=gposEnergy(GPOS.ax.Y)?GPOS.ax.Z:GPOS.ax.Y;                         // вбік — насамперед із гравітації
+  if(eP<VB_GEST.posAmp && gposEnergy(L)<VB_GEST.posAmp && gposEnergy(GPOS.ax.C)>gposEnergy(L)) L=GPOS.ax.C;   // компас — лише коли гравітація нічого не бачить (поворот «як дверцята»); під час кивка курс стрибає
+  const eL=gposEnergy(L), nP=gestRun(GPOS.ax.P), nL=gestRun(L);
+  let kind=null, n=0, e=0;
+  if(nP>=VB_GEST.need && eP>=VB_GEST.dom*eL){ kind='YES'; n=nP; e=eP; }
+  else if(nL>=VB_GEST.need && eL>=VB_GEST.dom*eP){ kind='NO'; n=nL; e=eL; }
+  return {kind, n, e, eP, eL, src:(kind==='NO'&&L===GPOS.ax.C)?'компас':'нахил'};
+}
 function gestTick(dt){
   const Wg=gestGravRate(dt);
   const haveGyro = sensor.rrX!=null;
@@ -10859,7 +10923,9 @@ function gestTick(dt){
     GEST.hGy+=(gyP-GEST.hGy)*clamp(dt*2,0,1); GEST.hGr+=(Math.min(grP,400)-GEST.hGr)*clamp(dt*2,0,1);
     if(GEST.src==='gyro' && GEST.hGr>45 && GEST.hGy<0.15*GEST.hGr){ GEST.badT+=dt; if(GEST.badT>1.5){ GEST.src='grav'; logE('ЖЕСТ: гіроскоп не відповідає (гіро ~'+Math.round(GEST.hGy)+'°/с проти нахилу ~'+Math.round(GEST.hGr)+'°/с) — кивки рахую з нахилу, «ні» — з компаса'); } } else GEST.badT=0; }
   if(!haveGyro && GEST.src!=='grav' && Wg){ GEST.src='grav'; logE('ЖЕСТ: гіроскопа немає — кивки рахую з нахилу, «ні» — з компаса'); }
-  if(!DLG.q){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.att=null; return; }   // слухаємо лише коли питають
+  if(!DLG.q){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.att=null; gposReset(); return; }   // слухаємо лише коли питають
+  if(LESSON.on){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.att=null; return; }        // (09-24d) урок веде сам — відповіді не приймаємо
+  try{ gposTick(dt, Wg, now); }catch(e){}
   const W = (GEST.src==='grav') ? (Wg||[0,0,0]) : (Wy||[0,0,0]);
   // «куди дивиться» телефон: верхній край; якщо телефон стоїть вертикально — задня камера
   const w=clamp((Math.abs(G[1])-0.65)/0.3,0,1), ws=w*w*(3-2*w);
@@ -10876,17 +10942,25 @@ function gestTick(dt){
       const eP=a.eP||0, eLR=Math.max(a.eV||0,a.eF||0);
       const why = a.noise?'swing' : (a.maxAng<VB_GEST.amp)?'small' : (Math.min(eP,eLR)>0.55*Math.max(eP,eLR,1))?'mixed' : 'short';
       try{ dlgOnUnclear(why, eP>=eLR?'nod':'shake', a); }catch(e){} } }
-  if(now-GEST.lastFire<1.2 || now-(GEST.noiseT||0)<0.8) return;
+  if(now-GEST.lastFire<1.2 || now-(GEST.noiseT||0)<0.8 || now-(GPOS.noiseT||0)<0.8) return;
   const eV=gestEnergy(GEST.V), eP=gestEnergy(GEST.P), eF=gestEnergy(GEST.F);
   const LR = eV>=eF ? GEST.V : GEST.F, eLR=Math.max(eV,eF);
   const nP=gestRun(GEST.P), nLR=gestRun(LR);
-  let kind=null;
-  if(nP>=VB_GEST.need && eP>=VB_GEST.dom*eLR) kind='YES';
-  else if(nLR>=VB_GEST.need && eLR>=VB_GEST.dom*eP) kind='NO';
+  let kind=null, srcTxt=(GEST.src==='grav'?' · з нахилу':''), n=0, amp=0;
+  const pos=gposDecide();
+  if(pos.kind){ kind=pos.kind; n=pos.n; amp=Math.round(pos.e/Math.max(1,n)); srcTxt=' · за положенням ('+pos.src+')'; }   // (09-24d) положення — головне
+  else {
+    let kg=null; if(nP>=VB_GEST.need && eP>=VB_GEST.dom*eLR) kg='YES'; else if(nLR>=VB_GEST.need && eLR>=VB_GEST.dom*eP) kg='NO';
+    if(kg){ /* вето: гіро бачить одну вісь, а нахил (положення) — іншу; гіроскоп на деяких телефонах плутає осі */
+      const contra=(kg==='YES' && pos.eL>=VB_GEST.posAmp && pos.eL>0.8*pos.eP) || (kg==='NO' && pos.eP>=VB_GEST.posAmp && pos.eP>0.8*pos.eL);
+      if(contra){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; }
+        if(now-(GEST.vetoT||0)>3){ GEST.vetoT=now; logE('ЖЕСТ: гіроскоп каже «'+(kg==='YES'?'так':'ні')+'», а положення бачить інше (угору-вниз '+Math.round(pos.eP)+'° · вбік '+Math.round(pos.eL)+'°) — не вірю гіроскопу'); } }
+      else { kind=kg; n=kind==='YES'?nP:nLR; amp=Math.round((kind==='YES'?eP:eLR)/Math.max(1,n)); } }
+  }
   if(kind){
-    GEST.lastFire=now; GEST.att=null; const n=kind==='YES'?nP:nLR, amp=Math.round((kind==='YES'?eP:eLR)/Math.max(1,n));
-    for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; }
-    logE('ЖЕСТ: '+(kind==='YES'?'ТАК (кивок)':'НІ (похитування)')+' · рухів '+n+' · ~'+amp+'° на рух'+(GEST.src==='grav'?' · з нахилу':''));
+    GEST.lastFire=now; GEST.att=null;
+    for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } gposReset();
+    logE('ЖЕСТ: '+(kind==='YES'?'ТАК (кивок)':'НІ (похитування)')+' · рухів '+n+' · ~'+amp+'° на рух'+srcTxt);
     try{ if(navigator.vibrate) navigator.vibrate(kind==='YES'?[0,25,60,25]:[0,70]); }catch(e){}
     try{ dlgOnGesture(kind); }catch(e){}
   }
@@ -10970,28 +11044,31 @@ const UNCLEAR_TXT={ swing:'Не так сильно — це не удар. Сп
 const UNCLEAR_LOG={ swing:'надто різко', small:'замало', mixed:'косо', short:'не двічі' };
 function dlgOnUnclear(why, axis, a){
   const q=DLG.q; if(!q || LESSON.on) return;
-  const now=performance.now()/1000; if(DLG.unclearT!=null && now-DLG.unclearT<6) return;
+  const now=performance.now()/1000; if(DLG.unclearT!=null && now-DLG.unclearT<4) return;
   DLG.unclearT=now; DLG.unclearN=(DLG.unclearN||0)+1; DLG.quiet=0; SAY.queue.length=0;
   logE('ЖЕСТ: незрозуміло — '+UNCLEAR_LOG[why]+' · схоже на '+(axis==='nod'?'кивок':'похитування')+' · макс '+Math.round(a.maxAng||0)+'° · вгору-вниз '+Math.round(a.eP||0)+'° · вбік '+Math.round(Math.max(a.eV||0,a.eF||0))+'°');
-  if(DLG.unclearN>=2){ lessonStart(axis); return; }
+  if(DLG.unclearN>=2 || GEST.src==='grav'){ lessonStart(axis); return; }   // (09-24d) гіроскоп уже визнано сліпим — урок одразу
   mentorLine(UNCLEAR_TXT[why]||'Я не розчув.', why==='swing'?'surprised':'curious');
 }
 /* УРОК: наставник проводить рух крок за кроком. Кивок: угору (майже рівно, трохи вперед) → униз (майже до кінця,
    трохи вперед, щоб бачити екран). «Ні»: ліворуч → праворуч. Заодно міряє, чи гіроскоп бачить те, що бачить нахил. */
-var LESSON={ on:false, kind:'nod', step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0 };
+var LESSON={ on:false, kind:'nod', step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0, hold:0, upSg:0, sig:null };
 function lessonTip(){ const gy=sensor.gYr; if(gy==null) return null; const sg=(SENSCAL&&SENSCAL.tip)?SENSCAL.s:1; return clamp(sg*gy/9.4,-1,1); }   // −1 вістря вгору · +1 вістря вниз
+function lessonRoll(){ const gx=sensor.gXr; if(gx==null) return null; const g=Math.hypot(sensor.gXr||0,sensor.gYr||0,sensor.gZr||0)||9.8; return Math.asin(clamp(gx/g,-1,1))*180/Math.PI; }   // нахил верхнього краю вбік, °
 function lessonStart(kind){
-  Object.assign(LESSON,{on:true, kind, step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0});
+  Object.assign(LESSON,{on:true, kind, step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0, hold:0, upSg:0, sig:null});
   logE('ЖЕСТ: урок «'+(kind==='nod'?'кивок':'похитування')+'» — проводжу рухом');
   if(kind==='nod') mentorLine('Давай разом. Підніми телефон угору — майже рівно, трохи нахиливши вперед.','curious');
-  else mentorLine('Давай разом. Поверни телефон ліворуч — як дверцята.','curious');
+  else mentorLine('Давай разом. Поверни телефон ліворуч — як дверцята. Або нахили верхній край ліворуч.','curious');
 }
 function lessonEnd(ok){
   LESSON.on=false; DLG.unclearN=0; DLG.quiet=0; DLG.unclearT=performance.now()/1000;
+  try{ gposReset(); for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.att=null; GEST.noiseT=0; GPOS.noiseT=0; }catch(e){}   // (09-24d) урок не рахується як відповідь
   if(LESSON.kind==='nod' && LESSON.grA>30){ const r=LESSON.gyA/LESSON.grA;
     logE('ДАТЧИК: урок кивка · гіро '+Math.round(LESSON.gyA)+'° / нахил '+Math.round(LESSON.grA)+'° ('+Math.round(r*100)+'%)'+(r<0.35?' — гіроскоп майже сліпий, кивки рахую з нахилу':' — гіроскоп у нормі'));
     if(r<0.35 && GEST.src!=='grav'){ GEST.src='grav'; } }
-  const q=DLG.q; if(q) mentorLine(q.text+(q.hint?(' '+q.hint):''),'curious');
+  logE('ЖЕСТ: урок '+(ok?'пройдено':'перервано')+' · перепитую');
+  const q=DLG.q; if(q) mentorLine(q.reask||q.text,'curious');                   // (09-24d) коротко — рух уже знає
 }
 function lessonTick(dt){
   if(!LESSON.on) return;
@@ -10999,19 +11076,32 @@ function lessonTick(dt){
   try{ if(GEST.gPrev && sensor.rrX!=null){ const G=GEST.gPrev, Wy=[sensor.rrX||0,sensor.rrY||0,sensor.rrZ||0], d=_gdot(Wy,G);
       LESSON.gyA+=Math.hypot(Wy[0]-d*G[0],Wy[1]-d*G[1],Wy[2]-d*G[2])*dt; }
     if(LESSON._gp && GEST.gPrev){ LESSON.grA+=Math.acos(clamp(_gdot(LESSON._gp,GEST.gPrev),-1,1))*180/Math.PI; } LESSON._gp=GEST.gPrev?GEST.gPrev.slice():null; }catch(e){}
-  if(dlgSpeaking()){ LESSON.hintT=0; return; }
-  LESSON.t+=dt; LESSON.hintT+=dt;
+  /* (09-24d) положення міряємо ЗАВЖДИ — і поки наставник говорить (раніше рух під час мови губився); мова лише спиняє підказки */
+  const spk=dlgSpeaking(); if(spk) LESSON.hintT=0; else { LESSON.t+=dt; LESSON.hintT+=dt; }
+  const calm=Math.abs((sensor.gMag||9.81)-9.81)<2.5;
   if(LESSON.kind==='nod'){
     const p=lessonTip(); if(p==null){ lessonEnd(false); return; }
-    if(LESSON.step===0 && p<-0.75){ LESSON.step=1; LESSON.hintT=0; mentorLine('Добре. Тепер опусти вниз — майже до кінця, трохи подавши вперед, щоб бачити екран.','happy'); }
-    else if(LESSON.step===1 && p>0.45){ LESSON.step=2; mentorLine('Ось так. Це і є кивок: угору — униз. А тепер двічі, трохи швидше.','joy'); lessonEnd(true); }
-    else if(LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Угору — верхній край до стелі. Повільно.':'Униз — верхній край до підлоги, так, щоб бачити екран.','curious'); }
+    if(LESSON.step===0){
+      /* «угору»: за перевіреним знаком — вістря вгору; без перевірки — будь-який край майже вертикально (знак запам'ятовуємо) */
+      const up=(SENSCAL&&SENSCAL.tip) ? (p<-0.7) : (Math.abs(p)>0.7);
+      if(up && calm){ LESSON.hold+=dt; if(LESSON.hold>=0.35){ LESSON.upSg=Math.sign(p)||-1; LESSON.step=1; LESSON.hold=0; LESSON.hintT=0;
+          mentorLine('Добре. Тепер опусти вниз — майже до кінця, трохи подавши вперед, щоб бачити екран.','happy'); } }
+      else LESSON.hold=0;
+    } else if(LESSON.step===1){
+      if(p*LESSON.upSg<-0.4 && calm){ LESSON.hold+=dt; if(LESSON.hold>=0.25){ LESSON.step=2; mentorLine('Ось так. Це і є кивок: угору — униз. А тепер двічі, трохи швидше.','joy'); lessonEnd(true); return; } }
+      else LESSON.hold=0;
+    }
+    if(LESSON.on && LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Угору — верхній край до стелі. Повільно, і потримай.':'Униз — верхній край до підлоги, так, щоб бачити екран.','curious'); }
   } else {
-    const y=sensor.yawFused||0; if(LESSON.y0==null) LESSON.y0=y;
-    if(LESSON.step===0){ const d=angDiff(y,LESSON.y0); if(Math.abs(d)>25){ LESSON.step=1; LESSON.dir=Math.sign(d); LESSON.y1=y; LESSON.hintT=0; mentorLine('Так. А тепер — праворуч.','happy'); } }
-    else if(LESSON.step===1){ const d=angDiff(y,LESSON.y1); if(Math.abs(y-LESSON.y1)>0 && Math.sign(d)===-LESSON.dir && Math.abs(d)>35){ LESSON.step=2; mentorLine('Ось так. Це «ні»: ліворуч — праворуч. А тепер двічі.','joy'); lessonEnd(true); }
-      else if(Math.sign(d)===LESSON.dir && Math.abs(d)>5) LESSON.y1=y; }                    // ще доводить ліворуч — крайня точка далі
-    if(LESSON.on && LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Ліворуч — поверни телефон, як дверцята.':'Тепер у інший бік — праворуч.','curious'); }
+    /* «ні»: курс із компаса (поворот як дверцята) АБО нахил верхнього краю вбік — що спрацює перше */
+    if(!LESSON.sig){ LESSON.sig=[{v:()=>sensor.yawFused||0, wrap:true, t0:25, t1:35, v0:null, v1:null, dir:0},{v:()=>lessonRoll(), wrap:false, t0:18, t1:28, v0:null, v1:null, dir:0}]; }
+    for(const S of LESSON.sig){ const y=S.v(); if(y==null) continue; if(S.v0==null) S.v0=y; const df=(a,b)=>S.wrap?angDiff(a,b):(a-b);
+      if(LESSON.step===0){ const d=df(y,S.v0); if(Math.abs(d)>S.t0 && calm){ LESSON.step=1; S.dir=Math.sign(d); S.v1=y; LESSON.hintT=0; for(const T of LESSON.sig) if(T!==S){ T.v1=T.v(); T.dir=0; } mentorLine('Так. А тепер — праворуч.','happy'); break; } }
+      else if(LESSON.step===1){ if(S.v1==null) S.v1=y; const d=df(y,S.v1);
+        if(S.dir!==0 && Math.sign(d)===-S.dir && Math.abs(d)>S.t1 && calm){ LESSON.step=2; mentorLine('Ось так. Це «ні»: ліворуч — праворуч. А тепер двічі.','joy'); lessonEnd(true); return; }
+        else if(S.dir===0 && Math.abs(d)>S.t1 && calm){ LESSON.step=2; mentorLine('Ось так. Це «ні»: туди — й назад. А тепер двічі.','joy'); lessonEnd(true); return; }
+        else if(S.dir!==0 && Math.sign(d)===S.dir && Math.abs(d)>3) S.v1=y; } }                 // ще доводить ліворуч — крайня точка далі
+    if(LESSON.on && LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Ліворуч — поверни телефон, як дверцята, або нахили верхній край ліворуч.':'Тепер у інший бік — праворуч.','curious'); }
   }
 }
 function dlgOnGesture(kind){
