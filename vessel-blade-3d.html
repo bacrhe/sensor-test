@@ -820,7 +820,7 @@ function onMotion(e){
   sensor.rRateA = r.alpha || 0;
   // НАКЛОН + «ровно ли держим» по гравитации
   const ggRaw = e.accelerationIncludingGravity;
-  if(ggRaw) sensor.gYr=ggRaw.y||0;                                        // (09-24b) сирий Y — для перевірки «вістря вгору»
+  if(ggRaw){ sensor.gXr=ggRaw.x||0; sensor.gYr=ggRaw.y||0; sensor.gZr=ggRaw.z||0; }   // (09-24b/c) сирий вектор — для перевірки «вістря вгору» і запасних жестів
   try{ sensCalFeed(ggRaw); }catch(err){}
   const gg = sNorm(ggRaw);                                                  // (09-22q) у єдиному вигляді для всіх пристроїв
   if(gg){
@@ -3678,7 +3678,7 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY,fs){  
     new THREE.LineBasicMaterial({color: edgeCol, transparent:true,
       opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
   edges.frustumCulled=false; edges.position.copy(boxM.position); grp.add(edges);
-  if(solid && !crawl && (typeof VB_COL==='undefined' || VB_COL.on)){                    // (09-24b) колона до стелі
+  if(solid && !crawl && (fs===true || gx===0||gx===12||gy===0||gy===12) && (typeof VB_COL==='undefined' || VB_COL.on)){   // (09-24b/c) неруйнівне й стіни кімнати — колони до стелі
     const top=(baseY||0)+h-0.45, ext=Math.max(0, 3.8-top);
     if(ext>0.05){ const cm=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:0.5, alphaMap:colGradTex(), depthWrite:false});
       const cx=new THREE.Mesh(new THREE.BoxGeometry(w*0.98, ext, d*0.98), cm); cx.position.y=h/2+ext/2; cx.frustumCulled=false; cx.userData.colExt=true; grp.add(cx); } }
@@ -5237,7 +5237,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-24b · СЕРПАНТИН: спідран-полігон (меню або після екскурсії) — відлік, спіраль 3→2→1, манекен, повна діагностика, спроби · НАКОПИЧЕННЯ СТРІЧКИ: витривалість, виснаження, перший дотик забирає все, час кімнати сповільнюється для всіх (і музика) · неруйнівне — колони до стелі · діалог: паузи, «Алло? Прийом!», завдання не пропускаються · жести не плутаються зі змахами · перевірка «вістря вгору» · емодзі на обличчі';
+const BUILD_TAG='2026-09-24c · ТРЕТЯ ВІДПОВІДЬ «НЕЗРОЗУМІЛО»: наставник пояснює, що не так (різко/мало/косо/не двічі), після двох — проводить рух угору-вниз або ліворуч-праворуч і перевіряє гіроскоп (якщо сліпий — жести з нахилу й компаса) · ВИХОР: простор на старті, коридор 4→3→2→1, зрізані кути · невдача лише при справжній втраті, розгін 2.5 с, усі дотики в результатах · власне тіло не забирає стрічку · неруйнівне не ріжеться; колони — лише неруйнівне й стіни кімнати';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6056,7 +6056,7 @@ function frame(now){
   try{ joyTick(dt); }catch(e){}                             // (09-22e) джойстик
   try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
   try{ neighborLifeTick(dtW); }catch(e){}                    // (09-22j) вороги за стінами ходять і звучать
-  try{ gestTick(dt); dlgTick(dt); tourTick(dt); calTipTick(dt); mentorFaceTick(); }catch(e){ if(!window.__dlgErr){ window.__dlgErr=1; logE('ДІАЛОГ: '+e.message); } }   // (09-24a) діалог рухом
+  try{ gestTick(dt); lessonTick(dt); dlgTick(dt); tourTick(dt); calTipTick(dt); mentorFaceTick(); }catch(e){ if(!window.__dlgErr){ window.__dlgErr=1; logE('ДІАЛОГ: '+e.message); } }   // (09-24a) діалог рухом
   try{ sprTick(dt); raccHudTick(); }catch(e){ if(!window.__sprErr){ window.__sprErr=1; logE('СЕРПАНТИН: '+e.message); } }   // (09-24b)
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
@@ -7815,7 +7815,7 @@ function ribAccTick(dt, on, P){
 /* перший дотик після накопичення: усе накопичене — у цей дотик (частка × геометрія × швидкість) */
 function ribAccContact(CT){
   if(!VB_RACC.on || (RACC.A||0)<2) return 0;
-  const obj=String(CT&&CT.object||''); if(obj==='FLOOR'||obj==='CEILING') return 0;
+  const obj=String(CT&&CT.object||''); if(obj==='FLOOR'||obj==='CEILING'||obj.startsWith('BODY_')) return 0;   // (09-24c) підлога й власне тіло — не рахуються
   const ang=((CT.angle!=null?CT.angle:45)*Math.PI/180), geom=clamp(Math.sin(ang)+0.2,0.2,1.2), spd=clamp(((CT.speed||CT.normalSpeed||RIB.spd||0))/6,0.3,1.5);
   const E=RACC.A*VB_RACC.transfer*geom*spd, A0=RACC.A;
   RACC.A=0; RACC.lastE=E; RACC.lastA0=A0; RACC.lastObj=obj;
@@ -7887,6 +7887,7 @@ function ribbonImpact(CT){
   const parts=String(CT.object||'').split('_'); if(parts.length!==3||parts[0]!=='OBST') return;
   const gx=+parts[1], gy=+parts[2]; if(!(gx>0&&gx<12&&gy>0&&gy<12)) return;
   const o=obstacleAt(gx,gy); if(!o) return;
+  if(o.fs===true){ const n=performance.now(); if(n-(window.__fsLogT||0)>3000){ window.__fsLogT=n; logE('НЕРУЙНІВНЕ: ('+gx+','+gy+') — клинок не бере'); } return; }   // (09-24c) позначене неруйнівним — не ріжеться
   const mat=CT.surfaceType||'STONE', need=(RIB_CUT[mat]||18)*(VB_RIBBON.cutK||1);
   const pow=(CT.normalSpeed||0)*1.35*(1+(RIB.E||0)/8)*(VB_WEAPON.mass||1) + (CT._accE||0)*0.2;   // (09-24b) накопичена стрічка пробиває
   if(!(typeof SHEATH==='undefined' || SHEATH.drawn)) return;                                    // (09-22t) у піхвах — лише стук
@@ -8011,7 +8012,9 @@ window.VB_GEST=VB_GEST;
    витрачається витривалість; перший дотик до чогось віддає накопичене в цей дотик. */
 const VB_RACC={ on:1, gain:1.0, stam:0.30, Amax:300, minTS:0.35, transfer:0.6, decay:4 };
 var RACC={ A:0, max:0, len:0, stamUsed:0, exhausted:false, lastOnT:0, lastE:0, lastA0:0, lastObj:'' };
-var VB_COL={ on:1 };                                           // (09-24b) неруйнівне — колона до стелі
+var VB_COL={ on:1 };
+var VB_SPR={ failA:25, grace:2.5 };                   // (09-24c) серпантин: невдача — лише коли втрачено справжнє накопичення
+window.VB_SPR=VB_SPR;                                           // (09-24b) неруйнівне — колона до стелі
 window.VB_RACC=VB_RACC; window.RACC=RACC;
 const VB_SHEATH={ on:1, drawSpeed:4.5, sheatheHold:1.5 };
 var SHEATH={ drawn:false, stillT:0, lastDrawT:0 };
@@ -8521,12 +8524,12 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR};
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
   ['VB_RACC.on','Накопичення стрічки (1/0)',0,1,1],['VB_RACC.stam','Стрічка: витривалість за одиницю',0,1.5,0.05],['VB_RACC.Amax','Стрічка: накопичення для макс. уповільнення',50,1000,10],['VB_RACC.minTS','Стрічка: найповільніший час (×)',0.15,1,0.05],['VB_RACC.transfer','Стрічка: частка, що переходить у дотик',0.1,1.5,0.05],
-  ['VB_COL.on','Неруйнівні блоки — колони до стелі (1/0)',0,1,1],
+  ['VB_COL.on','Неруйнівні блоки — колони до стелі (1/0)',0,1,1],['VB_SPR.failA','Серпантин: невдача, якщо втрачено накопичення ≥',2,150,1],['VB_SPR.grace','Серпантин: розгін без невдачі, с',0,8,0.5],
   ['VB_SHEATH.on','Піхви: меч у піхвах, доки не махнеш (1/0)',0,1,1],['VB_SHEATH.drawSpeed','Піхви: швидкість вістря для вихоплення, м/с',2,10,0.1],
   ['VB_NOISE.spawn','Шум кличе ворогів (0 — вимк, 2 — удвічі частіше)',0,2,0.1],['VB_NOISE.cap','Шум: стеля живих ворогів',2,14,1],
   ['VB_RIBBON.on','Стрічка клинка: різ і світіння (1/0)',0,1,1],['VB_RIBBON.minSpeed','Стрічка: мін. швидкість вістря, м/с',1,8,0.1],
@@ -10822,7 +10825,7 @@ function allyDemoTick(dt){
    ТАК — кивок: вістря/верх телефона угору-униз, двічі. НІ — похитування: ліворуч-праворуч, двічі
    (поворот або нахил убік). Розпізнається за ПОСЛІДОВНІСТЮ обертань, не за положенням, і незалежно
    від хвату: вісь кивка — горизонтальна, поперек напряму телефона; вісь «ні» — вертикаль або сам напрям. */
-const GEST={ V:{st:[],cur:null}, P:{st:[],cur:null}, F:{st:[],cur:null}, lastFire:0, lastMotionT:0 };
+const GEST={ V:{st:[],cur:null,nm:'V'}, P:{st:[],cur:null,nm:'P'}, F:{st:[],cur:null,nm:'F'}, lastFire:0, src:'gyro', att:null, gPrev:null, yPrev:null, hGy:0, hGr:0, badT:0 };
 function gestAxis(A, rate, dt, now){
   if(Math.abs(rate)>VB_GEST.rate){ const sg=Math.sign(rate);
     if(A.cur && A.cur.sg===sg){ A.cur.ang+=Math.abs(rate)*dt; A.cur.t1=now; A.cur.pk=Math.max(A.cur.pk||0,Math.abs(rate)); }
@@ -10831,39 +10834,62 @@ function gestAxis(A, rate, dt, now){
   while(A.st.length && now-A.st[0].t1>VB_GEST.win) A.st.shift();
 }
 function gestClose(A){ const c=A.cur; A.cur=null; if(!c) return;
-  if(c.ang>VB_GEST.maxAng || (c.pk||0)>VB_GEST.maxRate || (c.t1-c.t0)>0.9){ A.st.length=0; GEST.noiseT=performance.now()/1000; return; }   // (09-24b) змах мечем — не кивок
-  if(c.ang>=VB_GEST.amp) A.st.push(c); }
+  const a=GEST.att; if(a){ a.maxAng=Math.max(a.maxAng,c.ang); a['e'+A.nm]=(a['e'+A.nm]||0)+Math.min(c.ang,VB_GEST.maxAng); }
+  if(c.ang>VB_GEST.maxAng || (c.pk||0)>VB_GEST.maxRate || (c.t1-c.t0)>0.9){ A.st.length=0; GEST.noiseT=performance.now()/1000; if(a) a.noise=true; return; }   // змах мечем — не кивок
+  if(c.ang>=VB_GEST.amp) A.st.push(c); else if(a) a.small=(a.small||0)+1; }
 function gestRun(A){ let run=0, prev=0; for(const x of A.st){ run=(x.sg!==prev)?run+1:1; prev=x.sg; } return run; }
 function gestEnergy(A){ let e=0; for(const x of A.st) e+=x.ang; return e; }
+const _gdot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2], _gcross=(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const _gnrm=v=>{ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; };
+/* (09-24c) кутова швидкість із руху гравітації (сирий акселерометр): запасне джерело, коли гіроскоп мовчить або бреше */
+function gestGravRate(dt){
+  if(sensor.gXr==null) return null;
+  const g1=_gnrm([sensor.gXr,sensor.gYr,sensor.gZr]); let W=null;
+  if(GEST.gPrev){ const c=_gcross(GEST.gPrev,g1), k=-180/Math.PI/Math.max(dt,1e-3); W=[c[0]*k,c[1]*k,c[2]*k]; }
+  GEST.gPrev=g1; return W;
+}
 function gestTick(dt){
-  if(sensor.rrX==null) return;
-  if(!DLG.q){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.nearT=0; return; }   // (09-24b) слухаємо лише коли питають
+  const Wg=gestGravRate(dt);
+  const haveGyro = sensor.rrX!=null;
   const now=performance.now()/1000;
   const gx=sensor.gXs??sensor.gX??0, gy=sensor.gYs??sensor.gY??-9.8, gz=sensor.gZs??sensor.gZ??0, gm=Math.hypot(gx,gy,gz)||9.8;
-  const G=[gx/gm,gy/gm,gz/gm], W=[sensor.rrX||0, sensor.rrY||0, sensor.rrZ||0];
-  const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2], cross=(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-  const nrm=v=>{ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; };
+  const G=[gx/gm,gy/gm,gz/gm], Wy=haveGyro?[sensor.rrX||0, sensor.rrY||0, sensor.rrZ||0]:null;
+  // здоров'я гіроскопа: обертання «поперек гравітації» видно і в гравітації — якщо гравітація крутиться, а гіро ні, гіро несправне
+  if(Wg){ const gyP=Wy?Math.hypot(...Wy.map((v,i)=>v-_gdot(Wy,G)*G[i])):0, grP=Math.hypot(...Wg);
+    GEST.hGy+=(gyP-GEST.hGy)*clamp(dt*2,0,1); GEST.hGr+=(Math.min(grP,400)-GEST.hGr)*clamp(dt*2,0,1);
+    if(GEST.src==='gyro' && GEST.hGr>45 && GEST.hGy<0.15*GEST.hGr){ GEST.badT+=dt; if(GEST.badT>1.5){ GEST.src='grav'; logE('ЖЕСТ: гіроскоп не відповідає (гіро ~'+Math.round(GEST.hGy)+'°/с проти нахилу ~'+Math.round(GEST.hGr)+'°/с) — кивки рахую з нахилу, «ні» — з компаса'); } } else GEST.badT=0; }
+  if(!haveGyro && GEST.src!=='grav' && Wg){ GEST.src='grav'; logE('ЖЕСТ: гіроскопа немає — кивки рахую з нахилу, «ні» — з компаса'); }
+  if(!DLG.q){ for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; } GEST.att=null; return; }   // слухаємо лише коли питають
+  const W = (GEST.src==='grav') ? (Wg||[0,0,0]) : (Wy||[0,0,0]);
   // «куди дивиться» телефон: верхній край; якщо телефон стоїть вертикально — задня камера
   const w=clamp((Math.abs(G[1])-0.65)/0.3,0,1), ws=w*w*(3-2*w);
-  let base=nrm([0, 1-ws, -ws]); let f=[base[0]-dot(base,G)*G[0], base[1]-dot(base,G)*G[1], base[2]-dot(base,G)*G[2]]; f=nrm(f);
-  const Pax=nrm(cross(f,G));
-  gestAxis(GEST.V, dot(W,G), dt, now); gestAxis(GEST.P, dot(W,Pax), dt, now); gestAxis(GEST.F, dot(W,f), dt, now);
+  let base=_gnrm([0, 1-ws, -ws]); let f=[base[0]-_gdot(base,G)*G[0], base[1]-_gdot(base,G)*G[1], base[2]-_gdot(base,G)*G[2]]; f=_gnrm(f);
+  const Pax=_gnrm(_gcross(f,G));
+  let rV=_gdot(W,G);
+  if(GEST.src==='grav'){ const y=sensor.yawFused||0; rV = (GEST.yPrev==null)?0:angDiff(y,GEST.yPrev)/Math.max(dt,1e-3); GEST.yPrev=y; }   // вертикаль гравітація не бачить — курс із компаса
+  const rP=_gdot(W,Pax), rF=_gdot(W,f);
+  if(Math.max(Math.abs(rV),Math.abs(rP),Math.abs(rF))>VB_GEST.rate && now-GEST.lastFire>1.5){ if(!GEST.att) GEST.att={t0:now, maxAng:0}; GEST.att.last=now; }   // хвіст щойно розпізнаного жесту — не нова спроба
+  gestAxis(GEST.V, rV, dt, now); gestAxis(GEST.P, rP, dt, now); gestAxis(GEST.F, rF, dt, now);
+  // спроба скінчилась (1 с спокою), а відповіді не було → «незрозумілий жест»
+  if(GEST.att && now-GEST.att.last>1.0){ const a=GEST.att; GEST.att=null;
+    if(GEST.lastFire<a.t0 && (a.noise || a.maxAng>=VB_GEST.amp*0.4)){
+      const eP=a.eP||0, eLR=Math.max(a.eV||0,a.eF||0);
+      const why = a.noise?'swing' : (a.maxAng<VB_GEST.amp)?'small' : (Math.min(eP,eLR)>0.55*Math.max(eP,eLR,1))?'mixed' : 'short';
+      try{ dlgOnUnclear(why, eP>=eLR?'nod':'shake', a); }catch(e){} } }
   if(now-GEST.lastFire<1.2 || now-(GEST.noiseT||0)<0.8) return;
   const eV=gestEnergy(GEST.V), eP=gestEnergy(GEST.P), eF=gestEnergy(GEST.F);
   const LR = eV>=eF ? GEST.V : GEST.F, eLR=Math.max(eV,eF);
-  const rP=gestRun(GEST.P), rLR=gestRun(LR);
+  const nP=gestRun(GEST.P), nLR=gestRun(LR);
   let kind=null;
-  if(rP>=VB_GEST.need && eP>=VB_GEST.dom*eLR) kind='YES';
-  else if(rLR>=VB_GEST.need && eLR>=VB_GEST.dom*eP) kind='NO';
+  if(nP>=VB_GEST.need && eP>=VB_GEST.dom*eLR) kind='YES';
+  else if(nLR>=VB_GEST.need && eLR>=VB_GEST.dom*eP) kind='NO';
   if(kind){
-    GEST.lastFire=now; const n=kind==='YES'?rP:rLR, amp=Math.round((kind==='YES'?eP:eLR)/Math.max(1,n));
+    GEST.lastFire=now; GEST.att=null; const n=kind==='YES'?nP:nLR, amp=Math.round((kind==='YES'?eP:eLR)/Math.max(1,n));
     for(const A of [GEST.V,GEST.P,GEST.F]){ A.st.length=0; A.cur=null; }
-    GEST.nearT=0; logE('ЖЕСТ: '+(kind==='YES'?'ТАК (кивок)':'НІ (похитування)')+' · рухів '+n+' · ~'+amp+'° на рух');
+    logE('ЖЕСТ: '+(kind==='YES'?'ТАК (кивок)':'НІ (похитування)')+' · рухів '+n+' · ~'+amp+'° на рух'+(GEST.src==='grav'?' · з нахилу':''));
     try{ if(navigator.vibrate) navigator.vibrate(kind==='YES'?[0,25,60,25]:[0,70]); }catch(e){}
     try{ dlgOnGesture(kind); }catch(e){}
-    return;
   }
-  if((rP>=2 && eP>=eLR) || (rLR>=2 && eLR>=eP)) GEST.nearT=now;          // (09-24b) майже відповідь — щоб перепитати по-доброму
 }
 addEventListener('keydown', e=>{ if(!DLG.q) return; const k=(e.key||'').toLowerCase(); if(k==='y'||k==='н'){ logE('ЖЕСТ: ТАК (клавіша)'); dlgOnGesture('YES'); } else if(k==='n'||k==='т'){ logE('ЖЕСТ: НІ (клавіша)'); dlgOnGesture('NO'); } });
 
@@ -10899,11 +10925,11 @@ function mentorFaceTick(){
 }
 
 /* ── ДІАЛОГ: питання → голосом пояснює відповіді → гравець відповідає рухом → підтвердження → далі ── */
-const DLG={ q:null, silent:0, stage:0, unclearT:0, openedOnce:false };
+const DLG={ q:null, silent:0, stage:0, unclearT:-99, openedOnce:false };
 function dlgSpeaking(){ return (typeof ttsBusy==='function'&&ttsBusy()) || !!SAY.cur || SAY.queue.length>0; }
 function mentorLine(text, face, voice){ if(face) mentorFace(face); allySay(text, null, voice); try{ tatami('МАЙСТЕР','"'+text+'"'); }catch(e){} }
 function mentorAsk(q){
-  DLG.q=q; DLG.silent=0; DLG.stage=0; DLG.quiet=0; DLG.unclearN=0; q._reasked=false; q._reN=0; GEST.nearT=0;
+  DLG.q=q; DLG.silent=0; DLG.stage=0; DLG.quiet=0; DLG.unclearN=0; q._reasked=false; q._reN=0; GEST.att=null;
   mentorLine(q.text+(q.hint?(' '+q.hint):''), 'curious');
   if(!ALLY.ph) try{ showBanner('❓ '+q.text+'  ·  ТАК — кивок двічі · НІ — похитати двічі','#86efac'); }catch(e){}
   logE('ПИТАННЯ «'+q.id+'»: '+q.text);
@@ -10925,6 +10951,7 @@ const POETIC=['Кожен крок починається з тиші перед
 const INTERJ=['Алло?','Прийом… прийом!','Еу… ти тут?','Агу?','Як це… чуєш мене?','Можеш телефоном ліворуч-праворуч зробити? Хоч так.','Кивни, якщо чуєш. Хоч раз — угору й униз.'];
 function dlgTick(dt){
   const q=DLG.q; if(!q) return;
+  if(LESSON.on) return;                                       // (09-24c) іде урок — не перепитуємо
   if(dlgSpeaking()){ DLG.quiet=0; return; }                   // тиша рахується, коли він замовк
   DLG.quiet=(DLG.quiet||0)+dt; DLG.silent+=dt;
   if(q.ladder){
@@ -10937,14 +10964,59 @@ function dlgTick(dt){
     DLG.quiet=0; q._reN=(q._reN||0)+1;
     const t=(q._reN%2===1)?((q.reask||q.text)+' '+(q.hint||'')):(INTERJ[(q._reN>>1)%INTERJ.length]+' '+(q.hint||''));
     mentorLine(t,'curious'); }
-  const now=performance.now()/1000;                          // майже відповідь, але не склалось — по-доброму, не частіше двох разів
-  if(GEST.nearT && now-GEST.nearT>1.6 && (DLG.unclearN||0)<2 && now-(DLG.unclearT||0)>10 && now-GEST.lastFire>2){
-    GEST.nearT=0; DLG.unclearT=now; DLG.unclearN=(DLG.unclearN||0)+1; DLG.quiet=0;
-    mentorLine('Я не розчув тебе. Ще раз, спокійно: угору й униз — двічі. Або ліворуч-праворуч — двічі.', 'curious'); }
+
+}
+const UNCLEAR_TXT={ swing:'Не так сильно — це не удар. Спокійно й плавно.', small:'Трохи ширше рух — я ледве бачу.', mixed:'Рух вийшов косий. Або вгору-вниз, або ліворуч-праворуч.', short:'Майже! Тільки двічі — туди й назад, туди й назад.' };
+const UNCLEAR_LOG={ swing:'надто різко', small:'замало', mixed:'косо', short:'не двічі' };
+function dlgOnUnclear(why, axis, a){
+  const q=DLG.q; if(!q || LESSON.on) return;
+  const now=performance.now()/1000; if(DLG.unclearT!=null && now-DLG.unclearT<6) return;
+  DLG.unclearT=now; DLG.unclearN=(DLG.unclearN||0)+1; DLG.quiet=0; SAY.queue.length=0;
+  logE('ЖЕСТ: незрозуміло — '+UNCLEAR_LOG[why]+' · схоже на '+(axis==='nod'?'кивок':'похитування')+' · макс '+Math.round(a.maxAng||0)+'° · вгору-вниз '+Math.round(a.eP||0)+'° · вбік '+Math.round(Math.max(a.eV||0,a.eF||0))+'°');
+  if(DLG.unclearN>=2){ lessonStart(axis); return; }
+  mentorLine(UNCLEAR_TXT[why]||'Я не розчув.', why==='swing'?'surprised':'curious');
+}
+/* УРОК: наставник проводить рух крок за кроком. Кивок: угору (майже рівно, трохи вперед) → униз (майже до кінця,
+   трохи вперед, щоб бачити екран). «Ні»: ліворуч → праворуч. Заодно міряє, чи гіроскоп бачить те, що бачить нахил. */
+var LESSON={ on:false, kind:'nod', step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0 };
+function lessonTip(){ const gy=sensor.gYr; if(gy==null) return null; const sg=(SENSCAL&&SENSCAL.tip)?SENSCAL.s:1; return clamp(sg*gy/9.4,-1,1); }   // −1 вістря вгору · +1 вістря вниз
+function lessonStart(kind){
+  Object.assign(LESSON,{on:true, kind, step:0, t:0, hintT:0, y0:null, y1:null, dir:0, gyA:0, grA:0});
+  logE('ЖЕСТ: урок «'+(kind==='nod'?'кивок':'похитування')+'» — проводжу рухом');
+  if(kind==='nod') mentorLine('Давай разом. Підніми телефон угору — майже рівно, трохи нахиливши вперед.','curious');
+  else mentorLine('Давай разом. Поверни телефон ліворуч — як дверцята.','curious');
+}
+function lessonEnd(ok){
+  LESSON.on=false; DLG.unclearN=0; DLG.quiet=0; DLG.unclearT=performance.now()/1000;
+  if(LESSON.kind==='nod' && LESSON.grA>30){ const r=LESSON.gyA/LESSON.grA;
+    logE('ДАТЧИК: урок кивка · гіро '+Math.round(LESSON.gyA)+'° / нахил '+Math.round(LESSON.grA)+'° ('+Math.round(r*100)+'%)'+(r<0.35?' — гіроскоп майже сліпий, кивки рахую з нахилу':' — гіроскоп у нормі'));
+    if(r<0.35 && GEST.src!=='grav'){ GEST.src='grav'; } }
+  const q=DLG.q; if(q) mentorLine(q.text+(q.hint?(' '+q.hint):''),'curious');
+}
+function lessonTick(dt){
+  if(!LESSON.on) return;
+  // вимір: скільки обертання бачить гіроскоп і скільки — гравітація (однаковий рух)
+  try{ if(GEST.gPrev && sensor.rrX!=null){ const G=GEST.gPrev, Wy=[sensor.rrX||0,sensor.rrY||0,sensor.rrZ||0], d=_gdot(Wy,G);
+      LESSON.gyA+=Math.hypot(Wy[0]-d*G[0],Wy[1]-d*G[1],Wy[2]-d*G[2])*dt; }
+    if(LESSON._gp && GEST.gPrev){ LESSON.grA+=Math.acos(clamp(_gdot(LESSON._gp,GEST.gPrev),-1,1))*180/Math.PI; } LESSON._gp=GEST.gPrev?GEST.gPrev.slice():null; }catch(e){}
+  if(dlgSpeaking()){ LESSON.hintT=0; return; }
+  LESSON.t+=dt; LESSON.hintT+=dt;
+  if(LESSON.kind==='nod'){
+    const p=lessonTip(); if(p==null){ lessonEnd(false); return; }
+    if(LESSON.step===0 && p<-0.75){ LESSON.step=1; LESSON.hintT=0; mentorLine('Добре. Тепер опусти вниз — майже до кінця, трохи подавши вперед, щоб бачити екран.','happy'); }
+    else if(LESSON.step===1 && p>0.45){ LESSON.step=2; mentorLine('Ось так. Це і є кивок: угору — униз. А тепер двічі, трохи швидше.','joy'); lessonEnd(true); }
+    else if(LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Угору — верхній край до стелі. Повільно.':'Униз — верхній край до підлоги, так, щоб бачити екран.','curious'); }
+  } else {
+    const y=sensor.yawFused||0; if(LESSON.y0==null) LESSON.y0=y;
+    if(LESSON.step===0){ const d=angDiff(y,LESSON.y0); if(Math.abs(d)>25){ LESSON.step=1; LESSON.dir=Math.sign(d); LESSON.y1=y; LESSON.hintT=0; mentorLine('Так. А тепер — праворуч.','happy'); } }
+    else if(LESSON.step===1){ const d=angDiff(y,LESSON.y1); if(Math.abs(y-LESSON.y1)>0 && Math.sign(d)===-LESSON.dir && Math.abs(d)>35){ LESSON.step=2; mentorLine('Ось так. Це «ні»: ліворуч — праворуч. А тепер двічі.','joy'); lessonEnd(true); }
+      else if(Math.sign(d)===LESSON.dir && Math.abs(d)>5) LESSON.y1=y; }                    // ще доводить ліворуч — крайня точка далі
+    if(LESSON.on && LESSON.hintT>15){ LESSON.hintT=0; mentorLine(LESSON.step===0?'Ліворуч — поверни телефон, як дверцята.':'Тепер у інший бік — праворуч.','curious'); }
+  }
 }
 function dlgOnGesture(kind){
   const q=DLG.q; if(!q) return;
-  DLG.q=null; SAY.queue.length=0;                          // (09-24b) старі репліки в черзі — геть: відповідь іде одразу
+  DLG.q=null; SAY.queue.length=0; LESSON.on=false;          // (09-24b/c) старі репліки й урок — геть: відповідь іде одразу
   if(q.ladder && DLG.stage>=2) mentorLine('О! Ти тут!', 'joy', {rate:1.05});
   logE('ВІДПОВІДЬ «'+q.id+'»: '+(kind==='YES'?'ТАК':'НІ'));
   const fn=(kind==='YES')?q.onYes:q.onNo; if(fn) fn();
@@ -10974,17 +11046,18 @@ function calTipTick(dt){
    Карта 13×13: старт у куті (1,1), коридор-спіраль звужується 3 → 2 → 1 клітинка, у центрі (6,6) — манекен
    з лабораторії. Біжиш, малюєш мечем стрічку — накопичуєш силу й сповільнюєш час; перший дотик віддає
    все накопичене. Дотик до стіни з накопиченням — спробу зруйновано; скінчилась витривалість — теж. */
-var SPR={ active:false, state:'idle', t0:0, t:0, attempt:0, dummy:null, dummyRev:0, spinV:0, minTS:1, maxA:0, cdT:0, cdStep:0, res:null, panel:null, hud:null };
+var SPR={ touches:[], active:false, state:'idle', t0:0, t:0, attempt:0, dummy:null, dummyRev:0, spinV:0, minTS:1, maxA:0, cdT:0, cdStep:0, res:null, panel:null, hud:null };
 window.SPR=SPR;
-const SPR_WALLS=(()=>{ const W=new Set(), add=(x,y)=>W.add(x+','+y);
-  for(let x=3;x<=9;x++) add(x,9);                 // низ третього кола — далі коридор 2
-  for(let y=3;y<=9;y++) add(3,y);                 // ліво третього кола
-  for(let x=4;x<=8;x++) add(x,4);                 // верх другого кола
-  for(let y=4;y<=8;y++) add(8,y);                 // право другого кола
-  for(let x=5;x<=7;x++) for(let y=5;y<=7;y++) if(!(x===6&&y===6)) add(x,y);   // кільце навколо центру
-  W.delete('6,7');                                // вхід до манекена — знизу
-  add(1,4); add(2,4);                             // назад до старту не пройти
-  W.delete('3,5');                                // ворота у внутрішнє коло (коридор 1)
+const SPR_WALLS=(()=>{                              // (09-24c) ВИХОР: старт 5×4 → коридор 4 → 3 → 2 → 1 → манекен, ~270°
+  const open=new Set(), o=(x0,x1,y0,y1)=>{ for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++) open.add(x+','+y); };
+  o(1,5, 8,11);                                   // старт: місце розмахнутись і розвернутись
+  o(1,4, 1,7);                                    // угору — ширина 4
+  o(5,11,1,3);                                    // праворуч уздовж верху — ширина 3
+  o(10,11,4,8);                                   // униз — ширина 2
+  o(7,9, 7,8);                                    // ліворуч до центру — ширина 2
+  open.add('7,6'); open.add('6,6');               // останній прохід — 1, манекен
+  open.add('5,4'); open.add('9,4'); open.add('9,6');   // зрізані внутрішні кути — повороти без зачепів
+  const W=new Set(); for(let x=1;x<=11;x++) for(let y=1;y<=11;y++) if(!open.has(x+','+y)) W.add(x+','+y);
   return W; })();
 function sprBuild(){
   for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i]; if(o.gx>=1&&o.gx<=11&&o.gy>=1&&o.gy<=11){ if(o.mesh) scene.remove(o.mesh); obstacles.splice(i,1); } }
@@ -11002,7 +11075,7 @@ function sprBuild(){
   logE('СЕРПАНТИН: карту збудовано · стін '+SPR_WALLS.size+' · манекен у (6,6)');
 }
 function sprReset(){
-  player.gx=1; player.gy=1; player._cont=false; player.cx=1; player.cy=1; player.vgx=1; player.vgy=1; player.dirIdx=2;
+  player.gx=3; player.gy=10; player._cont=false; player.cx=3; player.cy=10; player.vgx=3; player.vgy=10; player.dirIdx=0; SPR.touches=[];
   player.stamina=100; player.hp=Math.max(player.hp||0,100); player.dead=false;
   RACC.A=0; RACC.max=0; RACC.len=0; RACC.stamUsed=0; RACC.exhausted=false; SPR.minTS=1; SPR.maxA=0; SPR.res=null;
   try{ RIB.S.length=0; RIB.prevA=null; RIB.prevB=null; }catch(e){} try{ if(TRAIL){ TRAIL.cells.length=0; TRAIL.active=false; } }catch(e){}
@@ -11031,7 +11104,7 @@ function sprTick(dt){
     SPR.cdT+=dt; const steps=[[0.2,'На старт…'],[1.6,'Увага…'],[3.0,'Старт!']];
     while(SPR.cdStep<steps.length && SPR.cdT>=steps[SPR.cdStep][0]){ const t=steps[SPR.cdStep][1], go=SPR.cdStep===2;
       showBanner('🏁 '+t, go?'#22c55e':'#fbbf24'); try{ ttsSpeak(t,{critical:go}); blip(go?880:440,0.18,'square',0.14); if(navigator.vibrate) navigator.vibrate(go?[0,120]:[0,40]); }catch(e){} SPR.cdStep++; }
-    if(SPR.cdStep<3){ player.gx=1; player.gy=1; player._cont=false; player.cx=1; player.cy=1; }
+    if(SPR.cdStep<3){ player.gx=3; player.gy=10; player._cont=false; player.cx=3; player.cy=10; }
     else { SPR.state='run'; SPR.t0=performance.now(); RACC.A=0; RACC.max=0; RACC.stamUsed=0; logE('СЕРПАНТИН: СТАРТ · спроба '+SPR.attempt); }
     return;
   }
@@ -11045,7 +11118,11 @@ function sprContact(CT,E){
   if(!SPR.active || SPR.state!=='run') return;
   const obj=String(CT&&CT.object||'');
   if(obj.startsWith('DUMMY_')){ SPR.spinV+=clamp((E||0)*0.02+(RIB.spd||0)*0.15,0.3,12)*(Math.random()<0.5?-1:1); sprFinish(true,'HIT',CT,E); }
-  else if(obj!=='FLOOR' && obj!=='CEILING' && (E||0)>0) sprFinish(false,'CONTACT_BEFORE_DUMMY',CT,E);
+  else if(obj!=='FLOOR' && obj!=='CEILING' && !obj.startsWith('BODY_')){
+    const A0=(E||0)>0?(RACC.lastA0||0):0, tt=(performance.now()-SPR.t0)/1000;
+    SPR.touches.push({t:+tt.toFixed(2), obj, lost:Math.round(A0)});
+    if(A0>=VB_SPR.failA && tt>VB_SPR.grace) sprFinish(false,'CONTACT_BEFORE_DUMMY',CT,E);
+    else if(A0>0){ logE('СЕРПАНТИН: стрічку збито об '+obj+' — втрачено '+Math.round(A0)+(tt<=VB_SPR.grace?' (розгін, не рахується)':' (менше '+VB_SPR.failA+' — біжи далі)')); try{ showBanner('〰 стрічку збито','#fbbf24'); }catch(e){} } }
 }
 function sprOnExhaust(){ if(SPR.active && SPR.state==='run') sprFinish(false,'STAMINA_EXHAUSTED'); }
 const SPR_WHY={ HIT:'удар по манекену', CONTACT_BEFORE_DUMMY:'зачепив стіну — накопичення зруйновано', STAMINA_EXHAUSTED:'скінчилась витривалість', LEFT_ROUTE:'зійшов з маршруту', DIED:'загинув' };
@@ -11057,7 +11134,7 @@ function sprFinish(ok, reason, CT, E){
     stamUsed:Math.round(RACC.stamUsed), minTS:+SPR.minTS.toFixed(2), bladeV:+(RIB.spd||0).toFixed(1), pos:[player.gx,player.gy],
     hit: CT ? { part:String(CT.object||''), p:v3(CT.position), n:v3(CT.normal), v:+(CT.speed||0).toFixed(2), vn:+(CT.normalSpeed||0).toFixed(2), vt:+(CT.tangentialSpeed||0).toFixed(2),
                 depth:+(CT.depth||0).toFixed(2), pressure:+(CT.pressure||0).toFixed(2), impulse:+(CT.impulse||0).toFixed(2), angle:CT.angle, edge:CT.edgeAngle } : null,
-    dummySpin:+SPR.spinV.toFixed(2), date:Date.now() };
+    dummySpin:+SPR.spinV.toFixed(2), touches:SPR.touches.length, lostTotal:SPR.touches.reduce((s,x)=>s+x.lost,0), touchList:SPR.touches.slice(0,20), date:Date.now() };
   SPR.res=r;
   try{ const L=JSON.parse(localStorage.getItem('vb_serp_runs')||'[]'); L.push(r); while(L.length>40) L.shift(); localStorage.setItem('vb_serp_runs', JSON.stringify(L)); }catch(e){}
   logE('СЕРПАНТИН: '+(ok?'ФІНІШ':'НЕВДАЧА')+' · '+SPR_WHY[reason]+' · '+JSON.stringify(r));
@@ -11073,8 +11150,8 @@ function sprShowResults(r){
   const rows = r.ok ? [
     ['Час', r.time.toFixed(2)+' с'+(best?(' · найкращий '+best.time.toFixed(2)+' с'):'')], ['Накопичено найбільше', r.maxA], ['У момент удару', r.aHit], ['Передано в манекен', r.E],
     ['Витривалість витрачено', r.stamUsed], ['Найповільніший час', '×'+r.minTS], ['Швидкість вістря', r.bladeV+' м/с'], ['Куди влучив', (h.part||'').replace('DUMMY_','')],
-    ['Точка', h.p?h.p.join(', '):'—'], ['Кут / кромка', (h.angle??'—')+'° / '+(h.edge??'—')+'°'], ['Глибина · тиск · імпульс', (h.depth??0)+' · '+(h.pressure??0)+' · '+(h.impulse??0)], ['Манекен закрутило', r.dummySpin+' рад/с'] ]
-  : [ ['Причина', SPR_WHY[r.reason]], ['Час до зупинки', r.time.toFixed(2)+' с'], ['Накопичено найбільше', r.maxA], ['Витривалість витрачено', r.stamUsed], ['Найповільніший час', '×'+r.minTS], ['Де', r.pos.join(', ')] ];
+    ['Точка', h.p?h.p.join(', '):'—'], ['Кут / кромка', (h.angle??'—')+'° / '+(h.edge??'—')+'°'], ['Глибина · тиск · імпульс', (h.depth??0)+' · '+(h.pressure??0)+' · '+(h.impulse??0)], ['Манекен закрутило', r.dummySpin+' рад/с'], ['Дотиків до стін', r.touches+' · втрачено '+r.lostTotal] ]
+  : [ ['Причина', SPR_WHY[r.reason]], ['Час до зупинки', r.time.toFixed(2)+' с'], ['Накопичено найбільше', r.maxA], ['Витривалість витрачено', r.stamUsed], ['Найповільніший час', '×'+r.minTS], ['Де', r.pos.join(', ')], ['Дотиків до стін', r.touches+' · втрачено '+r.lostTotal] ];
   SPR.panel.innerHTML='<div style="font-size:16px;margin-bottom:6px;color:'+(r.ok?'#4ade80':'#f87171')+'">'+(r.ok?'🏁 СЕРПАНТИН — ФІНІШ':'✕ СЕРПАНТИН — НЕВДАЧА')+' · спроба '+r.attempt+'</div>'+
     rows.map(x=>'<div><span style="color:#94a3b8">'+x[0]+':</span> '+x[1]+'</div>').join('')+
     '<div style="display:flex;gap:10px;margin-top:12px"><button id="sprAgain" style="flex:1;padding:10px;border-radius:10px;border:1px solid #22c55e;background:#052e1a;color:#86efac">▶ ЩЕ РАЗ</button>'+
