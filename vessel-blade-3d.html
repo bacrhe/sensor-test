@@ -5321,7 +5321,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-27g · ДОДЖЬО v2: показ наставника → твоя ТІНЬ робить удар у твоєму тілі → разом із тінню (один тон = ти в тіні, пульс вібро) → сам, у повну силу; замість «так/ні» — команди «не рухайся» і сигнали (три короткі, четвертий високий = починай); рухи поза вікнами не оцінюються · ОЦІНКА МАХУ: еталон = фаза рубання, повільний замах і зупинка в кінці більше не ламають відсоток, вага руків\'я 0.25 (телефон не рухає рукою, як анімація), у соло-вікні береться кращий із махів · ВЛАСНЕ ТІЛО у грі більше не збиває клинок (замах над головою не дає «розсинхрону») · параметри VB_KATAQ у 🎚 · (09-27f) піхви, тренування';
+const BUILD_TAG='2026-09-27g2 · (виправлено запуск: VB_KATAQ у списку налаштувань) · ДОДЖЬО v2: показ наставника → твоя ТІНЬ робить удар у твоєму тілі → разом із тінню (один тон = ти в тіні, пульс вібро) → сам, у повну силу; замість «так/ні» — команди «не рухайся» і сигнали (три короткі, четвертий високий = починай); рухи поза вікнами не оцінюються · ОЦІНКА МАХУ: еталон = фаза рубання, повільний замах і зупинка в кінці більше не ламають відсоток, вага руків\'я 0.25 (телефон не рухає рукою, як анімація), у соло-вікні береться кращий із махів · ВЛАСНЕ ТІЛО у грі більше не збиває клинок (замах над головою не дає «розсинхрону») · параметри VB_KATAQ у 🎚 · (09-27f) піхви, тренування';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -8899,7 +8899,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA};
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
