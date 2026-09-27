@@ -3666,7 +3666,10 @@ function applyAdvRoom(rx,ry){
   } }catch(e){}
   try{ AUDIO.music(home?'home':(chessWhite(rx,ry)?'white':(boss?'boss':'black'))); }catch(e){}   // тема кімнати з маніфесту
   logE('КІМНАТА ('+rx+','+ry+') «'+st.name+'» '+(chessWhite(rx,ry)?'⬜':'⬛')+' вага '+st.weight.toFixed(2)+(boss?' БОС':''));
-  try{ if(!home) setTimeout(()=>{ try{ if(ADV.rx===rx&&ADV.ry===ry) roomGuide(rx,ry); }catch(e){} }, 2600); }catch(e){}   // (09-27b) провідник
+  try{ if(!home) GUIDE.pending={rx,ry,t:0,next:2.6,tries:0}; else GUIDE.pending=null; }catch(e){}   // (09-27b/d) провідник — з повторними спробами
+  try{ if(typeof TOUR!=='undefined'){                                                                  // (09-27d) екскурсія не тримає гравця, що пішов з дому
+    if(!home && TOUR.on){ TOUR.on=false; TOUR.suspended=true; TOUR.begun=false; mentorLine('Гаразд, підемо далі. Доучимось удома.','neutral'); logE('ЕКСКУРСІЯ: призупинено — гравець пішов з дому'); }
+    else if(home && TOUR.suspended){ TOUR.suspended=false; TOUR.on=true; TOUR.pause=2.0; TOUR.begun=false; logE('ЕКСКУРСІЯ: продовжуємо з кроку '+(TOUR.step+1)); } } }catch(e){}
 }
 function chessWhite(rx,ry){ return ((rx+ry)%2)===0; }   // ⬜ ШАХІВНИЦЯ: парна сума = біла (безпечна), (6,6)=дім=біла
 function composeRoomEnemies(rx,ry){
@@ -4536,6 +4539,7 @@ function nearestTarget(ph){
 function isCellOccupied(gx,gy,ignore){
   if(gx<0||gx>12||gy<0||gy>12) return {layer0:true, kind:'edge'};
   if(structEdgeBlocked(gx,gy)) return {layer0:true, kind:'edge'};          // (09-22f) кромка за стіною — лише двері
+  if(typeof civBlocked==='function' && civBlocked(gx,gy)) return {layer0:true, kind:'obstacle'};   // (09-27d) житель і його прилавок
   if(ignore===player && trailHas(gx,gy)) return {layer0:true, kind:'trail'};   // (09-22p) свій шлейф — назад не пройти
   { const o=obstacleAt(gx,gy);
     if(o && o.pass!=='liquid' && o.pass!=='gas' && o.pass!=='plasma'
@@ -5315,7 +5319,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-27c · КЕНДЗЮЦУ: п\'ять стійок (тюдан, дзьодан, гедан, хассо, вакі), шість ударів (мен, кеса, гяку-кеса, йоко, цукі, кіріаге) й відвід — дані LAB; бійці, боси й наставник б\'ють ними, у кожного своя стійка й черга ударів · ЛАБОРАТОРІЯ РУХУ: запис → «≈ СХОЖІСТЬ» (DTW, відсотки до кожної анімації, найближча) → «⚗ ЗАПЕКТИ» (запис стає анімацією REC_… з корекцією кисті під записаний клинок; вороги б\'ють нею) · JSON анімації в лог/буфер · (09-27b) дім, карта, провідник, алхімія';
+const BUILD_TAG='2026-09-27d · ЖИТЕЛІ БІЛИХ КІМНАТ: торговець, цілитель, міняйло, жрець — персонажі за прилавком (риг, обличчям до тебе, свій голос і хмарка, дзвіночок для сліпого), кілька в кімнаті; підійшов — вітається, став перед прилавком — питає, відповідь кивком/похитуванням; плит на підлозі більше немає · ПРОВІДНИК: екскурсія призупиняється, коли йдеш із дому (продовжується вдома), у білій кімнаті наставник пробує заговорити кілька разів · хмарка над тим, хто говорить · (09-27c) кендзюцу, лабораторія руху · (09-27b) дім, карта, алхімія';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6135,6 +6139,7 @@ function frame(now){
   try{ entAudioFrame(dt); }catch(e){}                        // (09-22g) гул клинків мечників
   try{ neighborLifeTick(dtW); }catch(e){}                    // (09-22j) вороги за стінами ходять і звучать
   try{ gestTick(dt); lessonTick(dt); dlgTick(dt); tourTick(dt); calTipTick(dt); mentorFaceTick(); guideTick(dt); }catch(e){ if(!window.__dlgErr){ window.__dlgErr=1; logE('ДІАЛОГ: '+e.message); } }   // (09-24a) діалог рухом; (09-27b) провідник
+  try{ civTick(dt); }catch(e){ if(!window.__civErr){ window.__civErr=1; logE('ЖИТЕЛІ: '+e.message); } }   // (09-27d) жителі білих кімнат
   try{ sprTick(dt); raccHudTick(); }catch(e){ if(!window.__sprErr){ window.__sprErr=1; logE('СЕРПАНТИН: '+e.message); } }   // (09-24b)
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
@@ -6500,7 +6505,9 @@ const RIG_PROFILES={
   PLAYER:{scale:1.00, hue:0.55, torsoW:0.36, armLen:1.00, legLen:1.00, headSize:0.22, swordLen:1.35, cells:1},
   MENTOR:{scale:1.08, hue:0.74, torsoW:0.42, armLen:1.06, legLen:1.03, headSize:0.24, swordLen:1.55, cloak:true, cells:1},
   ENEMY: {scale:0.98, hue:0.96, torsoW:0.33, armLen:0.98, legLen:0.97, headSize:0.21, swordLen:1.30, spikes:true, cells:1},
-  BOSS:  {scale:1.65, hue:0.03, torsoW:0.56, armLen:1.12, legLen:1.06, headSize:0.30, swordLen:2.30, crown:true, cells:4}
+  BOSS:  {scale:1.65, hue:0.03, torsoW:0.56, armLen:1.12, legLen:1.06, headSize:0.30, swordLen:2.30, crown:true, cells:4},
+  TRADER:{scale:1.02, hue:0.12, torsoW:0.40, armLen:0.98, legLen:0.98, headSize:0.23, swordLen:1.0, cells:1},            // (09-27d) жителі білих кімнат
+  QUESTER:{scale:1.06, hue:0.55, torsoW:0.38, armLen:1.02, legLen:1.02, headSize:0.23, swordLen:1.0, cloak:true, cells:1}
 };
 /* Пози — таблиця кутів суглобів у градусах [x,y,z]; root — зсув/нахил кореня. */
 const LAB_LEGS={LEFT_HIP:[-24,0,0],LEFT_KNEE:[28,0,0],LEFT_ANKLE:[-4,0,0],RIGHT_HIP:[14,0,0],RIGHT_KNEE:[20,0,0],RIGHT_ANKLE:[-14,0,0],PELVIS:[0,-18,0]};
@@ -8434,7 +8441,7 @@ function freeReach(ph, tgt, r){
   const p=entPos(ph), fo=((ph.size||1)-1)*0.5, q=tgt&&tgt.local?entPos(player):[tgt.gx,tgt.gy];
   return Math.hypot(p[0]+fo-q[0], p[1]+fo-q[1]) <= r+fo;
 }
-function solidCell(cx,cy){ if(cx<0||cx>12||cy<0||cy>12) return true; const o=obstacleAt(cx,cy); if(o&&o.solid) return true; try{ if(structEdgeBlocked(cx,cy)) return true; }catch(e){} return false; }
+function solidCell(cx,cy){ if(cx<0||cx>12||cy<0||cy>12) return true; const o=obstacleAt(cx,cy); if(o&&o.solid) return true; try{ if(structEdgeBlocked(cx,cy)) return true; if(typeof civBlocked==='function'&&civBlocked(cx,cy)) return true; }catch(e){} return false; }
 function freeMoveTick(dt){
   if(!VB_FREE.on) return;
   const list=phantoms.slice(); try{ if(ALLY&&ALLY.ph&&!list.includes(ALLY.ph)) list.push(ALLY.ph); }catch(e){}
@@ -8671,6 +8678,7 @@ function sonarEntityTick(av, dt){
   av._showT=Math.max(0,(av._showT||0)-dt);
   let fl=0;
   if(av.ally){ const duty={wise:0.9,weak:0.6,dumb:0.35,mad:0.2}[av.mode]??0.9; const ph=(performance.now()/300)%1; fl = (ph<duty)?0.85:0.15; }
+  else if(av.civil){ fl=0.7; }                                                     // (09-27d) жителі — власне рівне світло
   else if(av.remote){ fl=0.35; }
   let near=0;
   try{ const d=Math.max(Math.abs((av.gx||0)-player.gx),Math.abs((av.gy||0)-player.gy)); if(d<=VB_SONAR.shadow){ const fk=(performance.now()/160)%1; near=(fk<0.5)?0.28:0.08; } }catch(e){}
@@ -9758,8 +9766,7 @@ const QPLATE={mesh:null,gx:0,gy:0,standT:0,seed:0};
 const QST={
   a:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_quest')||'null'); }catch(e){ return null; } })(),
   save(){ try{ localStorage.setItem('vb3d_quest', JSON.stringify(this.a)); }catch(e){} },
-  offer(seed){
-    if(this.a) return;
+  gen(seed){                                                     // (09-27d) те саме завдання можна показати до згоди
     const rng=mulberry32(seed);
     const deep=Math.round(rng()*2);
     const r0=rng();
@@ -9769,6 +9776,11 @@ const QST={
       ? { t:'hunt', kind:null, goal:3+deep*2, prog:0 }
       : { t:'cast', kind:'plasma', goal:1+deep, prog:0 });
     q.reward = rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2});
+    return q;
+  },
+  offer(seed){
+    if(this.a) return;
+    const q=this.gen(seed);
     this.a=q; this.save(); this.hud();
     const rk=Object.keys(q.reward)[0];
     tutModal('🎯 ЗАВДАННЯ ПРИЙНЯТО', this.text(q)+'<br><br>Нагорода: <b>+'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+'</b> + 5 душ.<br><i>Виконається сама — стеж за рядком угорі.</i>', [{t:'ДО СПРАВИ ▷'}]);
@@ -9862,11 +9874,110 @@ function plantRock(gx,gy,rng){
   const tint=[0x8d99ae,0x6b7280,0x9aa6b6][Math.floor(rng()*3)];
   addObstacle(gx,gy,'Si',new Set(),tint,0.6+rng()*0.5,rng()<0.4?'slab':'cube');
 }
+/* ═══════════════ (09-27d) ЖИТЕЛІ БІЛИХ КІМНАТ: торговці й жерці — персонажі за прилавком ═══════════════
+   Не плити на підлозі, а люди: риг у позі спокою за прилавком, обличчям до тебе, зі своїм голосом і хмаркою над
+   головою. Підійшов на три клітинки — вітається й кличе; став перед прилавком — питає; відповідаєш кивком або
+   похитуванням, як наставнику. В одній кімнаті може бути кілька: торговець силою (душі), цілитель, міняйло
+   (ресурси), жрець (завдання). Для сліпого кожен житель тихо дзвенить своєю нотою, коли ти поруч. */
+var CIV={ list:[], on:1 };
+const CIV_SIDE_UA={N:'біля північної стіни',S:'біля південної стіни',W:'біля західної стіни',E:'біля східної стіни'};
+const CIV_SPOTS={ N:[3,9,4,8,2,10].map(x=>({sd:'N',n:[x,1],c:[x,2],a:[x,3],face:[0,1]})), S:[3,9,4,8,2,10].map(x=>({sd:'S',n:[x,11],c:[x,10],a:[x,9],face:[0,-1]})),
+                  W:[3,9,4,8].map(y=>({sd:'W',n:[1,y],c:[2,y],a:[3,y],face:[1,0]})), E:[3,9,4,8].map(y=>({sd:'E',n:[11,y],c:[10,y],a:[9,y],face:[-1,0]})) };
+const CIV_KINDS={
+  upgrade:{ name:'ТОРГОВЕЦЬ', prof:'TRADER', hue:0.12, tone:620, voice:{rate:1.02,pitch:1.15}, goods:[0xfbbf24,0xf59e0b,0xfde68a], top:0x7a4a1f, body:0x5a3517,
+    greet:'Підходь, стань перед прилавком. Сила — за душі.', ask:'Три душі за покращення. Згода?',
+    can:()=>(player.score||0)>=3, cant:()=>'Замало душ — треба три, маєш '+(player.score||0)+'. Душі дають фантоми.',
+    give(c){ player.score-=3; const pool=['up_dmg','up_charge','up_reach']; civDrop(c, pool[Math.floor(Math.random()*pool.length)]); return 'Тримай. Лежить поруч із тобою.'; } },
+  heal:{ name:'ЦІЛИТЕЛЬ', prof:'TRADER', hue:0.36, tone:740, voice:{rate:0.95,pitch:1.0}, goods:[0x4ade80,0x86efac,0x22c55e], top:0x7a4a1f, body:0x5a3517,
+    greet:'Поранений? Підійди до прилавка.', ask:'Дві душі — і рани затягнуться. Згода?',
+    can:()=>(player.score||0)>=2 && player.hp<100, cant:()=> player.hp>=100 ? 'Ти здоровий. Приходь, коли болітиме.' : 'Замало душ — треба дві, маєш '+(player.score||0)+'.',
+    give(){ player.score-=2; player.hp=clamp(player.hp+45,0,100); player.stamina=100; try{ doFlash('#86efac'); }catch(e){} return 'Дихай. Стало легше.'; } },
+  smith:{ name:'МІНЯЙЛО', prof:'TRADER', hue:0.06, tone:480, voice:{rate:0.9,pitch:0.8}, goods:[0x9fb3c8,0x7a4a1f,0xb07cff], top:0x6b7280, body:0x374151,
+    greet:'Дерево й камінь беру, кристал даю. Підходь.', ask:'Три дерева й три камені — за кристал. Згода?',
+    can:()=>!!(window.RES&&RES.wood>=3&&RES.stone>=3), cant:()=>'Принеси три дерева й три камені. Маєш дерева '+((window.RES&&RES.wood)||0)+', каменів '+((window.RES&&RES.stone)||0)+'.',
+    give(){ RES.wood-=3; RES.stone-=3; RES.crystal=(RES.crystal||0)+1; saveRes(); resHUD(); return 'Кристал твій.'; } },
+  quest:{ name:'ЖРЕЦЬ', prof:'QUESTER', hue:0.55, tone:560, voice:{rate:0.92,pitch:0.85}, goods:[0x22d3ee], top:0x64748b, body:0x475569,
+    greet:'Маю справу для тебе. Підійди до вівтаря.', ask:(c)=>{ const q=QST.gen(c.seed); const rk=Object.keys(q.reward)[0]; return 'Справа така: '+ttsClean(QST.text(q))+'. Нагорода — '+q.reward[rk]+' '+(RES_NAME[rk]||rk)+' і п\'ять душ. Берешся?'; },
+    can:()=>!QST.a, cant:()=>'Ти ще не скінчив: '+ttsClean(QST.text(QST.a))+'. Поступ '+QST.a.prog+' з '+QST.a.goal+'.',
+    give(c){ QST.offer(c.seed); return 'Хай Ритм веде тебе.'; } },
+};
+function civBlocked(gx,gy){ if(typeof CIV==='undefined'||!CIV||!CIV.list) return false; for(const c of CIV.list){ if((c.n[0]===gx&&c.n[1]===gy)||(c.c[0]===gx&&c.c[1]===gy)) return true; } return false; }
+function civFree(x,y){ if(x<1||x>11||y<1||y>11) return false; if(obstacleAt(x,y)||(x===6&&y===6)) return false; if(!CIV||!CIV.list) return true; for(const c of CIV.list){ for(const k of ['n','c','a']) if(c[k][0]===x&&c[k][1]===y) return false; } return true; }
+function civClear(){ for(const c of CIV.list){ try{ scene.remove(c.mesh); if(c.counter) scene.remove(c.counter); c.mesh.traverse(o=>{ try{ o.geometry&&o.geometry.dispose(); }catch(e){} }); }catch(e){} } CIV.list=[]; }
+function civMake(kind, sp, seed){
+  const K=CIV_KINDS[kind]; if(!K) return null;
+  const g=new THREE.Group(); g.frustumCulled=false; scene.add(g);
+  const yaw=Math.atan2(sp.face[0],sp.face[1]);
+  const av={ mesh:g, parts:{}, civil:true, kind:'civil', civ:kind, K, sd:sp.sd, n:sp.n, c:sp.c, a:sp.a, face:sp.face, gx:sp.n[0], gy:sp.n[1], dead:false, strikeT:0, painT:0, hp:100, seed, greeted:false, standT:0, chimeT:0, asked:false, yaw, _vs:0, _gaitPh:0 };
+  g.position.set(worldX(sp.n[0]), -0.45, worldZ(sp.n[1])); g.rotation.y=yaw;
+  const cg=new THREE.Group(); cg.frustumCulled=false; cg.position.set(worldX(sp.c[0]),-0.45,worldZ(sp.c[1])); cg.rotation.y=yaw;
+  const body=new THREE.Mesh(new THREE.BoxGeometry(0.88,0.5,0.46), new THREE.MeshBasicMaterial({color:K.body})); body.position.y=0.25; body.frustumCulled=false; cg.add(body);
+  const top=new THREE.Mesh(new THREE.BoxGeometry(0.94,0.1,0.54), new THREE.MeshBasicMaterial({color:K.top})); top.position.y=0.55; top.frustumCulled=false; cg.add(top);
+  K.goods.forEach((col,i)=>{ const m=new THREE.Mesh(kind==='quest'?new THREE.OctahedronGeometry(0.14):new THREE.BoxGeometry(0.16,0.14,0.16), new THREE.MeshBasicMaterial({color:col})); m.position.set((i-(K.goods.length-1)/2)*0.26, kind==='quest'?0.78:0.67, 0); m.frustumCulled=false; cg.add(m); });
+  scene.add(cg); av.counter=cg;
+  try{ const l=labLabel(K.name,'#fbbf24',0.9); l.position.set(0,2.25,0); l.frustumCulled=false; g.add(l); av.label=l; }catch(e){}
+  try{ const S=rigNpcEnsure(av, K.prof, K.hue); if(S){ S.rig.sword.root.visible=false; S.civil=true; } }catch(e){ logE('ЖИТЕЛЬ риг: '+e.message); }
+  CIV.list.push(av); return av;
+}
+function civPlace(kind, sides, seed){
+  for(const sd of sides){ for(const sp of (CIV_SPOTS[sd]||[])){ if(civFree(...sp.n)&&civFree(...sp.c)&&civFree(...sp.a)) return civMake(kind, sp, seed); } }
+  for(const sd of ['N','S','W','E']){ for(const sp of CIV_SPOTS[sd]){ if(civFree(...sp.n)&&civFree(...sp.c)&&civFree(...sp.a)) return civMake(kind, sp, seed); } }
+  return null;
+}
+function civBuild(rx,ry,st,type){
+  civClear(); if(!CIV.on || !ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;
+  const rng=mulberry32(rx*571+ry*53+21), seed=rx*977+ry*31+7, w=st.weight||0;
+  let plan=[];
+  if(type==='shop') plan=[['upgrade',['N','W']],['smith',['N','E']]].concat(w>0.25?[['heal',['S','W']]]:[]);
+  else if(type==='shrine') plan=[['quest',['E','N']],['heal',['S','W']]];
+  else if(type==='grove') plan=rng()<0.5?[['smith',['S','E']]]:[];
+  else if(type==='quarry') plan=rng()<0.5?[['upgrade',['W','N']]]:[];
+  else { if(rng()<0.3+w*0.35) plan.push(['quest',['E','N']]); if(rng()<0.3+w*0.5) plan.push(['upgrade',['N','W']]); }
+  for(const p of plan) civPlace(p[0], p[1], seed);
+  if(CIV.list.length) logE('ЖИТЕЛІ ('+rx+','+ry+'): '+CIV.list.map(c=>c.K.name+' '+CIV_SIDE_UA[c.sd]+' — прилавок ('+c.c[0]+','+c.c[1]+'), стань на ('+c.a[0]+','+c.a[1]+')').join(' · '));
+}
+function civDrop(c, kind){
+  const cand=[[c.a[0],c.a[1]],[player.gx,player.gy],[player.gx+1,player.gy],[player.gx-1,player.gy],[player.gx,player.gy+1],[player.gx,player.gy-1]];
+  for(const [x,y] of cand){ if(x>=1&&x<=11&&y>=1&&y<=11&&!obstacleAt(x,y)&&!civBlocked(x,y)){ spawnPickup(x,y,kind); return true; } }
+  return false;
+}
+function civSay(c, text){ try{ allySay(text, null, c.K.voice, c.mesh); tatami(c.K.name,'"'+text+'"'); }catch(e){} }
+function civAsk(c){
+  const K=c.K;
+  if(!K.can()){ civSay(c, typeof K.cant==='function'?K.cant():K.cant); logE('ЖИТЕЛЬ '+K.name+': умову не виконано'); return; }
+  const text=typeof K.ask==='function'?K.ask(c):K.ask;
+  const q={ id:'CIV_'+c.civ, text, hint:'Кивни — так. Похитай — ні.', reaskT:14, civ:c, say:(t,f)=>civSay(c,t),
+    onYes:()=>{ let r=null; try{ r=K.give(c); }catch(e){ logE('ЖИТЕЛЬ '+K.name+': '+e.message); } civSay(c, r||'Тримай.'); logE('ЖИТЕЛЬ '+K.name+': згода'); try{ if(navigator.vibrate) navigator.vibrate([0,30,40,60]); }catch(e){} },
+    onNo:()=>{ civSay(c,'Як знаєш. Я тут.'); logE('ЖИТЕЛЬ '+K.name+': відмова'); } };
+  DLG.q=q; DLG.silent=0; DLG.stage=0; DLG.quiet=0; DLG.unclearN=0; q._reasked=false; q._reN=0; GEST.att=null;
+  civSay(c, q.text+' '+q.hint);
+  logE('ПИТАННЯ «'+q.id+'» ('+K.name+'): '+q.text);
+}
+function civTick(dt){
+  if(!CIV.list.length) return;
+  const now=performance.now()/1000, busy=!!(typeof DLG!=='undefined'&&DLG.q);
+  for(const c of CIV.list){
+    const dx=worldX(player.gx)-c.mesh.position.x, dz=worldZ(player.gy)-c.mesh.position.z, d=Math.max(Math.abs(player.gx-c.gx),Math.abs(player.gy-c.gy));
+    const tgt = d<=5 ? Math.atan2(dx,dz) : c.yaw;
+    let dy=tgt-c.mesh.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy)); c.mesh.rotation.y+=dy*clamp(dt*4,0,1);
+    const S=c._rigS;
+    if(S && S.rig){ const P=labAnimAt('IDLE', (now+(c.seed%7))%2.6)||labResolve({p:'IDLE'}); S.poseS=S.poseS?labLerpPose(S.poseS,P,clamp(dt*6,0,1)):P;
+      const prev=LAB; LAB=S; try{ S.warn=[]; labSetPose(S.poseS); }catch(e){} finally{ LAB=prev; } S.rig.sword.root.visible=false; }
+    try{ sonarEntityTick(c, dt); }catch(e){}
+    if(c.label) c.label.visible = d<=6;
+    if(mode!=='fighter' || player.dead) continue;
+    if(d<=4 && now-c.chimeT>3){ c.chimeT=now; try{ spatialBlip(c.mesh.position.x,1.4,c.mesh.position.z,c.K.tone,0.08,'sine',0.05); }catch(e){} }
+    if(d<=3 && !c.greeted && !busy && !dlgSpeaking()){ c.greeted=true; civSay(c, c.K.greet); logE('ЖИТЕЛЬ '+c.K.name+': вітається'); }
+    if(player.gx===c.a[0] && player.gy===c.a[1]){ c.standT+=dt; if(c.standT>=0.8 && !busy && !c.asked && !dlgSpeaking() && !(typeof LESSON!=='undefined'&&LESSON.on) && !(typeof TOUR!=='undefined'&&TOUR.on)){ c.asked=true; civAsk(c); } }
+    else { c.standT=0; if(c.asked && d>2) c.asked=false; }
+    if(busy && DLG.q.civ===c && d>3){ DLG.q=null; civSay(c,'Як хочеш.'); logE('ЖИТЕЛЬ '+c.K.name+': гравець відійшов — питання знято'); }
+  }
+}
 /* ═══════════════ (09-27b) НАСТАВНИК-ПРОВІДНИК ═══════════════
    У білих кімнатах і вдома наставник пояснює, де ти, що тут є і що з цим робити: дерева, камінь, руда,
    кристали (і якою силою їх бере клинок), плити торговця й завдання, поточне завдання, а в святилищах і
    торгових дворах — рецепт алхімії, що лежить знаками на підлозі, з абеткою Морзе для кожного елемента. */
-var GUIDE={ said:{}, quietT:0, homeDone:false, alch:null, meshes:[] };
+var GUIDE={ said:{}, quietT:0, homeDone:false, alch:null, meshes:[], pending:null };
 const MORSE_OF={A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',K:'-.-',L:'.-..',M:'--',N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..'};
 function morseSay(word){ return String(word).toUpperCase().split('').map(ch=>(MORSE_OF[ch]||'').split('').map(q=>q==='.'?'крапка':'тире').join(' ')).join(', потім '); }
 const ALCH_NAMES={FE:'залізо',C:'вугілля',PL:'плазма',NA:'натрій',CL:'хлор',SI:'кремній',O:'кисень',H:'водень'};
@@ -9889,7 +10000,7 @@ function alchHintBuild(rx,ry,st){
   alchClear();
   const type=(typeof roomTypeOf==='function')?roomTypeOf(rx,ry):null; if(type!=='shrine' && type!=='shop') return;
   const rng=mulberry32(rx*571+ry*53+11), H=ALCH_HINTS[Math.floor(rng()*ALCH_HINTS.length)], n=H.cells.length;
-  const busy=(x,y)=>obstacleAt(x,y)||(TRADER.mesh&&TRADER.gx===x&&TRADER.gy===y)||(QPLATE.mesh&&QPLATE.gx===x&&QPLATE.gy===y)||(x===6&&y===6);
+  const busy=(x,y)=>obstacleAt(x,y)||(TRADER.mesh&&TRADER.gx===x&&TRADER.gy===y)||(QPLATE.mesh&&QPLATE.gx===x&&QPLATE.gy===y)||(x===6&&y===6)||(typeof civFree==='function'&&!civFree(x,y));
   let row=null;
   for(let t=0;t<40&&!row;t++){ const y=2+Math.floor(rng()*9), x0=2+Math.floor(rng()*(9-n)); let ok=true; for(let k=0;k<n;k++) if(busy(x0+k,y)) ok=false; if(ok) row={x0,y}; }
   if(!row) return;
@@ -9921,8 +10032,9 @@ function roomGuide(rx,ry){
     L.push('Це '+st.name+'. Біла кімната — ворогів тут немає.');
     if(type==='grove') L.push('Гай. Дерева: листя ріжеться легко, стовбур — удар сильніший, сила шість. Зрубаєш вщент — буде дерево для кузні.');
     else if(type==='quarry') L.push('Каменярня. Камінь — удар щосили, з розгону: сила вісімнадцять. Руда міцніша, двадцять шість: накопич стрічкою й бий.');
-    else if(type==='shop') L.push('Торговий двір. Золота плита посередині: стань на неї — три душі за покращення.');
-    else if(type==='shrine') L.push('Святилище. Блакитна плита дає завдання: стань — і слухай.');
+    else if(type==='shop') L.push('Торговий двір. Торговці стоять за прилавками: підійди, стань перед прилавком — вони самі спитають. Відповідай кивком або похитуванням.');
+    else if(type==='shrine') L.push('Святилище. Жрець за вівтарем дає завдання — стань перед вівтарем і слухай.');
+    try{ if(typeof CIV!=='undefined' && CIV.list.length) L.push('Тут '+CIV.list.map(c=>c.K.name.toLowerCase()+' '+CIV_SIDE_UA[c.sd]).join(', ')+'.'); }catch(e){}
     const parts=[]; if(inv.tree) parts.push('дерев '+inv.tree); if(inv.rock) parts.push('каменів '+inv.rock); if(inv.ore) parts.push('руди '+inv.ore); if(inv.crystal) parts.push('кристалів '+inv.crystal+' — вони дзвінкі, сила чотирнадцять');
     if(parts.length) L.push('Тут є: '+parts.join(', ')+'.');
     try{ if(typeof QST!=='undefined' && QST.a) L.push('Твоє завдання: '+ttsClean(QST.text(QST.a))+'.'); }catch(e){}
@@ -9934,14 +10046,22 @@ function roomGuide(rx,ry){
   return true;
 }
 function guideTick(dt){
-  if(!ADV.on || !advHome() || GUIDE.homeDone) return;
-  if(!guideCanSpeak() || dlgSpeaking() || !(typeof DLG!=='undefined' && DLG.openedOnce)){ GUIDE.quietT=0; return; }
-  GUIDE.quietT+=dt; if(GUIDE.quietT>=4){ GUIDE.quietT=0; roomGuide(6,6); }
+  if(!ADV.on) return;
+  if(advHome()){
+    if(GUIDE.homeDone) return;
+    if(!guideCanSpeak() || dlgSpeaking() || !(typeof DLG!=='undefined' && DLG.openedOnce)){ GUIDE.quietT=0; return; }
+    GUIDE.quietT+=dt; if(GUIDE.quietT>=4){ GUIDE.quietT=0; roomGuide(6,6); }
+    return;
+  }
+  const p=GUIDE.pending; if(!p || p.rx!==ADV.rx || p.ry!==ADV.ry) return;       // (09-27d) біла кімната: пробуємо, доки наставник не звільниться
+  p.t+=dt; if(p.t<p.next) return; p.next=p.t+4; p.tries++;
+  if(dlgSpeaking()) return;
+  if(roomGuide(p.rx,p.ry) || p.tries>=10) GUIDE.pending=null;
 }
 function advRoomExtras(rx,ry,st){
   MM.seen.add(rx+','+ry); miniMapDraw();   // мінімапа: кімнату відвідано
   clearScars(); VOXREG.clear();            // сліди косметичні; воксель-реєстр — покімнатний
-  clearTrader(); clearQuestPlate(); try{ alchClear(); }catch(e){}
+  clearTrader(); clearQuestPlate(); try{ alchClear(); civClear(); }catch(e){}
   setTimeout(()=>{ try{ watchPicked(); }catch(e){} }, 250);   // (07-17g) хто що вже підібрав у цій кімнаті
   if(!ADV.on || (rx===6&&ry===6) || !chessWhite(rx,ry)) return;   // лише білі коридори (не дім)
   const rng=mulberry32(rx*131+ry*17+9);
@@ -9984,19 +10104,8 @@ function advRoomExtras(rx,ry,st){
   }
   if(rng()<0.28) spawnPickup(2+Math.floor(rng()*9), 2+Math.floor(rng()*9), 'scroll');   // 📜 сувій рецепта
   const _rt=(VB_ROOMS&&VB_ROOMS.on)?roomTypeOf(rx,ry):null;
-  if(_rt ? _rt==='shrine' : rng()<0.3+st.weight*0.35) makeQuestPlate(rx,ry,rng,st);       // 🎯 квестова плита (святилище)
-  if(_rt ? _rt==='shop' : rng()<0.3+st.weight*0.5){                                    // торговець (торговий двір)
-    let gx,gy,tries=0;
-    if(_rt){ gx=6; gy=6; }
-    else do{ gx=3+Math.floor(rng()*7); gy=3+Math.floor(rng()*7); tries++; }while(obstacleAt(gx,gy)&&tries<20);
-    const geo=new THREE.BoxGeometry(0.9,0.12,0.9);
-    const mat=new THREE.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
-    const m=new THREE.Mesh(geo,mat); m.frustumCulled=false;
-    m.position.set(worldX(gx),0.06-0.45,worldZ(gy)); scene.add(m);
-    TRADER.mesh=m; TRADER.gx=gx; TRADER.gy=gy; TRADER.standT=0; TRADER.cool=0;
-    showBanner('🛒 ТОРГОВЕЦЬ: стань на золоту плиту · 3 душі → покращення','#fbbf24');
-    logE('торговець у ('+rx+','+ry+') клітинка '+gx+','+gy);
-  }
+  try{ civBuild(rx,ry,st,_rt); }catch(e){ logE('ЖИТЕЛІ: '+e.message); }     // (09-27d) торговці й жерці — персонажі за прилавком (замість плит)
+  if(CIV.list.length) showBanner('🧑 '+CIV.list.map(c=>c.K.name).join(' · ')+' — підійди й стань перед прилавком','#fbbf24');
   try{ alchHintBuild(rx,ry,st); }catch(e){ logE('АЛХІМІЯ: '+e.message); }   // (09-27b) рецепт на підлозі
 }
 function tickTrader(dt){
@@ -11105,10 +11214,10 @@ function allyBubble(){
   }
   return SAY.el;
 }
-function allySay(text, hold, voice){             // одна репліка (черга — речення за реченням); voice — {rate,pitch}
+function allySay(text, hold, voice, who){        // одна репліка (черга — речення за реченням); voice — {rate,pitch}; who — над ким хмарка (09-27d)
   if(!text) return;
   const parts=String(text).split(/(?<=[.!?…])\s+/).filter(Boolean);
-  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.0, p.length*0.07/((voice&&voice.rate)||1)), v:voice||null});   // (07-23) темп мови
+  for(const p of parts) SAY.queue.push({t:p, hold:hold||Math.max(2.0, p.length*0.07/((voice&&voice.rate)||1)), v:voice||null, who:who||null});   // (07-23) темп мови
 }
 function allySayNow(text){ SAY.queue.length=0; SAY.cur=null; SAY.t=0; try{ ttsFlush(); }catch(e){} allySay(text); }
 function sayTick(dt){
@@ -11128,10 +11237,11 @@ function sayTick(dt){
   SAY.t-=dt;
   if(SAY.t<=0 && !(typeof ttsBusy==='function' && ttsBusy())){
     SAY.cur=null; if(!SAY.queue.length) el.style.display='none'; return; }
-  // хмарка тримається над головою вчителя
+  // хмарка тримається над головою вчителя (або над тим, хто говорить — жителі, 09-27d)
   try{
-    if(!a || !a.mesh){ el.style.display='none'; return; }
-    _w3.set(0, TIER_H*2.6, 0); a.mesh.localToWorld(_w3);
+    const who=(SAY.cur&&SAY.cur.who)||null;
+    if(!who && (!a || !a.mesh)){ el.style.display='none'; return; }
+    if(who){ _w3.set(0, 2.35, 0); who.localToWorld(_w3); } else { _w3.set(0, TIER_H*2.6, 0); a.mesh.localToWorld(_w3); }
     const _fw=new THREE.Vector3(); camera.getWorldDirection(_fw); const _to=_w3.clone().sub(camera.position); const _dist=_to.length(); _to.normalize();
     const _look = _fw.dot(_to) > Math.cos((VB_GEST.lookDeg||28)*Math.PI/180) && _dist<16;   // (09-24a) лише коли дивишся на нього
     _w3.project(camera);
@@ -11140,7 +11250,7 @@ function sayTick(dt){
     el.style.display = vis?'block':'none';
     el.style.left=clamp(x, 90, window.innerWidth-90)+'px';
     el.style.top =clamp(y, 70, window.innerHeight-140)+'px';
-    el.style.borderColor = (a.mode==='mad')?'#ef4444':'#86efac';
+    el.style.borderColor = who ? '#fbbf24' : ((a&&a.mode==='mad')?'#ef4444':'#86efac');
   }catch(e){}
 }
 
@@ -11379,7 +11489,7 @@ function dlgTick(dt){
   } else if(DLG.quiet>(q.reaskT||14)){                          // перепитує — доки не відповіси
     DLG.quiet=0; q._reN=(q._reN||0)+1;
     const t=(q._reN%2===1)?((q.reask||q.text)+' '+(q.hint||'')):(INTERJ[(q._reN>>1)%INTERJ.length]+' '+(q.hint||''));
-    mentorLine(t,'curious'); }
+    if(q.say) q.say(t,'curious'); else mentorLine(t,'curious'); }
 
 }
 const UNCLEAR_TXT={ swing:'Не так сильно — це не удар. Спокійно й плавно.', small:'Трохи ширше рух — я ледве бачу.', mixed:'Рух вийшов косий. Або вгору-вниз, або ліворуч-праворуч.', short:'Майже! Тільки двічі — туди й назад, туди й назад.' };
@@ -11390,7 +11500,7 @@ function dlgOnUnclear(why, axis, a){
   DLG.unclearT=now; DLG.unclearN=(DLG.unclearN||0)+1; DLG.quiet=0; SAY.queue.length=0;
   logE('ЖЕСТ: незрозуміло — '+UNCLEAR_LOG[why]+' · схоже на '+(axis==='nod'?'кивок':'похитування')+' · макс '+Math.round(a.maxAng||0)+'° · вгору-вниз '+Math.round(a.eP||0)+'° · вбік '+Math.round(Math.max(a.eV||0,a.eF||0))+'°');
   if(DLG.unclearN>=2 || GEST.src==='grav'){ lessonStart(axis); return; }   // (09-24d) гіроскоп уже визнано сліпим — урок одразу
-  mentorLine(UNCLEAR_TXT[why]||'Я не розчув.', why==='swing'?'surprised':'curious');
+  { const t=UNCLEAR_TXT[why]||'Я не розчув.', f=why==='swing'?'surprised':'curious'; if(q.say) q.say(t,f); else mentorLine(t,f); }
 }
 /* УРОК: наставник проводить рух крок за кроком. Кивок: угору (майже рівно, трохи вперед) → униз (майже до кінця,
    трохи вперед, щоб бачити екран). «Ні»: ліворуч → праворуч. Заодно міряє, чи гіроскоп бачить те, що бачить нахил. */
@@ -11410,7 +11520,7 @@ function lessonEnd(ok){
     logE('ДАТЧИК: урок кивка · гіро '+Math.round(LESSON.gyA)+'° / нахил '+Math.round(LESSON.grA)+'° ('+Math.round(r*100)+'%)'+(r<0.35?' — гіроскоп майже сліпий, кивки рахую з нахилу':' — гіроскоп у нормі'));
     if(r<0.35 && GEST.src!=='grav'){ GEST.src='grav'; } }
   logE('ЖЕСТ: урок '+(ok?'пройдено':'перервано')+' · перепитую');
-  const q=DLG.q; if(q) mentorLine(q.reask||q.text,'curious');                   // (09-24d) коротко — рух уже знає
+  const q=DLG.q; if(q){ const t=q.reask||q.text; if(q.say) q.say(t,'curious'); else mentorLine(t,'curious'); }   // (09-24d) коротко — рух уже знає
 }
 function lessonTick(dt){
   if(!LESSON.on) return;
@@ -11680,7 +11790,7 @@ function ttsClean(t){
   s=s.replace(/[\u{1F300}-\u{1FAFF}\u{2190}-\u{21FF}\u{2600}-\u{27BF}]/gu,'');
   s=s.replace(/<[^>]+>/g,'');
   s=s.split('"').join('').split(q1).join('').split(q2).join('').split(q3).join('').split(q4).join('');
-  s=s.replace(/[\u25AE\u25AF\u25BA\u25B6\u25C0\u00B7\u2022]/g,'');
+  s=s.replace(/[\u25AE\u25AF\u25BA\u25B6\u25C0\u00B7\u2022\u25C6\u25C7\u25A6\u25A0\u25A1]/g,'');   // (09-27d) + ◆ ◇ ▦ — значки ресурсів не читаються вголос
   s=s.replace(/\s+/g,' ').trim();
   return s;
 }
