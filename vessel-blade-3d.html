@@ -4114,7 +4114,7 @@ function equipWpn(w){
 }
 function rackTake(w){
   if(w==='flail'){                                                    // 🌀 ЦІП: тимчасовий, за ресурси
-    if(window.RES && RES.iron>=2 && RES.crystal>=2){
+    if(typeof RES!=='undefined' && RES.iron>=2 && RES.crystal>=2){
       RES.iron-=2; RES.crystal-=2; saveRes(); resHUD();
       equipWpn('flail'); FLAIL.t=FLAIL_DUR;
       showBanner('🌀 ЦІП АКТИВОВАНО на '+FLAIL_DUR+'с  (−2⛓ −2◆)','#a78bfa');
@@ -5028,6 +5028,7 @@ setInterval(()=>{ try{
         if(R.boom){ doFlash('#ffd166'); buzz([0,60]); blip(90,0.3,'sawtooth',0.22); } else doFlash('#bfe8ff');
         if(R.both && !R.keepA) killBlock(o);
         transmute(n, R.out);
+        try{ QST.progress('alch', (R.out&&R.out.type)||'none', 1); }catch(e){}   // (09-27e) завдання жерця «алхімія»
         changed=true; break outer;                      // одна реакция за тик — мир дышит ровно
       }
     }
@@ -5319,7 +5320,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-27d · ЖИТЕЛІ БІЛИХ КІМНАТ: торговець, цілитель, міняйло, жрець — персонажі за прилавком (риг, обличчям до тебе, свій голос і хмарка, дзвіночок для сліпого), кілька в кімнаті; підійшов — вітається, став перед прилавком — питає, відповідь кивком/похитуванням; плит на підлозі більше немає · ПРОВІДНИК: екскурсія призупиняється, коли йдеш із дому (продовжується вдома), у білій кімнаті наставник пробує заговорити кілька разів · хмарка над тим, хто говорить · (09-27c) кендзюцу, лабораторія руху · (09-27b) дім, карта, алхімія';
+const BUILD_TAG='2026-09-27e · ЗАВДАННЯ ЖЕРЦЯ: серпантин, алхімія (сталь/сіль/пісок/вода/скло), закляття будь-яким елементом, УДАР (кеса/мен/… зі схожістю ≥ 55 %), СТІЙКА (тюдан/… утримати 2 с) — з винагородами · КАТА У ГРІ: кожен мах оцінюється проти еталонів («УДАР: схожий на …»), наставник каже відсоток і що виправити · LAB: «❓ ІНСТРУКЦІЯ» покроково · міняйло бачить твої ресурси (RES) · (09-27d) жителі, (09-27c) кендзюцу, (09-27b) дім і карта';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6066,6 +6067,7 @@ function frame(now){
     }
     updateAvatarMesh(player, now);
     try{ rigPlayerTick(dt); }catch(e){ if(!window.__rigErr){ window.__rigErr=1; logE('VB_RIG: '+e.message); } }   // (09-21) новий риг гравця у грі
+    try{ kataqTick(dt); }catch(e){ if(!window.__kataqErr){ window.__kataqErr=1; logE('КАТА: '+e.message); } }     // (09-27e) оцінка маху проти еталонів
     try{ ribbonTick(dt); }catch(e){ if(!window.__ribErr){ window.__ribErr=1; logE('СТРІЧКА: '+e.message); } }   // (09-22p) слід клинка — різ, шлейф, світіння
     try{ gameSwordContact(dt); }catch(e){}            // (09-12b) стіна/підлога/стеля: STOP + SLIDE + haptic + звук
     if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
@@ -7768,7 +7770,7 @@ function labBuildPanel(){
   const p=document.createElement('div'); p.id='labPanel';
   const T=(a)=>labBtn('flag:'+a,a.toUpperCase());
   p.innerHTML=
-    '<div style="display:flex;justify-content:space-between;align-items:center;gap:4px"><b style="color:#60a5fa;font-size:9px">CHAR &amp; STRUCT LAB</b>'+labBtn('hidepanel','◀ СХОВАТИ')+labBtn('exit','✕ ВИЙТИ','warn')+'</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:4px"><b style="color:#60a5fa;font-size:9px">CHAR &amp; STRUCT LAB</b>'+labBtn('help','❓ ІНСТРУКЦІЯ')+labBtn('hidepanel','◀ СХОВАТИ')+labBtn('exit','✕ ВИЙТИ','warn')+'</div>'+
     '<h3>ОБ\'ЄКТ</h3>'+labBtn('kind:CHARACTER','CHARACTER')+labBtn('kind:STRUCTURE','STRUCTURE')+labBtn('kind:WEAPON','WEAPON')+labBtn('kind:TEST','TEST OBJECT')+
     '<div>'+labBtn('prof:PLAYER','PLAYER')+labBtn('prof:MENTOR','MENTOR')+labBtn('prof:ENEMY','ENEMY')+labBtn('prof:BOSS','BOSS')+'</div>'+
     '<div>'+labBtn('size:1','1 CELL')+labBtn('size:4','4 CELLS')+labBtn('size:9','9 CELLS')+' '+labBtn('h:LOW','LOW')+labBtn('h:MEDIUM','MED')+labBtn('h:HIGH','HIGH')+' '+labBtn('mat:UNKNOWN','UNKNOWN')+labBtn('mat:WOOD','WOOD')+'</div>'+
@@ -7812,6 +7814,27 @@ function labBuildPanel(){
   ov.addEventListener('touchstart',e=>{ if(e.touches.length===2){ pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); drag=null; } },{passive:true});
   ov.addEventListener('touchmove',e=>{ if(e.touches.length===2&&pinch){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); LAB.orbit.dist=clamp(LAB.orbit.dist*(pinch/d),1.2,16); pinch=d; } },{passive:true});
   ov.addEventListener('wheel',e=>{ LAB.orbit.dist=clamp(LAB.orbit.dist*(e.deltaY>0?1.1:0.9),1.2,16); },{passive:true});
+}
+/* (09-27e) ПАМ'ЯТКА ЛАБОРАТОРІЇ — покроково, без термінів */
+const LAB_HELP_HTML=
+  '<h3>ЛАБОРАТОРІЯ РУХУ — ЯК ПРАЦЮВАТИ</h3>'+
+  '<p><b>1. Підготовка.</b> Меню → LAB. Угорі: CHARACTER → PLAYER. Натисни <b>LIVE SENSOR</b> — телефон керує ригом. Стань у стійку й натисни <b>NEUTRAL (калібр.)</b> — це «нуль» рук і клинка.</p>'+
+  '<p><b>2. Подивитись еталон.</b> ANIMATION LAB → у списку обери KESA, MEN, YOKO… → <b>▶ PLAY</b>. <b>LOOP</b> — повторювати, «швидкість 0.25×» — повільно, <b>FRAME ▶</b> — по кадру. Це ті самі удари, якими б\'ють вороги.</p>'+
+  '<p><b>3. Записати свій рух.</b> <b>● RECORD</b> → зроби удар (1–3 с) → <b>■ STOP REC</b>. Запис стає «поточним» (без назви, живе до перезапуску).</p>'+
+  '<p><b>4. Порівняти.</b> <b>≈ СХОЖІСТЬ З АНІМАЦІЯМИ</b> → у вікні ІНФО: «KESA 71 %, MEN 40 %…». Перший рядок — найближчий удар. Повтори рух, дивись, чи росте відсоток (гаряче-холодно). Той самий рядок іде в лог — надішли його мені.</p>'+
+  '<p><b>5. Зберегти запис.</b> <b>SAVE MOTION</b> → назва. Збережені — у списку «— запис —». <b>▶ PLAY REC</b> програє запис на ригу, <b>⏹ PLAY OFF</b> — назад до LIVE.</p>'+
+  '<p><b>6. Зробити з запису анімацію.</b> Обери запис у списку (або лиши поточний) → <b>⚗ ЗАПЕКТИ В АНІМАЦІЮ</b> → назва. З\'явиться <b>REC_НАЗВА</b> у списку анімацій. Кнопка <b>REC У ВОРОГІВ</b> — вороги одразу б\'ють нею (частка — повзунок «частка ударів із записів»).</p>'+
+  '<p><b>7. Виправити позу руками.</b> Обери анімацію → <b>⏸</b> → <b>FRAME ▶</b> до потрібного моменту → у розділі ПОЗА обери суглоб і крути три повзунки → <b>SAVE POSE AS…</b>. Або обери готову позу (CHUDAN, JODAN…) і правь її.</p>'+
+  '<p><b>8. Віддати мені.</b> <b>JSON АНІМАЦІЇ</b> (обрана анімація + її пози) або <b>EXPORT MOTION</b> (запис) → у лог і буфер обміну. Надішли лог — поправлю кути й поверну.</p>'+
+  '<p><b>9. У грі.</b> Кожен твій мах оцінюється сам: у лозі «УДАР: схожий на KESA 62 %». Жрець у святилищі дає завдання «удар» і «стійка» — наставник каже відсоток і що виправити.</p>'+
+  '<p style="color:#64748b">Порада: спершу подивись еталон на 0.25×, повтори його повільно 3–4 рази, і лише потім записуй.</p>';
+function labHelpToggle(){
+  let h=$('labHelp');
+  if(!h){ h=document.createElement('div'); h.id='labHelp';
+    h.style.cssText='position:fixed;left:6px;top:40px;bottom:6px;width:min(60vw,360px);z-index:80;overflow:auto;background:rgba(4,10,22,0.94);border:1px solid #1e4a7a;border-radius:8px;padding:8px 10px;color:#c5d8f0;font:11px "Courier New",monospace;line-height:1.45;display:none';
+    h.innerHTML='<div style="text-align:right"><button id="labHelpClose" style="background:#0b1c33;border:1px solid #1e4a7a;color:#8fc0f0;font:10px \'Courier New\',monospace;padding:4px 8px;border-radius:4px">✕ закрити</button></div>'+LAB_HELP_HTML;
+    document.body.appendChild(h); $('labHelpClose').onclick=()=>{ h.style.display='none'; }; }
+  h.style.display = h.style.display==='none' ? 'block' : 'none';
 }
 function labPanelToggle(force){
   const p=$('labPanel'); if(!p) return;
@@ -7863,6 +7886,7 @@ function labAct(act){
   else if(k==='recplaystop') labRecPlayStop();
   else if(k==='recsave') labRecSave();
   else if(k==='recexport') labRecExport();
+  else if(k==='help') labHelpToggle();
   else if(k==='recscore') labScoreCurrent();
   else if(k==='recbake') labBakeCurrent();
   else if(k==='katanpc'){ VB_KATA.on=VB_KATA.on?0:1; logE('КАТА у ворогів: '+(VB_KATA.on?'УВІМК':'ВИМК')); }
@@ -9766,16 +9790,20 @@ const QPLATE={mesh:null,gx:0,gy:0,standT:0,seed:0};
 const QST={
   a:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_quest')||'null'); }catch(e){ return null; } })(),
   save(){ try{ localStorage.setItem('vb3d_quest', JSON.stringify(this.a)); }catch(e){} },
-  gen(seed){                                                     // (09-27d) те саме завдання можна показати до згоди
+  gen(seed){                                                     // (09-27d) те саме завдання можна показати до згоди; (09-27e) нові види
     const rng=mulberry32(seed);
     const deep=Math.round(rng()*2);
-    const r0=rng();
-    const q = r0<0.45
-      ? { t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3, prog:0 }
-      : (r0<0.8
-      ? { t:'hunt', kind:null, goal:3+deep*2, prog:0 }
-      : { t:'cast', kind:'plasma', goal:1+deep, prog:0 });
-    q.reward = rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2});
+    const r0=rng(); let q;
+    if(r0<0.28)      q={ t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3 };
+    else if(r0<0.46) q={ t:'hunt', kind:null, goal:3+deep*2 };
+    else if(r0<0.58) q={ t:'cast', kind:['plasma','plasma','Fe','H','O','Na','Cl','Si','C'][Math.floor(rng()*9)], goal:1+deep };
+    else if(r0<0.68) q={ t:'alch', kind:['steel','salt','sand','liquid','glass'][Math.floor(rng()*5)], goal:1 };
+    else if(r0<0.82) q={ t:'kata', kind:(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA','YOKO'])[Math.floor(rng()*6)%6], goal:2+deep, pct:60 };
+    else if(r0<0.92) q={ t:'stance', kind:['CHUDAN','JODAN','GEDAN','HASSO','WAKI'][Math.floor(rng()*5)], goal:1, hold:2 };
+    else             q={ t:'serp', kind:null, goal:1 };
+    if(!q.kind && q.t==='kata') q.kind='KESA';
+    q.prog=0;
+    q.reward = (q.t==='serp'||q.t==='kata') ? (rng()<0.5?{crystal:2}:{steel:1}) : (rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2}));
     return q;
   },
   offer(seed){
@@ -9785,13 +9813,24 @@ const QST={
     const rk=Object.keys(q.reward)[0];
     tutModal('🎯 ЗАВДАННЯ ПРИЙНЯТО', this.text(q)+'<br><br>Нагорода: <b>+'+q.reward[rk]+' '+RES_ICON[rk]+' '+RES_NAME[rk]+'</b> + 5 душ.<br><i>Виконається сама — стеж за рядком угорі.</i>', [{t:'ДО СПРАВИ ▷'}]);
   },
-  text(q){ return q.t==='mine'
-    ? 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)'
-    : (q.t==='hunt' ? 'Розвтіли <b>'+q.goal+' фантомів</b>'
-    : 'Промов закляттям Морзе <b>ПЛАЗМУ (PL: ·−−· / ·−··) '+q.goal+' раз</b> — тапай по екрану: короткий тап «·», довгий «−»'); },
+  text(q){
+    const K={MEN:'мен — згори вниз',KESA:'кеса — навскіс справа згори',GYAKU_KESA:'гяку-кеса — навскіс зліва згори',YOKO:'йоко — горизонтальний, клинок плазом',TSUKI:'цукі — укол уперед',KIRIAGE:'кіріаге — знизу вгору'};
+    const ST={CHUDAN:'тюдан — вістря вперед, на рівні горла',JODAN:'дзьодан — меч над головою, вістря назад',GEDAN:'гедан — вістря вниз-уперед, до коліна',HASSO:'хассо — клинок вертикально біля правого плеча',WAKI:'вакі — клинок схований позаду справа, вістря вниз'};
+    const EL={plasma:'ПЛАЗМУ (PL)',Fe:'ЗАЛІЗО (FE)',H:'ВОДЕНЬ (H)',O:'КИСЕНЬ (O)',Na:'НАТРІЙ (NA)',Cl:'ХЛОР (CL)',Si:'КРЕМНІЙ (SI)',C:'ВУГЛЕЦЬ (C)'};
+    const AL={steel:'сталь: залізо і вугілля поруч, біля них плазма',salt:'сіль: натрій і хлор поруч',sand:'пісок: кремній і кисень, поруч плазма',liquid:'воду: водень і кисень, поруч плазма',glass:'скло: плазма поруч із піском'};
+    switch(q.t){
+      case 'mine': return 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)';
+      case 'hunt': return 'Розвтіли <b>'+q.goal+' фантомів</b>';
+      case 'cast': return 'Промов закляттям Морзе <b>'+(EL[q.kind]||q.kind)+' '+q.goal+' '+(q.goal>1?'рази':'раз')+'</b> — тапай по екрану: короткий тап «·», довгий «−»';
+      case 'alch': return 'Зроби алхімією <b>'+(AL[q.kind]||q.kind)+'</b> — блоки кличуть закляттям Морзе';
+      case 'kata': return 'Виконай удар <b>'+(K[q.kind]||q.kind)+'</b> '+q.goal+' '+(q.goal>1?'рази':'раз')+' зі схожістю не менше '+(q.pct||60)+' відсотків — кожен мах оцінюється';
+      case 'stance': return 'Стань у стійку <b>'+(ST[q.kind]||q.kind)+'</b> і завмри на '+(q.hold||2)+' секунди';
+      case 'serp': return 'Пройди <b>Серпантин</b> (кнопка в меню) і торкнись манекена в центрі';
+    }
+    return '…'; },
   progress(t,kind,amt){
     const q=this.a; if(!q || q.t!==t) return;
-    if(t==='mine' && q.kind!==kind) return;
+    if(q.kind && kind!==q.kind) return;                          // (09-27e) вид має збігатись для всіх типів (руда, елемент, продукт, удар, стійка)
     q.prog=Math.min(q.goal, q.prog+(amt||1)); this.save(); this.hud();
     if(q.prog>=q.goal){
       const rk=Object.keys(q.reward)[0];
@@ -9805,7 +9844,7 @@ const QST={
   hud(){
     const q=this.a, ICO=window.RES_ICON||{};          // (07-16j) дзеркало — жодних TDZ
     qstHudEl.style.display=q?'block':'none';
-    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?(ICO[q.kind]||q.kind):(q.t==='hunt'?'☠':'⚡'))+' '+q.prog+' / '+q.goal;
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?(ICO[q.kind]||q.kind):({hunt:'☠',cast:'⚡',alch:'⚗',kata:'⚔',stance:'🧍',serp:'🌀'}[q.t]||'•'))+(q.t==='kata'||q.t==='stance'?' '+q.kind:'')+' '+q.prog+' / '+q.goal;
   }
 };
 const qstHudEl=document.createElement('div');
@@ -9874,6 +9913,62 @@ function plantRock(gx,gy,rng){
   const tint=[0x8d99ae,0x6b7280,0x9aa6b6][Math.floor(rng()*3)];
   addObstacle(gx,gy,'Si',new Set(),tint,0.6+rng()*0.5,rng()<0.4?'slab':'cube');
 }
+/* ═══════════════ (09-27e) КАТА У ГРІ: кожен мах гравця порівнюється з ударами кендзюцу ═══════════════
+   Риг гравця щокадру віддає хват і напрям клинка в системі тіла; мах (вістря швидше 2.5 м/с — і до зупинки)
+   вирізається й порівнюється DTW з еталонами (KATA_ATTACKS + запечені REC_*) — тією самою мірою, що в лабораторії.
+   Стійка — статична відстань до пози з утриманням. Завдання жерця «удар» і «стійка» рахуються звідси, наставник
+   каже відсоток і що виправити. */
+var KATAQ={ on:1, S:null, cache:{}, poseCache:{}, buf:[], stroke:null, tipPrev:null, last:null, sayT:-99, holdT:0, hintT:0 };
+const KATA_UA={MEN:'мен',KESA:'кеса',GYAKU_KESA:'гяку-кеса',YOKO:'йоко',TSUKI:'цукі',KIRIAGE:'кіріаге',UKENAGASHI:'укенагасі'};
+const KATA_TIPS={MEN:'Замах над голову і руб прямо вниз, до пояса.',KESA:'Від правого плеча навскіс униз ліворуч, ніби ріжеш рукав.',GYAKU_KESA:'Від лівого плеча навскіс униз праворуч.',YOKO:'Клинок плазом, горизонтально, від правого стегна ліворуч.',TSUKI:'Не махай — штовхни вістря вперед, прямо.',KIRIAGE:'Від правого стегна знизу — угору ліворуч.'};
+const STANCE_UA={CHUDAN:'тюдан',JODAN:'дзьодан',GEDAN:'гедан',HASSO:'хассо',WAKI:'вакі'};
+function kataqRig(){ if(KATAQ.S) return KATAQ.S; try{ const obj=new THREE.Group(); const S=rigStateNew('PLAYER',obj); S.rig=labBuildRig('PLAYER'); obj.add(S.rig.root); obj.updateMatrixWorld(true); KATAQ.S=S; }catch(e){ logE('КАТА: риг для еталонів — '+e.message); } return KATAQ.S; }
+function kataqReach(S){ const dm=S.rig.dims; return dm.upper+dm.fore+dm.hand; }
+function kataqRef(name){
+  const c=KATAQ.cache[name]; if(c) return c; const S=kataqRig(); if(!S) return null;
+  const prev=LAB; LAB=S; let tr=null; try{ tr=labAnimTraj(name,30); }catch(e){} finally{ LAB=prev; }
+  if(!tr) return null; const f=trajTrim(trajFeat(tr,kataqReach(S)),0.2); const R={feat:f.length>=3?trajResample(f,48):null}; KATAQ.cache[name]=R; return R;
+}
+function kataqPoseRef(name){
+  const c=KATAQ.poseCache[name]; if(c) return c; const S=kataqRig(); if(!S||!LAB_POSES[name]) return null;
+  const prev=LAB; LAB=S; let r=null; try{ labSwordMode(false); labSetPose(labResolve({p:name})); r=labSwordRel(); }catch(e){} finally{ LAB=prev; }
+  if(!r) return null; const reach=kataqReach(S); const F={g:r.g.map(x=>x/reach), d:r.d}; KATAQ.poseCache[name]=F; return F;
+}
+function kataqSay(text, face){ const now=performance.now()/1000; if(now-KATAQ.sayT<5) return; KATAQ.sayT=now; try{ if(typeof guideCanSpeak==='function' && guideCanSpeak() && !dlgSpeaking()) mentorLine(text, face||'curious'); }catch(e){} }
+function kataqTick(dt){
+  if(!KATAQ.on || !VB_RIG.on || !VB_RIG.player || !VB_RIG.player.rig || player.dead || mode!=='fighter') return;
+  const S=VB_RIG.player, now=performance.now()/1000;
+  let r=null; { const prev=LAB; LAB=S; try{ r=labSwordRel(); }catch(e){ r=null; } finally{ LAB=prev; } } if(!r) return;
+  r.t=now; const B=KATAQ.buf; B.push(r); while(B.length && now-B[0].t>4) B.shift();
+  const p=KATAQ.tipPrev; const v=p?Math.hypot(r.tip[0]-p.tip[0],r.tip[1]-p.tip[1],r.tip[2]-p.tip[2])/Math.max(1e-3,now-p.t):0; KATAQ.tipPrev=r; r.v=v;
+  const drawn=(typeof SHEATH==='undefined'||SHEATH.drawn);
+  const st=KATAQ.stroke;
+  if(!st){ if(v>2.5 && drawn) KATAQ.stroke={t0:now-0.15, slowT:0}; }
+  else { if(v<1.0){ st.slowT+=dt; if(st.slowT>0.25){ KATAQ.stroke=null; try{ kataqEvalStroke(st.t0, now-0.25); }catch(e){ logE('КАТА: '+e.message); } } } else st.slowT=0; if(now-st.t0>3.5) KATAQ.stroke=null; }
+  const q=(typeof QST!=='undefined')&&QST.a;
+  if(q && q.t==='stance' && drawn){
+    const F=kataqPoseRef(q.kind); if(F){ const reach=kataqReach(S); const d=featDist({g:r.g.map(x=>x/reach), d:r.d}, F);
+      if(d<0.24 && v<0.8){ KATAQ.holdT+=dt; if(KATAQ.holdT>=(q.hold||2)){ KATAQ.holdT=-3; QST.progress('stance',q.kind,1); try{ showBanner('🧍 '+q.kind+' ✓','#4ade80'); }catch(e){} kataqSay('Так, це '+(STANCE_UA[q.kind]||q.kind)+'.','joy'); }
+        else if(KATAQ.holdT>0){ try{ showBanner('🧍 '+q.kind+' … '+KATAQ.holdT.toFixed(1)+' с','#93c5fd'); }catch(e){} } }
+      else { if(KATAQ.holdT>0) KATAQ.holdT=0; else if(KATAQ.holdT<0) KATAQ.holdT=Math.min(0,KATAQ.holdT+dt);
+        KATAQ.hintT+=dt; if(KATAQ.hintT>6 && v<0.8){ KATAQ.hintT=0; const ST={CHUDAN:'Вістря вперед, на рівні горла, руки перед животом.',JODAN:'Меч над головою, вістря назад.',GEDAN:'Вістря вниз-уперед, до коліна.',HASSO:'Клинок вертикально біля правого плеча, гарда біля щоки.',WAKI:'Сховай клинок позаду справа, вістря вниз.'}; kataqSay((STANCE_UA[q.kind]||q.kind)+': '+(ST[q.kind]||'')+' Різниця '+Math.round(d*100)+'.','curious'); } } }
+  } else KATAQ.holdT=0;
+}
+function kataqEvalStroke(t0,t1){
+  const frames=KATAQ.buf.filter(f=>f.t>=t0&&f.t<=t1); if(frames.length<6) return;
+  const S=VB_RIG.player, reach=kataqReach(S);
+  const tr={frames:frames.map(f=>({t:f.t-t0, g:f.g, d:f.d, tip:f.tip}))};
+  const fa=trajTrim(trajFeat(tr,reach),0.35); if(fa.length<4) return; const A=trajResample(fa,48);
+  const names=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:[]).concat(typeof kataRecList==='function'?kataRecList():[]); const res=[];
+  for(const nm of names){ const R=kataqRef(nm); if(!R||!R.feat) continue; res.push({name:nm, score:trajScore(trajDTW(A,R.feat))}); }
+  if(!res.length) return; res.sort((a,b)=>b.score-a.score);
+  KATAQ.last={t:performance.now()/1000, res, dur:+(fa[fa.length-1].t-fa[0].t).toFixed(2)};
+  logE('УДАР '+KATAQ.last.dur+' с: схожий на '+res.slice(0,3).map(r=>r.name+' '+r.score+'%').join(' · '));
+  const q=(typeof QST!=='undefined')&&QST.a;
+  if(q && q.t==='kata'){ const me=res.find(r=>r.name===q.kind); const sc=me?me.score:0, need=q.pct||60, top=res[0].name===q.kind;
+    if(sc>=need && top){ QST.progress('kata',q.kind,1); try{ showBanner('⚔ '+q.kind+' '+sc+'% ✓ ('+q.prog+'/'+q.goal+')','#4ade80'); if(navigator.vibrate) navigator.vibrate([0,30,40,30]); }catch(e){} kataqSay('Так! '+(KATA_UA[q.kind]||q.kind)+' — '+sc+'.','joy'); }
+    else { try{ showBanner('⚔ '+q.kind+' '+sc+'%'+(top?'':' (більше схоже на '+res[0].name+')')+' — треба '+need+'%','#f59e0b'); }catch(e){} kataqSay((KATA_UA[q.kind]||q.kind)+' — '+sc+'.'+(top?'':' Це більше '+(KATA_UA[res[0].name]||res[0].name)+'.')+' '+(KATA_TIPS[q.kind]||''),'curious'); } }
+}
 /* ═══════════════ (09-27d) ЖИТЕЛІ БІЛИХ КІМНАТ: торговці й жерці — персонажі за прилавком ═══════════════
    Не плити на підлозі, а люди: риг у позі спокою за прилавком, обличчям до тебе, зі своїм голосом і хмаркою над
    головою. Підійшов на три клітинки — вітається й кличе; став перед прилавком — питає; відповідаєш кивком або
@@ -9894,7 +9989,7 @@ const CIV_KINDS={
     give(){ player.score-=2; player.hp=clamp(player.hp+45,0,100); player.stamina=100; try{ doFlash('#86efac'); }catch(e){} return 'Дихай. Стало легше.'; } },
   smith:{ name:'МІНЯЙЛО', prof:'TRADER', hue:0.06, tone:480, voice:{rate:0.9,pitch:0.8}, goods:[0x9fb3c8,0x7a4a1f,0xb07cff], top:0x6b7280, body:0x374151,
     greet:'Дерево й камінь беру, кристал даю. Підходь.', ask:'Три дерева й три камені — за кристал. Згода?',
-    can:()=>!!(window.RES&&RES.wood>=3&&RES.stone>=3), cant:()=>'Принеси три дерева й три камені. Маєш дерева '+((window.RES&&RES.wood)||0)+', каменів '+((window.RES&&RES.stone)||0)+'.',
+    can:()=>{ try{ return RES.wood>=3&&RES.stone>=3; }catch(e){ return false; } }, cant:()=>{ let w=0,st=0; try{ w=RES.wood||0; st=RES.stone||0; }catch(e){} return 'Принеси три дерева й три камені. Маєш дерева '+w+', каменів '+st+'.'; },
     give(){ RES.wood-=3; RES.stone-=3; RES.crystal=(RES.crystal||0)+1; saveRes(); resHUD(); return 'Кристал твій.'; } },
   quest:{ name:'ЖРЕЦЬ', prof:'QUESTER', hue:0.55, tone:560, voice:{rate:0.92,pitch:0.85}, goods:[0x22d3ee], top:0x64748b, body:0x475569,
     greet:'Маю справу для тебе. Підійди до вівтаря.', ask:(c)=>{ const q=QST.gen(c.seed); const rk=Object.keys(q.reward)[0]; return 'Справа така: '+ttsClean(QST.text(q))+'. Нагорода — '+q.reward[rk]+' '+(RES_NAME[rk]||rk)+' і п\'ять душ. Берешся?'; },
@@ -11680,6 +11775,7 @@ function sprFinish(ok, reason, CT, E){
   SPR.res=r;
   try{ const L=JSON.parse(localStorage.getItem('vb_serp_runs')||'[]'); L.push(r); while(L.length>40) L.shift(); localStorage.setItem('vb_serp_runs', JSON.stringify(L)); }catch(e){}
   logE('СЕРПАНТИН: '+(ok?'ФІНІШ':'НЕВДАЧА')+' · '+SPR_WHY[reason]+' · '+JSON.stringify(r));
+  try{ if(ok) QST.progress('serp', null, 1); }catch(e){}   // (09-27e) завдання жерця «серпантин»
   try{ const say = ok ? ('Фініш. '+r.time.toFixed(1).replace('.',',')+' секунди. Сила удару '+r.E+'.') : ('Спробу зупинено: '+SPR_WHY[reason]+'.'); ttsSpeak(say,{critical:true}); }catch(e){}
   try{ if(navigator.vibrate) navigator.vibrate(ok?[0,60,40,60,40,160]:[0,300]); }catch(e){}
   sprShowResults(r);
