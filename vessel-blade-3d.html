@@ -5321,7 +5321,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-27f · ПІХВИ: «вістря вниз» тепер за справжнім клинком рига (знак нахилу телефона більше не важить), спокій — гіроскопом (курс при вістрі вниз пливе) · ДОДЖЬО: наставник показує 6 ударів (вістря співає: висота → тон), ти повторюєш, він каже відсоток словами — після екскурсії або з меню «🥋 ТРЕНУВАННЯ УДАРІВ» · LAB: «🥋 ПОВТОРИ ЗА МНОЮ» — показ двічі повільно → «тепер ти» → запис 3 с → відсоток голосом, 3 спроби · репліки наставника — для слуху (відсотки словами), мах коротший за 0.3 с не рахується · (09-27e) завдання жерця, ката у грі';
+const BUILD_TAG='2026-09-27g · ДОДЖЬО v2: показ наставника → твоя ТІНЬ робить удар у твоєму тілі → разом із тінню (один тон = ти в тіні, пульс вібро) → сам, у повну силу; замість «так/ні» — команди «не рухайся» і сигнали (три короткі, четвертий високий = починай); рухи поза вікнами не оцінюються · ОЦІНКА МАХУ: еталон = фаза рубання, повільний замах і зупинка в кінці більше не ламають відсоток, вага руків\'я 0.25 (телефон не рухає рукою, як анімація), у соло-вікні береться кращий із махів · ВЛАСНЕ ТІЛО у грі більше не збиває клинок (замах над головою не дає «розсинхрону») · параметри VB_KATAQ у 🎚 · (09-27f) піхви, тренування';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7328,7 +7328,7 @@ function labBuildColliders(){
 /* (09-14b) ТІЛО ЯК КОЛАЙДЕР: корпус, голова, таз, стегна, гомілки. Меч виштовхується з них так само,
    як зі стіни, а контакт іде в лог як BODY_* (можлива механіка самопорізу — поки лише подія). */
 function labBodyColliders(){
-  const rig=LAB.rig; if(!rig || !LAB.swordFree) return [];
+  const rig=LAB.rig; if(!rig || !LAB.swordFree || LAB.isGame) return [];   // (09-27g) у грі власне тіло не збиває клинок: замах над головою — не «удар об BODY_HEAD»
   const names={torso:'BODY_TORSO',head:'BODY_HEAD',pelvis:'BODY_PELVIS',left_thigh:'BODY_THIGH_L',right_thigh:'BODY_THIGH_R',left_shin:'BODY_SHIN_L',right_shin:'BODY_SHIN_R'};
   const out=[]; for(const m of rig.parts){ const id=names[m.name]; if(!id) continue; out.push({id,type:'BODY',surfaceType:'BODY',box:new THREE.Box3().setFromObject(m),startFrac:0.22,skipInside:true}); }   // (09-16d) лише лезо, не руків'я
   return out;
@@ -7636,20 +7636,29 @@ function trajTrim(feat, vmin){ let a=0,b=feat.length-1; while(a<b&&feat[a].v<vmi
 function trajResample(feat,N){ const T0=feat[0].t, T1=feat[feat.length-1].t, out=[];
   for(let k=0;k<N;k++){ const t=T0+(T1-T0)*k/Math.max(1,N-1); let i=0; while(i<feat.length-2&&feat[i+1].t<t) i++; const a=feat[i], b=feat[Math.min(i+1,feat.length-1)], f=(b.t>a.t)?clamp((t-a.t)/(b.t-a.t),0,1):0;
     out.push({g:a.g.map((x,j)=>x+(b.g[j]-x)*f), d:a.d.map((x,j)=>x+(b.d[j]-x)*f)}); } return out; }
-function featDist(a,b){ const dp=Math.hypot(a.g[0]-b.g[0],a.g[1]-b.g[1],a.g[2]-b.g[2]); const dot=clamp(a.d[0]*b.d[0]+a.d[1]*b.d[1]+a.d[2]*b.d[2],-1,1); return 0.5*Math.min(dp,1.5)+0.5*(Math.acos(dot)/Math.PI); }
+var VB_KATAQ={ wG:0.25, trim:0.30, tol:0.30, need:55, solo:55, ghostSpeed:0.5, demoSpeed:0.45, soloWin:4.0 };   // (09-27g) оцінка маху й доджьо
+window.VB_KATAQ=VB_KATAQ;
+function featDist(a,b){ const dp=Math.hypot(a.g[0]-b.g[0],a.g[1]-b.g[1],a.g[2]-b.g[2]); const dot=clamp(a.d[0]*b.d[0]+a.d[1]*b.d[1]+a.d[2]*b.d[2],-1,1); const w=VB_KATAQ.wG; return w*Math.min(dp,1.5)+(1-w)*(Math.acos(dot)/Math.PI); }
+/* (09-27g) обрізка ВІДНОСНО піку швидкості (медіана з 3 кадрів — один сплеск не обманює): лишається саме рубання,
+   повільний замах і повернення відпадають. Еталон — лише фаза рубання (від ключа перед CONTACT до CONTACT). */
+function trajTrimRel(feat, frac){ if(feat.length<3) return feat; const v=feat.map((f,i)=>{ const a=feat[Math.max(0,i-1)].v, b=f.v, c=feat[Math.min(feat.length-1,i+1)].v; return [a,b,c].sort((x,y)=>x-y)[1]; }); let im=0; for(let i=1;i<v.length;i++) if(v[i]>v[im]) im=i; const vm=v[im]*frac; let a=im,b=im; while(a>0&&v[a-1]>=vm) a--; while(b<feat.length-1&&v[b+1]>=vm) b++; a=Math.max(0,a-1); b=Math.min(feat.length-1,b+1); return feat.slice(a,b+1); }
+function kataqRefRange(name){ const A=LAB_ANIMS[name]; if(!A||/^REC_/.test(name)) return null; const K=A.keys; const ci=K.findIndex(k=>k.mark==='CONTACT'); if(ci<1) return null; return [K[ci-1].t, K[ci].t+0.04]; }
+function kataqRefFeat(name, reach){ const tr=labAnimTraj(name,60); if(!tr||!tr.frames||tr.frames.length<3) return null; const rg=kataqRefRange(name); let f;
+  if(rg){ f=trajFeat({frames:tr.frames.filter(x=>x.t>=rg[0]-1e-6&&x.t<=rg[1]+1e-6)},reach); } else f=trajTrimRel(trajFeat(tr,reach),VB_KATAQ.trim);
+  return f.length>=3?trajResample(f,48):null; }
+function kataqCands(feat){ const L=[trajTrimRel(feat,VB_KATAQ.trim), trajTrimRel(feat,0.5), trajTrim(feat,0.35)]; return L.filter(f=>f.length>=4).map(f=>trajResample(f,48)); }
+function kataqScoreCands(As, names, refFn){ const res=[]; for(const nm of names){ const R=refFn(nm); if(!R) continue; res.push({name:nm, score:Math.max(...As.map(A=>trajScore(trajDTW(A,R))))}); } res.sort((a,b)=>b.score-a.score); return res; }
 function trajDTW(A,B){ const n=A.length,m=B.length, w=Math.max(Math.round(Math.max(n,m)*0.25),Math.abs(n-m)+1);
   const D=Array.from({length:n+1},()=>new Float64Array(m+1).fill(Infinity)); D[0][0]=0;
   for(let i=1;i<=n;i++) for(let j=Math.max(1,i-w);j<=Math.min(m,i+w);j++){ const c=featDist(A[i-1],B[j-1]); D[i][j]=c+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]); }
   return D[n][m]/(n+m); }
 const SCORE_SKIP=new Set(['IDLE','READY','TURN','STEP','RAISE_SWORD','LOWER_SWORD','RETRACT','RECOIL','DISARM','HIT','DEATH']);
 function trajScore(dist){ return Math.round(100*clamp(1-dist/0.42,0,1)); }
-function labScoreTraj(trA, names){
-  const reach=labReach(); const fa=trajTrim(trajFeat(trA,reach),0.35); if(fa.length<4) return {err:'запис без руху (вістря < 0.35 м/с)'};
-  const A=trajResample(fa,48), res=[];
-  for(const nm of names){ if(SCORE_SKIP.has(nm)) continue; const tb=labAnimTraj(nm,30); if(!tb||tb.frames.length<3) continue;
-    const fb=trajTrim(trajFeat(tb,reach),0.2); if(fb.length<3) continue; const B=trajResample(fb,48);
-    const dist=trajDTW(A,B); res.push({name:nm, dist:+dist.toFixed(3), score:trajScore(dist), dur:+(fb[fb.length-1].t-fb[0].t).toFixed(2)}); }
-  res.sort((a,b)=>b.score-a.score); return {res, dur:+(fa[fa.length-1].t-fa[0].t).toFixed(2), vmax:+Math.max(...fa.map(f=>f.v)).toFixed(2)};
+function labScoreTraj(trA, names){                                     // (09-27g) як у грі: фаза рубання еталона, кандидати обрізки запису
+  const reach=labReach(); const feat=trajFeat(trA,reach); const As=kataqCands(feat); if(!As.length) return {err:'запис без руху (вістря < 0.35 м/с)'};
+  const res=[]; for(const nm of names){ if(SCORE_SKIP.has(nm)) continue; const R=kataqRefFeat(nm,reach); if(!R) continue; res.push({name:nm, score:Math.max(...As.map(A=>trajScore(trajDTW(A,R))))}); }
+  res.sort((a,b)=>b.score-a.score); const fa=trajTrimRel(feat,VB_KATAQ.trim);
+  return {res, dur:+(fa[fa.length-1].t-fa[0].t).toFixed(2), vmax:+Math.max(...feat.map(f=>f.v)).toFixed(2)};
 }
 function labCurrentClip(){ let clip=LAB.clip; const sel=$('labMotion'); if(sel&&sel.value){ clip=labMotions().find(m=>m.name===sel.value)||clip; } return clip; }
 function labScoreCurrent(){
@@ -7845,8 +7854,9 @@ function labFollowTick(dt){
   const busy=(typeof ttsBusy==='function')&&ttsBusy();
   if(LABF.phase==='say'){ if(LABF.t>0.6 && !busy){ LABF.phase='show'; LABF.t=0; LAB.anim=LABF.name; LAB.animT=0; LAB.playing=true; LAB.loop=true; LAB.speed=0.5; labPanelSync(); } return; }
   if(LABF.phase==='show'){ const A=LAB_ANIMS[LABF.name]; const T=(A&&A.keys[A.keys.length-1].t)||1;
-    if(LAB.animT>=2*T-0.02 || LABF.t>2*T/0.5+2){ LAB.playing=false; LAB.loop=false; LAB.speed=1; labApplyPose(LAB.pose); LABF.phase='ready'; LABF.t=0; labPanelSync(); try{ ttsSpeak('Тепер ти. Три. Два. Один. Давай!',{critical:true}); }catch(e){} } return; }
-  if(LABF.phase==='ready'){ if(!busy && LABF.t>1.0){ LAB.flags.sensor=true; if(!LAB.neutral) labCalibrateNeutral(); labRefreshFlags(); labRecStart(); LABF.phase='rec'; LABF.t=0; labPanelSync(); try{ if(navigator.vibrate) navigator.vibrate([0,50]); }catch(e){} } return; }
+    if(LAB.animT>=2*T-0.02 || LABF.t>2*T/0.5+2){ LAB.playing=false; LAB.loop=false; LAB.speed=1; labApplyPose(LAB.pose); LABF.phase='ready'; LABF.t=0; labPanelSync(); try{ ttsSpeak('Тепер ти. Чекай: три короткі сигнали, на четвертий, високий, — бий.',{critical:true}); }catch(e){} } return; }
+  if(LABF.phase==='ready'){ if(!busy && LABF.t>0.6){ LABF.phase='cue'; LABF.t=0; cueStart(()=>{ if(!LABF.on) return; LAB.flags.sensor=true; if(!LAB.neutral) labCalibrateNeutral(); labRefreshFlags(); labRecStart(); LABF.phase='rec'; LABF.t=0; labPanelSync(); }); } return; }
+  if(LABF.phase==='cue'){ cueTick(dt); return; }   // (09-27g) три короткі, четвертий високий — запис
   if(LABF.phase==='rec'){ if(LABF.t>=3.0){ labRecStop(); LABF.phase='score'; LABF.t=0; labPanelSync(); } return; }
   if(LABF.phase==='score'){ LABF.tries++; let S=null; try{ S=labScoreCurrent(); }catch(e){}
     const res=S&&S.res; const ua=KATA_UA[LABF.name]||LABF.name.replace(/^REC_/,'запис ').replace(/_/g,' ');
@@ -7858,7 +7868,7 @@ function labFollowTick(dt){
     try{ if(navigator.vibrate) navigator.vibrate(sc>=60?[0,30,40,30]:[0,60]); }catch(e){}
     logE('LAB ПОВТОРИ: спроба '+LABF.tries+' — '+LABF.name+' '+sc+'%'+(top?'':' (найближче '+res[0].name+' '+res[0].score+'%)'));
     LABF.phase = LABF.tries>=3 ? 'done' : 'again'; LABF.t=0; return; }
-  if(LABF.phase==='again'){ if(!busy && LABF.t>1.0){ LABF.phase='ready'; LABF.t=0; try{ ttsSpeak('Ще раз. Три. Два. Один. Давай!',{critical:true}); }catch(e){} } return; }
+  if(LABF.phase==='again'){ if(!busy && LABF.t>1.0){ LABF.phase='ready'; LABF.t=0; try{ ttsSpeak('Ще раз. Три сигнали — і на високий бий.',{critical:true}); }catch(e){} } return; }
   if(LABF.phase==='done'){ if(!busy){ try{ ttsSpeak('Досить, три спроби. Натисни кнопку знову, щоб повторити, або обери інший удар.',{critical:true}); }catch(e){} labFollowStop('три спроби зроблено'); } return; }
 }
 /* (09-27e) ПАМ'ЯТКА ЛАБОРАТОРІЇ — покроково, без термінів */
@@ -7866,7 +7876,7 @@ const LAB_HELP_HTML=
   '<h3>ЛАБОРАТОРІЯ РУХУ — ЯК ПРАЦЮВАТИ</h3>'+
   '<p><b>1. Підготовка.</b> Меню → LAB. Угорі: CHARACTER → PLAYER. Натисни <b>LIVE SENSOR</b> — телефон керує ригом. Стань у стійку й натисни <b>NEUTRAL (калібр.)</b> — це «нуль» рук і клинка.</p>'+
   '<p><b>2. Подивитись еталон.</b> ANIMATION LAB → у списку обери KESA, MEN, YOKO… → <b>▶ PLAY</b>. <b>LOOP</b> — повторювати, «швидкість 0.25×» — повільно, <b>FRAME ▶</b> — по кадру. Це ті самі удари, якими б\'ють вороги.</p>'+
-  '<p><b>2б. Найпростіше — голосом.</b> Обери удар у списку → <b>🥋 ПОВТОРИ ЗА МНОЮ</b>: голос пояснює удар, риг показує його двічі повільно, потім «Тепер ти. Три, два, один» — 3 секунди запису — і відсоток словами. Три спроби, далі кнопка знову. Те саме в грі робить наставник: меню → 🥋 ТРЕНУВАННЯ УДАРІВ.</p>'+
+  '<p><b>2б. Найпростіше — голосом.</b> Обери удар у списку → <b>🥋 ПОВТОРИ ЗА МНОЮ</b>: голос пояснює удар, риг показує його двічі повільно, потім «Тепер ти» — три короткі сигнали, четвертий високий — 3 секунди запису — і відсоток словами. Три спроби, далі кнопка знову. Те саме в грі робить наставник: меню → 🥋 ТРЕНУВАННЯ УДАРІВ.</p>'+
   '<p><b>3. Записати свій рух.</b> <b>● RECORD</b> → зроби удар (1–3 с) → <b>■ STOP REC</b>. Запис стає «поточним» (без назви, живе до перезапуску).</p>'+
   '<p><b>4. Порівняти.</b> <b>≈ СХОЖІСТЬ З АНІМАЦІЯМИ</b> → у вікні ІНФО: «KESA 71 %, MEN 40 %…». Перший рядок — найближчий удар. Повтори рух, дивись, чи росте відсоток (гаряче-холодно). Той самий рядок іде в лог — надішли його мені.</p>'+
   '<p><b>5. Зберегти запис.</b> <b>SAVE MOTION</b> → назва. Збережені — у списку «— запис —». <b>▶ PLAY REC</b> програє запис на ригу, <b>⏹ PLAY OFF</b> — назад до LIVE.</p>'+
@@ -8381,7 +8391,7 @@ function sheathTick(dt){
     const gm=sensor.gyroMag; const still=(gm!=null) ? (gm<35 && spd<1.6) : (spd<0.6);
     if(tipDown && still) SHEATH.stillT+=dt; else SHEATH.stillT=0;
     SHEATH._dbgT=(SHEATH._dbgT||0)+dt;
-    if(tipDown && SHEATH._dbgT>2.5){ SHEATH._dbgT=0; logE('ПІХВИ: вістря вниз (y '+(dirY==null?'—':dirY.toFixed(2))+') · гіро '+(gm==null?'—':Math.round(gm))+'°/с · вістря '+spd.toFixed(1)+' м/с · спокій '+SHEATH.stillT.toFixed(1)+' с'); }
+    if(tipDown && (gm==null||gm<80) && SHEATH._dbgT>2.5){ SHEATH._dbgT=0; logE('ПІХВИ: вістря вниз (y '+(dirY==null?'—':dirY.toFixed(2))+') · гіро '+(gm==null?'—':Math.round(gm))+'°/с · вістря '+spd.toFixed(1)+' м/с · спокій '+SHEATH.stillT.toFixed(1)+' с'); }
     if(SHEATH.stillT>VB_SHEATH.sheatheHold && performance.now()-SHEATH.lastDrawT>2000){ SHEATH.drawn=false; SHEATH.stillT=0;
       logE('МЕЧ У ПІХВАХ — мацання, без різу, тихо'); try{ showBanner('🗡 МЕЧ У ПІХВАХ','#94a3b8'); spatialBlip(p.x,1.0,p.z,520,0.05,'square',0.1); if(navigator.vibrate) navigator.vibrate([0,25]); }catch(e){} }
   }
@@ -8909,7 +8919,7 @@ const SENS_SLIDERS=[
   ['VB_ROOMS.on','Кімнати: структуровані з дверима (1) / випадкові (0)',0,1,1],
   ['VB_WORLD.seamless','Безшовний світ: зсув кімнат + миттєві двері (1/0)',0,1,1],['VB_WORLD.range','Сусіди-тіні: радіус кімнат (0–2)',0,2,1],
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,5,0.05],['VB_ARM.bodyFollow','Лінійний рух: тіло йде за рукою (випад)',0,2,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
-  ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],
+  ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],['VB_KATAQ.wG','Ката: вага положення руків\'я (0 — лише напрям клинка)',0,1,0.05],['VB_KATAQ.solo','Ката: удар сам — потрібно відсотків (доджьо і жрець)',20,90,5],['VB_KATAQ.need','Доджьо: разом із тінню — потрібно відсотків',20,90,5],['VB_KATAQ.tol','Доджьо: допуск «у тіні»',0.15,0.6,0.05],['VB_KATAQ.ghostSpeed','Доджьо: швидкість тіні (частка від бойової)',0.2,1,0.1],
   ['VB_CAM.head','Альбомна: камера — голова (1) / старий приціл уздовж клинка (0)',0,1,1],['VB_CAM.headBack','Голова: камера позаду голови, м',0,0.8,0.05],['VB_CAM.headUp','Голова: камера вище очей, м',-0.2,0.4,0.02],
   ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],
   ['VB_CAM.axis','Старий приціл: задня камера (1) / клинок (0)',0,1,1],
@@ -9857,7 +9867,7 @@ const QST={
     else if(r0<0.46) q={ t:'hunt', kind:null, goal:3+deep*2 };
     else if(r0<0.58) q={ t:'cast', kind:['plasma','plasma','Fe','H','O','Na','Cl','Si','C'][Math.floor(rng()*9)], goal:1+deep };
     else if(r0<0.68) q={ t:'alch', kind:['steel','salt','sand','liquid','glass'][Math.floor(rng()*5)], goal:1 };
-    else if(r0<0.82) q={ t:'kata', kind:(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA','YOKO'])[Math.floor(rng()*6)%6], goal:2+deep, pct:60 };
+    else if(r0<0.82) q={ t:'kata', kind:(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA','YOKO'])[Math.floor(rng()*6)%6], goal:2+deep, pct:(typeof VB_KATAQ!=='undefined'?VB_KATAQ.solo:60) };
     else if(r0<0.92) q={ t:'stance', kind:['CHUDAN','JODAN','GEDAN','HASSO','WAKI'][Math.floor(rng()*5)], goal:1, hold:2 };
     else             q={ t:'serp', kind:null, goal:1 };
     if(!q.kind && q.t==='kata') q.kind='KESA';
@@ -9985,8 +9995,8 @@ function kataqRig(){ if(KATAQ.S) return KATAQ.S; try{ const obj=new THREE.Group(
 function kataqReach(S){ const dm=S.rig.dims; return dm.upper+dm.fore+dm.hand; }
 function kataqRef(name){
   const c=KATAQ.cache[name]; if(c) return c; const S=kataqRig(); if(!S) return null;
-  const prev=LAB; LAB=S; let tr=null; try{ tr=labAnimTraj(name,30); }catch(e){} finally{ LAB=prev; }
-  if(!tr) return null; const f=trajTrim(trajFeat(tr,kataqReach(S)),0.2); const R={feat:f.length>=3?trajResample(f,48):null}; KATAQ.cache[name]=R; return R;
+  const prev=LAB; LAB=S; let feat=null; try{ feat=kataqRefFeat(name, kataqReach(S)); }catch(e){} finally{ LAB=prev; }   // (09-27g) еталон — фаза рубання
+  const R={feat}; KATAQ.cache[name]=R; return R;
 }
 function kataqPoseRef(name){
   const c=KATAQ.poseCache[name]; if(c) return c; const S=kataqRig(); if(!S||!LAB_POSES[name]) return null;
@@ -10015,15 +10025,15 @@ function kataqTick(dt){
 }
 function kataqEvalStroke(t0,t1){
   const frames=KATAQ.buf.filter(f=>f.t>=t0&&f.t<=t1); if(frames.length<6) return;
+  if(t1-t0<0.3) return;                                                                 // (09-27g) коротше 0.3 с — тремтіння, не удар
   const S=VB_RIG.player, reach=kataqReach(S);
   const tr={frames:frames.map(f=>({t:f.t-t0, g:f.g, d:f.d, tip:f.tip}))};
-  const fa=trajTrim(trajFeat(tr,reach),0.35); if(fa.length<4) return; if(fa[fa.length-1].t-fa[0].t<0.3) return;   // (09-27f) коротше 0.3 с — не удар, а тремтіння
-  const A=trajResample(fa,48);
-  const names=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:[]).concat(typeof kataRecList==='function'?kataRecList():[]); const res=[];
-  for(const nm of names){ const R=kataqRef(nm); if(!R||!R.feat) continue; res.push({name:nm, score:trajScore(trajDTW(A,R.feat))}); }
-  if(!res.length) return; res.sort((a,b)=>b.score-a.score);
-  KATAQ.last={t:performance.now()/1000, res, dur:+(fa[fa.length-1].t-fa[0].t).toFixed(2)};
-  logE('УДАР '+KATAQ.last.dur+' с: схожий на '+res.slice(0,3).map(r=>r.name+' '+r.score+'%').join(' · '));
+  const feat=trajFeat(tr,reach); const As=kataqCands(feat); if(!As.length) return;   // (09-27g) кандидати обрізки: саме рубання, ширше, увесь мах
+  const names=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:[]).concat(typeof kataRecList==='function'?kataRecList():[]);
+  const res=kataqScoreCands(As, names, nm=>{ const R=kataqRef(nm); return R&&R.feat; }); if(!res.length) return;
+  const vmax=Math.max(...feat.map(f=>f.v));
+  KATAQ.last={t:performance.now()/1000, res, dur:+(t1-t0).toFixed(2), vmax:+vmax.toFixed(1)};
+  logE('УДАР '+KATAQ.last.dur+' с (вістря до '+KATAQ.last.vmax+' м/с): схожий на '+res.slice(0,3).map(r=>r.name+' '+r.score+'%').join(' · '));
   const q=(typeof QST!=='undefined')&&QST.a;
   if(q && q.t==='kata'){ const me=res.find(r=>r.name===q.kind); const sc=me?me.score:0, need=q.pct||60, top=res[0].name===q.kind;
     const inDojo=(typeof DOJO!=='undefined'&&DOJO.on);
@@ -10031,78 +10041,133 @@ function kataqEvalStroke(t0,t1){
     else { try{ showBanner('⚔ '+q.kind+' '+sc+'%'+(top?'':' (більше схоже на '+res[0].name+')')+' — треба '+need+'%','#f59e0b'); }catch(e){} if(!inDojo) kataqSay((KATA_UA[q.kind]||q.kind)+' — '+pctUA(sc)+'.'+(top?'':' Зараз це більше схоже на '+(KATA_UA[res[0].name]||res[0].name)+'.')+' '+(KATA_TIPS[q.kind]||''),'curious'); } }
   if(typeof DOJO!=='undefined' && DOJO.on){ try{ dojoStroke(res, KATAQ.last.dur); }catch(e){ logE('ДОДЖЬО: '+e.message); } }   // (09-27f)
 }
-/* ═══════════════ (09-27f) ДОДЖЬО: наставник показує удар, гравець повторює, наставник каже відсоток ═══════════════
-   Сліпому — головне: під час показу вістря наставника «співає» (висота → тон, ліворуч/праворуч — стерео),
-   слова наставника описують шлях клинка, результат — теж словами. Читати нічого не треба.
-   Оцінка маху — та сама, що для завдань жерця (kataqEvalStroke). Після кожного удару — двічі ≥ 60 % і він
-   перший у списку → наступний удар; три невдачі → «Показати ще раз?» (кивок — показ, похитування — далі). */
-var DOJO={ on:false, list:[], i:0, kind:null, phase:'', t:0, reps:0, fails:0, blipT:0, then:null, waitHint:0, tries:0 };
+/* ═══════════════ (09-27g) ДОДЖЬО v2: показ → тінь у своєму тілі → разом із тінню → сам ═══════════════
+   Жодних питань «так/ні» всередині тренування — лише команди й сигнали: «Не рухайся» / три короткі сигнали,
+   четвертий високий = починай. Рухи поза вікнами не оцінюються і не коментуються.
+   ТІНЬ: напівпрозорий риг у тілі гравця робить еталонний удар (від першої особи — своя ж рука); «разом» —
+   гравець веде клинок за тінню: у тіні — один тон і пульс вібро, поза тінню — другий тон свого вістря. */
+var DOJO={ on:false, list:[], i:0, kind:null, phase:'', t:0, then:null, tries:0, followN:0, soloN:0, blipT:0, cueNext:'', soloArmed:false, soloT0:-1, best:null };
 window.DOJO=DOJO;
+var CUE={ on:false, t:0, i:0, cb:null };
+function cueStart(cb){ CUE.on=true; CUE.t=0; CUE.i=0; CUE.cb=cb; }
+function cueTick(dt){ if(!CUE.on) return; CUE.t+=dt; const times=[0,0.7,1.4,2.1];
+  while(CUE.i<4 && CUE.t>=times[CUE.i]){ const last=CUE.i===3; try{ blip(last?1040:520, last?0.22:0.08, 'sine', last?0.16:0.12); if(navigator.vibrate) navigator.vibrate(last?[0,90]:[0,30]); }catch(e){} CUE.i++;
+    if(last){ CUE.on=false; const cb=CUE.cb; CUE.cb=null; if(cb) cb(); } } }
 function pctUA(n){ n=Math.round(n); const m10=n%10, m100=n%100; const w=(m100>=11&&m100<=14)?'відсотків':(m10===1?'відсоток':(m10>=2&&m10<=4?'відсотки':'відсотків')); return n+' '+w; }
+var SHADE={ S:null, on:false, anim:null, t:0, T:0, speed:0.5, playing:false, blipT:0, sync:null, inSync:false, prevTip:null, hapT:0 };
+window.SHADE=SHADE;
+function ghostEnsure(){
+  if(SHADE.S) return SHADE.S;
+  try{ const obj=new THREE.Group(); obj.name='GHOST_RIG'; obj.frustumCulled=false; scene.add(obj);
+    const S=rigStateNew('PLAYER',obj); S.rig=labBuildRig('PLAYER'); obj.add(S.rig.root); rigMatsPrep(S.rig);
+    for(const m of S.rig._mats){ m.depthWrite=false; } rigRecolor(S.rig,0.52); rigSetOpacity(S.rig,0.38,0.6);
+    obj.visible=false; SHADE.S=S; }catch(e){ logE('ТІНЬ: '+e.message); }
+  return SHADE.S;
+}
+function ghostPlay(name, speed){ const S=ghostEnsure(); const A=LAB_ANIMS[name]; if(!S||!A) return false;
+  SHADE.anim=name; SHADE.t=0; SHADE.T=A.keys[A.keys.length-1].t; SHADE.speed=speed||VB_KATAQ.ghostSpeed; SHADE.playing=true; SHADE.on=true; S.obj.visible=true;
+  SHADE.sync={t:0,act:0,dsum:0,n:0}; SHADE.blipT=0; SHADE.prevTip=null; SHADE.inSync=false; SHADE.hapT=0; return true; }
+function ghostStop(){ SHADE.playing=false; SHADE.on=false; if(SHADE.S) SHADE.S.obj.visible=false; }
+function ghostTick(dt, follow){
+  if(!SHADE.on || !SHADE.S) return;
+  const S=SHADE.S, P=VB_RIG.player; if(!P||!P.rig) return;
+  if(SHADE.playing){ SHADE.t+=dt*SHADE.speed; if(SHADE.t>=SHADE.T){ SHADE.t=SHADE.T; SHADE.playing=false; } }
+  const pose=labAnimAt(SHADE.anim, Math.min(SHADE.t, SHADE.T-0.001));
+  S.obj.position.copy(P.obj.position); S.obj.rotation.copy(P.obj.rotation); S.mirror=P.mirror; S.body.visYaw=P.body.visYaw;
+  const prev=LAB; LAB=S; let gr=null;
+  try{ labSwordMode(false); if(pose) labSetPose(pose); S.rig.root.rotation.copy(P.rig.root.rotation); S.rig.root.position.copy(P.rig.root.position); S.obj.updateMatrixWorld(true); gr=labSwordRel(); }catch(e){} finally{ LAB=prev; }
+  try{ const hc=((VB_CAM.head|0)===1); S.rig.J.NECK.traverse(o=>{ if(o.isMesh) o.visible=!hc; }); }catch(e){}
+  let tp=null, gv=0; try{ const sw=S.rig.sword; tp=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); if(SHADE.prevTip) gv=tp.distanceTo(SHADE.prevTip)/Math.max(1e-3,dt); SHADE.prevTip=tp.clone(); }catch(e){}
+  if(follow && gr && KATAQ.tipPrev){ const reach=kataqReach(P), pr=KATAQ.tipPrev;
+    const d=featDist({g:pr.g.map(x=>x/reach), d:pr.d},{g:gr.g.map(x=>x/reach), d:gr.d}); SHADE.inSync=d<VB_KATAQ.tol;
+    if(SHADE.playing && gv>0.3){ SHADE.sync.act+=dt; SHADE.sync.dsum+=d; SHADE.sync.n++; if(SHADE.inSync) SHADE.sync.t+=dt; } }
+  SHADE.blipT-=dt;
+  if(tp && SHADE.playing && SHADE.blipT<=0){ SHADE.blipT=0.09;
+    try{ const f=320+640*clamp((tp.y-0.2)/2.1,0,1); spatialBlip(tp.x,tp.y,tp.z,f,0.07,'sine',0.09);
+      if(follow && !SHADE.inSync){ const sw=P.rig.sword; const pt=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); const f2=320+640*clamp((pt.y-0.2)/2.1,0,1); setTimeout(()=>{ try{ spatialBlip(pt.x,pt.y,pt.z,f2,0.06,'triangle',0.07); }catch(e){} },45); } }catch(e){} }
+  if(follow && SHADE.playing && SHADE.inSync){ SHADE.hapT-=dt; if(SHADE.hapT<=0){ SHADE.hapT=0.4; try{ if(navigator.vibrate) navigator.vibrate([0,18]); }catch(e){} } }
+}
+function ghostScore(){ const s=SHADE.sync; if(!s||s.act<0.2) return {pct:0, mean:1}; return {pct:Math.round(100*s.t/s.act), mean:+(s.dsum/Math.max(1,s.n)).toFixed(2)}; }
 function dojoMentor(){ const a=(typeof ALLY!=='undefined')&&ALLY.ph; return (a && !a.dead && a.mesh) ? a : null; }
+function dojoPlaceMentor(a){ try{ const fd=DIRV[player.dirIdx||0]||[0,1]; for(const dist of [3,4,2]){ const nx=clamp(player.gx+fd[0]*dist,0,12), ny=clamp(player.gy+fd[1]*dist,0,12);
+  if((nx!==player.gx||ny!==player.gy) && !obstacleAt(nx,ny) && !isCellOccupied(nx,ny,a)){ a.gx=nx; a.gy=ny; a.moveT=1; return; } } }catch(e){} }
 function dojoStart(then){
   const a=dojoMentor(); if(!a){ logE('ДОДЖЬО: наставника немає поруч'); try{ showBanner('🥋 Наставника немає поруч','#f59e0b'); }catch(e){} if(then) then(); return; }
   DOJO.on=true; DOJO.then=then||null; DOJO.list=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA']).slice(); DOJO.i=0; DOJO.tries=0;
   try{ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0; }catch(e){}
   try{ KATAQ.stroke=null; }catch(e){}
-  logE('ДОДЖЬО: старт · '+DOJO.list.join(', '));
+  dojoPlaceMentor(a); ghostEnsure();
+  logE('ДОДЖЬО: старт · '+DOJO.list.join(', ')+' · потрібно '+VB_KATAQ.need+'% разом із тінню, '+VB_KATAQ.solo+'% сам');
   dojoShow(true);
 }
 function dojoShow(first){
-  const k=DOJO.list[DOJO.i]; DOJO.kind=k; DOJO.phase='say'; DOJO.t=0; DOJO.reps=0; DOJO.fails=0; DOJO.waitHint=0;
+  const k=DOJO.list[DOJO.i]; DOJO.kind=k; DOJO.followN=0; DOJO.soloN=0; DOJO.phase='say'; DOJO.t=0; DOJO.best=null; DOJO.soloArmed=false;
   const lead = first ? 'Перший удар — ' : (DOJO.i===DOJO.list.length-1 ? 'Останній удар — ' : 'Далі — ');
-  mentorLine(lead+(KATA_UA[k]||k)+'. '+(KATA_TIPS[k]||'')+' Дивись і слухай: вістря співає — де високо, там тонко.','curious');
-  logE('ДОДЖЬО: показ '+k);
+  mentorLine(lead+(KATA_UA[k]||k)+'. '+(KATA_TIPS[k]||'')+' Не рухайся. Дивись на мене і слухай: вістря співає — де високо, там тонко.','curious');
+  logE('ДОДЖЬО: '+k+' — показ наставника');
 }
-function dojoDemoStart(){ const a=dojoMentor(); if(!a) return; const A=LAB_ANIMS[DOJO.kind]; const T=A?A.keys[A.keys.length-1].t:1; a.demo={name:DOJO.kind, t:0, T, speed:0.45, loops:2, pause:0}; DOJO.blipT=0; }
+function dojoDemoStart(){ const a=dojoMentor(); if(!a) return; const A=LAB_ANIMS[DOJO.kind]; const T=A?A.keys[A.keys.length-1].t:1; a.demo={name:DOJO.kind, t:0, T, speed:VB_KATAQ.demoSpeed, loops:1, pause:0}; DOJO.blipT=0; }
 function dojoFacePlayer(a){ try{ const dx=player.gx-a.gx, dy=player.gy-a.gy; if(dx||dy){ const yaw=Math.atan2(dx,-dy)*180/Math.PI; a.dirIdx=((Math.round(wrap360(yaw)/45)%8)+8)%8; } }catch(e){} }
+function dojoGo(next){ DOJO.cueNext=next; DOJO.phase='cue'; DOJO.t=0;
+  cueStart(()=>{ if(!DOJO.on) return; if(DOJO.cueNext==='follow'){ ghostPlay(DOJO.kind, VB_KATAQ.ghostSpeed); DOJO.phase='follow'; }
+    else { DOJO.phase='solo'; DOJO.soloArmed=true; DOJO.soloT0=-1; DOJO.best=null; try{ KATAQ.stroke=null; }catch(e){} } DOJO.t=0; }); }
 function dojoTick(dt){
   if(!DOJO.on) return;
   const a=dojoMentor(); if(!a){ dojoEnd(true); return; }
   if(mode!=='fighter' || player.dead) return;
+  if(Math.abs(a.gx-player.gx)+Math.abs(a.gy-player.gy)>9){ mentorLine('Тренування перервано — ти пішов.','neutral'); dojoEnd(true); return; }
   dojoFacePlayer(a);
-  DOJO.t+=dt;
-  if(DLG.q) return;                                                     // питання наставника — чекаємо відповіді
-  if(DOJO.phase==='say'){ if(DOJO.t>0.8 && !dlgSpeaking()){ DOJO.phase='show'; DOJO.t=0; dojoDemoStart(); } return; }
-  if(DOJO.phase==='show'){
-    const D=a.demo;
-    if(D){
-      if(D.pause>0){ D.pause-=dt; if(D.pause<=0) D.t=0; }
-      else { D.t+=dt*D.speed; if(D.t>=D.T){ D.loops--; if(D.loops<=0) a.demo=null; else { D.t=D.T; D.pause=0.9; } } }
-      DOJO.blipT-=dt;                                                   // вістря наставника співає: висота → тон
-      if(a.demo && D.pause<=0 && DOJO.blipT<=0){ DOJO.blipT=0.09; try{ const S=a._rigS; if(S&&S.rig){ const sw=S.rig.sword; const tp=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); const f=320+640*clamp((tp.y-0.2)/2.1,0,1); spatialBlip(tp.x,tp.y,tp.z,f,0.07,'sine',0.09); } }catch(e){} }
-    } else { DOJO.phase='ask'; DOJO.t=0; mentorLine('Тепер ти. Зроби '+(KATA_UA[DOJO.kind]||DOJO.kind)+': із замахом, і зупинись у кінці.','curious'); }
-    return;
+  DOJO.t+=dt; cueTick(dt);
+  const talking=dlgSpeaking();
+  if(DLG.q) return;
+  switch(DOJO.phase){
+    case 'say': if(DOJO.t>0.6 && !talking){ DOJO.phase='demo'; DOJO.t=0; dojoDemoStart(); } return;
+    case 'demo': { const D=a.demo;
+      if(D){ if(D.pause>0){ D.pause-=dt; if(D.pause<=0) D.t=0; } else { D.t+=dt*D.speed; if(D.t>=D.T){ D.loops--; if(D.loops<=0) a.demo=null; else { D.t=D.T; D.pause=0.9; } } }
+        DOJO.blipT-=dt; if(a.demo && D.pause<=0 && DOJO.blipT<=0){ DOJO.blipT=0.09; try{ const S=a._rigS; if(S&&S.rig){ const sw=S.rig.sword; const tp=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); const f=320+640*clamp((tp.y-0.2)/2.1,0,1); spatialBlip(tp.x,tp.y,tp.z,f,0.07,'sine',0.09); } }catch(e){} }
+      } else { DOJO.phase='shadowsay'; DOJO.t=0; mentorLine('Тепер твоя тінь: твоя ж рука сама зробить цей удар. Не рухайся — дивись і слухай.','curious'); }
+      return; }
+    case 'shadowsay': if(!talking && DOJO.t>0.4){ if(ghostPlay(DOJO.kind, VB_KATAQ.ghostSpeed)){ DOJO.phase='shadow'; } else { DOJO.phase='followsay'; mentorLine('Тепер сам, у повну силу. Чекай: три короткі сигнали, на четвертий, високий, — бий.','curious'); } DOJO.t=0; } return;
+    case 'shadow': ghostTick(dt,false); if(!SHADE.playing && DOJO.t>0.5){ ghostStop(); DOJO.phase='followsay'; DOJO.t=0; mentorLine('А тепер разом із тінню, повільно. Чекай: три короткі сигнали, а на четвертий, високий, — рухайся з нею. Один тон — ти в тіні.','curious'); } return;
+    case 'followsay': if(!talking && DOJO.t>0.4) dojoGo(SHADE.S?'follow':'solo'); return;
+    case 'cue': return;
+    case 'follow': ghostTick(dt,true);
+      if(!SHADE.playing && DOJO.t>0.3){ const sc=ghostScore(); ghostStop(); DOJO.followN++;
+        logE('ДОДЖЬО ТІНЬ: '+DOJO.kind+' разом '+sc.pct+'% · середня відстань '+sc.mean+' · спроба '+DOJO.followN);
+        try{ showBanner('🥋 '+DOJO.kind+' з тінню '+sc.pct+'%', sc.pct>=VB_KATAQ.need?'#4ade80':'#f59e0b'); }catch(e){}
+        if(sc.pct>=VB_KATAQ.need){ mentorLine('Разом на '+pctUA(sc.pct)+'. Добре. Тепер сам, у повну силу: три сигнали — і на високий бий. Із замахом, і зупинись у кінці.','joy'); DOJO.phase='solosay'; }
+        else if(DOJO.followN<3){ mentorLine('Разом лише на '+pctUA(sc.pct)+'. Не поспішай, веди клинок точно за тінню. Ще раз: три сигнали, і на високий рушай.','curious'); DOJO.phase='followsay'; }
+        else { mentorLine('Разом на '+pctUA(sc.pct)+'. Гаразд, спробуй сам, у повну силу: три сигнали — і на високий бий.','neutral'); DOJO.phase='solosay'; }
+        DOJO.t=0; }
+      return;
+    case 'solosay': if(!talking && DOJO.t>0.4) dojoGo('solo'); return;
+    case 'solo':
+      if(DOJO.best && DOJO.soloT0>=0 && DOJO.t-DOJO.soloT0>=VB_KATAQ.soloWin) dojoSoloVerdict();
+      else if(!DOJO.best && DOJO.t>8){ DOJO.soloArmed=false; mentorLine('Я не почув удару. Ще раз: три сигнали — і бий.','curious'); DOJO.phase='solosay'; DOJO.t=0; }
+      return;
+    case 'next': if(DOJO.t>1.2 && !talking){ DOJO.i++; if(DOJO.i>=DOJO.list.length) dojoEnd(false); else dojoShow(false); } return;
   }
-  if(DOJO.phase==='ask'){ if(!dlgSpeaking()){ DOJO.phase='wait'; DOJO.t=0; DOJO.waitHint=0; try{ if(navigator.vibrate) navigator.vibrate([0,40]); }catch(e){} } return; }
-  if(DOJO.phase==='wait'){
-    DOJO.waitHint+=dt;
-    if(DOJO.waitHint>18 && !dlgSpeaking()){ DOJO.waitHint=0; mentorLine('Я чекаю. '+(KATA_TIPS[DOJO.kind]||'')+' Махни різко — і зупинись.','curious'); }
-    return;
-  }
-  if(DOJO.phase==='next'){ if(DOJO.t>1.2 && !dlgSpeaking()){ DOJO.i++; if(DOJO.i>=DOJO.list.length) dojoEnd(false); else dojoShow(false); } return; }
 }
 function dojoStroke(res, dur){
-  if(DOJO.phase!=='wait' || DLG.q) return;
-  const k=DOJO.kind, me=res.find(r=>r.name===k), sc=me?me.score:0, top=res[0].name===k, need=60, ua=KATA_UA[k]||k;
-  DOJO.tries++;
-  logE('ДОДЖЬО: '+k+' — '+sc+'%'+(top?'':' (найближче '+res[0].name+' '+res[0].score+'%)')+' · мах '+dur+' с · спроба '+DOJO.tries);
-  if(sc>=need && top){
-    DOJO.reps++; try{ showBanner('🥋 '+k+' '+sc+'% ✓ ('+DOJO.reps+'/2)','#4ade80'); if(navigator.vibrate) navigator.vibrate([0,30,40,30]); }catch(e){}
-    if(DOJO.reps>=2){ mentorLine(ua+' — '+pctUA(sc)+'. Так, це він. Запам\'ятай руку.','joy'); DOJO.phase='next'; DOJO.t=0; }
-    else mentorLine(ua+' — '+pctUA(sc)+'. Добре. Ще раз, так само.','joy');
-  } else {
-    DOJO.fails++; try{ showBanner('🥋 '+k+' '+sc+'%'+(top?'':' → '+res[0].name)+' — треба 60%','#f59e0b'); }catch(e){}
-    const why = top ? '' : ' Зараз це більше схоже на '+(KATA_UA[res[0].name]||res[0].name)+'.';
-    if(DOJO.fails>=3){ DOJO.phase='askagain';
-      mentorAsk({ id:'DOJO_AGAIN', text:ua+' — '+pctUA(sc)+'.'+why+' Показати ще раз?', hint:'Кивни — покажу. Похитай — підемо далі.', reaskT:16,
-        onYes:()=>{ DOJO.fails=0; DOJO.phase='say'; DOJO.t=0; mentorLine('Дивись ще раз. '+(KATA_TIPS[k]||''),'curious'); },
-        onNo:()=>{ mentorLine('Гаразд, пропустимо. Повернемось до нього іншим разом.','neutral'); DOJO.phase='next'; DOJO.t=0; } }); }
-    else mentorLine(ua+' — '+pctUA(sc)+'.'+why+' '+(KATA_TIPS[k]||'')+' Спробуй ще.','curious');
-  }
+  if(DOJO.phase!=='solo' || !DOJO.soloArmed) return;
+  const k=DOJO.kind, me=res.find(r=>r.name===k), sc=me?me.score:0, top=res[0].name===k;
+  logE('ДОДЖЬО: '+k+' — '+sc+'%'+(top?'':' (найближче '+res[0].name+' '+res[0].score+'%)')+' · мах '+dur+' с');
+  if(DOJO.soloT0<0) DOJO.soloT0=DOJO.t;
+  if(!DOJO.best || sc>DOJO.best.sc) DOJO.best={sc,top,other:res[0].name};
+  if(sc>=VB_KATAQ.solo && top) dojoSoloVerdict();
+}
+function dojoSoloVerdict(){
+  const b=DOJO.best; DOJO.soloArmed=false; DOJO.soloN++; const k=DOJO.kind, ua=KATA_UA[k]||k; if(!b) return;
+  if(b.sc>=VB_KATAQ.solo && b.top){ try{ showBanner('🥋 '+k+' '+b.sc+'% ✓','#4ade80'); if(navigator.vibrate) navigator.vibrate([0,30,40,30]); }catch(e){}
+    mentorLine('Так! '+ua+' — '+pctUA(b.sc)+'. Це він.','joy'); DOJO.phase='next'; DOJO.t=0; DOJO.best=null; return; }
+  const why = b.top ? '' : ' Це більше схоже на '+(KATA_UA[b.other]||b.other)+'.';
+  try{ showBanner('🥋 '+k+' '+b.sc+'%'+(b.top?'':' → '+b.other)+' — треба '+VB_KATAQ.solo+'%','#f59e0b'); }catch(e){}
+  if(DOJO.soloN<3){ mentorLine(ua+' — '+pctUA(b.sc)+'.'+why+' '+(KATA_TIPS[k]||'')+' Ще раз: три сигнали — і бий.','curious'); DOJO.phase='solosay'; }
+  else { mentorLine(ua+' — '+pctUA(b.sc)+'.'+why+' Підемо далі, повернемось до нього іншим разом.','neutral'); DOJO.phase='next'; }
+  DOJO.t=0; DOJO.best=null;
 }
 function dojoEnd(abort){
-  const a=dojoMentor(); if(a) a.demo=null;
+  ghostStop(); CUE.on=false; const a=dojoMentor(); if(a) a.demo=null;
   DOJO.on=false; DOJO.phase='';
   if(!abort) mentorLine('Це всі шість. Тренуйся, коли захочеш: у меню є «Тренування ударів». А жрець у святилищі дає за удари завдання.','joy');
   logE('ДОДЖЬО: '+(abort?'перервано':'завершено'));
