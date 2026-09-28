@@ -655,7 +655,14 @@ function sensorYawTick(dt){
   }
   sensor.yawG=null;
   // BLADE_RESPONSE=1 → ЖОДНОГО фільтра: телефон повернувся на 30° — клинок теж.
-  sensor.yawFused = (r>=0.999) ? tgt : smoothAngle(sensor.yawFused, tgt, clamp(r*30*dt,0,1));
+  let yf = (r>=0.999) ? tgt : smoothAngle(sensor.yawFused, tgt, clamp(r*30*dt,0,1));
+  /* (09-28i) ОБМЕЖЕННЯ ШВИДКОСТІ КУРСУ: компас під час маху стрибає (2000°/с при гіро 400) — вістря «телепортується»
+     на 100+ м/с і ламає оцінку удару. Курс не може крутитись швидше, ніж телефон реально обертається (гіроскоп) + запас.
+     Біля вертикалі (проекція вістря < 0.35) азимут вільний — там оберт азимуту майже не рухає вістря. */
+  if(sensor.haveGyro && sensor.yawFused!=null && dt>0 && !(sensor.tipH!=null && sensor.tipH<0.35)){
+    const maxStep=(120+1.3*(sensor.gyroMag||0))*dt, step=angDiff(yf, sensor.yawFused);
+    if(Math.abs(step)>maxStep){ yf=wrap360(sensor.yawFused+Math.sign(step)*maxStep); sensor.yawClampN=(sensor.yawClampN||0)+1; } }
+  sensor.yawFused=yf;
 }
 /* Канал 2+3: різкий фізичний мах рукою. Пороги налаштовувані (ТЗ п.10). */
 function swingTick(dt){
@@ -2211,7 +2218,10 @@ function updateStanceAndCamera(dt){
   let fpYaw, fpPitch;
   if(headCam){
     const bodyYaw=(player.visYaw!=null)?player.visYaw:_camYaw;
-    CAMH.yaw=(CAMH.yaw==null)?bodyYaw:wrap360(CAMH.yaw+angDiff(bodyYaw,CAMH.yaw)*clamp(dt*8,0,1));
+    let camTgt=bodyYaw;                                                                   // (09-28i) погляд довертається до цілі
+    try{ const T=camLockTarget(); if(T && T.mesh){ const tp=T.mesh.position; const yawTo=wrap360(Math.atan2(tp.x-px, -(tp.z-pz))*180/Math.PI);
+      const mx=VB_CAM.lockMax||70; camTgt=wrap360(bodyYaw+clamp(angDiff(yawTo,bodyYaw),-mx,mx)*clamp(VB_CAM.lock,0,1)); } }catch(e){}
+    CAMH.yaw=(CAMH.yaw==null)?camTgt:wrap360(CAMH.yaw+angDiff(camTgt,CAMH.yaw)*clamp(dt*8,0,1));
     const el=-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI;                       // підйом клинка, ° (sensor.pitch = −sin)
     const pT=clamp(el*(VB_CAM.headPitch??0.3),-25,25);
     CAMH.pitch=(CAMH.pitch==null)?pT:CAMH.pitch+(pT-CAMH.pitch)*clamp(dt*4,0,1);
@@ -5329,7 +5339,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-28h · ЗАМАХ ЗА ГОЛОВУ: азимут клинка — це куди дивиться ВІСТРЯ (за головою — так за головою, без розвороту картинки на 135°); тіло й камера не розвертаються, поки меч над головою; розворот біля вертикалі — не «ривок» · СТРІЧКИ КЛИНКА у наставника (зелена), ворогів (червона) і всіх NPC з ригом · (09-27g) доджьо v2, оцінка маху';
+const BUILD_TAG='2026-09-28i · ВІДЛІК: «три, два, один — бий/рушай» — гучні тони (повз фільтри й гучність ефектів) + голос + вібро + цифри на екрані · ЕКСКУРСІЯ: якщо меч уже вийнято — наставник це бачить (спершу сховати, потім вийняти) · КАМЕРА: м\'яка фіксація на цілі (наставник у тренуванні, найближчий ворог у бою; частка й межа — у 🎚) · ДОДЖЬО: ставить посередині кімнати, «разом із тінню» терпить запізнення ±0.6 с, допуск 0.36, потрібно 50 % · КУРС не стрибає швидше, ніж крутиться телефон · (09-28h) замах за голову, стрічки NPC';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7668,7 +7678,7 @@ function trajTrim(feat, vmin){ let a=0,b=feat.length-1; while(a<b&&feat[a].v<vmi
 function trajResample(feat,N){ const T0=feat[0].t, T1=feat[feat.length-1].t, out=[];
   for(let k=0;k<N;k++){ const t=T0+(T1-T0)*k/Math.max(1,N-1); let i=0; while(i<feat.length-2&&feat[i+1].t<t) i++; const a=feat[i], b=feat[Math.min(i+1,feat.length-1)], f=(b.t>a.t)?clamp((t-a.t)/(b.t-a.t),0,1):0;
     out.push({g:a.g.map((x,j)=>x+(b.g[j]-x)*f), d:a.d.map((x,j)=>x+(b.d[j]-x)*f)}); } return out; }
-var VB_KATAQ={ wG:0.25, trim:0.30, tol:0.30, need:55, solo:55, ghostSpeed:0.5, demoSpeed:0.45, soloWin:4.0 };   // (09-27g) оцінка маху й доджьо
+var VB_KATAQ={ wG:0.25, trim:0.30, tol:0.36, need:50, solo:55, ghostSpeed:0.5, demoSpeed:0.45, soloWin:4.0, lagWin:0.6 };   // (09-28i) tol/need м'якші, lagWin — терпимість до запізнення за тінню   // (09-27g) оцінка маху й доджьо
 window.VB_KATAQ=VB_KATAQ;
 function featDist(a,b){ const dp=Math.hypot(a.g[0]-b.g[0],a.g[1]-b.g[1],a.g[2]-b.g[2]); const dot=clamp(a.d[0]*b.d[0]+a.d[1]*b.d[1]+a.d[2]*b.d[2],-1,1); const w=VB_KATAQ.wG; return w*Math.min(dp,1.5)+(1-w)*(Math.acos(dot)/Math.PI); }
 /* (09-27g) обрізка ВІДНОСНО піку швидкості (медіана з 3 кадрів — один сплеск не обманює): лишається саме рубання,
@@ -7886,7 +7896,7 @@ function labFollowTick(dt){
   const busy=(typeof ttsBusy==='function')&&ttsBusy();
   if(LABF.phase==='say'){ if(LABF.t>0.6 && !busy){ LABF.phase='show'; LABF.t=0; LAB.anim=LABF.name; LAB.animT=0; LAB.playing=true; LAB.loop=true; LAB.speed=0.5; labPanelSync(); } return; }
   if(LABF.phase==='show'){ const A=LAB_ANIMS[LABF.name]; const T=(A&&A.keys[A.keys.length-1].t)||1;
-    if(LAB.animT>=2*T-0.02 || LABF.t>2*T/0.5+2){ LAB.playing=false; LAB.loop=false; LAB.speed=1; labApplyPose(LAB.pose); LABF.phase='ready'; LABF.t=0; labPanelSync(); try{ ttsSpeak('Тепер ти. Чекай: три короткі сигнали, на четвертий, високий, — бий.',{critical:true}); }catch(e){} } return; }
+    if(LAB.animT>=2*T-0.02 || LABF.t>2*T/0.5+2){ LAB.playing=false; LAB.loop=false; LAB.speed=1; labApplyPose(LAB.pose); LABF.phase='ready'; LABF.t=0; labPanelSync(); try{ ttsSpeak('Тепер ти. Я порахую: три, два, один — і на «бий» бий.',{critical:true}); }catch(e){} } return; }
   if(LABF.phase==='ready'){ if(!busy && LABF.t>0.6){ LABF.phase='cue'; LABF.t=0; cueStart(()=>{ if(!LABF.on) return; LAB.flags.sensor=true; if(!LAB.neutral) labCalibrateNeutral(); labRefreshFlags(); labRecStart(); LABF.phase='rec'; LABF.t=0; labPanelSync(); }); } return; }
   if(LABF.phase==='cue'){ cueTick(dt); return; }   // (09-27g) три короткі, четвертий високий — запис
   if(LABF.phase==='rec'){ if(LABF.t>=3.0){ labRecStop(); LABF.phase='score'; LABF.t=0; labPanelSync(); } return; }
@@ -7900,7 +7910,7 @@ function labFollowTick(dt){
     try{ if(navigator.vibrate) navigator.vibrate(sc>=60?[0,30,40,30]:[0,60]); }catch(e){}
     logE('LAB ПОВТОРИ: спроба '+LABF.tries+' — '+LABF.name+' '+sc+'%'+(top?'':' (найближче '+res[0].name+' '+res[0].score+'%)'));
     LABF.phase = LABF.tries>=3 ? 'done' : 'again'; LABF.t=0; return; }
-  if(LABF.phase==='again'){ if(!busy && LABF.t>1.0){ LABF.phase='ready'; LABF.t=0; try{ ttsSpeak('Ще раз. Три сигнали — і на високий бий.',{critical:true}); }catch(e){} } return; }
+  if(LABF.phase==='again'){ if(!busy && LABF.t>1.0){ LABF.phase='ready'; LABF.t=0; try{ ttsSpeak('Ще раз: три, два, один — бий.',{critical:true}); }catch(e){} } return; }
   if(LABF.phase==='done'){ if(!busy){ try{ ttsSpeak('Досить, три спроби. Натисни кнопку знову, щоб повторити, або обери інший удар.',{critical:true}); }catch(e){} labFollowStop('три спроби зроблено'); } return; }
 }
 /* (09-27e) ПАМ'ЯТКА ЛАБОРАТОРІЇ — покроково, без термінів */
@@ -8814,7 +8824,18 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.3, fov:96, guardQ:0 };   // (09-27a) камера «голова»
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.3, fov:96, guardQ:0, lock:0.5, lockMax:70, lockRange:6 };   // (09-27a) камера «голова»; (09-28i) lock — частка фіксації погляду на цілі
+var CAMLOCK={ target:null };
+/* (09-28i) ЦІЛЬ ДЛЯ ПОГЛЯДУ: у тренуванні — наставник; у бою — найближчий живий ворог у lockRange клітинок
+   (тримаємо ту саму, поки жива й не далі lockRange+2). Голова довертається до цілі на частку lock, не більше lockMax°. */
+function camLockTarget(){
+  if(!(VB_CAM.lock>0)) { CAMLOCK.target=null; return null; }
+  if(typeof DOJO!=='undefined' && DOJO.on){ const a=(typeof ALLY!=='undefined')&&ALLY.ph; CAMLOCK.target=(a&&a.mesh&&!a.dead)?a:null; return CAMLOCK.target; }
+  const range=VB_CAM.lockRange||6; let best=CAMLOCK.target;
+  if(best && (best.dead || best.ally || !best.mesh || Math.abs(best.gx-player.gx)+Math.abs(best.gy-player.gy)>range+2 || phantoms.indexOf(best)<0)) best=null;
+  if(!best){ let bd=1e9; for(const p of phantoms){ if(p.dead||p.ally||!p.mesh) continue; const d=Math.abs(p.gx-player.gx)+Math.abs(p.gy-player.gy); if(d<=range && d<bd){ bd=d; best=p; } } }
+  CAMLOCK.target=best; return best;
+}
 const CAMH={ yaw:null, pitch:null };   // (09-27a) стан головної камери
 window.CAMH=CAMH;
 const VB_ORI={ force:0, rollSign:1, level:1, autoFull:1 };   // (09-27a) знак повороту тепер із фізики; rollSign=−1 — лише якщо калібрування збрехало
@@ -8954,7 +8975,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,5,0.05],['VB_ARM.bodyFollow','Лінійний рух: тіло йде за рукою (випад)',0,2,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],['VB_KATAQ.wG','Ката: вага положення руків\'я (0 — лише напрям клинка)',0,1,0.05],['VB_KATAQ.solo','Ката: удар сам — потрібно відсотків (доджьо і жрець)',20,90,5],['VB_KATAQ.need','Доджьо: разом із тінню — потрібно відсотків',20,90,5],['VB_KATAQ.tol','Доджьо: допуск «у тіні»',0.15,0.6,0.05],['VB_KATAQ.ghostSpeed','Доджьо: швидкість тіні (частка від бойової)',0.2,1,0.1],
   ['VB_CAM.head','Альбомна: камера — голова (1) / старий приціл уздовж клинка (0)',0,1,1],['VB_CAM.headBack','Голова: камера позаду голови, м',0,0.8,0.05],['VB_CAM.headUp','Голова: камера вище очей, м',-0.2,0.4,0.02],
-  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],
+  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_CAM.lock','Камера: частка фіксації погляду на цілі (0 — вимк)',0,1,0.05],['VB_CAM.lockMax','Камера: макс. доворот голови до цілі, °',0,90,5],['VB_CAM.lockRange','Камера: ціль ближче, ніж клітинок',2,12,1],
   ['VB_CAM.axis','Старий приціл: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
@@ -10081,11 +10102,21 @@ function kataqEvalStroke(t0,t1){
    гравець веде клинок за тінню: у тіні — один тон і пульс вібро, поза тінню — другий тон свого вістря. */
 var DOJO={ on:false, list:[], i:0, kind:null, phase:'', t:0, then:null, tries:0, followN:0, soloN:0, blipT:0, cueNext:'', soloArmed:false, soloT0:-1, best:null };
 window.DOJO=DOJO;
-var CUE={ on:false, t:0, i:0, cb:null };
-function cueStart(cb){ CUE.on=true; CUE.t=0; CUE.i=0; CUE.cb=cb; }
-function cueTick(dt){ if(!CUE.on) return; CUE.t+=dt; const times=[0,0.7,1.4,2.1];
-  while(CUE.i<4 && CUE.t>=times[CUE.i]){ const last=CUE.i===3; try{ blip(last?1040:520, last?0.22:0.08, 'sine', last?0.16:0.12); if(navigator.vibrate) navigator.vibrate(last?[0,90]:[0,30]); }catch(e){} CUE.i++;
-    if(last){ CUE.on=false; const cb=CUE.cb; CUE.cb=null; if(cb) cb(); } } }
+var CUE={ on:false, t:0, i:0, cb:null, words:null };
+/* (09-28i) ВІДЛІК «три, два, один — бий»: тон прямо в master (повз фільтр світу й гучність ефектів — тому чутно
+   навіть із приглушеним звуком), голос називає цифру, вібро коротке/довге, на екрані цифра. Крок 0.8 с. */
+function cueTone(freq, dur, vol){ try{ if(!AC||!master) return; const o=AC.createOscillator(), o2=AC.createOscillator(), g=AC.createGain(), g2=AC.createGain();
+  o.type='triangle'; o.frequency.value=freq; o2.type='square'; o2.frequency.value=freq*2; g2.gain.value=0.22; o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master);
+  const t=AC.currentTime; g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.012); g.gain.setValueAtTime(vol,t+dur*0.6); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.start(t); o2.start(t); o.stop(t+dur+0.02); o2.stop(t+dur+0.02); }catch(e){} }
+function cueStart(cb, words){ CUE.on=true; CUE.t=0; CUE.i=0; CUE.cb=cb; CUE.words=words||['три','два','один','бий!']; }
+function cueTick(dt){ if(!CUE.on) return; CUE.t+=dt; const times=[0,0.8,1.6,2.4];
+  while(CUE.i<4 && CUE.t>=times[CUE.i]){ const last=CUE.i===3; const word=CUE.words[CUE.i];
+    cueTone(last?1320:880, last?0.45:0.18, last?0.7:0.5);
+    try{ if(navigator.vibrate) navigator.vibrate(last?[0,180]:[0,45]); }catch(e){}
+    try{ showBanner(last?('⚔ '+word.toUpperCase()):String(3-CUE.i), last?'#4ade80':'#fbbf24'); }catch(e){}
+    try{ ttsSpeak(word,{critical:true,rate:1.15}); }catch(e){}
+    CUE.i++; if(last){ CUE.on=false; const cb=CUE.cb; CUE.cb=null; if(cb) cb(); } } }
 function pctUA(n){ n=Math.round(n); const m10=n%10, m100=n%100; const w=(m100>=11&&m100<=14)?'відсотків':(m10===1?'відсоток':(m10>=2&&m10<=4?'відсотки':'відсотків')); return n+' '+w; }
 var SHADE={ S:null, on:false, anim:null, t:0, T:0, speed:0.5, playing:false, blipT:0, sync:null, inSync:false, prevTip:null, hapT:0 };
 window.SHADE=SHADE;
@@ -10099,7 +10130,7 @@ function ghostEnsure(){
 }
 function ghostPlay(name, speed){ const S=ghostEnsure(); const A=LAB_ANIMS[name]; if(!S||!A) return false;
   SHADE.anim=name; SHADE.t=0; SHADE.T=A.keys[A.keys.length-1].t; SHADE.speed=speed||VB_KATAQ.ghostSpeed; SHADE.playing=true; SHADE.on=true; S.obj.visible=true;
-  SHADE.sync={t:0,act:0,dsum:0,n:0}; SHADE.blipT=0; SHADE.prevTip=null; SHADE.inSync=false; SHADE.hapT=0; return true; }
+  SHADE.sync={t:0,act:0,dsum:0,n:0}; SHADE.blipT=0; SHADE.prevTip=null; SHADE.inSync=false; SHADE.hapT=0; SHADE.gh=[]; SHADE.ph=[]; SHADE.samp=[]; SHADE.nextSamp=0; return true; }
 function ghostStop(){ SHADE.playing=false; SHADE.on=false; if(SHADE.S) SHADE.S.obj.visible=false; }
 function ghostTick(dt, follow){
   if(!SHADE.on || !SHADE.S) return;
@@ -10111,24 +10142,44 @@ function ghostTick(dt, follow){
   try{ labSwordMode(false); if(pose) labSetPose(pose); S.rig.root.rotation.copy(P.rig.root.rotation); S.rig.root.position.copy(P.rig.root.position); S.obj.updateMatrixWorld(true); gr=labSwordRel(); }catch(e){} finally{ LAB=prev; }
   try{ const hc=((VB_CAM.head|0)===1); S.rig.J.NECK.traverse(o=>{ if(o.isMesh) o.visible=!hc; }); }catch(e){}
   let tp=null, gv=0; try{ const sw=S.rig.sword; tp=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); if(SHADE.prevTip) gv=tp.distanceTo(SHADE.prevTip)/Math.max(1e-3,dt); SHADE.prevTip=tp.clone(); }catch(e){}
-  if(follow && gr && KATAQ.tipPrev){ const reach=kataqReach(P), pr=KATAQ.tipPrev;
-    const d=featDist({g:pr.g.map(x=>x/reach), d:pr.d},{g:gr.g.map(x=>x/reach), d:gr.d}); SHADE.inSync=d<VB_KATAQ.tol;
-    if(SHADE.playing && gv>0.3){ SHADE.sync.act+=dt; SHADE.sync.dsum+=d; SHADE.sync.n++; if(SHADE.inSync) SHADE.sync.t+=dt; } }
+  if(follow && gr && KATAQ.tipPrev){ const reach=kataqReach(P), pr=KATAQ.tipPrev; const now=performance.now()/1000;
+    const gf={g:gr.g.map(x=>x/reach), d:gr.d}, pf={g:pr.g.map(x=>x/reach), d:pr.d};
+    /* (09-28i) терпимість до запізнення: порівнюємо не лише «зараз із зараз», а й із тим, де тінь / рука були
+       упродовж останніх lagWin с — хто відстає чи поспішає на пів секунди, той усе одно «в тіні». */
+    const W=VB_KATAQ.lagWin||0.6; SHADE.gh.push({t:now,f:gf}); SHADE.ph.push({t:now,f:pf});
+    while(SHADE.gh.length && now-SHADE.gh[0].t>W) SHADE.gh.shift(); while(SHADE.ph.length && now-SHADE.ph[0].t>W) SHADE.ph.shift();
+    let d=featDist(pf,gf); for(const h of SHADE.gh){ const x=featDist(pf,h.f); if(x<d) d=x; } for(const h of SHADE.ph){ const x=featDist(h.f,gf); if(x<d) d=x; }
+    SHADE.inSync=d<VB_KATAQ.tol;
+    if(SHADE.playing && gv>0.3){ SHADE.sync.act+=dt; SHADE.sync.dsum+=d; SHADE.sync.n++; if(SHADE.inSync) SHADE.sync.t+=dt; }
+    if(SHADE.playing && SHADE.t>=SHADE.nextSamp){ SHADE.nextSamp+=SHADE.T/4; SHADE.samp.push({g:gr.d.slice(), p:pr.d.slice(), d:+d.toFixed(2)}); } }
   SHADE.blipT-=dt;
   if(tp && SHADE.playing && SHADE.blipT<=0){ SHADE.blipT=0.09;
     try{ const f=320+640*clamp((tp.y-0.2)/2.1,0,1); spatialBlip(tp.x,tp.y,tp.z,f,0.07,'sine',0.09);
       if(follow && !SHADE.inSync){ const sw=P.rig.sword; const pt=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); const f2=320+640*clamp((pt.y-0.2)/2.1,0,1); setTimeout(()=>{ try{ spatialBlip(pt.x,pt.y,pt.z,f2,0.06,'triangle',0.07); }catch(e){} },45); } }catch(e){} }
   if(follow && SHADE.playing && SHADE.inSync){ SHADE.hapT-=dt; if(SHADE.hapT<=0){ SHADE.hapT=0.4; try{ if(navigator.vibrate) navigator.vibrate([0,18]); }catch(e){} } }
 }
-function ghostScore(){ const s=SHADE.sync; if(!s||s.act<0.2) return {pct:0, mean:1}; return {pct:Math.round(100*s.t/s.act), mean:+(s.dsum/Math.max(1,s.n)).toFixed(2)}; }
+function ghostScore(){ const s=SHADE.sync; if(!s||s.act<0.2) return {pct:0, mean:1, diag:''};
+  const ea=(v)=>Math.round(Math.asin(clamp(v[1],-1,1))*180/Math.PI)+'/'+Math.round(Math.atan2(v[0],v[2])*180/Math.PI);   // підйом/азимут клинка у системі тіла
+  const diag=(SHADE.samp||[]).map(q=>ea(q.g)+'→'+ea(q.p)+'('+q.d+')').join(' · ');
+  return {pct:Math.round(100*s.t/s.act), mean:+(s.dsum/Math.max(1,s.n)).toFixed(2), diag}; }
 function dojoMentor(){ const a=(typeof ALLY!=='undefined')&&ALLY.ph; return (a && !a.dead && a.mesh) ? a : null; }
 function dojoPlaceMentor(a){ try{ const fd=DIRV[player.dirIdx||0]||[0,1]; for(const dist of [3,4,2]){ const nx=clamp(player.gx+fd[0]*dist,0,12), ny=clamp(player.gy+fd[1]*dist,0,12);
   if((nx!==player.gx||ny!==player.gy) && !obstacleAt(nx,ny) && !isCellOccupied(nx,ny,a)){ a.gx=nx; a.gy=ny; a.moveT=1; return; } } }catch(e){} }
+function dojoPlacePlayer(){                                                             // (09-28i) біля стіни/блоків замах б'є у стіну — ставимо посередині
+  try{ const near = player.gx<2||player.gx>10||player.gy<2||player.gy>10; let blocked=false;
+    for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){ if(obstacleAt(player.gx+dx,player.gy+dy)) blocked=true; }
+    if(!near && !blocked) return false;
+    for(const [x,y] of [[6,6],[6,7],[7,6],[5,6],[6,5],[5,5],[7,7],[5,7],[7,5]]){ let ok=!obstacleAt(x,y);
+      for(let dx=-1;dx<=1&&ok;dx++) for(let dy=-1;dy<=1;dy++) if(obstacleAt(x+dx,y+dy)) ok=false;
+      if(ok){ player.gx=x; player.gy=y; player._cont=false; player.cx=x; player.cy=y; player.vgx=x; player.vgy=y; return true; } } }catch(e){}
+  return false;
+}
 function dojoStart(then){
   const a=dojoMentor(); if(!a){ logE('ДОДЖЬО: наставника немає поруч'); try{ showBanner('🥋 Наставника немає поруч','#f59e0b'); }catch(e){} if(then) then(); return; }
   DOJO.on=true; DOJO.then=then||null; DOJO.list=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA']).slice(); DOJO.i=0; DOJO.tries=0;
   try{ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0; }catch(e){}
   try{ KATAQ.stroke=null; }catch(e){}
+  if(dojoPlacePlayer()) mentorLine('Я поставив тебе посередині — тут є місце для замаху.','neutral');
   dojoPlaceMentor(a); ghostEnsure();
   logE('ДОДЖЬО: старт · '+DOJO.list.join(', ')+' · потрібно '+VB_KATAQ.need+'% разом із тінню, '+VB_KATAQ.solo+'% сам');
   dojoShow(true);
@@ -10143,7 +10194,7 @@ function dojoDemoStart(){ const a=dojoMentor(); if(!a) return; const A=LAB_ANIMS
 function dojoFacePlayer(a){ try{ const dx=player.gx-a.gx, dy=player.gy-a.gy; if(dx||dy){ const yaw=Math.atan2(dx,-dy)*180/Math.PI; a.dirIdx=((Math.round(wrap360(yaw)/45)%8)+8)%8; } }catch(e){} }
 function dojoGo(next){ DOJO.cueNext=next; DOJO.phase='cue'; DOJO.t=0;
   cueStart(()=>{ if(!DOJO.on) return; if(DOJO.cueNext==='follow'){ ghostPlay(DOJO.kind, VB_KATAQ.ghostSpeed); DOJO.phase='follow'; }
-    else { DOJO.phase='solo'; DOJO.soloArmed=true; DOJO.soloT0=-1; DOJO.best=null; try{ KATAQ.stroke=null; }catch(e){} } DOJO.t=0; }); }
+    else { DOJO.phase='solo'; DOJO.soloArmed=true; DOJO.soloT0=-1; DOJO.best=null; try{ KATAQ.stroke=null; }catch(e){} } DOJO.t=0; }, ['три','два','один', next==='follow'?'рушай!':'бий!']); }
 function dojoTick(dt){
   if(!DOJO.on) return;
   const a=dojoMentor(); if(!a){ dojoEnd(true); return; }
@@ -10160,23 +10211,23 @@ function dojoTick(dt){
         DOJO.blipT-=dt; if(a.demo && D.pause<=0 && DOJO.blipT<=0){ DOJO.blipT=0.09; try{ const S=a._rigS; if(S&&S.rig){ const sw=S.rig.sword; const tp=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0)); const f=320+640*clamp((tp.y-0.2)/2.1,0,1); spatialBlip(tp.x,tp.y,tp.z,f,0.07,'sine',0.09); } }catch(e){} }
       } else { DOJO.phase='shadowsay'; DOJO.t=0; mentorLine('Тепер твоя тінь: твоя ж рука сама зробить цей удар. Не рухайся — дивись і слухай.','curious'); }
       return; }
-    case 'shadowsay': if(!talking && DOJO.t>0.4){ if(ghostPlay(DOJO.kind, VB_KATAQ.ghostSpeed)){ DOJO.phase='shadow'; } else { DOJO.phase='followsay'; mentorLine('Тепер сам, у повну силу. Чекай: три короткі сигнали, на четвертий, високий, — бий.','curious'); } DOJO.t=0; } return;
-    case 'shadow': ghostTick(dt,false); if(!SHADE.playing && DOJO.t>0.5){ ghostStop(); DOJO.phase='followsay'; DOJO.t=0; mentorLine('А тепер разом із тінню, повільно. Чекай: три короткі сигнали, а на четвертий, високий, — рухайся з нею. Один тон — ти в тіні.','curious'); } return;
+    case 'shadowsay': if(!talking && DOJO.t>0.4){ if(ghostPlay(DOJO.kind, VB_KATAQ.ghostSpeed)){ DOJO.phase='shadow'; } else { DOJO.phase='followsay'; mentorLine('Тепер сам, у повну силу. Три, два, один — і на «бий» бий.','curious'); } DOJO.t=0; } return;
+    case 'shadow': ghostTick(dt,false); if(!SHADE.playing && DOJO.t>0.5){ ghostStop(); DOJO.phase='followsay'; DOJO.t=0; mentorLine('А тепер разом із тінню, повільно. Я порахую: три, два, один — і на «рушай» веди клинок за нею. Один тон — ти в тіні.','curious'); } return;
     case 'followsay': if(!talking && DOJO.t>0.4) dojoGo(SHADE.S?'follow':'solo'); return;
     case 'cue': return;
     case 'follow': ghostTick(dt,true);
       if(!SHADE.playing && DOJO.t>0.3){ const sc=ghostScore(); ghostStop(); DOJO.followN++;
-        logE('ДОДЖЬО ТІНЬ: '+DOJO.kind+' разом '+sc.pct+'% · середня відстань '+sc.mean+' · спроба '+DOJO.followN);
+        logE('ДОДЖЬО ТІНЬ: '+DOJO.kind+' разом '+sc.pct+'% · середня відстань '+sc.mean+' · спроба '+DOJO.followN+' · тінь→ти (підйом/азимут, відстань): '+sc.diag);
         try{ showBanner('🥋 '+DOJO.kind+' з тінню '+sc.pct+'%', sc.pct>=VB_KATAQ.need?'#4ade80':'#f59e0b'); }catch(e){}
-        if(sc.pct>=VB_KATAQ.need){ mentorLine('Разом на '+pctUA(sc.pct)+'. Добре. Тепер сам, у повну силу: три сигнали — і на високий бий. Із замахом, і зупинись у кінці.','joy'); DOJO.phase='solosay'; }
-        else if(DOJO.followN<3){ mentorLine('Разом лише на '+pctUA(sc.pct)+'. Не поспішай, веди клинок точно за тінню. Ще раз: три сигнали, і на високий рушай.','curious'); DOJO.phase='followsay'; }
-        else { mentorLine('Разом на '+pctUA(sc.pct)+'. Гаразд, спробуй сам, у повну силу: три сигнали — і на високий бий.','neutral'); DOJO.phase='solosay'; }
+        if(sc.pct>=VB_KATAQ.need){ mentorLine('Разом на '+pctUA(sc.pct)+'. Добре. Тепер сам, у повну силу. Три, два, один — і на «бий» бий: із замахом, і зупинись у кінці.','joy'); DOJO.phase='solosay'; }
+        else if(DOJO.followN<3){ mentorLine('Разом лише на '+pctUA(sc.pct)+'. Не поспішай: тінь іде повільно, веди клинок точно за нею. Ще раз: три, два, один — і рушай.','curious'); DOJO.phase='followsay'; }
+        else { mentorLine('Разом на '+pctUA(sc.pct)+'. Гаразд, спробуй сам, у повну силу. Три, два, один — і на «бий» бий.','neutral'); DOJO.phase='solosay'; }
         DOJO.t=0; }
       return;
     case 'solosay': if(!talking && DOJO.t>0.4) dojoGo('solo'); return;
     case 'solo':
       if(DOJO.best && DOJO.soloT0>=0 && DOJO.t-DOJO.soloT0>=VB_KATAQ.soloWin) dojoSoloVerdict();
-      else if(!DOJO.best && DOJO.t>8){ DOJO.soloArmed=false; mentorLine('Я не почув удару. Ще раз: три сигнали — і бий.','curious'); DOJO.phase='solosay'; DOJO.t=0; }
+      else if(!DOJO.best && DOJO.t>8){ DOJO.soloArmed=false; mentorLine('Я не почув удару. Ще раз: три, два, один — бий.','curious'); DOJO.phase='solosay'; DOJO.t=0; }
       return;
     case 'next': if(DOJO.t>1.2 && !talking){ DOJO.i++; if(DOJO.i>=DOJO.list.length) dojoEnd(false); else dojoShow(false); } return;
   }
@@ -10195,7 +10246,7 @@ function dojoSoloVerdict(){
     mentorLine('Так! '+ua+' — '+pctUA(b.sc)+'. Це він.','joy'); DOJO.phase='next'; DOJO.t=0; DOJO.best=null; return; }
   const why = b.top ? '' : ' Це більше схоже на '+(KATA_UA[b.other]||b.other)+'.';
   try{ showBanner('🥋 '+k+' '+b.sc+'%'+(b.top?'':' → '+b.other)+' — треба '+VB_KATAQ.solo+'%','#f59e0b'); }catch(e){}
-  if(DOJO.soloN<3){ mentorLine(ua+' — '+pctUA(b.sc)+'.'+why+' '+(KATA_TIPS[k]||'')+' Ще раз: три сигнали — і бий.','curious'); DOJO.phase='solosay'; }
+  if(DOJO.soloN<3){ mentorLine(ua+' — '+pctUA(b.sc)+'.'+why+' '+(KATA_TIPS[k]||'')+' Ще раз: три, два, один — бий.','curious'); DOJO.phase='solosay'; }
   else { mentorLine(ua+' — '+pctUA(b.sc)+'.'+why+' Підемо далі, повернемось до нього іншим разом.','neutral'); DOJO.phase='next'; }
   DOJO.t=0; DOJO.best=null;
 }
@@ -12072,18 +12123,21 @@ function dlgOfferTour(then,o){
 const TOUR={ on:false, step:0, t:0, x0:0, y0:0, hinted:false, pause:0, then:null, begun:false };
 function tourPos(){ return (player._cont&&player.cx!=null)?[player.cx,player.cy]:[player.gx,player.gy]; }
 const TOUR_STEPS=[
-  {say:'Спершу — меч. Зараз він у піхвах: ним можна обмацувати світ. Махни різко — і він вийде.', ok:()=>typeof SHEATH==='undefined'||SHEATH.drawn, done:'Так. Тепер він ріже.', hint:'Різкіше — ніби струшуєш краплю з леза.'},
+  {say:'Спершу — меч. Зараз він у піхвах: ним можна обмацувати світ. Махни різко — і він вийде.', ok:()=>typeof SHEATH==='undefined'||SHEATH.drawn, done:'Так. Тепер він ріже.', hint:'Різкіше — ніби струшуєш краплю з леза.',
+   alt:{say:'Спершу — меч. Бачу, ти вже вийняв його і рубаєш. Тоді навпаки: сховай його — вістрям униз, і завмри на секунду-дві.', ok:()=>typeof SHEATH!=='undefined'&&!SHEATH.drawn, done:'Тихо. У піхвах він лише мацає світ — і нікого не ранить.', hint:'Опусти вістря вниз і не рухайся секунду-дві.'}},   // (09-28i) меч уже в руці — урок навпаки
   {say:'Щоб іти — торкнись екрана й потягни, куди хочеш. Відпустиш — зупинишся.', ok:()=>{ const p=tourPos(); return Math.hypot(p[0]-TOUR.x0,p[1]-TOUR.y0)>=2; }, done:'Добре. Ти ходиш.', hint:'Торкнись екрана і тягни палець уперед.'},
   {say:'Поверни телефон набік, як фотоапарат. Це захисна стійка — і світ сповільниться.', ok:()=>(ORI.landS||0)>0.8, done:'Відчуваєш? Час густішає.', hint:'Повільно клади телефон набік, до кінця.'},
-  {say:'Тепер сховай меч: вістрям униз — і завмри.', ok:()=>typeof SHEATH!=='undefined'&&!SHEATH.drawn, done:'Тихо. Так проходять повз ворогів.', hint:'Опусти вістря вниз і не рухайся секунду-дві.'},
+  {say:'Тепер сховай меч: вістрям униз — і завмри.', ok:()=>typeof SHEATH!=='undefined'&&!SHEATH.drawn, done:'Тихо. Так проходять повз ворогів.', hint:'Опусти вістря вниз і не рухайся секунду-дві.',
+   alt:{say:'А тепер вийми його знову: махни різко.', ok:()=>typeof SHEATH==='undefined'||SHEATH.drawn, done:'Так. Тепер він знову ріже.', hint:'Різкіше — ніби струшуєш краплю з леза.'}},
 ];
+function tourDef(i){ const S=TOUR_STEPS[i]; if(S && S.alt && (i===0||i===3) && TOUR.swapped) return S.alt; return S; }   // (09-28i) порядок «сховати → вийняти», якщо меч уже вийнято
 function tourStart(then){ TOUR.on=true; TOUR.step=0; TOUR.then=then; TOUR.pause=0.6; TOUR.begun=false; logE('ЕКСКУРСІЯ: старт'); }
-function tourBegin(){ const S=TOUR_STEPS[TOUR.step]; TOUR.t=0; TOUR.hinted=false; const p=tourPos(); TOUR.x0=p[0]; TOUR.y0=p[1]; TOUR.begun=true; mentorLine(S.say,'curious'); logE('ЕКСКУРСІЯ: крок '+(TOUR.step+1)+'/'+TOUR_STEPS.length); }
+function tourBegin(){ if(TOUR.step===0) TOUR.swapped=!!(typeof SHEATH!=='undefined'&&SHEATH.drawn); const S=tourDef(TOUR.step); TOUR.t=0; TOUR.hinted=false; const p=tourPos(); TOUR.x0=p[0]; TOUR.y0=p[1]; TOUR.begun=true; mentorLine(S.say,'curious'); logE('ЕКСКУРСІЯ: крок '+(TOUR.step+1)+'/'+TOUR_STEPS.length); }
 function tourTick(dt){
   if(!TOUR.on || DLG.q) return;
   if(TOUR.pause>0){ TOUR.pause-=dt; if(TOUR.pause<=0) tourBegin(); return; }
   if(!TOUR.begun) return; if(dlgSpeaking()){ TOUR.quiet=0; return; }
-  const S=TOUR_STEPS[TOUR.step]; TOUR.t+=dt;
+  const S=tourDef(TOUR.step); TOUR.t+=dt;
   if(S.ok() && TOUR.step===2){ mentorLine(S.done,'happy'); TOUR.begun=false; askLevel(); return; }   // (09-24b) перевірка горизонту відповіддю
   if(S.ok()){ mentorLine(S.done,'happy'); TOUR.step++; TOUR.begun=false;
     if(TOUR.step>=TOUR_STEPS.length){ TOUR.on=false; tourEnd(); } else TOUR.pause=1.0; return; }
