@@ -473,10 +473,18 @@ function orientationHeading(alpha,beta){
   sensor.quat={x:_oQuat.x,y:_oQuat.y,z:_oQuat.z,w:_oQuat.w};   // (09-11) для SENSOR DEBUG VIEW
   _lookh.set(0,0,-1).applyQuaternion(_oQuat);   // спинка
   _toph.set(0,1,0).applyQuaternion(_oQuat);     // верхушка (клинок)
-  const s = _toph.y>=0 ? 1 : -1;                // клинок ниже горизонта → азимут спинки зеркален
-  const hx=_toph.x + s*_lookh.x, hz=_toph.z + s*_lookh.z;
-  sensor.headConf = 1;                          // азимут определён всегда
-  return wrap360(Math.atan2(hx,-hz)*180/Math.PI);
+  /* (09-28h) АЗИМУТ = КУДИ ДИВИТЬСЯ ВІСТРЯ, і тільки воно. Стара сума «вістря + спинка» давала
+     правильний азимут лише до вертикалі: замах за голову (мен, дзьодан, 90…135°) малювався як
+     «вперед під 70°», а на ~135° азимут раптово розвертався на 180° — картинка крутилась.
+     Тепер за головою — так за головою. Біля самої вертикалі (проекція < 0.18 ≈ 10°) азимут
+     не визначений — тримаємо останній; тіло при цьому не розвертається (labLiveStep). */
+  const h=Math.hypot(_toph.x,_toph.z);
+  sensor.tipY=_toph.y; sensor.tipH=h;
+  if(h>=0.18){ sensor.headConf=1; sensor.tipAz=wrap360(Math.atan2(_toph.x,-_toph.z)*180/Math.PI); return sensor.tipAz; }
+  sensor.headConf=clamp(h/0.18,0,1);
+  if(sensor.tipAz!=null) return sensor.tipAz;
+  const s0=_toph.y>=0 ? 1 : -1; const hx=_toph.x + s0*_lookh.x, hz=_toph.z + s0*_lookh.z;   // перший зразок — як раніше
+  sensor.tipAz=wrap360(Math.atan2(hx,-hz)*180/Math.PI); return sensor.tipAz;
 }
 
 /* (09-13c) ПОВНИЙ кватерніон пристрою (з γ) — потрібен, щоб лінійне прискорення телефона
@@ -5321,7 +5329,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-27g2 · (виправлено запуск: VB_KATAQ у списку налаштувань) · ДОДЖЬО v2: показ наставника → твоя ТІНЬ робить удар у твоєму тілі → разом із тінню (один тон = ти в тіні, пульс вібро) → сам, у повну силу; замість «так/ні» — команди «не рухайся» і сигнали (три короткі, четвертий високий = починай); рухи поза вікнами не оцінюються · ОЦІНКА МАХУ: еталон = фаза рубання, повільний замах і зупинка в кінці більше не ламають відсоток, вага руків\'я 0.25 (телефон не рухає рукою, як анімація), у соло-вікні береться кращий із махів · ВЛАСНЕ ТІЛО у грі більше не збиває клинок (замах над головою не дає «розсинхрону») · параметри VB_KATAQ у 🎚 · (09-27f) піхви, тренування';
+const BUILD_TAG='2026-09-28h · ЗАМАХ ЗА ГОЛОВУ: азимут клинка — це куди дивиться ВІСТРЯ (за головою — так за головою, без розвороту картинки на 135°); тіло й камера не розвертаються, поки меч над головою; розворот біля вертикалі — не «ривок» · СТРІЧКИ КЛИНКА у наставника (зелена), ворогів (червона) і всіх NPC з ригом · (09-27g) доджьо v2, оцінка маху';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5720,6 +5728,20 @@ function remoteRibbonIngest(r, p){
       REMRIB.S.push({a0:r._ribPrev.a,b0:r._ribPrev.b,a1:a,b1:b,t:now,life,p:P,fury:!!p.rf}); if(REMRIB.S.length>RIB_MAX) REMRIB.S.shift(); }
     r._ribPrev={a,b}; r._ribPrevT=now; }
 }
+/* (09-28h) СТРІЧКИ NPC: наставник, вороги, будь-хто з ригом і видимим мечем — та сама смуга, що й у гравця,
+   з тієї ж черги REMRIB. Швидкість вістря — за часом між кадрами (риг наставника оновлюється двічі на кадр). */
+function npcRibbonTick(av, S){
+  if(!VB_RIBBON.on || !S || !S.rig || !S.rig.sword || !S.rig.sword.root.visible || av.dead) return;
+  const sw=S.rig.sword; sw.root.updateWorldMatrix(true,false);
+  const a=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), b=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+  const now=performance.now()/1000; const R=av._rib||(av._rib={a:null,b:null,t:0,spd:0});
+  const dtr=now-(R.t||0); if(R.b && dtr<0.004) return;                          // той самий кадр — вдруге не рахуємо
+  if(R.b && dtr<0.4){ const v=b.distanceTo(R.b)/Math.max(dtr,1e-3); R.spd=R.spd*0.6+v*0.4;
+    if(R.spd>VB_RIBBON.minSpeed){ const P=clamp(R.spd,2,14); const life=(0.25+clamp(P/14,0,1)*1.1)*(VB_RIBBON.life||1);
+      REMRIB.S.push({a0:R.a,b0:R.b,a1:a,b1:b,t:now,life,p:P,kind:av.ally?'ally':'foe'}); if(REMRIB.S.length>RIB_MAX) REMRIB.S.shift(); } }
+  else R.spd=0;
+  R.a=a; R.b=b; R.t=now;
+}
 function remoteRibbonDraw(){
   if(!REMRIB.mesh){ const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(RIB_MAX*6*3),3)); geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(RIB_MAX*6*3),3)); geo.setDrawRange(0,0);
@@ -5728,7 +5750,7 @@ function remoteRibbonDraw(){
   const now=performance.now()/1000; while(REMRIB.S.length && now-REMRIB.S[0].t>REMRIB.S[0].life) REMRIB.S.shift();
   const pos=REMRIB.geo.attributes.position.array, col=REMRIB.geo.attributes.color.array; let n=0;
   for(const q of REMRIB.S){ const k=clamp(1-(now-q.t)/q.life,0,1); if(k<=0) continue; const I=k*k*clamp(q.p/10,0.25,1.2);
-    const C=q.fury?[1.0,0.45,0.25]:[0.85,0.55,1.0];                                     // чужа стрічка — фіолетова (ярість — помаранчева)
+    const C=q.kind==='ally'?[0.45,1.0,0.6]:(q.kind==='foe'?[1.0,0.35,0.3]:(q.fury?[1.0,0.45,0.25]:[0.85,0.55,1.0]));   // (09-28h) наставник — зелена, вороги — червона, чужі гравці — фіолетова (ярість — помаранчева)
     const V=[q.a0,q.b0,q.b1,q.a0,q.b1,q.a1], W=[0.3,1,1,0.3,1,0.3];
     for(let i=0;i<6;i++){ const o=(n*6+i)*3; pos[o]=V[i].x; pos[o+1]=V[i].y; pos[o+2]=V[i].z; col[o]=C[0]*I*W[i]; col[o+1]=C[1]*I*W[i]; col[o+2]=C[2]*I*W[i]; }
     n++; if(n>=RIB_MAX) break; }
@@ -7073,8 +7095,16 @@ function labLiveStep(dt){
       /* (09-15c) Розсинхрон КИСТІ й РУКИ не забирає керування корпусом: тіло далі йде за телефоном,
          «вибитими» лишаються тільки кисть із клинком (і плече — на рівні РУКА). Корпус завмирає
          й довертається інерцією ЛИШЕ на рівні ТІЛО. */
-      if(C.state!=='LOOSE' || C.level!=='BODY'){ bodyFollowTick(LAB.body,I.yaw,dt); LAB.astralBody={visYaw:LAB.body.visYaw}; }
-      else { LAB.astralBody=LAB.astralBody||{visYaw:LAB.body.visYaw}; bodyFollowTick(LAB.astralBody,I.yaw,dt);
+      /* (09-28h) МЕЧ НАД ГОЛОВОЮ — тіло стоїть. Замах мен/дзьодан заводить вістря за голову: азимут клинка
+         законно стає «назад», але це не команда розвернутись. Тримаємо ціль корпусу з останнього
+         «низького» положення, поки клинок майже вертикальний або піднятий і дивиться назад. */
+      let bodyYawTgt=I.yaw;
+      { const sinE=Math.abs(I.pitch||0), back=Math.abs(angDiff(I.yaw, LAB.body.visYaw||0))>95;
+        const overhead = sinE>0.82 || (sinE>0.45 && back);
+        if(overhead && LAB.bodyHoldYaw!=null) bodyYawTgt=LAB.bodyHoldYaw; else LAB.bodyHoldYaw=I.yaw;
+        LAB.overhead=overhead; }
+      if(C.state!=='LOOSE' || C.level!=='BODY'){ bodyFollowTick(LAB.body,bodyYawTgt,dt); LAB.astralBody={visYaw:LAB.body.visYaw}; }
+      else { LAB.astralBody=LAB.astralBody||{visYaw:LAB.body.visYaw}; bodyFollowTick(LAB.astralBody,bodyYawTgt,dt);
              LAB.body.visYaw=wrap360((LAB.body.visYaw||0)+C.ph.bodyV*dt); C.ph.bodyV*=Math.exp(-dt/1.2); }
       const bodyRel=angDiff(LAB.body.visYaw||0,N.yaw);
       const bodyRelA = C.state==='SYNC' ? bodyRel : angDiff(LAB.astralBody.visYaw||0,N.yaw);
@@ -7274,7 +7304,9 @@ function labLiveStep(dt){
         if(T.pp!=null) T.ph+=angDiff(I.yaw,T.pp); if(T.pb!=null) T.bd+=angDiff(LAB.body.visYaw||0,T.pb);
         T.pp=I.yaw; T.pb=LAB.body.visYaw||0; }
       /* МАСА: кутова швидкість наміру × маса / сила — понад межу хват зривається */
-      { const rate=Math.abs(angDiff(lagI,LAB.prevLagI==null?lagI:LAB.prevLagI))/Math.max(dt,0.001); LAB.prevLagI=lagI;
+      { const dLag=Math.abs(angDiff(lagI,LAB.prevLagI==null?lagI:LAB.prevLagI)); LAB.prevLagI=lagI;
+        const flip = dLag>120 && Math.abs(pitchA)>60;                          // (09-28h) вістря пройшло вертикаль — азимут «перекинувся», клинок майже не рухався
+        const rate = flip ? 0 : dLag*Math.max(0.2,Math.cos(pitchA*Math.PI/180))/Math.max(dt,0.001);   // біля вертикалі оберт азимуту — малий рух вістря
         LAB.swingRate=(LAB.swingRate||0)*0.7+rate*0.3;
         const limit=VB_WEAPON.maxRate*VB_WEAPON.strength/Math.max(VB_WEAPON.mass+(VB_WEAPON.clingMass||0),0.2);
         const gyroOk = !LAB.isGame || (sensor.gyroMag||0) > limit*0.55 || !sensor.haveGyro;   // (09-22q) шум орієнтації — не ривок
@@ -8105,7 +8137,7 @@ function linearWhooshTick(S, dt){
 const VB_RIBBON={ on:1, minSpeed:2.5, dmgK:1.0, life:1.0, cutK:1.0 };
 const RIB_CUT={ LEAF:3, WOOD:6, GROUND:10, GLASS:12, CRYSTAL:14, STONE:18, SOLID:18, METAL:26, BODY:99 };
 var RIB={ S:[], mesh:null, geo:null, E:0, stroke:0, prevA:null, prevB:null, spd:0, hits:new Map(), lastOn:false };
-const RIB_MAX=360;
+const RIB_MAX=720;   // (09-28h) спільний пул: чужі гравці + наставник + вороги
 window.VB_RIBBON=VB_RIBBON; window.RIB=RIB;
 function ribMesh(){ if(RIB.mesh) return; const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(RIB_MAX*6*3),3));
@@ -8586,6 +8618,7 @@ function rigNpcTick(av, dt, opts){
   S.poseS = S.poseS ? labLerpPose(S.poseS,P,rate) : P;
   const prev=LAB; LAB=S;
   try{ S.warn=[]; labSetPose(S.poseS); if(!av.dead) rigGait(S.rig.J, av._vs||0, av._gaitPh||0, S.rig.root, 1); }catch(e){} finally{ LAB=prev; }   // (09-22s) хода
+  try{ npcRibbonTick(av,S); }catch(e){}   // (09-28h) стрічка клинка NPC
 }
 
 /* ═══════════════════════ ЕХО-СОНАР (2026-09-21) ═══════════════════════
