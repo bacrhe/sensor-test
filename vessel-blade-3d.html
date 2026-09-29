@@ -489,11 +489,11 @@ function orientationHeading(alpha,beta){
 
 /* (09-13c) ПОВНИЙ кватерніон пристрою (з γ) — потрібен, щоб лінійне прискорення телефона
    правильно переносити у світ; для азимуту лишається безкреновий _oQuat вище. */
-const _oEulerF=new THREE.Euler(), _oQuatF=new THREE.Quaternion();
+const _oEulerF=new THREE.Euler(), _oQuatF=new THREE.Quaternion(), _oQuatN=new THREE.Quaternion();
 function orientationFullQuat(alpha,beta,gamma){
   const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
   _oEulerF.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,-(gamma||0)*Math.PI/180,'YXZ');
-  _oQuatF.setFromEuler(_oEulerF); _oQuatF.multiply(_q1h); _oQuatF.multiply(_q0h.setFromAxisAngle(_upZh,-o));
+  _oQuatF.setFromEuler(_oEulerF); _oQuatF.multiply(_q1h); _oQuatN.copy(_oQuatF); _oQuatF.multiply(_q0h.setFromAxisAngle(_upZh,-o));   // (09-29k) _oQuatN — природна система пристрою (без повороту екрана), для гравітації
   sensor.quatFull={x:_oQuatF.x,y:_oQuatF.y,z:_oQuatF.z,w:_oQuatF.w};
 }
 // Приоритет источников азимута: 'deviceorientationabsolute' (магнитометр, привязан к
@@ -502,35 +502,92 @@ function orientationFullQuat(alpha,beta,gamma){
 // абсолютный — «вернулся в тот же угол комнаты» ≠ «тот же угол в игре». Теперь как
 // только абсолютный источник появился, относительный к компасу не допускается.
 let haveAbsOrient=false;
+/* ═══ (09-29k) ДЖЕРЕЛО ОРІЄНТАЦІЇ: ГІРОСКОП ОС + ПОВІЛЬНИЙ КОМПАС ═══
+   deviceorientation (відносний; в ОС це game rotation vector — гіроскоп + акселерометр, БЕЗ магнітометра) — плавний,
+   без тремтіння: нерухомий телефон = нерухомий курс. deviceorientationabsolute (магнітометр) у спокої гуляє на градуси,
+   а під час маху бреше на десятки — досі саме він вів клинок і камеру («пливе», «мен виходить косий»). Тепер компас
+   лише повільно (τ absTau с, тільки у спокої й не біля вертикалі) підтягує зсув до півночі. Так само нахил і крен:
+   не з акселерометра (він під час маху міряє прискорення руки, а не гравітацію), а з кватерніона орієнтації ОС —
+   з нього рахуємо «синтетичну» гравітацію у системі пристрою і годуємо нею весь старий код без змін.
+   Якщо відносної орієнтації немає або вона не реагує на поворот (гіроскопа немає) — повертаємось на компас. */
+var VB_SRC={ primary:'REL', absTau:20, calmRate:30, relN:0, absN:0, absOff:null, absT:0, lostT:0, winT:0, winTurn:0, relMin:null, relMax:null, badWin:0, decided:false, logged:false, relLast:null, absLast:null };
+const _azE=new THREE.Euler(), _azQ=new THREE.Quaternion(), _azV=new THREE.Vector3(), _azQ0=new THREE.Quaternion();
+function azimuthOf(alpha,beta){                                                        // без стану: азимут вістря і його горизонтальна проекція
+  const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
+  _azE.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,0,'YXZ'); _azQ.setFromEuler(_azE); _azQ.multiply(_q1h); _azQ.multiply(_azQ0.setFromAxisAngle(_upZh,-o));
+  _azV.set(0,1,0).applyQuaternion(_azQ); const h=Math.hypot(_azV.x,_azV.z);
+  return {az:wrap360(Math.atan2(_azV.x,-_azV.z)*180/Math.PI), h, y:_azV.y};
+}
+const _gdV=new THREE.Vector3(), _gdQ=new THREE.Quaternion(), _yQ=new THREE.Quaternion(), _yAx=new THREE.Vector3(0,1,0);
+function oriDerive(){                                                                 // гравітація у системі пристрою — з кватерніона ОС (вигляд «вектор униз», як після калібрування)
+  _gdQ.copy(_oQuatN).invert(); _gdV.set(0,-9.81,0).applyQuaternion(_gdQ);
+  sensor.gSyn={x:_gdV.x,y:_gdV.y,z:_gdV.z}; sensor.tOriG=performance.now();
+  gravDerive(sensor.gSyn, 1, sensor.tOriG, true);
+}
 function onOrient(e){
-  sensor.tOrient=performance.now();                 // (09-17) мітка часу зразка — для прогнозу між кадрами
-  // beta — запасной наклон (используется, только если нет гравитации)
-  if(e.beta!=null && !sensor.haveGrav){ sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1);
-    sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }   // елевація задньої кришки (fallback без грав.)
+  if(e.absolute===true){ onOrientAbs(e); return; }                                     // деякі браузери шлють абсолютний тією ж подією
+  sensor.tOrient=performance.now(); VB_SRC.relN++;
   if(e.gamma!=null) sensor.roll = e.gamma;
-  if(e.alpha!=null && !isNaN(e.alpha)){
-    if(e.absolute===true && !haveAbsOrient){ haveAbsOrient=true; sensor.yawSrc='ABSOLUTE';
-      logE('СЕНСОР: джерело азимуту = ABSOLUTE (orientation.absolute)'); }
-    if(e.absolute===true || !haveAbsOrient){
-      // (09-10b, ТЗ п.3) ОСНОВНЕ і ЄДИНЕ джерело напряму клинка — орієнтація пристрою.
-      sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
-      sensor.headRaw = orientationHeading(e.alpha, e.beta);
-      try{ orientationFullQuat(e.alpha,e.beta,e.gamma); }catch(err){}
-      sensor.compass = sensor.headRaw; sensor.haveCompass = true;
-      if(!haveAbsOrient && sensor.yawSrc!=='DEVICE'){ sensor.yawSrc='DEVICE';
-        logE('СЕНСОР: джерело азимуту = DEVICE (deviceorientation, відносний нуль)'); }
-    }
-  }
+  if(e.alpha==null || isNaN(e.alpha)){
+    if(e.beta!=null && !sensor.haveGrav){ sensor.pitchRaw = clamp((e.beta - 45) / 45, -1, 1); sensor.camPitchRaw = clamp((e.beta - 90) / 70, -1, 1); }
+    return; }
+  sensor.relAlpha=e.alpha; sensor.relBeta=e.beta;
+  if(VB_SRC.relMin==null||e.alpha<VB_SRC.relMin) VB_SRC.relMin=e.alpha; if(VB_SRC.relMax==null||e.alpha>VB_SRC.relMax) VB_SRC.relMax=e.alpha;
+  if(VB_SRC.primary!=='REL') return;
+  sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
+  sensor.headRel = orientationHeading(e.alpha, e.beta);
+  sensor.headRaw = wrap360(sensor.headRel + (VB_SRC.absOff||0));
+  try{ orientationFullQuat(e.alpha,e.beta,e.gamma);
+       if(VB_SRC.absOff){ _oQuatF.premultiply(_yQ.setFromAxisAngle(_yAx,-(VB_SRC.absOff)*Math.PI/180)); sensor.quatFull={x:_oQuatF.x,y:_oQuatF.y,z:_oQuatF.z,w:_oQuatF.w}; }   // кватерніон у тій самій системі, що й курс
+       oriDerive(); }catch(err){}
+  sensor.compass = sensor.headRaw; sensor.haveCompass = true;
+  if(!VB_SRC.logged){ VB_SRC.logged=true; sensor.yawSrc='GYRO'; logE('СЕНСОР: джерело азимуту = ГІРОСКОП ОС (deviceorientation) · компас підтягує північ повільно (τ '+VB_SRC.absTau+' с)'); }
 }
 function onOrientAbs(e){
-  if(e.alpha!=null && !isNaN(e.alpha)){
-    if(!haveAbsOrient){ haveAbsOrient=true; sensor.yawSrc='ABSOLUTE';
-      logE('СЕНСОР: джерело азимуту = ABSOLUTE (deviceorientationabsolute)'); }
+  if(e.alpha==null || isNaN(e.alpha)) return;
+  VB_SRC.absN++; sensor.absAlpha=e.alpha;
+  if(VB_SRC.primary==='ABS'){
+    if(!haveAbsOrient){ haveAbsOrient=true; sensor.yawSrc='ABSOLUTE'; logE('СЕНСОР: джерело азимуту = КОМПАС (deviceorientationabsolute)'); }
     sensor.alphaRaw=e.alpha; sensor.betaRaw=e.beta;
     sensor.headRaw = orientationHeading(e.alpha, e.beta);
-    try{ orientationFullQuat(e.alpha,e.beta,e.gamma); }catch(err){}
+    try{ orientationFullQuat(e.alpha,e.beta,e.gamma); oriDerive(); }catch(err){}
     sensor.compass = sensor.headRaw; sensor.haveCompass = true;
-  }
+    return; }
+  /* відносний курс веде клинок; компас тут — лише повільний зсув до півночі */
+  const now=performance.now(); const dtA=clamp((now-(VB_SRC.absT||now))/1000,0,0.5); VB_SRC.absT=now;
+  if(sensor.headRel==null || !(VB_SRC.absTau>0)) return;
+  const A=azimuthOf(e.alpha,e.beta); if(A.h<0.5) return;                              // біля вертикалі компас дзеркалить
+  if((sensor.gyroMag||0)>=VB_SRC.calmRate) return;                                    // під час руху компас бреше найбільше
+  const target=angDiff(A.az, sensor.headRel);
+  if(VB_SRC.absOff==null){                                                            // перша прив'язка — середнє за ~40 зразків, а не один шумний
+    const r=target*Math.PI/180; VB_SRC.a0s=(VB_SRC.a0s||0)+Math.sin(r); VB_SRC.a0c=(VB_SRC.a0c||0)+Math.cos(r); VB_SRC.a0n=(VB_SRC.a0n||0)+1;
+    if(VB_SRC.a0n>=40){ VB_SRC.absOff=wrap360(Math.atan2(VB_SRC.a0s,VB_SRC.a0c)*180/Math.PI); logE('КУРС: північ прив\'язано — зсув гіроскопа від компаса '+Math.round(VB_SRC.absOff)+'°'); }
+    return; }
+  const err=angDiff(target, VB_SRC.absOff);
+  if(Math.abs(err)<40){ VB_SRC.absOff=wrap360(VB_SRC.absOff+err*clamp(dtA/VB_SRC.absTau,0,1)); VB_SRC.lostT=0; }
+  else { VB_SRC.lostT+=dtA; if(VB_SRC.lostT>6){ VB_SRC.absOff=wrap360(target); VB_SRC.lostT=0; logE('КУРС: компас розійшовся з гіроскопом на '+Math.round(err)+'° у спокої — північ прив\'язано наново'); } }
+}
+function srcHealthTick(dt){                                                           // раз на 2 с: чи жива відносна орієнтація
+  const S=VB_SRC; if(S.decided) return;
+  S.winT+=dt; S.winTurn+=Math.abs(sensor.yawRateFull||0)*dt;
+  if(S.winT<2) return;
+  const span=(S.relMin==null)?0:(S.relMax-S.relMin);
+  if(S.relN===0 && S.absN>0){ S.primary='ABS'; S.decided=true; sensor.tipAz=null; logE('СЕНСОР: відносної орієнтації немає — курс із компаса'); }
+  else if(S.relN>0 && S.winTurn>40 && span<4){ S.badWin++; if(S.badWin>=2){ S.primary='ABS'; S.decided=true; sensor.tipAz=null; logE('СЕНСОР: відносна орієнтація не реагує на поворот (гіроскопа немає?) — курс із компаса'); } }
+  else if(S.relN>0 && S.winTurn>40){ S.decided=true; logE('СЕНСОР: відносна орієнтація жива (поворот '+Math.round(S.winTurn)+'°, α '+Math.round(span)+'°) — курс від гіроскопа ОС'); }
+  S.winT=0; S.winTurn=0; S.relMin=null; S.relMax=null; S.relN=0; S.absN=0;
+}
+/* розкид у спокої — щоб бачити в лозі, чи стоїть картинка, коли телефон лежить */
+var STILLM={ buf:[], t:0, logT:0 };
+function stillMonitorTick(dt){
+  const now=performance.now()/1000; const still=(sensor.gyroMag||0)<6 && (sensor.speed||0)<0.6 && sensor.headRaw!=null;
+  if(!still){ STILLM.buf.length=0; STILLM.t=0; return; }
+  STILLM.t+=dt; STILLM.buf.push({t:now, y:sensor.yawFused||0, p:sensor.pitch||0, b:player.visYaw||0});
+  while(STILLM.buf.length && now-STILLM.buf[0].t>2) STILLM.buf.shift();
+  if(STILLM.t>2.5 && now-STILLM.logT>8){ STILLM.logT=now; const B=STILLM.buf; if(B.length<10) return; let yMin=1e9,yMax=-1e9,pMin=1e9,pMax=-1e9,bMin=1e9,bMax=-1e9; const y0=B[0].y, b0=B[0].b;
+    for(const q of B){ const dy=angDiff(q.y,y0), db=angDiff(q.b,b0); yMin=Math.min(yMin,dy); yMax=Math.max(yMax,dy); pMin=Math.min(pMin,q.p); pMax=Math.max(pMax,q.p); bMin=Math.min(bMin,db); bMax=Math.max(bMax,db); }
+    const pd=(Math.asin(clamp(pMax,-1,1))-Math.asin(clamp(pMin,-1,1)))*180/Math.PI;
+    logE('СПОКІЙ '+STILLM.t.toFixed(0)+' с: курс ±'+((yMax-yMin)/2).toFixed(2)+'° · нахил ±'+(pd/2).toFixed(2)+'° · корпус ±'+((bMax-bMin)/2).toFixed(2)+'° · джерело '+(VB_SRC.primary==='REL'?'гіро ОС':'компас')+(VB_SRC.absOff!=null?' · зсув півночі '+Math.round(VB_SRC.absOff)+'°':'')); }
 }
 /* ════ ЄДИНИЙ ФІЛЬТР НАПРЯМУ КЛИНКА (2026-09-10b, ТЗ п.3-8) ══════════════
    Було: гіро-швидкість → інтегрування → власний gyro-yaw → корекція компасом
@@ -604,6 +661,7 @@ function classifyMotion(dt){
   sensor.motion=m; sensor.gesture=g;
 }
 function sensorYawTick(dt){
+  try{ srcHealthTick(dt); }catch(e){}
   swingTick(dt);
   classifyMotion(dt);
   if(sensor.headRaw==null) return;    // немає орієнтації (десктоп) — yaw правлять стрілки
@@ -616,7 +674,7 @@ function sensorYawTick(dt){
      помилково перевертала гіроскоп кожні ~30 с → курс крутився навпаки. Тому в грі — компас
      (як до 09-17d), гіроскоп веде курс лише в лабораторії або за тумблером VB_YAW.inGame. */
   const inLab = !!(window.LABG ? LABG.on : (window.LAB && LAB.on));
-  if(G.gyro>0.01 && sensor.haveGyro && (inLab || G.inGame)){
+  if(G.gyro>0.01 && sensor.haveGyro && (inLab || G.inGame) && VB_SRC.primary!=='REL'){   // (09-29k) курс уже від гіроскопа ОС — власне інтегрування зайве
     if(sensor.yawG==null){ sensor.yawG=tgt; G.sgnAcc=0; G.sgnT=0; }
     const rate=(sensor.yawRateFull||0)*G.sign;
     sensor.yawG=wrap360(sensor.yawG + rate*dt);                        // інтегруємо
@@ -830,70 +888,48 @@ function sensDiagTick(dt){
       ' · екран='+scr+'°');
   }catch(e){}
 }
+function gravDerive(gg, GS, now, syn){                                              // (09-29k) усе, що рахувалось із гравітації, — в одному місці
+  if(!gg) return;
+  if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GS*gg.y/9.4, -1, 1); }
+  if(gg.z!=null){ sensor.camPitchRaw = clamp(-GS*gg.z/9.4, -1, 1); sensor.gz = gg.z; }
+  sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
+  if((Math.abs(gg.x||0)+Math.abs(gg.z||0))>1.5) sensor.gRoll=Math.atan2(gg.x||0,gg.z||0)*180/Math.PI;   // крен навколо осі клинка
+  const gm=Math.hypot(gg.x||0,gg.y||0,gg.z||0)||1; sensor.rollLand=Math.asin(clamp(Math.abs(gg.x||0)/gm,0,1))*180/Math.PI; sensor.rollSide=(gg.x||0)>=0?1:-1;
+  sensor.gMag=gm; sensor.gSynUsed=!!syn;
+  sensor.gX=gg.x||0; sensor.gY=gg.y||0; sensor.gZ=gg.z||0;
+  const _dt=clamp((now-(sensor._gT||now))/1000,0,0.1); sensor._gT=now;
+  const _calm = syn ? true : (Math.abs(gm-9.81)<1.2 && (sensor.gyroMag||0)<140), _k=_calm?clamp(_dt/(syn?0.06:0.22),0,1):0;
+  if(sensor.gXs==null){ sensor.gXs=sensor.gX; sensor.gYs=sensor.gY; sensor.gZs=sensor.gZ; }
+  else { sensor.gXs+=(sensor.gX-sensor.gXs)*_k; sensor.gYs+=(sensor.gY-sensor.gYs)*_k; sensor.gZs+=(sensor.gZ-sensor.gZs)*_k; }
+}
 function onMotion(e){
   const now = performance.now();
   const dt = lastMotT ? clamp((now-lastMotT)/1000, 0, 0.1) : 0.016;
   lastMotT = now;
   const r = e.rotationRate || {};
   sensor.rRateA = r.alpha || 0;
-  // НАКЛОН + «ровно ли держим» по гравитации
   const ggRaw = e.accelerationIncludingGravity;
-  if(ggRaw){ sensor.gXr=ggRaw.x||0; sensor.gYr=ggRaw.y||0; sensor.gZr=ggRaw.z||0; }   // (09-24b/c) сирий вектор — для перевірки «вістря вгору» і запасних жестів
-  try{ sensCalFeed(ggRaw); }catch(err){}
-  const gg = sNorm(ggRaw);                                                  // (09-22q) у єдиному вигляді для всіх пристроїв
-  if(gg){
-    if(gg.y!=null){ sensor.haveGrav = true; sensor.pitchRaw = clamp(GSIGN()*gg.y/9.4, -1, 1); }
-    if(!(window.LAB&&LAB.on)){ try{ autoPitchAxis(gg); }catch(err){} }   // (07-20e) сам визначає перевернуту вісь — але не в LAB (09-16c)
-    // ВИДОШУКАЧ (07-15): елевація ЗАДНЬОЇ КРИШКИ (-Z пристрою). Екран догори → кришка
-    // дивиться в підлогу → -1; телефон вертикально (будь-яка орієнтація!) → 0 (горизонт);
-    // «фотографуєш небо» → +1. Це і є метафора справжньої камери — працює і боком.
-    if(gg.z!=null) sensor.camPitchRaw = clamp(-GSIGN()*gg.z/9.4, -1, 1);
-    if(gg.z!=null) sensor.gz = gg.z;
-  }
-  // level (для отладки/HUD): 1 ровно, 0 вертикально
-  sensor.level = clamp((Math.abs(sensor.gz)-2.5)/5.0, 0, 1);
-  // ── ШВИДКІСТЬ ОБЕРТАННЯ (2026-09-10b, ТЗ п.4) ──
-  // Гіроскоп лишається ЛИШЕ вимірювачем швидкості: жестів, різких рухів, діагностики.
-  // Самостійним джерелом кута клинка він більше НЕ є — інтегрування прибрано.
+  if(ggRaw){ sensor.gXr=ggRaw.x||0; sensor.gYr=ggRaw.y||0; sensor.gZr=ggRaw.z||0; }   // сирий вектор — для перевірки «вістря вгору»
+  const ggAcc = sNorm(ggRaw);
+  /* (09-29k) гравітація з кватерніона ОС, якщо він є (свіжий або телефон майже не обертається); акселерометр — лише запасний */
+  const synFresh = !!(sensor.gSyn && ((now-(sensor.tOriG||0))<500 || (sensor.gyroMag||0)<20));
+  const gg = synFresh ? sensor.gSyn : ggAcc;
+  if(!synFresh && ggAcc){ gravDerive(ggAcc, GSIGN(), now, false); if(!(window.LAB&&LAB.on)){ try{ autoPitchAxis(ggAcc); }catch(err){} } }
+  sensor.gyroMag=Math.hypot(r.alpha||0, r.beta||0, r.gamma||0);
   const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
   const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
-  // γ-СЛАГАЕМОЕ ИСКЛЮЧЕНО: r.gamma — вращение вокруг ДЛИННОЙ оси телефона (крен запястья).
-  // При поднятом телефоне (ярус 2) эта ось почти вертикальна, и старый omegaG интегрировал
-  // крен прямо в yaw — камера уезжала при каждом входе/выходе из МАЯКА. Теперь крен
-  // по определению не крутит камеру; телесный поворот ловится через α/β-компоненты
-  // гироскопа + γ-инвариантный компас (orientationHeading) добирает остальное.
-  const omegaG=((r.beta||0)*cgx + (r.alpha||0)*cgz)/gmag;   // °/с вокруг мировой вертикали, БЕЗ крена
-  sensor.yawRate=omegaG;                                   // тільки вимір (камера/мах), у yaw не потрапляє
-  /* (09-17e) ПОВНА проекція кутової швидкості на світову вертикаль — з γ-складовою.
-     Потрібна саме для курсу: коли телефон тримають як руків'я (вістрям уперед), вертикаль
-     збігається з віссю γ, і без цього доданка поворот «убік» узагалі не читався. */
-  sensor.yawRateFull=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;
-  sensor.gyroMag=Math.hypot(r.alpha||0, r.beta||0, r.gamma||0);   // (09-17f) свідок: телефон узагалі обертався?
+  const omegaG=((r.beta||0)*cgx + (r.alpha||0)*cgz)/gmag;   // °/с навколо світової вертикалі, без крена
+  sensor.yawRate=omegaG;
+  sensor.yawRateFull=((r.beta||0)*cgx + (r.gamma||0)*cgy + (r.alpha||0)*cgz)/gmag;   // повна проекція — для курсу/обмежувача
   sensor.haveGyro = sensor.haveGyro || Math.abs(sensor.yawRateFull)>8;
   sensor.spin=Math.abs(omegaG);
   sensor.haveGyro = sensor.haveGyro || sensor.spin>8;
-  // скорость руки = чистое ускорение
-  const a = sNorm(e.acceleration) || {};                                  // (09-22q) той самий знак, що й у гравітації
-  // (09-11b) ОСІ ЧИСТОГО ПРИСКОРЕННЯ — куди фізично їде рука. Саме воно, а не
-  // accelerationIncludingGravity, годиться для порогів: у спокої ≈0, а не 9.81.
+  const a = sNorm(e.acceleration) || {};
   sensor.ax=a.x||0; sensor.ay=a.y||0; sensor.az=a.z||0;
-  // (09-13b) КРЕН НАВКОЛО ОСІ КЛИНКА з вектора гравітації: atan2(gx,gz) безперервний на 360°,
-  // вироджується лише коли вістря дивиться строго вгору/вниз (тоді крен і не визначений).
-  if(gg && (Math.abs(gg.x||0)+Math.abs(gg.z||0))>1.5) sensor.gRoll=Math.atan2(gg.x||0,gg.z||0)*180/Math.PI;
-  /* (09-22) «телефон набік» = гравітація лягла на вісь X приладу. Однозначно в будь-якому нахилі:
-     клинок угору/вниз — gx≈0 → не набік; як фотоапарат — |gx|≈g → набік. γ тут не годиться. */
-  if(gg){ const gm=Math.hypot(gg.x||0,gg.y||0,gg.z||0)||1; sensor.rollLand=Math.asin(clamp(Math.abs(gg.x||0)/gm,0,1))*180/Math.PI; sensor.rollSide=(gg.x||0)>=0?1:-1; }
-  sensor.gMag=gg?Math.hypot(gg.x||0, gg.y||0, gg.z||0):9.8;
-  if(gg){ sensor.gX=gg.x||0; sensor.gY=gg.y||0; sensor.gZ=gg.z||0;     // (09-22k) для рівня горизонту
-    /* (09-22o) гравітація без ривків: різкий рух — це прискорення руки, а не нахил; тоді оцінку тримаємо */
-    const _m=Math.hypot(sensor.gX,sensor.gY,sensor.gZ), _now=performance.now(), _dt=clamp((_now-(sensor._gT||_now))/1000,0,0.1); sensor._gT=_now;
-    const _calm=Math.abs(_m-9.81)<1.2 && (sensor.gyroMag||0)<140, _k=_calm?clamp(_dt/0.22,0,1):0;
-    if(sensor.gXs==null){ sensor.gXs=sensor.gX; sensor.gYs=sensor.gY; sensor.gZs=sensor.gZ; }
-    else { sensor.gXs+=(sensor.gX-sensor.gXs)*_k; sensor.gYs+=(sensor.gY-sensor.gYs)*_k; sensor.gZs+=(sensor.gZ-sensor.gZs)*_k; } }
   sensor.speed = Math.hypot(sensor.ax, sensor.ay, sensor.az);
-  sensor.rollRate = (r&&r.gamma)||0;    // °/с вокруг длинной оси — раскрутка нунчаков/цепа
-  sensor.pitchRate = (r&&r.beta)||0;    // °/с наклона — взмахи хлыстом
-  if(r){ sensor.rrX=r.beta||0; sensor.rrY=r.gamma||0; sensor.rrZ=r.alpha||0; }   // (09-24a) для жестів ТАК/НІ
+  sensor.rollRate = (r&&r.gamma)||0;
+  sensor.pitchRate = (r&&r.beta)||0;
+  if(r){ sensor.rrX=r.beta||0; sensor.rrY=r.gamma||0; sensor.rrZ=r.alpha||0; }
 }
 
 function bindSensors(){
@@ -1350,15 +1386,15 @@ function homeMapPaint(){
   for(let y=0;y<G;y++) for(let x=0;x<G;x++){
     const st=roomStyle(x,y), wht=chessWhite(x,y), seen=(typeof MM!=='undefined')&&MM.seen.has(x+','+y), ring=Math.min(x,y,12-x,12-y);
     const h=FLOOR_HUES[st.archetype]??0.58;
-    if(x===6&&y===6) _fc.setHex(0x2f9fe0);
-    else if(wht) _fc.setHSL(h, seen?0.35:0.18, seen?0.40:0.24);
-    else { _fc.setHSL(h, seen?0.7:0.5, (seen?0.13:0.07)+0.05*st.weight); if(ring<=1) _fc.lerp(red, seen?0.55:0.4); }
+    if(x===6&&y===6) _fc.setHex(0x38bdf8);
+    else if(wht) _fc.setHSL(h, seen?0.40:0.25, seen?0.62:0.40);   // (09-29k) яскравіше — карту видно з висоти голови
+    else { _fc.setHSL(h, seen?0.7:0.55, (seen?0.30:0.18)+0.06*st.weight); if(ring<=1) _fc.lerp(red, seen?0.55:0.4); }
     _fd.position.set(worldX(x),-0.45,worldZ(y)); _fd.scale.set(1,1,1); _fd.updateMatrix(); floor.setMatrixAt(i,_fd.matrix); floor.setColorAt(i,_fc); i++;
   }
   floor.instanceMatrix.needsUpdate=true; if(floor.instanceColor) floor.instanceColor.needsUpdate=true;
   homeMapClear();
   if(!(VB_ROOMS&&VB_ROOMS.on)) return;
-  const pos=[], col=[], gold=new THREE.Color(0xfbbf24), dim=new THREE.Color(0x4a3d14);
+  const pos=[], col=[], gold=new THREE.Color(0xfbbf24), dim=new THREE.Color(0x8a6d24);
   const push=(x1,z1,x2,z2,c)=>{ pos.push(x1,-0.40,z1,x2,-0.40,z2); col.push(c.r,c.g,c.b,c.r,c.g,c.b); };
   for(let x=0;x<13;x++) for(let y=0;y<13;y++){
     const s1=(typeof MM!=='undefined')&&MM.seen.has(x+','+y);
@@ -2227,8 +2263,11 @@ function updateStanceAndCamera(dt){
         /* (09-29j) довго дивишся вбік (> lockAwayDeg упродовж lockAway с) — погляд відпускає ціль; повернувся — знову тримає */
         if(off>(VB_CAM.lockAwayDeg||60)) L.awayT=Math.min((L.awayT||0)+dt,(VB_CAM.lockAway||2.5)+0.6); else L.awayT=Math.max(0,(L.awayT||0)-dt*2);
         const want=(L.awayT>(VB_CAM.lockAway||2.5))?0:1; L.str=(L.str==null)?want:L.str+(want-L.str)*clamp(dt*(want?2:0.8),0,1);
-        camTgt=wrap360(bodyYaw+clamp(angDiff(yawTo,bodyYaw),-mx,mx)*clamp(strength,0,1)*L.str); }
-      else { L.awayT=0; L.str=0; } }catch(e){}
+        camTgt=wrap360(bodyYaw+clamp(angDiff(yawTo,bodyYaw),-mx,mx)*clamp(strength,0,1)*L.str);
+        const eng=(strength>0.05 && L.str>0.5);                                           // (09-29k) чутно й видно, коли погляд узяв ціль
+        if(eng && !L.engaged){ L.engaged=true; try{ showBanner('🎯 ПОГЛЯД: '+((typeof DOJO!=='undefined'&&DOJO.on)?'НАСТАВНИК':'ВОРОГ'),'#86efac'); blip(880,0.07,'sine',0.14); }catch(e2){} logE('КАМЕРА: погляд тримає '+((typeof DOJO!=='undefined'&&DOJO.on)?'наставника':'ворога')); }
+        else if(!eng && L.engaged){ L.engaged=false; try{ showBanner('ПОГЛЯД ВІЛЬНИЙ','#94a3b8'); blip(440,0.07,'sine',0.1); }catch(e2){} logE('КАМЕРА: погляд відпустив ціль'); } }
+      else { L.awayT=0; L.str=0; if(L.engaged){ L.engaged=false; try{ showBanner('ПОГЛЯД ВІЛЬНИЙ','#94a3b8'); }catch(e2){} } } }catch(e){}
     CAMH.yaw=(CAMH.yaw==null)?camTgt:wrap360(CAMH.yaw+angDiff(camTgt,CAMH.yaw)*clamp(dt*8,0,1));
     const _S=VB_RIG.player; const el=(_S&&_S.elevAmp!=null)?clamp(_S.elevAmp,-90,90):(-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI);   // підйом клинка, ° (09-29j: підсилений)
     const pT=clamp(el*(VB_CAM.headPitch??0.3),-25,25);
@@ -3177,7 +3216,7 @@ const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
    між кімнатами — лабіринт: не всі сусіди з'єднані. Закриті двері — кристалічна печать (дзвенить).
    var — щоб ранні виклики (isCellOccupied під час ініціалізації) не впали в TDZ. */
 var VB_ROOMS={ on:1, loops:0.18, seed:20260922 };
-var ROOM_LAYOUT_V=4;   // (09-22h) дім — стіни з чотирьох матеріалів; кромку гарантовано
+var ROOM_LAYOUT_V=5;   // (09-29k) дім без зайвих блоків — старі знімки кімнат (і чужі) не накривають   // (09-22h) дім — стіни з чотирьох матеріалів; кромку гарантовано
 var ROOMMAZE={ open:null };
 window.VB_ROOMS=VB_ROOMS;
 function roomMazeBuild(){
@@ -4049,7 +4088,7 @@ function buildStructuredRoomCore(rx,ry,rng,st){
   const R=new Set(['6,6','6,1','6,11','1,6','11,6']);
   const put=(x,y,mat,tint,shape,tall,fs)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)) return; addObstacle(x,y,mat,taken,tint,tall||1,shape||'cube',0,null,0,fs); };
   const tree=(x,y)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)||obstacleAt(x,y)) return; taken.add(k); plantTree(x,y,rng); };
-  if(type==='home'){ put(1,1,'fragile',0xb07cff,'post',1.2,true); put(1,11,'Fe',0x565f6b,'post',1.1); put(11,11,'Si',0x8d99ae,'post',1.1); tree(11,1); }   // (09-22h) зразки: кристал, залізо, камінь, дерево; (09-27b) по кутках — підлога під карту
+  if(type==='home'){ /* (09-29k) дім порожній — місце для тренувань; зразки матеріалів прибрано */ }   // (09-22h) зразки: кристал, залізо, камінь, дерево; (09-27b) по кутках — підлога під карту
   else if(type==='hall'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,inMat,inTint,'post',1.1);
     if(w>0.35) for(const [x,y] of [[6,3],[3,6],[9,6],[6,9]]) put(x,y,inMat,inTint,'post',1.0); }
   else if(type==='cross'){ for(const [ax,ay] of [[2,2],[8,2],[2,8],[8,8]]) for(let dx=0;dx<3;dx++) for(let dy=0;dy<3;dy++) put(ax+dx,ay+dy,inMat,inTint,'cube',1.0); }
@@ -5360,7 +5399,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-29j · НАСТАВНИК: повтори коротшають, замість повторення — конкретна вада (замах вище / дорубуй нижче / клинок лівіше / не штовхай — рубай); повне пояснення лише якщо ти не рухався або робив інше · КАМЕРА: фіксація тільки на наставнику у тренуванні (жорстка, відпускає, коли 2.5 с дивишся вбік); на ворога — вимк (є в 🎚) · ДОДЖЬО: наставник тримає 4 кроки, пауза з меню або якщо відійшов, продовження — дошка на східній стіні або меню, прогрес зберігається · ТІНЬ чекає, коли відстаєш · SUPERHOT: час світу від твого руху (🎚) · НАХИЛ ×: підсилення нахилу переводить клинок за голову без нахилу телефона назад (🎚 «Нахил ×») · горизонт — не більше трьох перепитувань · (09-28i) відлік';
+const BUILD_TAG='2026-09-29k · СЕНСОРИ: курс і нахил — з гіроскопа ОС (deviceorientation), компас лише повільно підтягує північ; гравітація для крену/горизонту — з кватерніона, не з акселерометра → нерухомий телефон = нерухома картинка, мен не «пливе» · корпус не повертається під час маху · прогноз між кадрами вимк · КАМЕРА у тренуванні тримає наставника повністю (сигнал «погляд на наставнику»), нахил камери за клинком вимк · ДІМ: карта світу на підлозі яскрава, зайві блоки прибрано · дошка не перепитує, піхви в тренуванні не спрацьовують · лог «СПОКІЙ» — розкид курсу/нахилу, коли телефон лежить · (09-29j) наставник коротше, пауза/дошка, SuperHot, Нахил ×';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6046,6 +6085,7 @@ function frame(now){
   last=now;
 
   sensorYawTick(dt);        // (09-11) канали сенсорів: клинок миттєво, мах — за порогами
+  try{ stillMonitorTick(dt); }catch(e){}
   if(SENSVIEW.on){ try{ drawSensView(); }catch(e){} }
 
   // клавиатурная отладка (если нет сенсоров под рукой)
@@ -6069,7 +6109,7 @@ function frame(now){
   } else if(mode==='fighter'){
     // наклон телефона → ярус/присед (лёгкий низкочастотный фильтр — убирает дрожь яруса/клинка)
     const pTgt = clamp(sensor.pitchRaw*(invertPitch?-1:1), -1, 1);
-    sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*10,0,1));
+    sensor.pitch = lerp(sensor.pitch, pTgt, clamp(dt*25,0,1));   // (09-29k) джерело чисте — фільтр ~40 мс
     sensor.camPitch = lerp(sensor.camPitch||0, clamp(sensor.camPitchRaw||0,-1,1), clamp(dt*10,0,1));
 
     if(!clinch.active){
@@ -7137,7 +7177,11 @@ function labLiveStep(dt){
       let bodyYawTgt=I.yaw;
       bodyYawTgt=yawI;
       { const eA=Math.abs(eAmp), back=Math.abs(angDiff(yawI, LAB.body.visYaw||0))>95;
-        const overhead = eA>55 || (eA>27 && back) || flipAmp;
+        /* (09-29k) МАХ НЕ КРУТИТЬ КОРПУС: під час удару азимут клинка гуляє на 60-90° (кеса, йоко) — це рух руки,
+           а не команда розвернутись. Швидко обертається телефон або летить вістря — ціль корпусу завмирає ще на strokeHold с. */
+        const fast=(sensor.gyroMag||0)>VB_BODY.strokeRate;                                  // за гіроскопом телефона (швидкість вістря зростає й від повороту самого корпусу — зациклювалось)
+        LAB.strokeHold = fast ? VB_BODY.strokeHold : Math.max(0,(LAB.strokeHold||0)-dt);
+        const overhead = eA>55 || (eA>27 && back) || flipAmp || LAB.strokeHold>0;
         if(overhead && LAB.bodyHoldYaw!=null) bodyYawTgt=LAB.bodyHoldYaw; else LAB.bodyHoldYaw=yawI;
         LAB.overhead=overhead; }
       if(C.state!=='LOOSE' || C.level!=='BODY'){ bodyFollowTick(LAB.body,bodyYawTgt,dt); LAB.astralBody={visYaw:LAB.body.visYaw}; }
@@ -7473,16 +7517,17 @@ window.VB_RESYNC=VB_RESYNC;
    множники по осях). Лінійний: прискорення → ЛИШЕ положення руків'я (VB_ARM — посилення окремо
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
 const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
+const VB_BODY={ strokeRate:160, strokeHold:0.35 };   // (09-29k) корпус завмирає, поки телефон крутиться швидше strokeRate °/с, і ще strokeHold с після
 /* Прив'язка «вперед» до сторін світу: lock=1 — нейтраль завжди північ+offset (однакова точка
    в будь-якій кімнаті), 0 — нейтраль там, де телефон у момент калібровки. */
 const VB_NORTH={ lock:0, offset:0 };
 window.VB_NORTH=VB_NORTH;
-const VB_PRED={ k:1.0 };
+const VB_PRED={ k:0.0 };   // (09-29k) прогноз між зразками вимк: орієнтація ОС іде 60 Гц, а прогноз додавав хитання
 var PREDCAL={ ys:1, ps:1, ya:0, yn:0, pa:0, pn:0, py:null, pp:null, lastYs:1 };   // (09-22q)   // 0 — без прогнозу гіроскопом між зразками, 1 — повний
 /* (09-17d) Курс: 1 — веде гіроскоп із повільною корекцією компасом (лінійний поворот),
    0 — чистий компас (як раніше). tau — за скільки секунд компас забирає дрейф. */
 const VB_YAW={ gyro:1.0, inGame:0, tau:12.0, deadErr:25, sign:1, holdRate:25, holdT:0, winC:0, winG:0, winA:0, winT:0, prevC:null, bad:0, agree:0, disagree:0, decided:false, lostT:0 };
-window.VB_YAW=VB_YAW;
+window.VB_YAW=VB_YAW; window.VB_SRC=VB_SRC; window.VB_BODY=VB_BODY; window.vbSensor=sensor;   // (09-29k) для перевірок
 window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
   dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
@@ -8444,6 +8489,7 @@ var SHEATH={ drawn:false, stillT:0, lastDrawT:0 };
 window.VB_SHEATH=VB_SHEATH; window.SHEATH=SHEATH;
 function sheathTick(dt){
   if(!VB_SHEATH.on){ SHEATH.drawn=true; return; }
+  if(typeof DOJO!=='undefined' && DOJO.on){ SHEATH.drawn=true; SHEATH.stillT=0; return; }   // (09-29k) у тренуванні меч завжди в руці
   const spd=RIB.spd||0, p=player.mesh?player.mesh.position:{x:0,z:0};
   if(!SHEATH.drawn){
     if(spd>VB_SHEATH.drawSpeed && !player.disarmed && !player.dead){ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0;
@@ -8805,7 +8851,7 @@ const REVEAL={
       if(f.r>f.R||f.t>f.T||amp<=0){ this.fronts.splice(k,1); continue; }
       for(let cy=0;cy<G;cy++)for(let cx=0;cx<G;cx++){ const d=Math.hypot(worldX(cx)-f.x, worldZ(cy)-f.z); if(d>r0-0.6 && d<=f.r){ const i=cy*G+cx; if(amp>I[i]) I[i]=amp; } } }
     // підлога
-    if(this.floorBase && floor.instanceColor){ const arr=floor.instanceColor.array, B=this.floorBase, fl=((typeof advHome==='function'&&ADV.on&&advHome())?0.9:VB_SONAR.floor*2);   // (09-27b) удома підлога-карта світиться сама
+    if(this.floorBase && floor.instanceColor){ const arr=floor.instanceColor.array, B=this.floorBase, fl=((typeof advHome==='function'&&ADV.on&&advHome())?1.15:VB_SONAR.floor*2);   // (09-27b) удома підлога-карта світиться сама
       for(let i=0;i<G*G;i++){ const k=Math.min(1.6, fl + I[i]*3.2); arr[i*3]=B[i*3]*k; arr[i*3+1]=B[i*3+1]*k; arr[i*3+2]=B[i*3+2]*k; }
       floor.instanceColor.needsUpdate=true; }
     // сітка
@@ -8851,7 +8897,7 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.3, fov:96, guardQ:0, lock:0.85, lockFoe:0, lockMax:70, lockRange:6, lockAway:2.5, lockAwayDeg:60 };   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.0, fov:96, guardQ:0, lock:1.0, lockFoe:0, lockMax:80, lockRange:6, lockAway:2.5, lockAwayDeg:70 };   // (09-29k) головна камера не киває за клинком; у тренуванні дивиться на наставника повністю   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
 var CAMLOCK={ target:null };
 /* (09-28i) ЦІЛЬ ДЛЯ ПОГЛЯДУ: у тренуванні — наставник; у бою — найближчий живий ворог у lockRange клітинок
    (тримаємо ту саму, поки жива й не далі lockRange+2). Голова довертається до цілі на частку lock, не більше lockMax°. */
@@ -8988,7 +9034,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -9030,6 +9076,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.dead','Мертва зона, м/с²',0,1.5,0.01],['VB_ARM.holdT','Утримання пози, с',0,8,0.1],
   ['VB_ARM.kReturn','Швидкість повернення',0,5,0.1],['VB_ARM.tiltCouple','Нахил клинка ↓ опускає руку',0,1,0.05],
   ['КУТОВИЙ РУХ (клинок)'],
+  ['VB_SRC.absTau','Курс: компас підтягує північ за, с (0 — не підтягує, чистий гіроскоп)',0,60,5],['VB_SRC.calmRate','Курс: компас слухаємо лише коли гіро тихіше, °/с',5,120,5],['VB_BODY.strokeRate','Корпус: завмирає, коли телефон крутиться швидше, °/с',60,500,10],['VB_BODY.strokeHold','Корпус: і ще стільки с після маху',0,1,0.05],
   ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил × (2 — 45° телефона = вертикаль, далі клинок іде за голову; 4 — 45° = за спину)',0.2,4,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
   ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],['VB_PRED.k','Прогноз гіроскопом (проти ривків)',0,1,0.05],
   ['VB_NORTH.lock','«Вперед» = північ (1) / де телефон (0)',0,1,1],['VB_NORTH.offset','Зсув від півночі, °',0,355,5],
@@ -9045,13 +9092,15 @@ function sensGet(path){ const [r,k]=path.split('.'); return SENS_ROOTS[r][k]; }
 function sensSet(path,v){ const [r,k]=path.split('.'); SENS_ROOTS[r][k]=v; }
 function sensSnapshot(){ const o={}; for(const it of SENS_SLIDERS) if(it.length>1) o[it[0]]=+(sensGet(it[0])).toFixed(3); return o; }
 const SENS_DEFAULTS=sensSnapshot();
-const SENS_MIG=2;   // (09-24d) міграція збережених налаштувань: авто-рука вимк, крен → новий зсув; (09-27a) rollSign → 1
+const SENS_MIG=3;   // (09-29k) камера на наставнику 1.0, нахил камери 0, прогноз 0, пороги доджьо   // (09-24d) міграція збережених налаштувань: авто-рука вимк, крен → новий зсув; (09-27a) rollSign → 1
 function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d_sens_cfg')||'null'); if(sv){ for(const p in sv) if(p in SENS_DEFAULTS) sensSet(p,+sv[p]); logE('ЧУТЛИВІСТЬ: завантажено збережені налаштування ('+Object.keys(sv).length+')');
   if(!((+sv._mig||0)>=SENS_MIG)){ sensSet('VB_HAND.auto',0); if(Math.abs((+sv['VB_ARM.rollShift']||0)-0.3)<0.001) sensSet('VB_ARM.rollShift',SENS_DEFAULTS['VB_ARM.rollShift']);
     try{ if(typeof HAND!=='undefined' && HAND.side!=='R'){ HAND.side='R'; localStorage.setItem('vb_hand','R'); logE('СТІЙКА: повернуто правшу (ліва рука вмикалась нахилом випадково)'); } }catch(e){}
     sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-24d — авто-рука за нахилом вимкнена, крен зсуває рукоять'); }
   if((+sv._mig||0)<2){ if((VB_ORI.rollSign||1)<0){ sensSet('VB_ORI.rollSign',1); logE('ГОРИЗОНТ: знак повороту картинки тепер із калібрування датчика — ручний −1 скинуто'); }
-    sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-27a — камера «голова», горизонт із фізики'); } } }catch(e){} }
+    sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-27a — камера «голова», горизонт із фізики'); }
+  if((+sv._mig||0)<3){ for(const p of ['VB_CAM.lock','VB_CAM.lockMax','VB_CAM.headPitch','VB_CAM.lockAwayDeg','VB_PRED.k','VB_KATAQ.need','VB_KATAQ.tol','VB_KATAQ.solo']) if(p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]);
+    sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-29k — камера на наставнику повністю, без кивання за клинком, прогноз вимк, пороги доджьо типові'); } } }catch(e){} }
 function sensSettingsSave(){ try{ localStorage.setItem('vb3d_sens_cfg',JSON.stringify(Object.assign(sensSnapshot(),{_mig:SENS_MIG}))); logE('ЧУТЛИВІСТЬ: збережено'); }catch(e){} }
 function sensSettingsReset(){ for(const p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]); try{ localStorage.removeItem('vb3d_sens_cfg'); }catch(e){} sensSettingsRefresh(); logE('ЧУТЛИВІСТЬ: скинуто до типових'); }
 function sensSettingsCopy(){ const txt='VB_SENS_CFG '+JSON.stringify(sensSnapshot()); try{ navigator.clipboard.writeText(txt); }catch(e){} logE(txt); const b=$('sensCopyBtn'); if(b) b.textContent='✔ скопійовано'; }
@@ -10229,6 +10278,7 @@ function dojoSay(key, variants, face){ DOJO.said=DOJO.said||{}; const c=DOJO.sai
 function dojoStart(then, opts){
   opts=opts||{};
   const a=dojoMentor(); if(!a){ logE('ДОДЖЬО: наставника немає поруч'); try{ showBanner('🥋 Наставника немає поруч','#f59e0b'); }catch(e){} if(then) then(); return; }
+  try{ if(typeof DLG!=='undefined' && DLG.q && /^DOJO_/.test(DLG.q.id||'')) DLG.q=null; }catch(e){}   // (09-29k) зависле питання дошки — геть
   const sv=dojoLoad(); let i0=0; DOJO.done={};
   if(opts.resume && sv){ i0=clamp(sv.i|0,0,5); DOJO.done=sv.done||{}; } else if(opts.fresh) dojoClear();
   DOJO.on=true; DOJO.paused=false; DOJO.then=then||null; DOJO.list=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA']).slice(); DOJO.i=i0; DOJO.tries=0; DOJO.said=DOJO.said||{}; DOJO.awayT=0;
@@ -10249,6 +10299,7 @@ function dojoPause(why){
   const t=DOJO.then; DOJO.then=null; if(t) setTimeout(()=>{ try{ t(); }catch(e){} }, 2500);
 }
 function dojoBoardAsk(){                                                              // (09-29j) дошка тренувань: стояти під нею 1.2 с
+  if(DOJO.on || (typeof DLG!=='undefined' && DLG.q)) return;
   const a=dojoMentor(); if(!a){ try{ showBanner('🥋 Наставника немає поруч','#f59e0b'); }catch(e){} return; }
   const sv=dojoLoad();
   if(sv && sv.i>0 && sv.i<6){ const k=(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN'])[sv.i]||'MEN';
@@ -10532,7 +10583,7 @@ function roomGuide(rx,ry){
   const st=roomStyle(rx,ry), L=[];
   if(rx===6&&ry===6){
     L.push('Це дім. Підлога під ногами — карта світу: кожна плита — кімната, тринадцять на тринадцять.');
-    L.push('Світлі плити — безпечні кімнати, темні — з ворогами, червонуваті по краю — боси. Золоті риски між плитами — двері лабіринту. Ми — на синій, посередині.');
+    L.push('Світлі плити — безпечні кімнати, темні — з ворогами, червонуваті по краю — боси. Де ти вже був — плити яскравіші, з позначкою. Золоті риски між плитами — двері лабіринту. Ми — на синій, посередині. Глянь під ноги.');
     L.push('Зброя — у північній стіні. Підійди й вдар по кристалу тричі — і візьмеш. Кузня — на південній стіні: стань під ковадлом і зачекай. Дошка тренувань — на східній: постій під нею, і я покажу удари.');
   } else if(chessWhite(rx,ry)){
     const type=(typeof roomTypeOf==='function')?roomTypeOf(rx,ry):null, inv=roomInventory();
@@ -10789,10 +10840,11 @@ setInterval(()=>{
     }
   } else { craftStandT=0; craftArm=true; }
   // (09-29j) дошка тренувань: стоїмо під нею вдома
-  try{ if(ADV.on && advHome() && mode==='fighter' && !player.dead && !(typeof DOJO!=='undefined'&&DOJO.on) && !(typeof DLG!=='undefined'&&DLG.q)
-     && player.gx===DOJO_CELL[0] && player.gy===DOJO_CELL[1]){
-    if(dojoArm){ dojoStandT+=0.16; if(dojoStandT>=1.2 && tutModalEl.style.display==='none'){ dojoStandT=0; dojoArm=false; dojoBoardAsk(); buzz([0,40]); } }
-  } else { dojoStandT=0; dojoArm=true; } }catch(e){}
+  try{ const onBoard=ADV.on && advHome() && mode==='fighter' && !player.dead && player.gx===DOJO_CELL[0] && player.gy===DOJO_CELL[1];
+    if(!onBoard){ dojoStandT=0; dojoArm=true; }                                          // (09-29k) зводимо лише коли ЗІЙШОВ з клітинки — не перепитує після відповіді
+    else if(dojoArm && !(typeof DOJO!=='undefined'&&DOJO.on) && !(typeof DLG!=='undefined'&&DLG.q)){
+      dojoStandT+=0.16; if(dojoStandT>=1.2 && tutModalEl.style.display==='none'){ dojoStandT=0; dojoArm=false; dojoBoardAsk(); buzz([0,40]); } }
+    else dojoStandT=0; }catch(e){}
   // ціп: зворотний відлік
   if(playerWpn==='flail'){
     if(FLAIL.t<=0) FLAIL.t=FLAIL_DUR;             // взяв з дропу — теж тимчасовий
