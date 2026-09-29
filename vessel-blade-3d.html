@@ -1709,7 +1709,7 @@ function spawnObstacles(rng, count){
   obstacles.forEach(o=>o.mesh && scene.remove(o.mesh)); obstacles.length=0;
   // не ставим препятствия на центр игрока и на стартовые клетки фантомов
   const taken=new Set(['6,6', ...PH_STARTS.map(s=>s[0]+','+s[1])]);
-  const plan=[]; const total=(count==null?4:count);
+  const plan=[]; const total=(count==null?0:count);   // (09-29l) без випадкових блоків — вони лишились від давніх експериментів і заважали тренуванню
   for(let i=0;i<total;i++) plan.push(i<Math.ceil(total/2));
   for(const solid of plan){
     let gx,gy,key,tries=0;
@@ -2128,8 +2128,8 @@ function updateStanceAndCamera(dt){
   // (07-18i) у дворуччі камера стоїть за спиною ТІЛА — однаково на обох
   // пристроях; своє плече дає лише бічний зсув, анатомія не дзеркалиться.
   const _camYaw = (window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL())
-    ? (player.visYaw||0) : sensor.yawFused;
-  const [dx,dz] = dirXZ(_camYaw);   // камера — мгновенно
+    ? (player.visYaw||0) : camYawTick(dt);   // (09-29l) камера — за корпусом (у дуелі — на ціль), не за клинком
+  const [dx,dz] = dirXZ(_camYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
   const _lkBeacon = linkFresh() ? (LINK.remote.beacon?1:0) : null;   // (07-17) стійку диктує МЕЧ-пристрій
@@ -2255,25 +2255,12 @@ function updateStanceAndCamera(dt){
   const headCam = (typeof VB_CAM!=='undefined' && (VB_CAM.head|0)===1 && _lkBeacon==null && (CAM.view==='auto'||CAM.view==='fp'));
   let fpYaw, fpPitch;
   if(headCam){
-    const bodyYaw=(player.visYaw!=null)?player.visYaw:_camYaw;
-    let camTgt=bodyYaw;                                                                   // (09-28i) погляд довертається до цілі
-    try{ const T=camLockTarget(), L=CAMLOCK;
-      if(T && T.mesh){ const tp=T.mesh.position; const yawTo=wrap360(Math.atan2(tp.x-px, -(tp.z-pz))*180/Math.PI); const off=Math.abs(angDiff(yawTo,bodyYaw));
-        const mx=VB_CAM.lockMax||70, strength=(typeof DOJO!=='undefined'&&DOJO.on)?VB_CAM.lock:VB_CAM.lockFoe;
-        /* (09-29j) довго дивишся вбік (> lockAwayDeg упродовж lockAway с) — погляд відпускає ціль; повернувся — знову тримає */
-        if(off>(VB_CAM.lockAwayDeg||60)) L.awayT=Math.min((L.awayT||0)+dt,(VB_CAM.lockAway||2.5)+0.6); else L.awayT=Math.max(0,(L.awayT||0)-dt*2);
-        const want=(L.awayT>(VB_CAM.lockAway||2.5))?0:1; L.str=(L.str==null)?want:L.str+(want-L.str)*clamp(dt*(want?2:0.8),0,1);
-        camTgt=wrap360(bodyYaw+clamp(angDiff(yawTo,bodyYaw),-mx,mx)*clamp(strength,0,1)*L.str);
-        const eng=(strength>0.05 && L.str>0.5);                                           // (09-29k) чутно й видно, коли погляд узяв ціль
-        if(eng && !L.engaged){ L.engaged=true; try{ showBanner('🎯 ПОГЛЯД: '+((typeof DOJO!=='undefined'&&DOJO.on)?'НАСТАВНИК':'ВОРОГ'),'#86efac'); blip(880,0.07,'sine',0.14); }catch(e2){} logE('КАМЕРА: погляд тримає '+((typeof DOJO!=='undefined'&&DOJO.on)?'наставника':'ворога')); }
-        else if(!eng && L.engaged){ L.engaged=false; try{ showBanner('ПОГЛЯД ВІЛЬНИЙ','#94a3b8'); blip(440,0.07,'sine',0.1); }catch(e2){} logE('КАМЕРА: погляд відпустив ціль'); } }
-      else { L.awayT=0; L.str=0; if(L.engaged){ L.engaged=false; try{ showBanner('ПОГЛЯД ВІЛЬНИЙ','#94a3b8'); }catch(e2){} } } }catch(e){}
-    CAMH.yaw=(CAMH.yaw==null)?camTgt:wrap360(CAMH.yaw+angDiff(camTgt,CAMH.yaw)*clamp(dt*8,0,1));
+    // (09-29l) курс головної камери — той самий, що й загальний (camYawTick): корпус або ціль дуелі
     const _S=VB_RIG.player; const el=(_S&&_S.elevAmp!=null)?clamp(_S.elevAmp,-90,90):(-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI);   // підйом клинка, ° (09-29j: підсилений)
     const pT=clamp(el*(VB_CAM.headPitch??0.3),-25,25);
     CAMH.pitch=(CAMH.pitch==null)?pT:CAMH.pitch+(pT-CAMH.pitch)*clamp(dt*4,0,1);
-    fpYaw=CAMH.yaw; fpPitch=CAMH.pitch*Math.PI/180;
-  } else { CAMH.yaw=null; CAMH.pitch=null; fpYaw=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.yaw : _camYaw; fpPitch=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.pitch*Math.PI/180 : null; }
+    fpYaw=_camYaw; fpPitch=CAMH.pitch*Math.PI/180;
+  } else { CAMH.pitch=null; fpYaw=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.yaw : _camYaw; fpPitch=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.pitch*Math.PI/180 : null; }
   const [fdx,fdz] = dirXZ(fpYaw);
   let headY=TIER_H*1.95+0.2;
   try{ const S=VB_RIG.player; if(headCam && S && S.rig && S.rig.J.HEAD){ const hp=S.rig.J.HEAD.getWorldPosition(new THREE.Vector3()); headY=hp.y+0.12*(S.rig.P.scale||1); } }catch(e){}
@@ -3216,7 +3203,7 @@ const ADV={on:false, rx:6, ry:6, edgeT:0, edgeDir:null};
    між кімнатами — лабіринт: не всі сусіди з'єднані. Закриті двері — кристалічна печать (дзвенить).
    var — щоб ранні виклики (isCellOccupied під час ініціалізації) не впали в TDZ. */
 var VB_ROOMS={ on:1, loops:0.18, seed:20260922 };
-var ROOM_LAYOUT_V=5;   // (09-29k) дім без зайвих блоків — старі знімки кімнат (і чужі) не накривають   // (09-22h) дім — стіни з чотирьох матеріалів; кромку гарантовано
+var ROOM_LAYOUT_V=6;   // (09-29k) дім без зайвих блоків — старі знімки кімнат (і чужі) не накривають   // (09-22h) дім — стіни з чотирьох матеріалів; кромку гарантовано
 var ROOMMAZE={ open:null };
 window.VB_ROOMS=VB_ROOMS;
 function roomMazeBuild(){
@@ -5399,7 +5386,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-29k · СЕНСОРИ: курс і нахил — з гіроскопа ОС (deviceorientation), компас лише повільно підтягує північ; гравітація для крену/горизонту — з кватерніона, не з акселерометра → нерухомий телефон = нерухома картинка, мен не «пливе» · корпус не повертається під час маху · прогноз між кадрами вимк · КАМЕРА у тренуванні тримає наставника повністю (сигнал «погляд на наставнику»), нахил камери за клинком вимк · ДІМ: карта світу на підлозі яскрава, зайві блоки прибрано · дошка не перепитує, піхви в тренуванні не спрацьовують · лог «СПОКІЙ» — розкид курсу/нахилу, коли телефон лежить · (09-29j) наставник коротше, пауза/дошка, SuperHot, Нахил ×';
+const BUILD_TAG='2026-09-29l · ДУЕЛЬ: фіксація на цілі — у тренуванні наставник, у бою найближчий ворог (до 5 клітинок): камера й тіло дивляться на ціль, телефон веде лише меч, джойстик — ближче/далі й кружляння; вихід — перемога або відстань > 8 · камера в портреті йде за тілом, не за клинком (мен більше не розвертає картинку) · стартова кімната без випадкових блоків · (09-29k) гіро ОС, СПОКІЙ';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6086,6 +6073,7 @@ function frame(now){
 
   sensorYawTick(dt);        // (09-11) канали сенсорів: клинок миттєво, мах — за порогами
   try{ stillMonitorTick(dt); }catch(e){}
+  try{ duelTick(dt); }catch(e){}
   if(SENSVIEW.on){ try{ drawSensView(); }catch(e){} }
 
   // клавиатурная отладка (если нет сенсоров под рукой)
@@ -7183,7 +7171,8 @@ function labLiveStep(dt){
         LAB.strokeHold = fast ? VB_BODY.strokeHold : Math.max(0,(LAB.strokeHold||0)-dt);
         const overhead = eA>55 || (eA>27 && back) || flipAmp || LAB.strokeHold>0;
         if(overhead && LAB.bodyHoldYaw!=null) bodyYawTgt=LAB.bodyHoldYaw; else LAB.bodyHoldYaw=yawI;
-        LAB.overhead=overhead; }
+        LAB.overhead=overhead;
+        if(LAB.isGame && typeof DUEL!=='undefined' && DUEL.on && DUEL.yawTo!=null){ bodyYawTgt=DUEL.yawTo; LAB.bodyHoldYaw=DUEL.yawTo; } }   // (09-29l) дуель: тіло дивиться на ціль
       if(C.state!=='LOOSE' || C.level!=='BODY'){ bodyFollowTick(LAB.body,bodyYawTgt,dt); LAB.astralBody={visYaw:LAB.body.visYaw}; }
       else { LAB.astralBody=LAB.astralBody||{visYaw:LAB.body.visYaw}; bodyFollowTick(LAB.astralBody,bodyYawTgt,dt);
              LAB.body.visYaw=wrap360((LAB.body.visYaw||0)+C.ph.bodyV*dt); C.ph.bodyV*=Math.exp(-dt/1.2); }
@@ -8910,6 +8899,50 @@ function camLockTarget(){
   CAMLOCK.target=best; return best;
 }
 const CAMH={ yaw:null, pitch:null };   // (09-27a) стан головної камери
+/* ═══ (09-29l) ДУЕЛЬ — ФІКСАЦІЯ НА ЦІЛІ ═══
+   Ціль: у тренуванні — наставник, у бою — найближчий ворог ближче range клітинок. Поки фіксація є: камера й корпус
+   дивляться на ціль, телефон веде ТІЛЬКИ меч відносно корпусу; джойстик ходить відносно цілі (вперед — ближче, убік —
+   кружляння). Світ «повертається» разом із ціллю: DUEL.off — зсув між курсом телефона й курсом у грі; у момент фіксації
+   він стає таким, щоб «вперед» гравця дивився на ціль, і далі йде за ціллю, коли вона обходить тебе. Вихід — ціль
+   переможена або далі за release клітинок (тренування — поки воно йде). Після виходу зсув лишається — без ривка. */
+const VB_DUEL={ foe:1, range:5, release:8, follow:10 };
+var DUEL={ on:false, tgt:null, off:0, offT:0, yawTo:null, prevYawTo:null, dojo:false };
+function duelCheb(t){ return Math.max(Math.abs(t.gx-player.gx),Math.abs(t.gy-player.gy)); }
+function duelYawTo(t){ const tp=t.mesh.position, pp=(player.mesh&&player.mesh.position)||{x:worldX(player.gx),z:worldZ(player.gy)};
+  return wrap360(Math.atan2(tp.x-pp.x, -(tp.z-pp.z))*180/Math.PI); }
+function duelPick(){
+  if(mode!=='fighter' || player.dead) return null;
+  if(typeof DOJO!=='undefined' && DOJO.on){ const a=(typeof ALLY!=='undefined')&&ALLY.ph; return (a&&a.mesh&&!a.dead)?a:null; }
+  if(!(VB_DUEL.foe>0)) return null;
+  let cur=DUEL.tgt;
+  if(cur && (DUEL.dojo || cur.dead || cur.ally || !cur.mesh || phantoms.indexOf(cur)<0 || duelCheb(cur)>VB_DUEL.release)) cur=null;
+  if(cur) return cur;
+  let best=null, bd=1e9; for(const p of phantoms){ if(!p||p.dead||p.ally||!p.mesh||(typeof ALLY!=='undefined'&&p===ALLY.ph)) continue; const d=duelCheb(p); if(d<=VB_DUEL.range && d<bd){ bd=d; best=p; } }
+  return best;
+}
+function duelTick(dt){
+  let t=null; try{ t=duelPick(); }catch(e){ t=null; }
+  if(t!==DUEL.tgt){
+    const was=DUEL.tgt; DUEL.tgt=t; DUEL.dojo=!!(t && typeof DOJO!=='undefined' && DOJO.on);
+    if(t){ const y=duelYawTo(t), body=(player.visYaw!=null)?player.visYaw:y;
+      DUEL.offT=wrap360(DUEL.off+angDiff(y,body)); DUEL.prevYawTo=y;
+      const who=DUEL.dojo?'НАСТАВНИК':'ВОРОГ';
+      try{ showBanner('🎯 ДУЕЛЬ: '+who,'#86efac'); blip(880,0.08,'sine',0.16); setTimeout(()=>{ try{ blip(1320,0.1,'sine',0.14); }catch(e){} },90); if(navigator.vibrate) navigator.vibrate([0,30]); }catch(e){}
+      logE('ДУЕЛЬ: фіксація на '+(DUEL.dojo?'наставнику':'ворогові')+' ('+t.gx+','+t.gy+') · поворот світу '+Math.round(angDiff(y,body))+'°'); }
+    else if(was){ try{ showBanner('ДУЕЛЬ ЗАВЕРШЕНО — погляд вільний','#94a3b8'); blip(440,0.1,'sine',0.12); }catch(e){} logE('ДУЕЛЬ: фіксацію знято'); }
+  }
+  DUEL.on=!!t;
+  if(t){ const y=duelYawTo(t); DUEL.offT=wrap360(DUEL.offT+angDiff(y,DUEL.prevYawTo==null?y:DUEL.prevYawTo)); DUEL.prevYawTo=y; DUEL.yawTo=y; }
+  else { DUEL.yawTo=null; DUEL.prevYawTo=null; }
+  DUEL.off=wrap360(DUEL.off+angDiff(DUEL.offT,DUEL.off)*clamp(dt*(VB_DUEL.follow||10),0,1));
+}
+/* камера: курс — за корпусом (у дуелі — на ціль), а не за клинком */
+function camYawTick(dt){
+  const tgt=(DUEL.on&&DUEL.yawTo!=null) ? DUEL.yawTo : ((player.visYaw!=null)?player.visYaw:aimYawEff());
+  CAMH.yaw=(CAMH.yaw==null)?tgt:wrap360(CAMH.yaw+angDiff(tgt,CAMH.yaw)*clamp(dt*8,0,1));
+  return CAMH.yaw;
+}
+window.DUEL=DUEL; window.VB_DUEL=VB_DUEL; window.CAMH=CAMH;
 window.CAMH=CAMH;
 const VB_ORI={ force:0, rollSign:1, level:1, autoFull:1 };   // (09-27a) знак повороту тепер із фізики; rollSign=−1 — лише якщо калібрування збрехало
 const BEACON={ state:'STANCE', t:0 };
@@ -8996,7 +9029,7 @@ function beaconTick(dt){
 function beaconEnter(){
   try{ logE('СВІТ: повільний час ×'+VB_SLOW.k+' (телефон повністю набік)'); }catch(e){}
   try{ logE('ГОРИЗОНТ: кут екрана '+Math.round(ORI.rotFull||0)+'° (піднято '+(((ORI.rotFull||0)<0)?'правий':'лівий')+' край) · ручний знак '+(VB_ORI.rollSign||1)+' · датчик '+(SENSCAL.tip?('перевірено, знак '+SENSCAL.s):'не перевірено')+' · камера '+(((VB_CAM.head|0)===1)?'ГОЛОВА':'ПРИЦІЛ')); }catch(e){}
-  CAMAIM.on=true; CAMAIM.yaw=sensor.yawFused||0; CAMAIM.pitch=-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI;
+  CAMAIM.on=true; CAMAIM.yaw=wrap360((sensor.yawFused||0)+((typeof DUEL!=='undefined'&&DUEL.off)||0)); CAMAIM.pitch=-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI;
   const v=camAxisVec(); CAMAIM.prevH=v?Math.atan2(v.x,-v.z)*180/Math.PI:null; CAMAIM.prevE=v?Math.asin(clamp(v.y,-1,1))*180/Math.PI:null;
   try{ oriInit(); oriDecide(); }catch(e){}
   logE('МАЯК: вхід · вісь '+(((VB_CAM.axis|0)===1)?'CAMERA':'BLADE')+' · aim '+Math.round(CAMAIM.yaw)+'°/'+Math.round(CAMAIM.pitch)+'° · режим '+(ORI.mode==='GAME'?'ГРА':'ПРИСТРІЙ'));
@@ -9034,7 +9067,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -9056,7 +9089,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,5,0.05],['VB_ARM.bodyFollow','Лінійний рух: тіло йде за рукою (випад)',0,2,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],['VB_KATAQ.wG','Ката: вага положення руків\'я (0 — лише напрям клинка)',0,1,0.05],['VB_KATAQ.solo','Ката: удар сам — потрібно відсотків (доджьо і жрець)',20,90,5],['VB_KATAQ.need','Доджьо: разом із тінню — потрібно відсотків',20,90,5],['VB_KATAQ.tol','Доджьо: допуск «у тіні»',0.15,0.6,0.05],['VB_KATAQ.ghostSpeed','Доджьо: швидкість тіні (частка від бойової)',0.2,1,0.1],['VB_KATAQ.rubber','Доджьо: тінь чекає, коли відстаєш (0 — ні, 1 — повністю)',0,1,0.1],
   ['VB_CAM.head','Альбомна: камера — голова (1) / старий приціл уздовж клинка (0)',0,1,1],['VB_CAM.headBack','Голова: камера позаду голови, м',0,0.8,0.05],['VB_CAM.headUp','Голова: камера вище очей, м',-0.2,0.4,0.02],
-  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_CAM.lock','Камера: фіксація на наставнику у тренуванні (0 — вимк)',0,1,0.05],['VB_CAM.lockFoe','Камера: фіксація на ворогові в бою (0 — вимк)',0,1,0.05],['VB_CAM.lockMax','Камера: макс. доворот голови до цілі, °',0,90,5],['VB_CAM.lockRange','Камера: ворог ближче, ніж клітинок',2,12,1],['VB_CAM.lockAway','Камера: відпустити ціль, якщо дивишся вбік довше, с',0.5,8,0.5],
+  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_DUEL.foe','Дуель: фіксація на ворогові в бою (1 — так, 0 — ні; у тренуванні — завжди)',0,1,1],['VB_DUEL.range','Дуель: ворог ближче, ніж клітинок — фіксація',2,10,1],['VB_DUEL.release','Дуель: далі, ніж клітинок — фіксацію знято',4,14,1],['VB_DUEL.follow','Дуель: як швидко світ іде за ціллю',2,30,1],
   ['VB_CAM.axis','Старий приціл: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
@@ -9706,7 +9739,7 @@ function aimYawEff(){
   if(typeof CAMAIM!=='undefined' && CAMAIM.on && !(typeof linkFresh==='function' && linkFresh())) return CAMAIM.yaw;   // (09-21) МАЯК: приціл = камера
   if(window.LINK && LINK.role==='swordL' && LINK.body && (Date.now()-(LINK.body.t||0))<4000)
     return LINK.body.yaw||0;                          // (07-20c) мовчить тіло — веду сам
-  return linkFresh() ? (LINK.remote.yaw||0) : sensor.yawFused;
+  return linkFresh() ? (LINK.remote.yaw||0) : wrap360((sensor.yawFused||0)+((typeof DUEL!=='undefined'&&DUEL.off)||0));   // (09-29l) зсув дуелі
 }
 function twoDev(){ return !!(window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL()); }
 function aimPitchEff(){ return AX.pR * _rawPitchRight(); }   // (07-20d) вісь пристрою діє завжди
