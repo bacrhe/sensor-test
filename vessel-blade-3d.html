@@ -564,8 +564,8 @@ function onOrientAbs(e){
     if(VB_SRC.a0n>=40){ VB_SRC.absOff=wrap360(Math.atan2(VB_SRC.a0s,VB_SRC.a0c)*180/Math.PI); logE('КУРС: північ прив\'язано — зсув гіроскопа від компаса '+Math.round(VB_SRC.absOff)+'°'); }
     return; }
   const err=angDiff(target, VB_SRC.absOff);
-  if(Math.abs(err)<40){ VB_SRC.absOff=wrap360(VB_SRC.absOff+err*clamp(dtA/VB_SRC.absTau,0,1)); VB_SRC.lostT=0; }
-  else { VB_SRC.lostT+=dtA; if(VB_SRC.lostT>6){ VB_SRC.absOff=wrap360(target); VB_SRC.lostT=0; logE('КУРС: компас розійшовся з гіроскопом на '+Math.round(err)+'° у спокої — північ прив\'язано наново'); } }
+  if(Math.abs(err)<15){ VB_SRC.absOff=wrap360(VB_SRC.absOff+err*clamp(dtA/VB_SRC.absTau,0,1)); VB_SRC.lostT=0; }
+  else { VB_SRC.lostT+=dtA; if(VB_SRC.lostT>6){ VB_SRC.lostT=0; const now2=performance.now()/1000; if(now2-(VB_SRC.warnT||0)>60){ VB_SRC.warnT=now2; logE('КУРС: компас не збігається з гіроскопом на '+Math.round(err)+'° (магнітні завади?) — ігнорую компас, курс веде гіроскоп'); } } }   // (09-29m) без стрибка світу
 }
 function srcHealthTick(dt){                                                           // раз на 2 с: чи жива відносна орієнтація
   const S=VB_SRC; if(S.decided) return;
@@ -2140,6 +2140,7 @@ function updateStanceAndCamera(dt){
     : (mode==='creator') ? 1
     : CAM.view==='fp' ? 1
     : (CAM.view==='third'||CAM.view==='top'||CAM.view==='fixed') ? 0
+    : (typeof DUEL!=='undefined' && DUEL.on && VB_DUEL.steady>0) ? (landSmooth(dt), 0)   // (09-29m) дуель: камера не стрибає в 1-шу особу від нахилу набік
     : landSmooth(dt);   // (09-22n) камера — за єдиною кривою 45°→90°
   camAimTick(dt);
   player.fpSmooth = lerp(player.fpSmooth||0, fpRaw, clamp(dt*6,0,1));
@@ -2288,7 +2289,7 @@ function updateStanceAndCamera(dt){
      світу — на стільки ж, неперервно, повертається картинка. Не стрибок у 90°, а плавно разом із телефоном. */
   try{
     /* (09-22n) поворот картинки йде тією ж кривою: до 45° — нуль, далі плавно до 90° на 90° */
-    const lvOn=clamp(VB_ORI.level??1,0,1)*(CAM.view==='third'?0:1);
+    const lvOn=clamp(VB_ORI.level??1,0,1)*(CAM.view==='third'?0:1)*((typeof DUEL!=='undefined'&&DUEL.on&&VB_DUEL.steady>0)?0:1);   // (09-29m) у дуелі картинка не повертається
     const land=ORI.landS||0;
     /* (09-27a) ЗНАК ПОВОРОТУ — З ФІЗИКИ, НЕ З ПІДБОРУ. Датчик приведено до вигляду «вектор униз» (перевірка
        «вістря вгору»), тож кут екрана відносно вертикалі = atan2(gx, −gy); світ на екрані має стояти проти
@@ -4983,7 +4984,7 @@ function contMove(ux,uy,v,dt){
   const P=player;
   if(!P._cont){ P._cont=true; P.cx=P.gx; P.cy=P.gy; }
   if(clinch.active) endClinch('retreat');
-  let fx,fy; if(CAM.view==='top'||CAM.view==='fixed'){ fx=0; fy=-1; } else { const d=dirXZ(P.visYaw||0); fx=d[0]; fy=d[1]; }
+  let fx,fy; if(CAM.view==='top'||CAM.view==='fixed'){ fx=0; fy=-1; } else { const d=dirXZ((typeof CAMH!=='undefined'&&CAMH.yaw!=null)?CAMH.yaw:(P.visYaw||0)); fx=d[0]; fy=d[1]; }   // (09-29m) «вперед» — куди дивиться камера
   const rx=-fy, ry=fx;
   let wx=fx*(-uy)+rx*ux, wy=fy*(-uy)+ry*ux; const L=Math.hypot(wx,wy)||1; wx/=L; wy/=L;
   playerFreeMove(wx,wy,v,dt);
@@ -5386,7 +5387,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-09-29l · ДУЕЛЬ: фіксація на цілі — у тренуванні наставник, у бою найближчий ворог (до 5 клітинок): камера й тіло дивляться на ціль, телефон веде лише меч, джойстик — ближче/далі й кружляння; вихід — перемога або відстань > 8 · камера в портреті йде за тілом, не за клинком (мен більше не розвертає картинку) · стартова кімната без випадкових блоків · (09-29k) гіро ОС, СПОКІЙ';
+const BUILD_TAG='2026-09-29m · ДУЕЛЬ лише на мечників і босів (повзуни, літуни, стрільці — ні) · у дуелі камера стабільна: не вмикається маяк/1-ша особа, картинка не повертається, час не сповільнюється від нахилу набік · вихід із дуелі: камера лишається, «вперед» телефона стає «вперед» тіла · джойстик — відносно погляду камери · НАХИЛ УНИЗ ×2: телефон на 45° униз = клинок під ноги (🎚 «Нахил униз ×») · компас більше не перестрибує курс (лише тихо підтягує дрібний дрейф) · (09-29l) дуель, (09-29k) гіро ОС';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7146,8 +7147,11 @@ function labLiveStep(dt){
       const elev=v=>-Math.asin(clamp(v,-1,1))*180/Math.PI;
       /* (09-29j) НАХИЛ × (VB_ANG.pitch) із переходом ЗА ГОЛОВУ: підсилений підйом понад 90° — клинок дивиться назад
          (азимут +180°, підйом 180°−e), тож замах мен/дзьодан не потребує нахиляти телефон екраном від себе. */
-      const eAmp=(elev(I.pitch)-elev(N.pitch))*VB_ANG.pitch; LAB.elevAmp=eAmp;
-      const flipAmp=Math.abs(eAmp)>90 && VB_ANG.pitch>1.001;
+      /* (09-29m) НАХИЛ УНИЗ ×pitchDown: телефон на 45° униз — клинок уже під ноги (екран лишається перед очима,
+         не треба нахилятись). Униз клинок за ноги не перевертається — упирається в «прямо вниз». */
+      const e0=elev(I.pitch)-elev(N.pitch);
+      const eAmp=(e0>=0) ? e0*VB_ANG.pitch : Math.max(-88, e0*(VB_ANG.pitchDown||1)); LAB.elevAmp=eAmp;
+      const flipAmp=eAmp>90 && VB_ANG.pitch>1.001;
       const yawI=flipAmp?wrap360(I.yaw+180):I.yaw;
       let yawRel=angDiff(yawI,N.yaw)*VB_ANG.yaw, pitchA=clamp(flipAmp?Math.sign(eAmp)*(180-Math.abs(eAmp)):eAmp,-85,85);
       const rollA=angDiff(I.groll!=null?I.groll:I.roll, N.groll!=null?N.groll:N.roll)*(LAB.rollSign||1)*VB_ANG.roll;
@@ -7505,7 +7509,7 @@ window.VB_RESYNC=VB_RESYNC;
 /* (09-16) ДВА НЕЗАЛЕЖНІ КАНАЛИ. Кутовий: орієнтація телефона → ЛИШЕ напрям клинка (VB_ANG —
    множники по осях). Лінійний: прискорення → ЛИШЕ положення руків'я (VB_ARM — посилення окремо
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
-const VB_ANG={ yaw:1.0, pitch:1.0, roll:1.0 };
+const VB_ANG={ yaw:1.0, pitch:1.0, pitchDown:2.0, roll:1.0 };   // (09-29m) pitchDown — підсилення нахилу вниз
 const VB_BODY={ strokeRate:160, strokeHold:0.35 };   // (09-29k) корпус завмирає, поки телефон крутиться швидше strokeRate °/с, і ще strokeHold с після
 /* Прив'язка «вперед» до сторін світу: lock=1 — нейтраль завжди північ+offset (однакова точка
    в будь-якій кімнаті), 0 — нейтраль там, де телефон у момент калібровки. */
@@ -8905,9 +8909,12 @@ const CAMH={ yaw:null, pitch:null };   // (09-27a) стан головної к�
    кружляння). Світ «повертається» разом із ціллю: DUEL.off — зсув між курсом телефона й курсом у грі; у момент фіксації
    він стає таким, щоб «вперед» гравця дивився на ціль, і далі йде за ціллю, коли вона обходить тебе. Вихід — ціль
    переможена або далі за release клітинок (тренування — поки воно йде). Після виходу зсув лишається — без ривка. */
-const VB_DUEL={ foe:1, range:5, release:8, follow:10 };
+const VB_DUEL={ foe:1, range:5, release:8, follow:10, small:0, steady:1 };
 var DUEL={ on:false, tgt:null, off:0, offT:0, yawTo:null, prevYawTo:null, dojo:false };
 function duelCheb(t){ return Math.max(Math.abs(t.gx-player.gx),Math.abs(t.gy-player.gy)); }
+/* (09-29m) дуель — лише з повноцінним супротивником: мечник (звичайний фантом, fighter) чи бос. Повзуни, літуни, стрільці —
+   дрібнота: від них відбиваються, погляд вони не захоплюють (VB_DUEL.small=1 — захоплюють усі). */
+function duelWorthy(p){ if(VB_DUEL.small>0) return true; if(p.boss || p.kind==='boss') return true; return !p.kind || p.kind==='fighter'; }
 function duelYawTo(t){ const tp=t.mesh.position, pp=(player.mesh&&player.mesh.position)||{x:worldX(player.gx),z:worldZ(player.gy)};
   return wrap360(Math.atan2(tp.x-pp.x, -(tp.z-pp.z))*180/Math.PI); }
 function duelPick(){
@@ -8917,7 +8924,7 @@ function duelPick(){
   let cur=DUEL.tgt;
   if(cur && (DUEL.dojo || cur.dead || cur.ally || !cur.mesh || phantoms.indexOf(cur)<0 || duelCheb(cur)>VB_DUEL.release)) cur=null;
   if(cur) return cur;
-  let best=null, bd=1e9; for(const p of phantoms){ if(!p||p.dead||p.ally||!p.mesh||(typeof ALLY!=='undefined'&&p===ALLY.ph)) continue; const d=duelCheb(p); if(d<=VB_DUEL.range && d<bd){ bd=d; best=p; } }
+  let best=null, bd=1e9; for(const p of phantoms){ if(!p||p.dead||p.ally||!p.mesh||(typeof ALLY!=='undefined'&&p===ALLY.ph)||!duelWorthy(p)) continue; const d=duelCheb(p); if(d<=VB_DUEL.range && d<bd){ bd=d; best=p; } }
   return best;
 }
 function duelTick(dt){
@@ -8927,9 +8934,16 @@ function duelTick(dt){
     if(t){ const y=duelYawTo(t), body=(player.visYaw!=null)?player.visYaw:y;
       DUEL.offT=wrap360(DUEL.off+angDiff(y,body)); DUEL.prevYawTo=y;
       const who=DUEL.dojo?'НАСТАВНИК':'ВОРОГ';
+      try{ if(VB_DUEL.steady>0 && (BEACON.state==='BEACON'||BEACON.state==='DISARMING')){ BEACON.state='STANCE'; beaconExit(); } player.charging=false; player.charge=1; }catch(e){}   // (09-29m) у дуелі маяка немає
       try{ showBanner('🎯 ДУЕЛЬ: '+who,'#86efac'); blip(880,0.08,'sine',0.16); setTimeout(()=>{ try{ blip(1320,0.1,'sine',0.14); }catch(e){} },90); if(navigator.vibrate) navigator.vibrate([0,30]); }catch(e){}
       logE('ДУЕЛЬ: фіксація на '+(DUEL.dojo?'наставнику':'ворогові')+' ('+t.gx+','+t.gy+') · поворот світу '+Math.round(angDiff(y,body))+'°'); }
-    else if(was){ try{ showBanner('ДУЕЛЬ ЗАВЕРШЕНО — погляд вільний','#94a3b8'); blip(440,0.1,'sine',0.12); }catch(e){} logE('ДУЕЛЬ: фіксацію знято'); }
+    else if(was){
+      /* (09-29m) камера й тіло лишаються, куди дивились; клинок зараз показує кудись — це стає новим «вперед» тіла
+         (плавно, ~0.3 с), щоб тіло з камерою не розвертались услід за клинком після виходу. Біля вертикалі азимут
+         вістря невизначений — тоді не чіпаємо. */
+      let fix=0; try{ const body=(player.visYaw!=null)?player.visYaw:0, blade=aimYawEff(); if(sensor.tipH==null || sensor.tipH>0.4){ fix=angDiff(body,blade); DUEL.offT=wrap360(DUEL.offT+fix); } }catch(e){}
+      try{ showBanner('ДУЕЛЬ ЗАВЕРШЕНО — погляд вільний','#94a3b8'); blip(440,0.1,'sine',0.12); }catch(e){}
+      logE('ДУЕЛЬ: фіксацію знято · «вперед» телефона переприв\'язано до тіла ('+Math.round(fix)+'°)'); }
   }
   DUEL.on=!!t;
   if(t){ const y=duelYawTo(t); DUEL.offT=wrap360(DUEL.offT+angDiff(y,DUEL.prevYawTo==null?y:DUEL.prevYawTo)); DUEL.prevYawTo=y; DUEL.yawTo=y; }
@@ -8985,7 +8999,7 @@ function superhotTick(){ const now=performance.now()/1000; const dt=clamp(now-(S
   const tip=clamp(((typeof RIB!=='undefined'&&RIB.spd)||0)/5,0,1), gy=clamp((sensor.gyroMag||0)/300,0,1), body=clamp((player._vs||0)/2.5,0,1);
   const raw=clamp(tip*1.2+gy*0.8+body*0.8,0,1); const k=raw>SUPERHOT.m?clamp(dt/0.08,0,1):clamp(dt/0.6,0,1); SUPERHOT.m+=(raw-SUPERHOT.m)*k; }
 function worldTimeScale(){
-  let ts=1-(1-VB_SLOW.k)*Math.pow(ORI.landS||0,1.5);
+  let ts=1-(1-VB_SLOW.k)*Math.pow((typeof DUEL!=='undefined'&&DUEL.on&&VB_DUEL.steady>0)?0:(ORI.landS||0),1.5);   // (09-29m) у дуелі нахил набік не сповільнює час
   try{ if(VB_SUPERHOT.mix>0 && !(typeof DOJO!=='undefined' && DOJO.on)){ superhotTick(); const sh=VB_SUPERHOT.min+(1-VB_SUPERHOT.min)*SUPERHOT.m; ts*=lerp(1,sh,clamp(VB_SUPERHOT.mix,0,1)); } }catch(e){}   // у доджьо показ наставника має йти в реальному часі
   try{ if(VB_RACC.on){ const f=clamp(RACC.A/VB_RACC.Amax,0,1); ts=Math.min(ts, 1-(1-VB_RACC.minTS)*Math.pow(f,0.8)); } }catch(e){}   // (09-24b) стрічка сповільнює час
   try{ for(const id in NET.remotes){ const p=NET.remotes[id]&&NET.remotes[id].latest; if(!p||(ADV.on&&(p.rx!==ADV.rx||p.ry!==ADV.ry))) continue;
@@ -9018,6 +9032,7 @@ function oriLevelAngle(dt){
   return ORI.phi||0;
 }
 function beaconTick(dt){
+  if(typeof DUEL!=='undefined' && DUEL.on && VB_DUEL.steady>0){ if(BEACON.state!=='STANCE'){ BEACON.state='STANCE'; beaconExit(); } return 0; }   // (09-29m) дуель: нахил набік — це удар, а не маяк
   const roll=(sensor.gX!=null)?landAngle():Math.abs(sensor.roll||0), B=BEACON;
   const EN=Math.max(VB_CAM.enterDeg, VB_CAM.tStart+(VB_CAM.tEnd-VB_CAM.tStart)*0.4), EX=clamp(VB_CAM.exitDeg, VB_CAM.tStart-5, EN-10);   // (09-22o) стійка — у межах переходу; гістерезис ≥10°
   if(B.state==='STANCE'){ if(roll>EN){ B.state='ARMING'; B.t=0; } }
@@ -9089,7 +9104,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,5,0.05],['VB_ARM.bodyFollow','Лінійний рух: тіло йде за рукою (випад)',0,2,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],['VB_KATAQ.wG','Ката: вага положення руків\'я (0 — лише напрям клинка)',0,1,0.05],['VB_KATAQ.solo','Ката: удар сам — потрібно відсотків (доджьо і жрець)',20,90,5],['VB_KATAQ.need','Доджьо: разом із тінню — потрібно відсотків',20,90,5],['VB_KATAQ.tol','Доджьо: допуск «у тіні»',0.15,0.6,0.05],['VB_KATAQ.ghostSpeed','Доджьо: швидкість тіні (частка від бойової)',0.2,1,0.1],['VB_KATAQ.rubber','Доджьо: тінь чекає, коли відстаєш (0 — ні, 1 — повністю)',0,1,0.1],
   ['VB_CAM.head','Альбомна: камера — голова (1) / старий приціл уздовж клинка (0)',0,1,1],['VB_CAM.headBack','Голова: камера позаду голови, м',0,0.8,0.05],['VB_CAM.headUp','Голова: камера вище очей, м',-0.2,0.4,0.02],
-  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_DUEL.foe','Дуель: фіксація на ворогові в бою (1 — так, 0 — ні; у тренуванні — завжди)',0,1,1],['VB_DUEL.range','Дуель: ворог ближче, ніж клітинок — фіксація',2,10,1],['VB_DUEL.release','Дуель: далі, ніж клітинок — фіксацію знято',4,14,1],['VB_DUEL.follow','Дуель: як швидко світ іде за ціллю',2,30,1],
+  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_DUEL.foe','Дуель: фіксація на ворогові в бою (1 — так, 0 — ні; у тренуванні — завжди)',0,1,1],['VB_DUEL.range','Дуель: ворог ближче, ніж клітинок — фіксація',2,10,1],['VB_DUEL.release','Дуель: далі, ніж клітинок — фіксацію знято',4,14,1],['VB_DUEL.follow','Дуель: як швидко світ іде за ціллю',2,30,1],['VB_DUEL.small','Дуель: захоплювати й дрібноту — повзунів, літунів, стрільців (1 — так)',0,1,1],['VB_DUEL.steady','Дуель: стабільна камера — без маяка, повороту картинки й повільного часу (1 — так)',0,1,1],
   ['VB_CAM.axis','Старий приціл: задня камера (1) / клинок (0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
@@ -9110,7 +9125,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.kReturn','Швидкість повернення',0,5,0.1],['VB_ARM.tiltCouple','Нахил клинка ↓ опускає руку',0,1,0.05],
   ['КУТОВИЙ РУХ (клинок)'],
   ['VB_SRC.absTau','Курс: компас підтягує північ за, с (0 — не підтягує, чистий гіроскоп)',0,60,5],['VB_SRC.calmRate','Курс: компас слухаємо лише коли гіро тихіше, °/с',5,120,5],['VB_BODY.strokeRate','Корпус: завмирає, коли телефон крутиться швидше, °/с',60,500,10],['VB_BODY.strokeHold','Корпус: і ще стільки с після маху',0,1,0.05],
-  ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил × (2 — 45° телефона = вертикаль, далі клинок іде за голову; 4 — 45° = за спину)',0.2,4,0.05],['VB_ANG.roll','Крен ×',0.2,2,0.05],
+  ['VB_ANG.yaw','Рискання ×',0.2,2,0.05],['VB_ANG.pitch','Нахил × (2 — 45° телефона = вертикаль, далі клинок іде за голову; 4 — 45° = за спину)',0.2,4,0.05],['VB_ANG.pitchDown','Нахил униз × (2 — телефон на 45° униз = клинок під ноги)',0.5,3,0.1],['VB_ANG.roll','Крен ×',0.2,2,0.05],
   ['SENSCFG.BLADE_RESPONSE','Миттєвість клинка',0.1,1,0.05],['VB_PRED.k','Прогноз гіроскопом (проти ривків)',0,1,0.05],
   ['VB_NORTH.lock','«Вперед» = північ (1) / де телефон (0)',0,1,1],['VB_NORTH.offset','Зсув від півночі, °',0,355,5],
   ['VB_YAW.gyro','LAB: курс від гіроскопа (1) / компаса (0)',0,1,0.05],['VB_YAW.inGame','ГРА: курс від гіроскопа (1) / компаса (0)',0,1,1],['VB_YAW.tau','Компас прибирає дрейф за, с',2,40,1],['VB_YAW.deadErr','Довіряти компасу лише в межах, °',5,90,5],
