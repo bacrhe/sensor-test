@@ -4955,7 +4955,7 @@ const VB_MOVE={ joy:1, dead:18, span:90, smooth:1, vmin:1.2, vmax:3.2, flow:1 };
    зрушиш. Тепер: зсув руків'я від тіла більший за go (м) — тіло робить крок у ту клітинку, куди пішов меч, а зсув
    руки меншає на sub (тіло підійшло під меч). Поштовх триває — через cd с ще крок, і так далі: іде людина — іде й
    персонаж. back/side — чи крокувати назад і вбік. У відпрацюванні вимкнено (drill=1 — увімкнути). */
-const VB_STEP={ on:1, go:0.42, sub:0.55, cd:0.28, back:1, side:1, drill:0, haptic:1, settle:0.7, hold:0.06, cont:0.5, vmin:0.25 };
+const VB_STEP={ on:1, go:0.5, sub:0.55, cd:0.45, back:1, side:0, drill:0, haptic:1, settle:0.7, hold:0.1, cont:0.5, vmin:0.25, gyroMax:110, tipMax:3.0, drain:6, dropAcc:22, dropMass:1.3 };
 var STEP={ t:0, n:0, logT:0, lastDir:'', lockT:0, lx:0, lz:0, overT:0 };
 window.VB_STEP=VB_STEP; window.STEP=STEP; try{ window.player=player; }catch(e){}
 function stepFollowTick(dt){
@@ -4964,11 +4964,26 @@ function stepFollowTick(dt){
   if(typeof DRILL!=='undefined' && DRILL.on && !(VB_STEP.drill>0)) return;
   if(clinch.active || (typeof SPR!=='undefined' && SPR.active)) return;
   STEP.t=Math.max(0,STEP.t-dt);
-  const o=S.arm.outS; let px=-o.x, pz=o.z;                                   // система тіла: z — уперед, x — ліворуч → px — праворуч
+  /* (10-06r) ЗАМАХ — НЕ КРОК. Телефон обертається (гіро) або летить вістря — це удар чи замах: рука гуляє, тіло стоїть.
+     Крок — лише коли руків'я ВЕДУТЬ без обертання: випад, поштовх, крок людини. */
+  const spinning=(sensor.gyroMag||0)>VB_STEP.gyroMax || (S.strokeHold||0)>0 || (S.bladeSpeed||0)>VB_STEP.tipMax;
+  const mass=Math.max(0.2,(VB_WEAPON.mass||1)), str=Math.max(0.2,(VB_WEAPON.strength||1)), heavy=mass/str;   // >1 — меч важкий для героя
+  const goEff=VB_STEP.go*clamp(1/heavy,0.5,2);                                                             // важкий меч тягне раніше, легкий — пізніше
+  const o=S.arm.outS; let px=-o.x, pz=o.z;
+  /* ЕФІРНА РУКА ВТЕКЛА ВПЕРЕД: чим далі руків'я від тіла, тим швидше тане витривалість і сильніше вібро — меч тягне */
+  { const Lh=Math.hypot(o.x,o.z), over=Math.max(0,Lh-goEff*0.6);
+    if(over>0 && !spinning){ player.stamina=clamp(player.stamina-dt*VB_STEP.drain*over*heavy,0,100); STEP.vibT=(STEP.vibT||0)-dt;
+      if(STEP.vibT<=0){ STEP.vibT=clamp(0.45-over*0.3,0.12,0.45); try{ if(VB_STEP.haptic>0 && navigator.vibrate) navigator.vibrate([0,Math.round(10+over*60)]); }catch(e){} } } }
+  /* ВАЖКИЙ МЕЧ + РИВОК — випускаєш із рук (маса ≥ dropMass; поріг прискорення ÷ важкість) */
+  if(mass>=VB_STEP.dropMass && !player.disarmed && !player.dead){ const am=Math.hypot(sensor.ax||0,sensor.ay||0,sensor.az||0);
+    if(am>VB_STEP.dropAcc/heavy){ STEP.dropT=(STEP.dropT||0)+dt; if(STEP.dropT>0.08){ STEP.dropT=0; player.disarmed=true; player.disarmT=0; try{ dropBlade(player); }catch(e){}
+        try{ showBanner('✕ МЕЧ ВИРВАВСЯ З РУК — заважкий для такого ривка','#ef4444'); blip(70,0.5,'sawtooth',0.24); if(navigator.vibrate) navigator.vibrate([0,220]); }catch(e){}
+        logE('ВАГА: ривок '+am.toFixed(1)+' м/с² при масі '+mass+' / силі '+str+' — меч випав з рук'); } } else STEP.dropT=0; }
+  if(spinning){ STEP.overT=0; return; }                                   // система тіла: z — уперед, x — ліворуч → px — праворуч
   if(!(VB_STEP.side>0)) px=0; if(!(VB_STEP.back>0) && pz<0) pz=0;
   STEP.lockT=Math.max(0,STEP.lockT-dt);
-  const L=Math.hypot(px,pz); if(L<VB_STEP.go*0.7) STEP.armed=true;                      // рука повернулась — наступний поштовх дасть новий крок
-  if(L<VB_STEP.go){ STEP.overT=0; return; }
+  const L=Math.hypot(px,pz); if(L<goEff*0.7) STEP.armed=true;                            // рука повернулась — наступний поштовх дасть новий крок
+  if(L<goEff){ STEP.overT=0; return; }
   STEP.overT+=dt; if(STEP.overT<VB_STEP.hold || STEP.t>0) return;
   /* один поштовх — один крок (новий — коли рука повернулась ближче за 0.7·go). Рука далеко й ДАЛІ йде вперед (швидкість
      уздовж поштовху > vmin — людина йде з прискоренням) — через cont с кроки йдуть самі, кожні cd с. Просто тримати руку
@@ -5436,7 +5451,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-05q · 🚶 КРОК ЗА МЕЧЕМ: руків\'я пішло далеко вперед, назад чи вбік (поштовх телефона) — тіло робить крок у сусідню клітинку, рука повертається під меч; тримаєш поштовх — кроки йдуть один за одним, іде людина — іде й персонаж (🎚 «Крок за мечем»; типово ввімкнено разом зі свайпами/джойстиком, у відпрацюванні вимкнено) · (09-30p) відпрацювання, живі еталони, контур у спарингу, ⏭';
+const BUILD_TAG='2026-10-06r · КРОК ЗА МЕЧЕМ v2: замах і випад — на місці; крок лише коли меч ТЯГНЕ: руків\'я пішло далеко БЕЗ обертання телефона (убік — вимкнено), поріг залежить від ваги меча й сили героя · ефірна рука далеко від тіла — витривалість тане, вібро наростає · важкий меч (маса ≥ 1.3) + різкий ривок — випускаєш з рук · у мирний час (ворогів поруч немає) корпус і камера йдуть за телефоном удвічі швидше · (10-05q) крок за мечем';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7224,7 +7239,8 @@ function labLiveStep(dt){
       { const eA=Math.abs(eAmp), back=Math.abs(angDiff(yawI, LAB.body.visYaw||0))>95;
         /* (09-29k) МАХ НЕ КРУТИТЬ КОРПУС: під час удару азимут клинка гуляє на 60-90° (кеса, йоко) — це рух руки,
            а не команда розвернутись. Швидко обертається телефон або летить вістря — ціль корпусу завмирає ще на strokeHold с. */
-        const fast=(sensor.gyroMag||0)>VB_BODY.strokeRate;                                  // за гіроскопом телефона (швидкість вістря зростає й від повороту самого корпусу — зациклювалось)
+        const calmK=(LAB.isGame && typeof calmNow==='function' && calmNow())?(VB_BODY.calmK||1):1;   // (10-06r) мирний час: повертаєш телефон — корпус іде одразу
+        const fast=(sensor.gyroMag||0)>VB_BODY.strokeRate*calmK;                                  // за гіроскопом телефона (швидкість вістря зростає й від повороту самого корпусу — зациклювалось)
         LAB.strokeHold = fast ? VB_BODY.strokeHold : Math.max(0,(LAB.strokeHold||0)-dt);
         const overhead = eA>55 || (eA>27 && back) || flipAmp || LAB.strokeHold>0;
         if(overhead && LAB.bodyHoldYaw!=null) bodyYawTgt=LAB.bodyHoldYaw; else LAB.bodyHoldYaw=yawI;
@@ -7564,7 +7580,9 @@ window.VB_RESYNC=VB_RESYNC;
    множники по осях). Лінійний: прискорення → ЛИШЕ положення руків'я (VB_ARM — посилення окремо
    на кожен напрямок). tiltCouple — єдина явна зв'язка «нахил клинка вниз опускає руку», 0 = чисте розділення. */
 const VB_ANG={ yaw:1.0, pitch:1.0, pitchDown:2.0, roll:1.0 };   // (09-29m) pitchDown — підсилення нахилу вниз
-const VB_BODY={ strokeRate:160, strokeHold:0.35 };   // (09-29k) корпус завмирає, поки телефон крутиться швидше strokeRate °/с, і ще strokeHold с після
+const VB_BODY={ strokeRate:160, strokeHold:0.35, calmK:1.6 };   // (10-06r) calmK — без ворогів поріг «маху» вищий, корпус іде за телефоном одразу
+function enemiesNear(r){ try{ r=r||7; for(const p of phantoms){ if(!p||p.dead||p.ally||!p.mesh) continue; if(Math.max(Math.abs(p.gx-player.gx),Math.abs(p.gy-player.gy))<=r) return true; } }catch(e){} return false; }
+function calmNow(){ return mode==='fighter' && !(typeof DUEL!=='undefined'&&DUEL.on) && !(typeof DOJO!=='undefined'&&DOJO.on) && !enemiesNear(7); }   // (09-29k) корпус завмирає, поки телефон крутиться швидше strokeRate °/с, і ще strokeHold с після
 /* Прив'язка «вперед» до сторін світу: lock=1 — нейтраль завжди північ+offset (однакова точка
    в будь-якій кімнаті), 0 — нейтраль там, де телефон у момент калібровки. */
 const VB_NORTH={ lock:0, offset:0 };
@@ -9020,7 +9038,7 @@ function trainingOn(){ return (typeof DOJO!=='undefined' && DOJO.on) || (typeof 
 /* камера: курс — за корпусом (у дуелі — на ціль), а не за клинком */
 function camYawTick(dt){
   const tgt=(DUEL.on&&DUEL.yawTo!=null) ? DUEL.yawTo : ((typeof DRILL!=='undefined'&&DRILL.on&&DRILL.yaw!=null) ? DRILL.yaw : ((player.visYaw!=null)?player.visYaw:aimYawEff()));   // (09-30p) відпрацювання — камера стоїть
-  CAMH.yaw=(CAMH.yaw==null)?tgt:wrap360(CAMH.yaw+angDiff(tgt,CAMH.yaw)*clamp(dt*8,0,1));
+  CAMH.yaw=(CAMH.yaw==null)?tgt:wrap360(CAMH.yaw+angDiff(tgt,CAMH.yaw)*clamp(dt*(calmNow()?14:8),0,1));   // (10-06r) мирний час — камера не відстає
   return CAMH.yaw;
 }
 window.DUEL=DUEL; window.VB_DUEL=VB_DUEL; window.CAMH=CAMH;
@@ -9202,7 +9220,8 @@ const SENS_SLIDERS=[
   ['SENSCFG.SWING_GYRO_THRESHOLD','Поріг маху, °/с',60,500,10],['SENSCFG.SWING_ACCEL_THRESHOLD','Поріг маху, м/с²',4,30,0.5],
   ['КРОК ЗА МЕЧЕМ (10-05q)'],
   ['VB_STEP.on','Крок за мечем: тіло йде за руків\'ям (1/0)',0,1,1],['VB_STEP.go','Крок за мечем: зсув руків\'я для кроку, м',0.2,1.0,0.02],['VB_STEP.sub','Крок за мечем: на скільки рука повертається після кроку, м',0.2,1.0,0.05],
-  ['VB_STEP.cd','Крок за мечем: пауза між кроками, с',0.1,1,0.02],['VB_STEP.cont','Крок за мечем: рука далеко й далі йде — кроки самі через, с',0.2,1.5,0.05],['VB_STEP.vmin','Крок за мечем: …якщо рука ще йде швидше за, м/с',0.05,1,0.05],['VB_STEP.settle','Крок за мечем: після кроку не рахувати гальмування як крок назад, с',0,1.5,0.05],['VB_STEP.back','Крок за мечем: і назад (1/0)',0,1,1],['VB_STEP.side','Крок за мечем: і вбік (1/0)',0,1,1],['VB_STEP.drill','Крок за мечем і у відпрацюванні (1/0)',0,1,1],
+  ['VB_STEP.cd','Крок за мечем: пауза між кроками, с',0.1,1,0.02],['VB_STEP.cont','Крок за мечем: рука далеко й далі йде — кроки самі через, с',0.2,1.5,0.05],['VB_STEP.vmin','Крок за мечем: …якщо рука ще йде швидше за, м/с',0.05,1,0.05],['VB_STEP.settle','Крок за мечем: після кроку не рахувати гальмування як крок назад, с',0,1.5,0.05],['VB_STEP.back','Крок за мечем: і назад (1/0)',0,1,1],['VB_STEP.side','Крок за мечем: і вбік (1/0)',0,1,1],['VB_STEP.drill','Крок за мечем і у відпрацюванні (1/0)',0,1,1],['VB_STEP.gyroMax','Крок за мечем: не крокувати, якщо телефон обертається швидше, °/с',30,400,10],['VB_STEP.tipMax','Крок за мечем: …або вістря летить швидше, м/с',1,10,0.5],
+  ['VB_STEP.drain','Ефірна рука далеко: витрата витривалості ×',0,20,0.5],['VB_STEP.dropAcc','Важкий меч: ривок, що вириває меч із рук, м/с² (÷ маса/сила)',8,40,1],['VB_STEP.dropMass','Важкий меч: від якої маси можна випустити',1,4,0.1],['VB_BODY.calmK','Мирний час: корпус і камера за телефоном швидше ×',1,3,0.1],
   ['ВІДПРАЦЮВАННЯ · КЛАСИФІКАТОР (09-30p)'],
   ['VB_DRILL.tolDeg','Відпрацювання: коридор — допуск напряму клинка, °',10,50,1],['VB_DRILL.tolPos','Відпрацювання: коридор — допуск положення рук, м',0.2,1.2,0.05],
   ['VB_DRILL.cov','Відпрацювання: зарахувати, якщо пройдено шляху ≥',0.4,1,0.05],['VB_DRILL.inside','Відпрацювання: … і в коридорі ≥',0.3,1,0.05],
