@@ -2143,15 +2143,15 @@ const camLook = new THREE.Vector3();   // сглаженная точка взг
    Екшн-камера: дуель — збоку від пари; інакше — збоку від найактивнішого, на зріст людини (dist м від нього, h м угору);
    перемикається лише коли хтось помітно активніший (×switchK) і не частіше ніж раз на hold с. Кімната — за найактивнішим
    гравцем (roomHold с між переходами). Застарілі (мовчать > 6 с) і на паузі камеру не ведуть. ═══ */
-const VB_WATCH={ on:1, dist:3.6, h:1.5, switchK:1.6, hold:3, minAct:0.04, roomHold:6, ahead:0.5 };
+const VB_WATCH={ on:1, dist:3.6, h:1.5, switchK:1.6, hold:3, minAct:0.04, roomHold:6, ahead:0.5, side:0, back:3.4, fh:2.1, fahead:1.8, th:1.15, yawK:3 };   // (10-06w) side=0: стеження за спиною, збоку лише в сутичці
 /* ═══ (10-06v) КООП-СКЛАДНІСТЬ. Складність кімнати — від числа БІЙЦІВ, що справді б'ються: я (якщо боєць) + живі
    гравці в цій кімнаті не на паузі. Спостерігачі (пакетів не шлють або spec), друга рука, гравці з інших кімнат —
    не рахуються. Спільна ціль кімнати: base·(1+k·(N−1)) ворогів; кожен клієнт доспавнює лише різницю між ціллю й
    чужими живими мобами в кімнаті (раніше кожен спавнив повний набір — удвох було вдвічі більше). ═══ */
-const VB_COOP={ on:1, k:0.5 };
+const VB_COOP={ on:1, k:0.5, oneMentor:1 };   // (10-06w) oneMentor — один учитель на команду (веде лідер)
 function coopFighters(){ let n=(mode==='fighter'&&!player.dead)?1:0; try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!r.av||!remoteFresh(r)) continue; if(!remoteInRoom(r)) continue; if(r.latest&&r.latest.pz) continue; n++; } }catch(e){} return Math.max(1,n); }
 function coopAliveOthers(){ let n=0; try{ const nowMs=Date.now(); for(const key in NET.rphantoms){ const r=NET.rphantoms[key], st=r&&r.latest; if(!st||st.dead||(st.hp!=null&&st.hp<=0)) continue; if((st.t||0)<nowMs-NET_PURGE_MS) continue;
-    const own=key.split('_')[0]; if(own==='forge'||own==='algocrat') continue; const o=NET.remotes[own]; if(!o||o.spec||!remoteFresh(o)||!remoteInRoom(o)) continue; n++; } }catch(e){} return n; }
+    if(st.al) continue; const own=key.split('_')[0]; if(own==='forge'||own==='algocrat') continue; const o=NET.remotes[own]; if(!o||o.spec||!remoteFresh(o)||!remoteInRoom(o)) continue; n++; } }catch(e){} return n; }
 function coopTarget(base){ const N=coopFighters(); return {N, T:Math.ceil(base*(1+(VB_COOP.k||0.5)*(N-1)))}; }
 function coopKinds(kinds0){
   if(!(VB_COOP.on>0) || !kinds0.length) return kinds0;
@@ -2162,7 +2162,23 @@ function coopKinds(kinds0){
   return out;
 }
 function coopWave(n0){ if(!(VB_COOP.on>0)) return n0; const {N,T}=coopTarget(n0), others=coopAliveOthers(); const n=Math.max(1,T-others); if(N>1||others>0) logE('КООП хвиля: бійців '+N+' · ціль '+T+' · чужих живих '+others+' → мої '+n); return n; }
-window.VB_COOP=VB_COOP; window.vbCoop={ fighters:coopFighters, others:coopAliveOthers, kinds:coopKinds };
+/* (10-06w) ОДИН УЧИТЕЛЬ НА КОМАНДУ: лідер — найменший id серед живих бійців цієї кімнати (включно зі мною). Лише лідер
+   тримає наставника; інші бачать його через кімнату (пакет моба з al=1 → профіль MENTOR). Навчання (татамі, доджьо,
+   спаринг, відпрацювання) — завжди зі своїм наставником. Перевірка кожні 2 с: зайвий супутник прибирається, новий лідер
+   отримує учителя. */
+var COOPM={ t:0, wasLeader:null };
+function coopLeaderId(){ let best=(NET.myId||''); try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!r.av||!remoteFresh(r)||!remoteInRoom(r)) continue; if(r.latest&&r.latest.pz) continue; if(id<best) best=id; } }catch(e){} return best; }
+function trainingLocal(){ return !!((typeof MENTOR!=='undefined'&&MENTOR.tatamiMode)||(typeof DOJO!=='undefined'&&DOJO.on)||(typeof SPAR!=='undefined'&&SPAR.on)||(typeof DRILL!=='undefined'&&DRILL.on)||(window.TUT&&(TUT.active||TUT.requested))); }
+function coopIsLeader(){ if(!(VB_COOP.on>0)||!(VB_COOP.oneMentor>0)) return true; if(!NET.online||!NET.myId) return true; return coopLeaderId()===NET.myId; }
+function coopMentorTick(dt){
+  if(!(VB_COOP.on>0)||!(VB_COOP.oneMentor>0)||mode!=='fighter'||!ADV.on||trainingLocal()) return;
+  COOPM.t+=dt; if(COOPM.t<2) return; COOPM.t=0;
+  const lead=coopIsLeader(), have=allyAlive();
+  if(!lead && have){ allyClear(); logE('КООП: учитель один на команду — його веде '+coopLeaderId().slice(0,4)+', мого супутника прибрано'); try{ showBanner('🧑‍🏫 УЧИТЕЛЬ ОДИН НА КОМАНДУ — йди за ним','#86efac'); }catch(e){} }
+  else if(lead && !have && COOPM.wasLeader===false){ try{ allySpawn(WAVES.R); logE('КООП: тепер команду веду я — учитель зі мною'); }catch(e){} }
+  COOPM.wasLeader=lead;
+}
+window.VB_COOP=VB_COOP; window.vbCoop={ fighters:coopFighters, others:coopAliveOthers, kinds:coopKinds, leader:coopLeaderId, isLeader:coopIsLeader };
 var WATCH={ id:null, t:0, side:1, sideFor:null, lastSw:0 };
 window.VB_WATCH=VB_WATCH; window.WATCH=WATCH;
 function remoteActTick(r, dt){ const raw=remoteFresh(r)?(r.actRaw||0):0; r.act=(r.act||0)+(raw-(r.act||0))*clamp((dt||0.016)/0.8,0,1); return r.act; }
@@ -2186,12 +2202,19 @@ function watchCamApply(e){
   camera.up.set(0,1,0);
   camPos.set(e.x+sx*WATCH.side*d+fx*ah*0.3, h, e.z+sz*WATCH.side*d+fz*ah*0.3); camTarget.set(e.x+fx*ah, 1.05, e.z+fz*ah);
 }
+/* (10-06w) СТЕЖЕННЯ: камера за спиною сутності (курс корпусу згладжено yawK/с), трохи вище голови, дивиться вперед —
+   кінематографічно й без ривків; у сутичці екшн-камера сама перемикається на вид збоку від пари, після — назад сюди. */
+function watchFollowApply(e, dt){
+  const F=VB_WATCH, yaw=e.yaw||0; WATCH.yawS=(WATCH.yawS==null||WATCH.yawFor!==e.id)?yaw:wrap360(WATCH.yawS+angDiff(yaw,WATCH.yawS)*clamp((dt||0.016)*(F.yawK||3),0,1)); WATCH.yawFor=e.id;
+  const [fx,fz]=dirXZ(WATCH.yawS); const d=(F.back||3.4)*(watcherMode()?SPEC.dist:1), h=F.fh||2.1, ah=F.fahead||1.8;
+  camera.up.set(0,1,0); camPos.set(e.x-fx*d, h, e.z-fz*d); camTarget.set(e.x+fx*ah, F.th||1.15, e.z+fz*ah);
+}
 function duelEntities(){
   const E=[];
   if(mode==='fighter' && !player.dead) E.push({id:'me', kind:'player', x:worldX(player.gx), z:worldZ(player.gy), yaw:player.visYaw||0, mesh:(VB_RIG.player&&VB_RIG.player.obj)||player.mesh});
-  try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!remoteFresh(r)||r.hidden) continue; E.push({id, kind:'player', x:worldX(r.gx), z:worldZ(r.gy), yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av&&r.av.mesh, vis:!!(r.av&&r.av.mesh&&r.av.mesh.visible)}); } }catch(e){}   // (10-06v) приховані не рахуються
+  try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!remoteFresh(r)||r.hidden) continue; const mp=(r.av&&r.av.mesh)?r.av.mesh.position:null; E.push({id, kind:'player', x:mp?mp.x:worldX(r.gx), z:mp?mp.z:worldZ(r.gy), yaw:(r.av&&r.av.visYaw!=null)?r.av.visYaw:((r.latest&&(r.latest.bv!=null?r.latest.bv:r.latest.yaw))||0), mesh:r.av&&r.av.mesh, vis:!!(r.av&&r.av.mesh&&r.av.mesh.visible)}); } }catch(e){}   // (10-06v) приховані не рахуються · (10-06w) позиція тіла й курс корпусу
   try{ for(const p of phantoms){ if(!p||p.dead||!p.mesh) continue; E.push({id:'ph'+phantoms.indexOf(p), kind:p.ally?'ally':'mob', x:p.mesh.position.x, z:p.mesh.position.z, yaw:p.visYaw||0, mesh:p.mesh, ph:p}); } }catch(e){}
-  try{ for(const k in NET.rphantoms){ const r=NET.rphantoms[k]; if(!r||!r.av||!r.av.mesh||r.hidden||!r.av.mesh.visible||(r.latest&&r.latest.dead)) continue; E.push({id:k, kind:'mob', x:r.av.mesh.position.x, z:r.av.mesh.position.z, yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av.mesh, vis:true}); } }catch(e){}
+  try{ for(const k in NET.rphantoms){ const r=NET.rphantoms[k]; if(!r||!r.av||!r.av.mesh||r.hidden||!r.av.mesh.visible||(r.latest&&r.latest.dead)) continue; E.push({id:k, kind:(r.latest&&r.latest.al)?'ally':'mob', x:r.av.mesh.position.x, z:r.av.mesh.position.z, yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av.mesh, vis:true}); } }catch(e){}
   return E;
 }
 function duelPairPick(){
@@ -5075,7 +5098,7 @@ $('cv').addEventListener('touchend',e=>{
    (відносно погляду, як свайп) і темп кроків: ледь потягнув — крок раз на 0.6 с, витягнув — раз на 0.18 с. */
 const VB_MOVE={ joy:1, dead:18, span:90, smooth:1, vmin:1.2, vmax:3.2, flow:1 };   // (09-22h) джойстик — типово
 /* (10-06t) МЕРЕЖА: живий меч — hz пакетів, коли в кімнаті є хтось іще; lag — буфер інтерполяції на приймачі, с */
-const VB_NET={ hz:15, lag:0.2, live:1 };
+const VB_NET={ hz:15, lag:0.2, live:1, pose:1 };   // (10-06w) pose — передавати позу рига (суглоби) гравця й мобів
 const VB_REPLAY={ on:1, hz:10, keep:90, share:1, max:3, alpha:0.45 };   // тіні минулого: запис 10 Гц, останні 90 с, до 3 кімнат локально
 const VB_PROBE={ noise:0.8, slow:1.5, fast:12, gyroFast:1500, clip2g:19.2 };
 /* (10-05q) КРОК ЗА МЕЧЕМ. Лінійний зсув руки (акселерометр, VB_ARM) пружиною повертається назад — так персонажа не
@@ -5685,7 +5708,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-06v · КООП-СКЛАДНІСТЬ: ворогів у кімнаті — за числом бійців, що справді б\'ються з мобами (спостерігачі, друга рука, пауза, сусідні кімнати — не рахуються): разом base·(1+0.5·(N−1)), кожен доспавнює лише до спільної цілі, хвилі й «на шум» — так само · СПОСТЕРІГАЧ: пара моб–моб вимкнена типово, утримувана пара не перекриває пару з гравцем, невидимі не ведуть камеру; у лозі й на екрані — гілка камери, її позиція й ціль · (10-06u) вага зброї, найяскравіше';
+const BUILD_TAG='2026-10-06w · ОДИН УЧИТЕЛЬ НА КОМАНДУ: наставника веде лідер групи (бійці однієї кімнати), решта бачить його ж через кімнату як НАСТАВНИКА, а не червоного ворога; свої зайві супутники прибираються за 2 с · ОДНАКОВЕ ВІРТУАЛЬНЕ ТІЛО: кожен гравець і моб передає позу рига (16 суглобів + корінь) 15 Гц — на всіх екранах тіло одне й те саме, різняться лише ефірне й фізичне · СПОСТЕРІГАЧ: екшн = стеження за спиною найактивнішого, у сутичці (ближче 3.2 кл.) — збоку від пари, після — знову стеження (VB_WATCH.side=1 — збоку завжди) · (10-06v) кооп-складність';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5844,6 +5867,9 @@ const NET = {
   myId:'p'+Math.random().toString(36).slice(2,8),
   db:null, online:false, sendT:0, remotes:{}, rphantoms:{},
   packet(av){
+    const _rg=(()=>{ try{ if(!(VB_NET.pose>0)) return null; const S=VB_RIG.player; if(!S||!S.rig) return null; const J=S.rig.J, out=[]; const D=180/Math.PI;
+      for(const j of LAB_JOINTS){ const r=J[j].rotation; out.push(Math.round(r.x*D),Math.round(r.y*D),Math.round(r.z*D)); }
+      const rt=S.rig.root; return {jr:out, rp:[+rt.position.x.toFixed(2),+rt.position.y.toFixed(2),+rt.position.z.toFixed(2)], rr:[Math.round(rt.rotation.x*D),Math.round(rt.rotation.y*D)]}; }catch(e){ return null; } })();   // (10-06w) поза рига
     const _sw=(()=>{ try{ if(!(VB_NET.live>0)) return null; const S=VB_RIG.player; if(!S||!S.rig) return null; const prev=LAB; LAB=S; let r; try{ r=labSwordRel(); } finally{ LAB=prev; } return {sg:r.g.map(v=>+v.toFixed(2)), sq:r.q.map(v=>+v.toFixed(3))}; }catch(e){ return null; } })();
     if(mode==='spectator'){                      // наблюдатель: столб-палка у задней кромки
       const sx = (this.myId.charCodeAt(1)||6) % 13;
@@ -5863,7 +5889,7 @@ const NET = {
       cx:(player._cont&&player.cx!=null)?+player.cx.toFixed(2):null, cy:(player._cont&&player.cy!=null)?+player.cy.toFixed(2):null,   // (09-22s/u) неперервна позиція — для інших
       rb:(typeof RIB!=='undefined'&&RIB.out&&RIB.out.length)?RIB.out.splice(0):null, rf:(typeof TRAIL!=='undefined'&&TRAIL.active)?1:0,   // (09-22r) стрічка леза для інших                                            // флаг клинча — для экшн-камеры и спектатора
       bt:(ORI.landS||0)>0.8?1:0, ra:(typeof RACC!=='undefined'&&VB_RACC.on)?+clamp(RACC.A/VB_RACC.Amax,0,1).toFixed(2):0,   // (09-24b) накопичення — сповільнює кімнату в усіх                                       // (09-22o) «повільний час»: я повністю набік — світ кімнати сповільнюється
-      sg:_sw?_sw.sg:null, sq:_sw?_sw.sq:null, bv:Math.round(av.visYaw||0), ls:(VB_RIG.player&&VB_RIG.player.ctl&&VB_RIG.player.ctl.state==='LOOSE')?1:0,   // (10-06t) живий меч: хват і кватерніон у системі тіла, курс корпусу
+      sg:_sw?_sw.sg:null, sq:_sw?_sw.sq:null, bv:Math.round(av.visYaw||0), jr:_rg?_rg.jr:null, rp:_rg?_rg.rp:null, rr:_rg?_rg.rr:null,   // (10-06w) суглоби + корінь ls:(VB_RIG.player&&VB_RIG.player.ctl&&VB_RIG.player.ctl.state==='LOOSE')?1:0,   // (10-06t) живий меч: хват і кватерніон у системі тіла, курс корпусу
       pz:paused?1:0,   // (10-06u) на паузі — не найяскравіше
       spec:false, t:Date.now() }; },
   async start(){
@@ -6067,8 +6093,12 @@ const NET = {
     // публикуем СВОИ фантомы (владелец ведёт их ИИ) — видны всем
     if(phantoms.length){
       const obj={};
+      this._phT=(this._phT||0)+1; const withPose=(VB_NET.pose>0) && (this._phT%2===0); const D=180/Math.PI;   // (10-06w) поза рига мобів — кожен другий тик
       phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
-        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now()}; });
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now()};
+        if(ph.ally && !ph.allyMad){ obj[i].al=1; obj[i].side='ally'; obj[i].nm='НАСТАВНИК'; }   // (10-06w) учитель — зелений і для інших
+        try{ const S=ph._rigS; if(withPose && S && S.rig && !ph.dead){ const jr=[]; for(const j of LAB_JOINTS){ const r=S.rig.J[j].rotation; jr.push(Math.round(r.x*D),Math.round(r.y*D),Math.round(r.z*D)); }
+          obj[i].jr=jr; const rt=S.rig.root; obj[i].rp=[+rt.position.x.toFixed(2),+rt.position.y.toFixed(2),+rt.position.z.toFixed(2)]; obj[i].rr=[Math.round(rt.rotation.x*D),Math.round(rt.rotation.y*D)]; } }catch(e){} });
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), obj).catch(()=>{});
     }else{
       set(ref(this.db,`blade/${this.room}/phantoms/${this.myId}`), null).catch(()=>{});
@@ -6186,12 +6216,16 @@ function renderRemotes(now, dt){
     const av = r.av;
     av.gx = r.gx; av.gy = r.gy; av.hp = r.hp;
     /* (10-06t) ЖИВИЙ МЕЧ: буфер зразків за часом приходу, відтворення на lag с позаду — плавно між двома пакетами */
-    if(p.sq && p.sg && VB_NET.live>0){ r.sbuf=r.sbuf||[]; if(r._sqT!==p.t){ r._sqT=p.t; r.sbuf.push({rt:Date.now(), g:p.sg, q:p.sq, bv:(p.bv!=null?p.bv:null)}); if(r.sbuf.length>16) r.sbuf.shift(); }
+    if(p.sq && p.sg && VB_NET.live>0){ r.sbuf=r.sbuf||[]; if(r._sqT!==p.t){ r._sqT=p.t; r.sbuf.push({rt:Date.now(), g:p.sg, q:p.sq, bv:(p.bv!=null?p.bv:null), jr:p.jr||null, rp:p.rp||null, rr:p.rr||null}); if(r.sbuf.length>16) r.sbuf.shift(); }
       const tr=Date.now()-(VB_NET.lag||0.2)*1000; const B=r.sbuf; let a=B[0], b=B[B.length-1];
       for(let i=B.length-1;i>=0;i--){ if(B[i].rt<=tr){ a=B[i]; b=B[Math.min(i+1,B.length-1)]; break; } }
       const u=(b.rt>a.rt)?clamp((tr-a.rt)/(b.rt-a.rt),0,1):1; const L=(x,y)=>x+(y-x)*u;
       const qa=new THREE.Quaternion(a.q[0],a.q[1],a.q[2],a.q[3]), qb=new THREE.Quaternion(b.q[0],b.q[1],b.q[2],b.q[3]); qa.slerp(qb,u);
-      av.rs={g:[L(a.g[0],b.g[0]),L(a.g[1],b.g[1]),L(a.g[2],b.g[2])], q:qa, bv:(a.bv!=null&&b.bv!=null)?wrap360(a.bv+angDiff(b.bv,a.bv)*u):(b.bv!=null?b.bv:null), rt:b.rt}; }
+      let jr=null, rp=null, rr=null;   // (10-06w) поза між двома пакетами
+      if(a.jr&&b.jr&&a.jr.length===b.jr.length){ jr=new Array(a.jr.length); for(let i=0;i<a.jr.length;i++) jr[i]=a.jr[i]+angDiff(b.jr[i],a.jr[i])*u; } else jr=b.jr||a.jr||null;
+      if(a.rp&&b.rp){ rp=[L(a.rp[0],b.rp[0]),L(a.rp[1],b.rp[1]),L(a.rp[2],b.rp[2])]; } else rp=b.rp||a.rp||null;
+      if(a.rr&&b.rr){ rr=[a.rr[0]+angDiff(b.rr[0],a.rr[0])*u, a.rr[1]+angDiff(b.rr[1],a.rr[1])*u]; } else rr=b.rr||a.rr||null;
+      av.rs={g:[L(a.g[0],b.g[0]),L(a.g[1],b.g[1]),L(a.g[2],b.g[2])], q:qa, bv:(a.bv!=null&&b.bv!=null)?wrap360(a.bv+angDiff(b.bv,a.bv)*u):(b.bv!=null?b.bv:null), rt:b.rt, jr, rp, rr}; }
     else av.rs=null;
     const bodyYaw=(av.rs&&av.rs.bv!=null)?av.rs.bv:(p.bv!=null?p.bv:(p.yaw||0));
     av.visYaw = smoothAngle(av.visYaw, bodyYaw, clamp(dt*10,0,1));
@@ -6362,7 +6396,13 @@ function renderRemotePhantoms(now, dt){
     av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
     av.swordLen=s.len||1; av.strikeT=s.strike?0.3:0; av.dead=!!s.dead || (av.hp<=0);
     updateAvatarMesh(av,now);
+    if(s.al){ av.ally=true; av.allyMad=false; av.mode='wise'; } else if(av.ally){ av.ally=false; }   // (10-06w) чужий учитель — профіль MENTOR
     try{ rigNpcTick(av, dt); sonarEntityTick(av, dt); }catch(e){}   // (09-21)
+    try{ if(VB_NET.pose>0 && s.jr && av._rigS && av._rigS.rig && s.jr.length>=LAB_JOINTS.length*3){ const S=av._rigS, jr=s.jr, D=Math.PI/180, k=clamp(dt*14,0,1);   // (10-06w) та сама поза, що у власника
+        av._jrS=(av._jrS&&av._jrS.length===jr.length)?av._jrS:jr.slice(); for(let i=0;i<jr.length;i++) av._jrS[i]+=angDiff(jr[i],av._jrS[i])*k;
+        for(let i=0;i<LAB_JOINTS.length;i++){ const J=S.rig.J[LAB_JOINTS[i]]; if(J) J.rotation.set(av._jrS[3*i]*D,av._jrS[3*i+1]*D,av._jrS[3*i+2]*D,'XYZ'); }
+        if(s.rp){ av._rpS=av._rpS||s.rp.slice(); for(let i=0;i<3;i++) av._rpS[i]+=(s.rp[i]-av._rpS[i])*k; S.rig.root.position.set(av._rpS[0],av._rpS[1],av._rpS[2]); }
+        if(s.rr){ av._rrS=av._rrS||s.rr.slice(); for(let i=0;i<2;i++) av._rrS[i]+=angDiff(s.rr[i],av._rrS[i])*k; S.rig.root.rotation.set(av._rrS[0]*D,av._rrS[1]*D,0); } S.obj.updateMatrixWorld(true); } }catch(e){}
     const biter=(s.k==='crawler'||s.k==='flyer');          // кусающиеся виды — без клинка
     if(biter){ av.blade.visible=false; av.blade.count=0; } else updateBlade(av);
     if(s.nm){                                              // имя + статус от Алго-крата
@@ -6376,6 +6416,7 @@ function renderRemotePhantoms(now, dt){
 function removeRemotePhantom(key){ const r=NET.rphantoms[key]; if(r){ disposeAvatar(r.av); delete NET.rphantoms[key]; } }
 function remotePhantomAt(cx,cy){
   for(const key in NET.rphantoms){ const r=NET.rphantoms[key]; const s=r.latest||{};
+    if(s.al) continue;   // (10-06w) чужий учитель — крізь нього
     if(!s.dead && (s.t||0)>Date.now()-NET_FRESH_MS && (s.x|0)===cx && (s.y|0)===cy) return {key,r}; }
   return null;
 }
@@ -6473,6 +6514,7 @@ function frame(now){
     try{ stepFollowTick(dt); }catch(e){ if(!window.__stepErr){ window.__stepErr=1; logE('КРОК ЗА МЕЧЕМ: '+e.message); } }   // (10-05q)
     try{ probeTick(dt); }catch(e){ if(!window.__probeErr){ window.__probeErr=1; logE('ПРОБА: '+e.message); } }   // (10-06t)
     try{ weaponKindTick(); weaponFallTick(dt); }catch(e){ if(!window.__wpnErr){ window.__wpnErr=1; logE('ВАГА: '+e.message); } }   // (10-06u)
+    try{ coopMentorTick(dt); }catch(e){ if(!window.__coopmErr){ window.__coopmErr=1; logE('КООП учитель: '+e.message); } }   // (10-06w)
     try{ kataqTick(dt); }catch(e){ if(!window.__kataqErr){ window.__kataqErr=1; logE('КАТА: '+e.message); } }
     try{ dojoTick(dt); }catch(e){ if(!window.__dojoErr){ window.__dojoErr=1; logE('ДОДЖЬО: '+e.message); } }
     try{ drillTick(dt); drillDojoContour(); }catch(e){ if(!window.__drillErr){ window.__drillErr=1; logE('ВІДПРАЦЮВАННЯ: '+e.message+' @ '+String(e.stack||'').split('\n')[1]); } }   // (09-30p)     // (09-27f) тренування з наставником     // (09-27e) оцінка маху проти еталонів
@@ -6508,7 +6550,7 @@ function frame(now){
     else { SPEC.pair=null;
       const E=(VB_WATCH.on>0)?duelEntities().filter(e=>e.kind!=='player' || e.id==='me' || ids.includes(e.id)):[];
       const e=(VB_WATCH.on>0)?watchPick(E,dt):null;
-      if(e){ watchCamApply(e); WATCH.branch='найяскравіше '+String(e.id).slice(0,4)+(e.kind==='player'?'':' ('+e.kind+')'); WATCH.tx=e.x; WATCH.tz=e.z; }
+      if(e){ if(VB_WATCH.side>0) watchCamApply(e); else watchFollowApply(e,dt); WATCH.branch=((VB_WATCH.side>0)?'збоку ':'стеження ')+String(e.id).slice(0,4)+(e.kind==='player'?'':' ('+e.kind+')'); WATCH.tx=e.x; WATCH.tz=e.z; }
       else if(!r){ specOrbitTick(dt); WATCH.branch='орбіта (нікого)'; WATCH.tx=null; }
       else { WATCH.branch='за спиною '+String(followTarget).slice(0,4); WATCH.tx=worldX(r.gx); WATCH.tz=worldZ(r.gy);
         const p=r.latest||{}; const yaw=p.yaw||0; const [dx,dz]=dirXZ(yaw);
@@ -9165,7 +9207,11 @@ function rigNpcTick(av, dt, opts){
   /* (10-06t) ЖИВИЙ МЕЧ іншого гравця: клинок — там, де його тримає той гравець (система його тіла), руки — IK за руків'ям */
   if(opts.remote && !av.dead && av.rs && (Date.now()-(av.rs.rt||0))<2500){ const prev2=LAB; LAB=S;
     try{ labSwordMode(true); const sw=S.rig.sword, q=av.rs.q; const off=new THREE.Vector3(0,sw.gripL*0.5,0).applyQuaternion(q);
-      sw.root.position.set(av.rs.g[0]+off.x, av.rs.g[1]+off.y, av.rs.g[2]+off.z); sw.root.quaternion.copy(q); sw.blade.scale.y=1; S.obj.updateMatrixWorld(true); labTwoHandGrip(S.rig,true); }catch(e){} finally{ LAB=prev2; } }
+      /* (10-06w) ОДНАКОВЕ ТІЛО: суглоби й корінь — як у відправника; руки вже на руків'ї, IK не потрібен */
+      const posed=!!(av.rs.jr && VB_NET.pose>0 && av.rs.jr.length>=LAB_JOINTS.length*3);
+      if(posed){ const jr=av.rs.jr, D=Math.PI/180; for(let i=0;i<LAB_JOINTS.length;i++){ const J=S.rig.J[LAB_JOINTS[i]]; if(J) J.rotation.set(jr[3*i]*D, jr[3*i+1]*D, jr[3*i+2]*D, 'XYZ'); }
+        if(av.rs.rp) S.rig.root.position.set(av.rs.rp[0],av.rs.rp[1],av.rs.rp[2]); if(av.rs.rr) S.rig.root.rotation.set(av.rs.rr[0]*D, av.rs.rr[1]*D, 0); }
+      sw.root.position.set(av.rs.g[0]+off.x, av.rs.g[1]+off.y, av.rs.g[2]+off.z); sw.root.quaternion.copy(q); sw.blade.scale.y=1; S.obj.updateMatrixWorld(true); if(!posed) labTwoHandGrip(S.rig,true); av._posed=posed; }catch(e){} finally{ LAB=prev2; } }
   else if(opts.remote && S.swordFree){ const prev2=LAB; LAB=S; try{ labSwordMode(false); }catch(e){} finally{ LAB=prev2; } }
   try{ npcRibbonTick(av,S); }catch(e){}   // (09-28h) стрічка клинка NPC
 }
@@ -9613,8 +9659,9 @@ const SENS_SLIDERS=[
   ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
   ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
   ['SENSCFG.SWING_GYRO_THRESHOLD','Поріг маху, °/с',60,500,10],['SENSCFG.SWING_ACCEL_THRESHOLD','Поріг маху, м/с²',4,30,0.5],
-  ['КООП-СКЛАДНІСТЬ (10-06v)'],
-  ['VB_COOP.on','Складність за числом бійців у кімнаті (1/0)',0,1,1],['VB_COOP.k','Ворогів більше на кожного додаткового бійця, ×',0,1.5,0.1],
+  ['КООП-СКЛАДНІСТЬ · ОДИН УЧИТЕЛЬ · ОДНАКОВЕ ТІЛО (10-06v/w)'],
+  ['VB_COOP.on','Складність за числом бійців у кімнаті (1/0)',0,1,1],['VB_COOP.k','Ворогів більше на кожного додаткового бійця, ×',0,1.5,0.1],['VB_COOP.oneMentor','Один учитель на команду — веде лідер (1/0)',0,1,1],
+  ['VB_NET.pose','Передавати позу рига гравця й мобів (1/0)',0,1,1],['VB_WATCH.side','Спостерігач: завжди збоку (1) / стеження, збоку лише в сутичці (0)',0,1,1],['VB_WATCH.back','Стеження: камера позаду, м',1.5,8,0.1],['VB_WATCH.fh','Стеження: висота камери, м',1,5,0.1],['VB_WATCH.fahead','Стеження: точка погляду попереду, м',0,5,0.1],['VB_WATCH.yawK','Стеження: згладження повороту, 1/с',0.5,10,0.5],
   ['ВАГА ЗБРОЇ · НАЙЯСКРАВІШЕ (10-06u)'],
   ['VB_WPN.on','Буквальна вага зброї (1/0)',0,1,1],['VB_WPN.kind','Зброя: 0 шпага · 1 меч · 2 сокира · 3 молот',0,3,1],['VB_WPN.lin','Лінійна межа руки при масі 1, м/с',1,12,0.5],
   ['VB_WPN.up','Перевантаження росте ×',0.2,3,0.1],['VB_WPN.down','Перевантаження спадає ×',0.1,3,0.1],['VB_WPN.lagRef','Відставання клинка, від якого росте, °',10,90,5],
@@ -13845,6 +13892,7 @@ function allySpawn(R){
     // (09-10) ТАТАМІ йде ПОЗА пригодою — але наставник там обов'язковий,
     // інакше черга реплік стоїть, і «майстер» говорить лише в лог.
     if(!ADV.on && !(typeof MENTOR!=='undefined' && MENTOR.tatamiMode)) return;
+    if(ADV.on && !trainingLocal() && !coopIsLeader()){ logE('КООП: учитель спільний — його веде '+coopLeaderId().slice(0,4)+', свого не кличу'); return; }   // (10-06w)
     const ph=makePhantom(1,'fighter');
     ph.ally=true; ph.allyMad=false;
     ph.mode=allyMode(R);
