@@ -1852,7 +1852,7 @@ function updateAvatarMesh(av, t){
       av._lgt=_nowF; av._lgx=av.gx; av._lgy=av.gy; }
     if(av._cont && av.cx!=null && (Math.abs(av.cx-av.gx)>1.5||Math.abs(av.cy-av.gy)>1.5)) av._cont=false;   // (09-22u) телепорт/респавн — безперервна позиція застаріла
     if(av._cont && av.cx!=null){ av.vgx=av.cx; av.vgy=av.cy; }            // (09-22p) плавний біг — модель там, де безперервна позиція
-    else if(av.remote && av._rcx!=null){ av.vgx += (av._rcx-av.vgx)*k; av.vgy += (av._rcy-av.vgy)*k; }   // (09-22s) чужий гравець — його безперервна позиція
+    else if((av.remote||av._rfree) && av._rcx!=null){ av.vgx += (av._rcx-av.vgx)*k; av.vgy += (av._rcy-av.vgy)*k; }   // (09-22s) чужий гравець — його безперервна позиція · (10-06x) і чужий моб
     else if(typeof VB_FREE!=='undefined' && VB_FREE.on && av._free && av.px!=null){ av.vgx=av.px; av.vgy=av.pz; }   // (09-22u) вільний рух — тіло там, де воно є
     else if(typeof VB_MOVE!=='undefined' && VB_MOVE.flow){                  // (09-22s) хода з постійною швидкістю
       const dx=av.gx-av.vgx, dy=av.gy-av.vgy, dist=Math.hypot(dx,dy);
@@ -5099,7 +5099,7 @@ $('cv').addEventListener('touchend',e=>{
 const VB_MOVE={ joy:1, dead:18, span:90, smooth:1, vmin:1.2, vmax:3.2, flow:1 };   // (09-22h) джойстик — типово
 /* (10-06t) МЕРЕЖА: живий меч — hz пакетів, коли в кімнаті є хтось іще; lag — буфер інтерполяції на приймачі, с */
 const VB_NET={ hz:15, lag:0.2, live:1, pose:1 };   // (10-06w) pose — передавати позу рига (суглоби) гравця й мобів
-const VB_REPLAY={ on:1, hz:10, keep:90, share:1, max:3, alpha:0.45 };   // тіні минулого: запис 10 Гц, останні 90 с, до 3 кімнат локально
+const VB_REPLAY={ on:1, hz:10, keep:90, share:1, max:3, alpha:0.3, watch:0 };   // (10-06x) watch — чи показувати тіні спостерігачу (типово ні), alpha 0.3   // тіні минулого: запис 10 Гц, останні 90 с, до 3 кімнат локально
 const VB_PROBE={ noise:0.8, slow:1.5, fast:12, gyroFast:1500, clip2g:19.2 };
 /* (10-05q) КРОК ЗА МЕЧЕМ. Лінійний зсув руки (акселерометр, VB_ARM) пружиною повертається назад — так персонажа не
    зрушиш. Тепер: зсув руків'я від тіла більший за go (м) — тіло робить крок у ту клітинку, куди пішов меч, а зсув
@@ -5123,7 +5123,7 @@ function replayGhostAdd(fr, hue, label){
   logE('ТІНЬ: '+label+' · '+Math.round(dur)+' с запису');
 }
 function replayLoad(key){
-  replayGhostsClear(); if(!(VB_REPLAY.on>0)) return;
+  replayGhostsClear(); if(!(VB_REPLAY.on>0)) return; if(watcherMode() && !(VB_REPLAY.watch>0)) return;   // (10-06x) спостерігач бачить лише живих
   try{ const all=JSON.parse(localStorage.getItem('vb3d_replay')||'{}'); const mine=all[key]; if(mine&&mine.fr) replayGhostAdd(mine.fr, 0.55, 'ти минулого разу'); }catch(e){}
   if(VB_REPLAY.share>0 && NET.online && NET.db){ try{ const rr=ref(NET.db,`blade/${NET.room}/replays/${key.replace(',','_')}`); let un=null; let done=false;
     un=onValue(rr, snap=>{ if(done) return; done=true; try{ if(un) un(); }catch(e){} const all2=snap.val()||{}; let n=0;
@@ -5708,7 +5708,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-06w · ОДИН УЧИТЕЛЬ НА КОМАНДУ: наставника веде лідер групи (бійці однієї кімнати), решта бачить його ж через кімнату як НАСТАВНИКА, а не червоного ворога; свої зайві супутники прибираються за 2 с · ОДНАКОВЕ ВІРТУАЛЬНЕ ТІЛО: кожен гравець і моб передає позу рига (16 суглобів + корінь) 15 Гц — на всіх екранах тіло одне й те саме, різняться лише ефірне й фізичне · СПОСТЕРІГАЧ: екшн = стеження за спиною найактивнішого, у сутичці (ближче 3.2 кл.) — збоку від пари, після — знову стеження (VB_WATCH.side=1 — збоку завжди) · (10-06v) кооп-складність';
+const BUILD_TAG='2026-10-06x · ОДНАКОВА КАРТИНКА: спостерігач не показує тіней минулого (у бійця їх не видно — і в нього не юрба) · колір тіла гравця один на всіх екранах (пакет несе відтінок, свій риг ним же фарбується) · моби передають безперервну позицію — на чужому екрані там само, де у власника · тіні прозоріші (0.3) · діагностика камери спостерігача — на екрані й у лозі · (10-06w) один учитель, однакове тіло';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -5884,7 +5884,7 @@ const NET = {
       yaw:Math.round(clinch.active?clinch.lockYaw:sensor.yawFused),   // в клинче — ЗАМОРОЖЕННЫЙ азимут (поза зацепа)
       pitch:+sensor.pitch.toFixed(2),
       roll:Math.round(sensor.roll), hp:Math.round(av.hp), stamina:Math.round(av.stamina),
-      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round((player.baseHue||0)*100)/100,
+      isCharging:av.charging, swordLength:+av.swordLen.toFixed(2), wpn:playerWpn, reach:Math.round((player.mods&&player.mods.reach)||0), mf:MORPH.form!=='human'?1:0, hue:Math.round(((player.baseHue!=null)?player.baseHue:0.55)*100)/100,   // (10-06x) той самий відтінок, що й у свого рига
       cl:clinch.active?1:0,
       cx:(player._cont&&player.cx!=null)?+player.cx.toFixed(2):null, cy:(player._cont&&player.cy!=null)?+player.cy.toFixed(2):null,   // (09-22s/u) неперервна позиція — для інших
       rb:(typeof RIB!=='undefined'&&RIB.out&&RIB.out.length)?RIB.out.splice(0):null, rf:(typeof TRAIL!=='undefined'&&TRAIL.active)?1:0,   // (09-22r) стрічка леза для інших                                            // флаг клинча — для экшн-камеры и спектатора
@@ -6095,7 +6095,8 @@ const NET = {
       const obj={};
       this._phT=(this._phT||0)+1; const withPose=(VB_NET.pose>0) && (this._phT%2===0); const D=180/Math.PI;   // (10-06w) поза рига мобів — кожен другий тик
       phantoms.forEach((ph,i)=>{ obj[i]={x:ph.gx,y:ph.gy,yaw:ph.dirIdx*45,hp:Math.round(ph.hp),
-        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now()};
+        len:+ph.swordLen.toFixed(2),strike:ph.strikeT>0?1:0,roll:Math.round(ph.roll||0),dead:ph.dead?1:0,k:ph.kind,sz:ph.size||1,hov:ph.hover||0,t:Date.now(),
+        px:(ph._free&&ph.px!=null)?+ph.px.toFixed(2):null, pz:(ph._free&&ph.pz!=null)?+ph.pz.toFixed(2):null};   // (10-06x) де тіло насправді
         if(ph.ally && !ph.allyMad){ obj[i].al=1; obj[i].side='ally'; obj[i].nm='НАСТАВНИК'; }   // (10-06w) учитель — зелений і для інших
         try{ const S=ph._rigS; if(withPose && S && S.rig && !ph.dead){ const jr=[]; for(const j of LAB_JOINTS){ const r=S.rig.J[j].rotation; jr.push(Math.round(r.x*D),Math.round(r.y*D),Math.round(r.z*D)); }
           obj[i].jr=jr; const rt=S.rig.root; obj[i].rp=[+rt.position.x.toFixed(2),+rt.position.y.toFixed(2),+rt.position.z.toFixed(2)]; obj[i].rr=[Math.round(rt.rotation.x*D),Math.round(rt.rotation.y*D)]; } }catch(e){} });
@@ -6250,7 +6251,7 @@ function renderRemotes(now, dt){
     av.remote=true;                                // (07-22) для м'якої інтерполяції
     updateAvatarMesh(av, now);
     updateBlade(av);
-    try{ rigNpcTick(av, dt, {remote:true, hue:rigHueForId(id)}); sonarEntityTick(av, dt); }catch(e){}   // (09-21) риг іншого гравця, свій колір
+    try{ rigNpcTick(av, dt, {remote:true, hue:(p.hue!=null?+p.hue:rigHueForId(id))}); if(av._rigS && p.hue!=null) rigRecolor(av._rigS.rig,+p.hue); sonarEntityTick(av, dt); }catch(e){}   // (09-21) риг іншого гравця · (10-06x) колір — його власний
     try{ remoteBlade2(r, av, p); }catch(e){}      // (07-18e) другий клинок чужого бійця
     try{                                          // (07-20d) ЗЧЕПЛЕНІ = ОДНЕ ТІЛО З ДВОМА КЛИНКАМИ
       if(typeof PAIR!=='undefined' && PAIR.with===id){
@@ -6391,6 +6392,7 @@ function renderRemotePhantoms(now, dt){
     }
     if(r.hidden){ r.hidden=false; av.mesh.visible=true; av.blade.visible=true; }
     av.gx=clamp(s.x|0,0,12); av.gy=clamp(s.y|0,0,12); av.hp=s.hp??100;
+    if(s.px!=null && s.pz!=null){ av._rfree=true; av._rcx=+s.px; av._rcy=+s.pz; } else { av._rfree=false; av._rcx=null; av._rcy=null; }   // (10-06x) безперервна позиція власника
     av.visYaw=smoothAngle(av.visYaw, s.yaw||0, clamp(dt*8,0,1));
     av.dirIdx=yawToDirIdx(s.yaw||0);
     av.pitch=0; av.roll=+(s.roll||0); av.crouch=0;
@@ -8676,6 +8678,7 @@ function rigPlayerEnsure(){
   S.body.visYaw=player.visYaw||0;
   const prev=LAB; LAB=S; try{ labSwordMode(true); }finally{ LAB=prev; }
   VB_RIG.player=S;
+  try{ if(player.baseHue!=null) rigRecolor(S.rig, player.baseHue); }catch(e){}   // (10-06x) свій риг — тим самим відтінком, що бачать інші
   logE('VB_RIG: гравець — новий риг (LIVE-фізика лабораторії у грі)');
   return S;
 }
@@ -9669,7 +9672,7 @@ const SENS_SLIDERS=[
   ['VB_WATCH.on','Спостерігач: за найактивнішим (1/0)',0,1,1],['VB_WATCH.dist','Спостерігач: відстань збоку, м',2,8,0.2],['VB_WATCH.h','Спостерігач: висота камери, м',0.8,4,0.1],['VB_WATCH.switchK','Перемикатись, коли активніший у ×',1,4,0.1],['VB_WATCH.hold','Не перемикатись частіше, с',1,10,0.5],['VB_WATCH.roomHold','Кімната: не перескакувати частіше, с',2,20,1],
   ['МЕРЕЖА · ТІНІ · ПРОБА (10-06t)'],
   ['VB_NET.live','Живий меч інших гравців (1/0)',0,1,1],['VB_NET.hz','Мережа: пакетів на секунду, коли є інші',5,25,1],['VB_NET.lag','Мережа: буфер плавності на приймачі, с',0.05,0.6,0.05],
-  ['VB_REPLAY.on','Тіні минулого (1/0)',0,1,1],['VB_REPLAY.keep','Тіні: записувати останні, с',20,180,10],['VB_REPLAY.share','Тіні: ділитись через кімнату (1/0)',0,1,1],['VB_REPLAY.alpha','Тіні: прозорість тіла',0.15,0.9,0.05],
+  ['VB_REPLAY.on','Тіні минулого (1/0)',0,1,1],['VB_REPLAY.watch','Тіні минулого у спостерігача (1/0)',0,1,1],['VB_REPLAY.keep','Тіні: записувати останні, с',20,180,10],['VB_REPLAY.share','Тіні: ділитись через кімнату (1/0)',0,1,1],['VB_REPLAY.alpha','Тіні: прозорість тіла',0.15,0.9,0.05],
   ['VB_PROBE.slow','Проба: «повільно» нижче, м/с²',0.5,5,0.1],['VB_PROBE.fast','Проба: «швидко» вище, м/с²',5,30,0.5],['VB_PROBE.gyroFast','Проба: «швидко» — гіро вище, °/с',300,2500,50],
   ['КРОК ЗА МЕЧЕМ (10-05q)'],
   ['VB_STEP.on','Крок за мечем: тіло йде за руків\'ям (1/0)',0,1,1],['VB_STEP.go','Крок за мечем: зсув руків\'я для кроку, м',0.2,1.0,0.02],['VB_STEP.sub','Крок за мечем: на скільки рука повертається після кроку, м',0.2,1.0,0.05],
