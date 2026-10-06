@@ -48,6 +48,26 @@ h1 span{color:#1e3a5f;font-size:10px}
 #logbody{flex:1;margin:0;padding:8px;overflow:auto;font-size:9px;line-height:1.5;color:#8ab0d8;white-space:pre-wrap}
 #pauseBtn{position:fixed;top:6px;right:30px;z-index:16;font:inherit;font-size:14px;
   background:#0a1a2e;color:#60a5fa;border:1px solid #1e3a5f;border-radius:6px;padding:4px 10px;display:none}
+#invBtn{position:fixed;top:6px;right:84px;z-index:16;font:inherit;font-size:14px;
+  background:#0a1a2e;color:#fcd34d;border:1px solid #1e3a5f;border-radius:6px;padding:4px 10px;display:none}
+#invBtn.on{background:#3b2f0b;border-color:#b45309}
+#invPanel{position:fixed;left:0;right:0;bottom:0;z-index:17;display:none;flex-direction:column;align-items:center;gap:6px;
+  padding:8px 8px 10px;background:linear-gradient(rgba(1,6,15,.15),rgba(1,6,15,.82) 18%,rgba(1,6,15,.9));pointer-events:none}
+#invPanel.on{display:flex}
+#invPanel .inv-title{font-size:11px;letter-spacing:.14em;color:#fcd34d;pointer-events:auto}
+#invPanel .inv-grid{display:grid;grid-template-columns:repeat(13,1fr);gap:2px;width:min(96vw,60vh);aspect-ratio:1/1;pointer-events:auto}
+#invPanel .ic{position:relative;border:1px solid #16304f;background:rgba(2,12,26,.7);border-radius:3px;font-size:9px;line-height:1.05;
+  display:flex;align-items:center;justify-content:center;text-align:center;color:#8fb3d9;overflow:hidden;user-select:none;-webkit-user-select:none}
+#invPanel .ic.fig{background:rgba(34,197,94,.22);border-color:#15803d}
+#invPanel .ic.fig.head{background:rgba(203,213,225,.35);border-color:#94a3b8}
+#invPanel .ic.slot{border:1px dashed #b45309;color:#fbbf24;background:rgba(120,53,15,.18)}
+#invPanel .ic.hand{border:1px solid #fcd34d;background:rgba(253,211,77,.14);color:#fde68a}
+#invPanel .ic.item{border-color:#1e5a8f;background:rgba(14,40,80,.8);color:#dbeafe;cursor:pointer}
+#invPanel .ic.item.eq{outline:2px solid #fcd34d}
+#invPanel .ic.res{color:#e2e8f0;background:rgba(30,58,95,.55)}
+#invPanel .ic .n{position:absolute;right:2px;bottom:1px;font-size:9px;color:#fde68a}
+#invPanel .ic .k{font-size:12px}
+#invPanel .inv-note{font-size:10px;color:#64748b;letter-spacing:.06em;pointer-events:auto;text-align:center;max-width:94vw}
 #followBtn{position:fixed;top:44px;right:30px;z-index:16;font:inherit;font-size:12px;
   background:#0a1a2e;color:#a5f3fc;border:1px solid #1e3a5f;border-radius:6px;padding:5px 10px;display:none}
 #menu{position:fixed;inset:0;z-index:28;display:none;flex-direction:column;align-items:center;justify-content:flex-start;
@@ -1490,6 +1510,7 @@ export { OutputShader };
       <button class="mbtn" data-mode="fighter" style="display:none">⚔ БОЄЦЬ</button>
       <button class="mbtn on" data-mode="action">🎬 ЕКШН (дуелі збоку)</button>
       <button class="mbtn" data-mode="follow">🎥 СТЕЖЕННЯ</button>
+      <button class="mbtn" data-mode="eyes">👀 ОЧИМА (1-ша особа)</button>
       <button class="mbtn" data-mode="spectator">👁 ЗГОРИ</button>
       <button class="mbtn" data-mode="map">🗺 МАПА</button>
     </div>
@@ -1511,6 +1532,8 @@ export { OutputShader };
 <div id="haptic"></div>
 <button id="logBtn">LOG</button>
 <button id="pauseBtn">⏸</button>
+<button id="invBtn" title="інвентар">🎒</button>
+<div id="invPanel"><div class="inv-title">🎒 ІНВЕНТАР · гра триває</div><div class="inv-grid" id="invGrid"></div><div class="inv-note" id="invNote"></div></div>
 <button id="followBtn">◎ ИГРОК ▷</button>
 <div id="crosshair"></div>
 <div id="forgePanel">
@@ -3282,7 +3305,12 @@ function updateAvatarMesh(av, t){
   if(av._faceYaw!=null) g.rotation.y = Math.PI - av._faceYaw*Math.PI/180;                               // (09-29o) спаринг: точно на гравця
   if(av._lungeO && av._lungeS){ g.position.x += av._lungeO.x*av._lungeS; g.position.z += av._lungeO.z*av._lungeS; }   // (09-29o) випад наставника
   // КАСТОМНАЯ МОДЕЛЬ зверя (повзун/літун/стрілець/босс): своя анимация, мимо гуманоида
-  if(av.kmodel){ if(av.kanim) av.kanim(av, t); return; }
+  if(av.kmodel){
+    /* (10-07a) СМЕРТЬ ЗВІРА: літун/повзун/стрілець падає з висоти на підлогу й лягає на бік (0.6 с), анімація виду зупиняється */
+    if(av.dead){ av._deadT=(av._deadT||0)+Math.max(dt2,0.001); const f=clamp(av._deadT/0.6,0,1), e=f*f;
+      g.position.y=(av.hover||0)*(1-e)+_hop*(1-e); av.kmodel.rotation.z=1.35*e; av.kmodel.position.y=0.12*e; }
+    else { if(av._deadT){ av._deadT=0; av.kmodel.rotation.z=0; av.kmodel.position.y=0; } if(av.kanim) av.kanim(av, t); }
+    return; }
   // ── ноги/стопы: присед опускает и разводит колени ──
   const spread=0.17+cr*0.13;
   /* (09-11, ТЗ п.21) БОЙОВА СТІЙКА замість «стоїть рівно»: одна нога попереду,
@@ -3475,7 +3503,7 @@ function handInfoLeft(){
 function updateBlade2(){
   const av=player;
   if(!av.blade2) return;
-  if(!linkFreshL() || av.dead || av.disarmed || mode!=='fighter'){ av.blade2.count=0; return; }
+  if(!linkFreshL() || av.dead || av.disarmed || mode!=='fighter' || (typeof weaponHands==='function' && weaponHands()===2)){ av.blade2.count=0; return; }   // (10-07a) дворучна зброя — лівий клинок не окремий
   const H=handInfoLeft();
   const bx=H.tipX-H.hx, by=H.tipY-H.hy, bz=H.tipZ-H.hz;
   const blen=Math.hypot(bx,by,bz)||1;
@@ -3503,6 +3531,7 @@ function updateBlade2(){
 }
 function updateBlade(av){
   if(av.disarmed || av.dead || av.noBlade || av.kmodel){ av.blade.count=0; return; }
+  if(av===player && typeof INVUI!=='undefined' && INVUI.open){ av.blade.count=0; return; }   // (10-07a) в інвентарі — не б'ємо
   if(av!==player && av._rigS && typeof VB_RIG!=='undefined' && VB_RIG.on){ av.blade.count=0; if(av.blade2) av.blade2.count=0; return; }   // (09-22k) риг має справжній меч   // у зверей клинка нет; у БОССА оружие = модель секиры (луч лишний)
   const wname = av===player ? playerWpn : av.wpn;
   const wst = wname && WEAPON_FX[wname];
@@ -4554,7 +4583,7 @@ function applyIncomingHit(h){
    Пакеты несут t=Date.now() → всё старше 6с игнорируем, старше 12с — сносим. */
 const NET_FRESH_MS = 6000, NET_PURGE_MS = 12000;
 function remoteFresh(r){ return !!r && (((r.latest&&r.latest.t)||0) > Date.now()-NET_FRESH_MS); }
-function sameAdvRoom(r){ if(mode==='spectator'||mode==='follow'||mode==='action') return true;   // (07-17b) глядач бачить усіх
+function sameAdvRoom(r){ if(mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes') return true;   // (07-17b) глядач бачить усіх
   if(!ADV.on) return true;
   const rx=(r.rx??(r.latest&&r.latest.rx)); if(rx==null) return true;
   return rx===ADV.rx && (r.ry??(r.latest&&r.latest.ry))===ADV.ry; }
@@ -5170,7 +5199,7 @@ function curRoomKey(){ return (typeof ADV!=='undefined' && ADV.on) ? (ADV.rx+','
 function snapshotRoom(){
   if(typeof SPR!=='undefined' && SPR.active) return;               // (09-24b) серпантин — тимчасова карта
   if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return;   // (07-17i) рука не пише світ
-  if(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map') return;   // (07-17v) глядач лише дивиться
+  if(mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes'||mode==='map') return;   // (07-17v) глядач лише дивиться
   NET.roomDirty=true; roomEdits.set(curRoomKey(), { lv:((VB_ROOMS&&VB_ROOMS.on)?ROOM_LAYOUT_V:1),
   blocks: obstacles.map(o=>({gx:o.gx,gy:o.gy,type:o.mtype||'wall',shape:o.shape||null,rotY:o.rotY||0,tint:o.tint??null,alpha:o.alpha??null,baseY:o.baseY||0,fs:o.fs??null,tm:o.tm||1})),
   micro: microBlocks.map(m=>({gx:m.gx,gy:m.gy,n:m.n,sx:m.sx,sy:m.sy,sz:m.sz,type:m.type,tint:m.tint,alpha:m.alpha,shape:m.shape||null,rotY:m.rotY||0,y0:m.y0,hgt:m.hgt})) }); }
@@ -5193,7 +5222,7 @@ function applyRemoteRoomIfNewer(key){
   // (07-16) ТРОТЛ: повна перебудова кімнати — дорога; чужі зрізи чекають вікна 2.5с
   const now=Date.now();
   NET._reAt = NET._reAt||{};
-  const _watch = (mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');
+  const _watch = (mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes'||mode==='map');
   const _gap=(_isHand||_watch) ? 0 : 1200;         // (07-17v) глядач теж бачить світ миттєво
   if(now - (NET._reAt[key]||0) < _gap){ NET._rePendKey=key; return false; }
   NET._reAt[key]=now; if(NET._rePendKey===key) NET._rePendKey=null;
@@ -5890,7 +5919,7 @@ function handleDeath(av, dt){
     }
   }
 }
-function watcherMode(){ return mode==='spectator'||mode==='follow'||mode==='action'||mode==='map'; }
+function watcherMode(){ return mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes'||mode==='map'; }
 function respawn(av){
   // ПРИГОДА: убитые враги НЕ возрождаются — иначе комнату не зачистить и переход невозможен
   if(ADV.on && av!==player){
@@ -7051,6 +7080,7 @@ function creatorRemove(){
 /* (10-06t) СПОСТЕРІГАЧ БАЧИТЬ: сонар — для сліпого бійця; глядач отримує звичайну картинку (REVEAL off) і світло на тіла.
    Повертаєшся бійцем — усе як було. */
 const WATCHL={ h:null, d:null };
+const RESW={t:0};
 const VB_VIEW={ full:1, _ap:null };   // (10-06y) full — повна картинка (стіни, світло, без сонарної темряви) на КОЖНОМУ пристрої, щоб звіряти екрани
 window.VB_VIEW=VB_VIEW;
 function viewFullTick(){ if(VB_VIEW._ap!==VB_VIEW.full){ VB_VIEW._ap=VB_VIEW.full; watcherVisualApply(); } }
@@ -7069,7 +7099,7 @@ function applyMode(){
   obstacles.forEach(o=>{ if(o.mesh) o.mesh.visible=true; });
   if(droppedBlade) droppedBlade.visible=fighter; if(WFALL&&WFALL.m) WFALL.m.visible=fighter;
   camera.up.set(0,1,0);
-  $('followBtn').style.display = (mode==='follow'||mode==='action')?'block':'none';
+  $('followBtn').style.display = (mode==='follow'||mode==='action'||mode==='eyes')?'block':'none';
   { const h=$('hud'); if(h) h.style.display=creator?'none':''; }
   { const c=$('creatorUI'); if(c) c.style.display=creator?'flex':'none'; }
   { const x=$('crosshair'); if(x) x.style.display=creator?'block':'none'; }
@@ -7085,8 +7115,8 @@ try{ const c=JSON.parse(localStorage.getItem('vb_cam')||'{}');
   if(c.zoom) CAM.zoom=clamp(+c.zoom,0.5,2.4); if(c.view) CAM.view=c.view;
   const h=localStorage.getItem('vb_hue'); if(h!=null) CAM._hue=+h; }catch(e){}
 function camSave(){ try{ localStorage.setItem('vb_cam',JSON.stringify({zoom:CAM.zoom,view:CAM.view})); }catch(e){} }
-const MODE_ORDER=['fighter','spectator','follow','action','map'];
-const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',action:'ЭКШН',map:'КАРТА'};
+const MODE_ORDER=['fighter','spectator','follow','eyes','action','map'];
+const MODE_LABEL={fighter:'БОЕЦ',spectator:'СВЕРХУ',follow:'СЛЕЖКА',eyes:'ОЧИМА',action:'ЭКШН',map:'КАРТА'};   // (10-07a) очима гравця
 function cycleMode(){
   mode = MODE_ORDER[(MODE_ORDER.indexOf(mode)+1)%MODE_ORDER.length];
   $('mMode').textContent='◎ РЕЖИМ: '+MODE_LABEL[mode];
@@ -7131,7 +7161,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-06y · ОФЛАЙН І Wi-Fi: three.js вшито у файл — гра стартує без інтернету · локальна мережа через vb-lan-server.js (кілька пристроїв в одній Wi-Fi / точці доступу) · хмара лише коли є інтернет · ворота показують режим мережі · тіло іншого гравця більше не «боком» (курс корпусу передавався двічі) · повна картинка на всіх пристроях (VB_VIEW.full) · тіні минулого вимкнено · (10-06x) однакова картинка';
+const BUILD_TAG='2026-10-07a · ЧУЖІ МОБИ як у власника (повзун/літун/стрілець/бос — свої моделі, не «малий боєць») · мертвий літун падає на підлогу · РЕСУРСИ: спостерігач бачить ресурси гравця, за яким стежить · РУКИ Й МЕЧ НЕ КРІЗЬ ТІЛО (самозіткнення: хват перед грудьми, лікоть назовні, клинок відхиляється від корпусу) · ЗБРОЯ 7 класів: кинджал · шпага · короткий меч · довгий меч · дворучний меч · сокира · молот (одна/дві руки, дві руки з двох пристроїв) · ІНВЕНТАР 13×13 без паузи (кнопка 🎒): руки, броня, кишені · (10-06y) офлайн і Wi-Fi';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7314,6 +7344,10 @@ const NET = {
       bt:(ORI.landS||0)>0.8?1:0, ra:(typeof RACC!=='undefined'&&VB_RACC.on)?+clamp(RACC.A/VB_RACC.Amax,0,1).toFixed(2):0,   // (09-24b) накопичення — сповільнює кімнату в усіх                                       // (09-22o) «повільний час»: я повністю набік — світ кімнати сповільнюється
       sg:_sw?_sw.sg:null, sq:_sw?_sw.sq:null, bv:Math.round(av.visYaw||0), jr:_rg?_rg.jr:null, rp:_rg?_rg.rp:null, rr:_rg?_rg.rr:null,   // (10-06w) суглоби + корінь ls:(VB_RIG.player&&VB_RIG.player.ctl&&VB_RIG.player.ctl.state==='LOOSE')?1:0,   // (10-06t) живий меч: хват і кватерніон у системі тіла, курс корпусу
       pz:paused?1:0,   // (10-06u) на паузі — не найяскравіше
+      wk:weaponKind().id, wh:weaponHands(),   // (10-07a) клас зброї і хват — чужий риг показує той самий клинок
+      hp:+((sensor.camPitch??sensor.pitch)||0).toFixed(2), fp:+(player.fpSmooth||0).toFixed(2),   // (10-07a) нахил голови і «перша особа» — для режиму «очима»
+      res:(typeof RES!=='undefined')?[RES.wood|0,RES.stone|0,RES.iron|0,RES.crystal|0,RES.glass|0,RES.steel|0]:null,   // (10-07a) ресурси — щоб спостерігач бачив мої, а не свої
+      iv:(typeof INVUI!=='undefined'&&INVUI.open)?1:0,   // (10-07a) риюсь в інвентарі — інші бачать позу
       spec:false, t:Date.now() }; },
   async start(){
     try{
@@ -7609,6 +7643,7 @@ function upsertRemote(id, p){
   try{ if(r.av){ r.av._rcx=(p.cx!=null)?+p.cx:null; r.av._rcy=(p.cy!=null)?+p.cy:null; } }catch(e){}   // (09-22s)
   try{ remoteRibbonIngest(r, p); }catch(e){}  // (09-22r)
   r.gx = clamp(p.x|0,0,12); r.gy = clamp(p.y|0,0,12); r.hp = p.hp??100;
+  if(p.res && p.res.length>=4) r.res={wood:p.res[0]|0,stone:p.res[1]|0,iron:p.res[2]|0,crystal:p.res[3]|0,glass:p.res[4]|0,steel:p.res[5]|0};   // (10-07a)
 }
 function setRemoteVisible(r,vis){
   if(r.av){ r.av.mesh.visible=vis; r.av.blade.visible=vis; }
@@ -7678,7 +7713,7 @@ function renderRemotes(now, dt){
     av.remote=true;                                // (07-22) для м'якої інтерполяції
     updateAvatarMesh(av, now);
     updateBlade(av);
-    try{ rigNpcTick(av, dt, {remote:true, hue:(p.hue!=null?+p.hue:rigHueForId(id))}); if(av._rigS && p.hue!=null) rigRecolor(av._rigS.rig,+p.hue); sonarEntityTick(av, dt); }catch(e){}   // (09-21) риг іншого гравця · (10-06x) колір — його власний
+    try{ rigNpcTick(av, dt, {remote:true, hue:(p.hue!=null?+p.hue:rigHueForId(id))}); if(av._rigS && p.hue!=null) rigRecolor(av._rigS.rig,+p.hue); if(av._rigS && p.wk){ const K=WPN_KINDS[weaponKindIndex(p.wk)]; weaponLookApply(av._rigS, K); } if(av._rigS&&av._rigS.rig&&p.iv) av._rigS.rig.sword.root.visible=false; sonarEntityTick(av, dt); }catch(e){}   // (10-07a) він в інвентарі — меч прибрано   // (09-21) риг іншого гравця · (10-06x) колір — його власний · (10-07a) той самий клас зброї
     try{ remoteBlade2(r, av, p); }catch(e){}      // (07-18e) другий клинок чужого бійця
     try{                                          // (07-20d) ЗЧЕПЛЕНІ = ОДНЕ ТІЛО З ДВОМА КЛИНКАМИ
       if(typeof PAIR!=='undefined' && PAIR.with===id){
@@ -7691,7 +7726,7 @@ function renderRemotes(now, dt){
     }catch(e){}
     // «нос» — куда смотрит
     const d = dirXZ(av.visYaw);
-    r.nose.visible = !(mode==='spectator'||mode==='follow'||mode==='action'||mode==='map');   // (07-17v)
+    r.nose.visible = !(mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes'||mode==='map');   // (07-17v)
     r.nose.position.set(worldX(r.gx)+d[0]*0.5, TIER_H*2.25, worldZ(r.gy)+d[1]*0.5);
   }
 }
@@ -7763,14 +7798,15 @@ function removeRemote(id){
 function upsertRemotePhantom(key, s){
   let r = NET.rphantoms[key];
   if(!r){ const av=makeAvatar(0.02); av.bladeHue=0.02; r=NET.rphantoms[key]={av, latest:s};
+    av.kind=(s&&s.k)||'fighter'; av.remoteMob=true;
     try{
       if(s&&s.k==='crawler') av.mesh.scale.set(0.55,0.35,0.55);
       else if(s&&s.k==='flyer') av.mesh.scale.set(0.45,0.45,0.45);
       else if(s&&s.k==='gunner') av.mesh.scale.set(0.8,0.85,0.8);
-      else if(s&&s.k==='boss') av.mesh.scale.setScalar((s.sz||2)>2?2.8:2.0);
+      else if(s&&s.k==='boss') av.mesh.scale.setScalar(1.35*(((s.sz||2)>2)?1.4:1));   // (10-07a) як у власника (makePhantom: 1.35)
       // СИЛУЭТЫ ВИДОВ: летун — крылья, босс — рога, стрелец — ствол, повзун — хвост
       const dec=(w,h,d,x,y,z,c)=>{ const q=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-        new THREE.MeshBasicMaterial({color:c})); q.frustumCulled=false; q.position.set(x,y,z); av.mesh.add(q); return q; };
+        new THREE.MeshBasicMaterial({color:c})); q.frustumCulled=false; q.position.set(x,y,z); q.userData.sil=true; av.mesh.add(q); return q; };
       if(s&&s.k==='flyer'){ dec(0.9,0.06,0.3,-0.75,1.45,0,0x9fd8ff); dec(0.9,0.06,0.3,0.75,1.45,0,0x9fd8ff); }
       else if(s&&s.k==='boss'){ dec(0.12,0.4,0.12,-0.2,2.25,0,0xf3c14b); dec(0.12,0.4,0.12,0.2,2.25,0,0xf3c14b); }
       else if(s&&s.k==='gunner'){ dec(0.14,0.14,0.8,0.2,1.35,0.5,0x8fa1ad); }
@@ -7779,6 +7815,9 @@ function upsertRemotePhantom(key, s){
       const hideP=(nms)=>{ for(const nm of nms){ const q=av.parts&&av.parts[nm]; if(q) q.visible=false; } };
       if(s&&s.k==='crawler') hideP(['legL','legR','footL','footR','armLU','armLF','armRU','armRF']);
       else if(s&&s.k==='flyer') hideP(['legL','legR','footL','footR']);
+      /* (10-07a) ТА САМА МОДЕЛЬ, ЩО У ВЛАСНИКА: повзун, літун, стрілець, бос — applyKindModel ховає манекен і додає kmodel;
+         старі «силуети» (крила-дошки, роги) — геть, бо модель виду вже має свої. Риг (rigNpcTick) для kmodel не будується. */
+      if(av.kind!=='fighter'){ try{ av.mesh.children.slice().forEach(ch=>{ if(ch.userData&&ch.userData.sil){ av.mesh.remove(ch); } }); applyKindModel(av); if(av.kind==='crawler'||av.kind==='flyer'||av.kind==='gunner') av.noBlade=true; }catch(e){} }
     }catch(e){}
     // МОРФОЛОГИЯ от Алго-крата: mw/mh/md (0.4..3) растягивают тело по осям поверх масштаба вида
     try{ if(s&&(s.mw||s.mh||s.md)){
@@ -7865,6 +7904,7 @@ function frame(now){
   try{ stillMonitorTick(dt); }catch(e){}
   try{ duelTick(dt); }catch(e){}
   try{ viewFullTick(); }catch(e){}   // (10-06y) повна картинка — перемикач діє одразу
+  try{ if(watcherMode() && typeof resHUD==='function'){ RESW.t=(RESW.t||0)+dt; if(RESW.t>0.5){ RESW.t=0; resHUD(); } } }catch(e){}   // (10-07a) ресурси того, за ким стежимо
   if(SENSVIEW.on){ try{ drawSensView(); }catch(e){} }
 
   // клавиатурная отладка (если нет сенсоров под рукой)
@@ -7968,6 +8008,20 @@ function frame(now){
       camPos.set(px-dx*3.6, TIER_H*3.1, pz-dz*3.6);
       camTarget.set(px+dx*2.5, TIER_H*1.1, pz+dz*2.5);
     }else{ camPos.set(0,11,11); camTarget.set(0,TIER_H,0); }
+  }else if(mode==='eyes'){
+    /* (10-07a) ОЧИМА ГРАВЦЯ: камера в голові того, за ким стежимо; дивиться за курсом його корпусу з нахилом його голови (hp) */
+    camera.up.set(0,1,0);
+    const ids=watchIds(); if(!ids.includes(followTarget)) followTarget=ids[0]||null;
+    const r=followTarget && NET.remotes[followTarget];
+    if(r && r.av){ const p=r.latest||{}; const yaw=(r.av.visYaw!=null)?r.av.visYaw:(p.bv!=null?p.bv:(p.yaw||0)); const [dx,dz]=dirXZ(yaw);
+      let hx=r.av.mesh.position.x, hy=1.72, hz=r.av.mesh.position.z;
+      try{ const S=r.av._rigS; if(S&&S.rig&&S.rig.J.HEAD){ const w=S.rig.J.HEAD.getWorldPosition(new THREE.Vector3()); hx=w.x; hy=w.y+0.12; hz=w.z; } }catch(e){}
+      const pt=((+p.fp||0)>0.5)?clamp(+(p.hp||0),-1,1):-0.12, fy=Math.sin(pt*0.9), fh=Math.cos(pt*0.9);   // у МАЯКУ — куди дивиться його телефон, інакше — рівно вперед, трохи вниз
+      camPos.set(hx+dx*0.16, hy, hz+dz*0.16); camTarget.set(hx+dx*fh*4, hy+fy*4, hz+dz*fh*4);
+      WATCH.branch='очима '+String(followTarget).slice(0,4);
+    } else { camPos.set(0,11,11); camTarget.set(0,TIER_H,0); WATCH.branch='очима (нікого)'; }
+    try{ for(const id in NET.remotes){ const q=NET.remotes[id]; const hide=(id===followTarget && !!(r&&r.av)); if(!q||!q.av||!q.av._rigS||!q.av._rigS.rig) continue;
+      if(q._eyesHid!==hide){ q._eyesHid=hide; q.av._rigS.rig.J.NECK.traverse(o=>{ if(o.isMesh) o.visible=!hide; }); } } }catch(e){}   // голову того, чиїми очима дивимось, не малюємо
   }else if(mode==='action'){
     /* (10-06u) ЕКШН-КАМЕРА «НАЙЯСКРАВІШЕ»: дуель — збоку від пари; інакше — збоку від найактивнішої сутності (гравець із живим
        мечем, моб у бою), на зріст людини; застарілі й на паузі не рахуються; без нікого — орбіта. VB_WATCH.on=0 — старий вид за спиною. */
@@ -8057,7 +8111,9 @@ function frame(now){
   try{ REVEAL.tick(dt); }catch(e){ if(!window.__revErr){ window.__revErr=1; logE('СОНАР: '+e.message); } }   // (09-21) ехо-сонар + музика за освітленням
   try{ if(started && mode!=='map' && mode!=='creator') replayTick(dt); }catch(e){ if(!window.__replErr){ window.__replErr=1; logE('ТІНІ: '+e.message); } }   // (10-06t)
   try{ speechSkipUiTick(); if(mode!=='map') drillCamTick(); }catch(e){ if(!window.__drillCamErr){ window.__drillCamErr=1; logE('ВІДПРАЦЮВАННЯ камера: '+e.message); } }   // (09-30p)
-  if(mode==='map'){ camera.position.copy(camPos); camLook.copy(camTarget); camera.lookAt(camLook); }
+  if(mode!=='eyes'){ try{ for(const id in NET.remotes){ const q=NET.remotes[id]; if(q&&q._eyesHid&&q.av&&q.av._rigS&&q.av._rigS.rig){ q._eyesHid=false; q.av._rigS.rig.J.NECK.traverse(o=>{ if(o.isMesh) o.visible=true; }); } } }catch(e){} }   // (10-07a)
+  if(mode==='eyes'){ camera.position.lerp(camPos, clamp(dt*16,0,1)); camLook.lerp(camTarget, clamp(dt*14,0,1)); camera.lookAt(camLook); }   // (10-07a) очима — камера жвавіша
+  else if(mode==='map'){ camera.position.copy(camPos); camLook.copy(camTarget); camera.lookAt(camLook); }
   else { camera.position.lerp(camPos, clamp(dt*8,0,1)); camLook.lerp(camTarget, clamp(dt*9,0,1)); camera.lookAt(camLook); }
   setListener(camera);
 
@@ -8798,9 +8854,10 @@ function labTwoHandGripCore(rig){
   const MA=LH?'LEFT':'RIGHT', SA=LH?'RIGHT':'LEFT', px=LH?1:-1;
   if(LAB.swordFree||rig.isAstral){                // LIVE: меч у просторі, ОБИДВІ руки IK
     const upW=sw.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3());
-    const r=labIK2(rig.J[MA+'_SHOULDER'],rig.J[MA+'_ELBOW'],rig.J[MA+'_WRIST'],upW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3(0.7*px,-0.6,-0.3).applyQuaternion(rootQ),tipW);
+    const ck=(LAB.isGame&&LAB.crossK)||0;   // (10-07a) хват поперек грудей — лікоть іде далі назовні й униз, передпліччя лягає перед грудьми
+    const r=labIK2(rig.J[MA+'_SHOULDER'],rig.J[MA+'_ELBOW'],rig.J[MA+'_WRIST'],upW,dm.upper,dm.fore+dm.hand*0.6,new THREE.Vector3((0.7+0.4*ck)*px,-0.6-0.2*ck,-0.3+1.0*ck).applyQuaternion(rootQ),tipW);   // поперек: лікоть уперед-назовні, як при обіймах
     LAB.ikR=r; if(!r.reach) LAB.warn.push(MA+'_HAND_OFF_GRIP'); if(r.stretch>0.97) LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); if(r.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
-    if(LAB===VB_RIG.player && !rig.isAstral && VB_WPN.on>0 && weaponKind().hands===1){ LAB.ikL=null; LAB.gripErrL=0; return; }   // (10-06u) одноручна зброя: друга рука вільна
+    if(LAB===VB_RIG.player && !rig.isAstral && VB_WPN.on>0 && weaponHands()===1){ LAB.ikL=null; LAB.gripErrL=0; return; }   // (10-06u) одноручна зброя (або хват «одна рука»): друга рука вільна
   }
   LAB.obj.updateMatrixWorld(true);
   const lowW=sw.sockets.GRIP_LOWER.getWorldPosition(new THREE.Vector3());
@@ -9040,8 +9097,7 @@ function labLiveStep(dt){
         else if(k<0.05) LAB.rollLogSide=0;
       } else { LAB.rollSide=0; LAB.rollK=0; }
       anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
-      { const r=Math.hypot(anchor.x,anchor.z), rMin=0.30*s;              // руки не входять у власне тіло
-        if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
+      labAnchorSelf(anchor, rig, s, HS, S0);                            // (10-07a) руки не входять у власне тіло; поперек грудей — перед грудьми
       /* (09-15b) ЗГЛАДЖУВАННЯ ЯКОРЯ: дрібний шум акселерометра й дуги давав покадрове «двоїння».
          Один фільтр на саме положення руків'я — орієнтація клинка лишається миттєвою. */
       { const p=LAB.anchorS||(LAB.anchorS=anchor.clone());
@@ -9131,13 +9187,35 @@ function labLiveStep(dt){
             sw.position.copy(sw.parent.worldToLocal(pW));
           }
         } };
+      const resolveSelf=()=>{   // (10-07a) клинок не проходить крізь власний корпус і голову — відхиляється навколо хвату, як від стіни
+        if(!(LAB.isGame||LAB.flags.sensor) || !(VB_SELF.on>0)) return;
+        const dmS=rig.dims, gl=rig.sword.gripL, bl=rig.sword.bladeL;
+        const A=new THREE.Vector3(0, dmS.hipH-0.12*s, 0), B=new THREE.Vector3(0, dmS.hipH+0.22*s+dmS.torsoH+0.05*s, 0);   // вісь капсули корпусу (у системі кореня)
+        const R=(VB_SELF.torsoR||0.24)*s, HC=new THREE.Vector3(0, dmS.hipH+0.22*s+dmS.torsoH+0.22*s, 0), HR=(VB_SELF.headR||0.19)*s;
+        LAB.selfRot=0;
+        for(let it=0; it<3; it++){
+          const d=new THREE.Vector3(0,-1,0).applyQuaternion(sw.quaternion), p=sw.position;
+          const g=p.clone().add(d.clone().multiplyScalar(gl)), t=p.clone().add(d.clone().multiplyScalar(gl+bl));
+          let best=null;
+          { const cp=segSegClosest(g,t,A,B); const dist=cp.p.distanceTo(cp.q); if(dist<R) best={need:R-dist, pb:cp.p, pc:cp.q}; }
+          { const cp=segPtClosest(g,t,HC); const dist=cp.p.distanceTo(HC); if(dist<HR && (!best || HR-dist>best.need)) best={need:HR-dist, pb:cp.p, pc:HC.clone()}; }
+          if(!best) break;
+          const n=best.pb.clone().sub(best.pc); if(n.lengthSq()<1e-6) n.set(-HS,0,0.3); n.y*=0.4; n.normalize();   // виштовхуємо вбік/уперед, не вгору
+          const lever=Math.max(0.25*s, best.pb.distanceTo(p));
+          const axis=new THREE.Vector3().crossVectors(d,n); if(axis.lengthSq()<1e-6) break; axis.normalize();
+          const th=Math.min(Math.asin(clamp(best.need/lever,0,1))*1.1, VB_SELF.maxRot||0.6);
+          sw.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, th));
+          LAB.selfRot+=th;
+        }
+        if(LAB.selfRot>0.02) LAB.warn.push('BLADE_OFF_BODY');
+      };
       if(C.state==='SYNC'){
         const wT=(LAB.isGame && VB_WPN.on>0) ? weaponFollow(anchor, qI, dt) : null;   // (10-06u) буквальна вага: клинок іде не швидше, ніж герой веде таку масу
         sw.position.copy(wT?wT.p:anchor); const qS=wT?wT.q:qI;
         if(LAB.isGame && (VB_WEAPON.clingMass||0)>0.05){ LAB.qLag=LAB.qLag?LAB.qLag.slerp(qS,clamp(dt*14/(1+VB_WEAPON.clingMass),0,1)):qS.clone(); sw.quaternion.copy(LAB.qLag); }   // повзуни на лезі — відстає
         else { LAB.qLag=null; sw.quaternion.copy(qS); }
         if(LAB.kickT>0){ const k=LAB.kickT*LAB.kickT; sw.quaternion.premultiply(new dq().slerp(LAB.kickQ,k)); LAB.kickT=Math.max(0,LAB.kickT-dt/0.28); }   // легкий відскок без втрати контролю
-        resolvePen();
+        resolvePen(); resolveSelf();
         if(LAB.isGame || LAB.flags.sensor){ const pulled=labGripReachFix(rig); if(pulled>0.02) LAB.warn.push('GRIP_PULLED_IN '+(pulled*100).toFixed(0)+'см'); }   // (09-22v) руків'я не «відлітає» від рук
         const ctType=LAB.contact?LAB.contact.type:'';
         const punishable = ctType && ctType!=='FLOOR' && ctType!=='BODY';    // підлога і власне тіло — не порушення
@@ -9157,7 +9235,7 @@ function labLiveStep(dt){
         }
         Pp.anchor.y=Math.max(Pp.anchor.y,0.36*s);
         sw.position.copy(Pp.anchor); sw.quaternion.copy(mkQ(Pp.yaw,Pp.pitch,Pp.roll));
-        resolvePen();
+        resolvePen(); resolveSelf();
         if(LAB.isGame || LAB.flags.sensor) labGripReachFix(rig);                        // (09-22v) і в розсинхроні меч у руках
         Pp.anchor.copy(sw.position);
         /* РЕСИНК: астрал (намір) достатньо близько до фізичного — контроль повертається */
@@ -9239,6 +9317,25 @@ function labBuildColliders(){
 }
 /* (09-14b) ТІЛО ЯК КОЛАЙДЕР: корпус, голова, таз, стегна, гомілки. Меч виштовхується з них так само,
    як зі стіни, а контакт іде в лог як BODY_* (можлива механіка самопорізу — поки лише подія). */
+/* ═══ (10-07a) САМОЗІТКНЕННЯ: власне тіло — не прозоре для власних рук і клинка ═══ */
+const VB_SELF={ on:1, gripR:0.30, crossZ:0.30, torsoR:0.24, headR:0.19, maxRot:0.6 };
+window.VB_SELF=VB_SELF;
+/* segSegClosest — вище (зіткнення клинків) */
+function segPtClosest(a,b,pt){ const ab=b.clone().sub(a); const L=ab.dot(ab); const u=L>1e-9?clamp(pt.clone().sub(a).dot(ab)/L,0,1):0; return {p:a.clone().add(ab.multiplyScalar(u)), u}; }
+/* хват: поза власним корпусом; поперек грудей — ПЕРЕД грудьми (плавно за мірою заходу за середину) */
+function labAnchorSelf(anchor, rig, s, HS, S0){
+  const hipY=rig.dims.hipH;
+  if(anchor.y>hipY-0.15*s){ const r=Math.hypot(anchor.x,anchor.z), rMin=(VB_SELF.gripR||0.30)*s; if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }
+  else { const r=Math.hypot(anchor.x,anchor.z), rMin=0.17*s; if(r<rMin){ const k=rMin/Math.max(r,1e-4); anchor.x*=k; anchor.z*=k; } }   // біля ніг — вужче
+  if(!(VB_SELF.on>0)) return;
+  const across=-anchor.x*Math.sign(S0.x||-HS);                      // >0 — рука зайшла за середину тіла
+  const k=clamp((across+0.10*s)/(0.20*s),0,1);                      // 0 ще на своєму боці (10 см), 1 — на 10 см за серединою
+  if(k>0 && anchor.y>hipY+0.05*s){ const zMin=(VB_SELF.crossZ||0.26)*s*k; if(anchor.z<zMin && anchor.z>-zMin) anchor.z=zMin;
+    /* поперек грудей рука ЗІГНУТА (лікоть уперед), а не випрямлена: хват не далі 78…95 % досяжності від плеча */
+    const dm=rig.dims, reach=(dm.upper+dm.fore+dm.hand*0.6)*0.985, dS=anchor.clone().sub(S0), L=dS.length(), maxL=reach*(0.95-0.17*k);
+    if(L>maxL){ anchor.copy(S0).add(dS.multiplyScalar(maxL/L)); if(anchor.z<zMin) anchor.z=zMin; } }
+  LAB.crossK=k;
+}
 function labBodyColliders(){
   const rig=LAB.rig; if(!rig || !LAB.swordFree || LAB.isGame || LAB.noBodyCol) return [];   // (09-27g) у грі власне тіло не збиває клинок: замах над головою — не «удар об BODY_HEAD»
   const names={torso:'BODY_TORSO',head:'BODY_HEAD',pelvis:'BODY_PELVIS',left_thigh:'BODY_THIGH_L',right_thigh:'BODY_THIGH_R',left_shin:'BODY_SHIN_L',right_shin:'BODY_SHIN_R'};
@@ -9316,13 +9413,25 @@ const VB_WEAPON={ mass:1.0, strength:1.0, maxRate:1100, drainRate:0.9 };
    витривалість тане (drain·O·важкість за с), вібро густішає, між клинком і телефоном видно ефірну нитку. На O=1 важка зброя
    (маса/сила ≥ dropHeavy) ВИСЛИЗАЄ з рук і падає (fall), легка — зриває хват (розсинхрон кисті). Шпага межу не дістає,
    молот — від одного маху «як шпагою». kind: 0 шпага · 1 меч · 2 сокира · 3 молот. ═══ */
-const VB_WPN={ on:1, kind:1, lin:5.0, up:1.0, down:0.7, lagRef:35, posRef:0.25, dropHeavy:1.2, fall:1, haptic:1, drain:4, hiltK:6, showLag:6 };
+const VB_WPN={ on:1, kind:3, lin:5.0, up:1.0, down:0.7, lagRef:35, posRef:0.25, dropHeavy:1.2, fall:1, haptic:1, drain:4, hiltK:6, showLag:6, grip:'auto' };   // (10-07a) grip: auto | one | two
+/* (10-07a) СІМ КЛАСІВ ЗБРОЇ за вагою. len — довжина леза (м) у ригу; hands — скільки рук просить сама зброя (хват можна змінити) */
 const WPN_KINDS=[
-  {id:'rapier', ua:'шпага',  mass:0.5, hands:1, look:'thin',   how:'легка й одноручна — крутити й колоти швидко, перевантажити майже неможливо'},
-  {id:'sword',  ua:'меч',    mass:1.0, hands:2, look:'sword',  how:'баланс — лише справжній ривок зриває хват'},
-  {id:'axe',    ua:'сокира', mass:1.6, hands:2, look:'axe',    how:'важка — різкий мах жовтить слід, довгий ривок вириває з рук'},
-  {id:'hammer', ua:'молот',  mass:3.0, hands:2, look:'hammer', how:'дуже важка — махнеш як шпагою: ривок на старті, слід червоніє, молот падає'},
+  {id:'dagger',     ua:'кинджал',       mass:0.3, hands:1, look:'dagger', len:0.42, how:'найлегший — межі швидкості практично немає; короткий, зручний і другою рукою'},
+  {id:'rapier',     ua:'шпага',         mass:0.5, hands:1, look:'thin',   len:1.15, how:'легка й одноручна — крутити й колоти швидко, перевантажити майже неможливо'},
+  {id:'shortsword', ua:'короткий меч',  mass:0.8, hands:1, look:'short',  len:0.78, how:'одноручний — трохи важчий за шпагу, межа швидкості вже відчутна'},
+  {id:'longsword',  ua:'довгий меч',    mass:1.0, hands:1, look:'sword',  len:1.35, how:'одноручний довгий — баланс; лише справжній ривок зриває хват'},
+  {id:'greatsword', ua:'дворучний меч', mass:1.8, hands:2, look:'great',  len:1.55, how:'найважчий з мечів — повільний, легко розводить тіла (розсинхрон), різкий рух — впустиш'},
+  {id:'axe',        ua:'сокира',        mass:1.6, hands:2, look:'axe',    len:1.10, how:'важка — різкий мах жовтить слід, довгий ривок вириває з рук'},
+  {id:'hammer',     ua:'молот',         mass:3.0, hands:2, look:'hammer', len:1.00, how:'дуже важка — махнеш як шпагою: ривок на старті, слід червоніє, молот падає'},
 ];
+function weaponKindIndex(id){ const i=WPN_KINDS.findIndex(k=>k.id===id); return i<0?3:i; }
+/* скільки рук НАСПРАВДІ на руків'ї: хват auto — як просить зброя; one/two — як обрав гравець */
+function weaponHands(){ const K=weaponKind(); const g=VB_WPN.grip||'auto'; return g==='one'?1:g==='two'?2:(K.hands||1); }
+/* довжина леза рига: перебудова геометрії клинка й кромки (blade.scale.y лишається для «СТОП» на поверхні) */
+function swordSetLen(sw, L, sc){ if(!sw||!sw.blade||Math.abs((sw.bladeL||0)-L)<1e-3) return; const s=sc||1;
+  try{ const g=new THREE.BoxGeometry(0.05*s,L,0.012*s); g.translate(0,-L/2,0); sw.blade.geometry.dispose(); sw.blade.geometry=g;
+    if(sw.edge){ const ge=new THREE.BoxGeometry(0.012*s,L*0.96,0.02*s); ge.translate(0.022*s,-L/2,0); sw.edge.geometry.dispose(); sw.edge.geometry=ge; }
+    sw.bladeL=L; }catch(e){} }
 window.VB_WPN=VB_WPN; window.WPN_KINDS=WPN_KINDS;
 function overloadColor(O){ const f=(a,b,u)=>[a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u,a[2]+(b[2]-a[2])*u]; const c0=[0.5,0.85,1.0], c1=[1.0,0.9,0.25], c2=[1.0,0.55,0.15], c3=[1.0,0.15,0.1];
   O=clamp(O||0,0,1); return O<0.33?f(c0,c1,O/0.33):O<0.66?f(c1,c2,(O-0.33)/0.33):f(c2,c3,(O-0.66)/0.34); }
@@ -9331,21 +9440,31 @@ function weaponLimits(){ const K=weaponKind(); const mass=Math.max(0.2,(VB_WEAPO
   return {K, mass, str, heavy, wmax:(VB_WEAPON.maxRate||1100)/heavy, vmax:(VB_WPN.lin||5)/heavy}; }
 function weaponKindSet(i, say){ VB_WPN.kind=clamp(i|0,0,WPN_KINDS.length-1); const K=weaponKind(); VB_WEAPON.mass=K.mass; VB_WPN._applied=VB_WPN.kind;
   try{ weaponLookApply(); }catch(e){} const L=weaponLimits();
-  const line='ЗБРОЯ: '+K.ua+' · маса '+K.mass+' · '+(K.hands===1?'одноручна':'дворучна')+' · межа '+Math.round(L.wmax)+'°/с і '+L.vmax.toFixed(1)+' м/с — '+K.how;
+  const line='ЗБРОЯ: '+K.ua+' · маса '+K.mass+' · лезо '+(K.len||1.35).toFixed(2)+' м · '+(K.hands===1?'одноручна':'дворучна')+' · хват '+(VB_WPN.grip||'auto')+' → '+(weaponHands()===1?'одна рука':'дві руки')+' · межа '+Math.round(L.wmax)+'°/с і '+L.vmax.toFixed(1)+' м/с — '+K.how;
+  try{ weaponTwoDeviceNote(); }catch(e){}
   logE(line); try{ if(typeof journal==='function' && typeof DRILL!=='undefined' && DRILL.on) journal(line); }catch(e){}
   if(say){ try{ showBanner('⚖ '+K.ua.toUpperCase()+' · маса '+K.mass+' · межа '+Math.round(L.wmax)+'°/с','#fde68a'); }catch(e){} }
-  try{ localStorage.setItem('vb3d_wpn',String(VB_WPN.kind)); }catch(e){} }
-function weaponKindFromWpn(w){ const m={sword:1,spear:1,axe:2,bossaxe:3,flail:2,nunchaku:0,whip:0,blaster:0}; if(m[w]!=null && m[w]!==(VB_WPN.kind|0)) weaponKindSet(m[w], false); }
-function weaponLookApply(){ const S=VB_RIG.player; if(!S||!S.rig) return; const sw=S.rig.sword, K=weaponKind(); if(sw.root.userData.look===K.look) return; sw.root.userData.look=K.look;
+  try{ localStorage.setItem('vb3d_wpn_id',K.id); }catch(e){} }
+function weaponKindFromWpn(w){ const m={sword:3,spear:3,axe:5,bossaxe:6,flail:5,nunchaku:0,whip:1,blaster:0}; if(m[w]!=null && m[w]!==(VB_WPN.kind|0)) weaponKindSet(m[w], false); }   // (10-07a) індекси нового каталогу
+function weaponLookApply(Sarg, Karg){ const S=Sarg||VB_RIG.player; if(!S||!S.rig) return; const sw=S.rig.sword, K=Karg||weaponKind(); if(sw.root.userData.look===K.look && Math.abs((sw.bladeL||0)-(K.len||1.35))<1e-3) return; sw.root.userData.look=K.look;
+  try{ swordSetLen(sw, K.len||1.35, S.rig.P?S.rig.P.scale:1); }catch(e){}   // (10-07a) довжина леза — за класом
   const old=sw.root.getObjectByName('WPN_HEAD'); if(old) sw.root.remove(old);
   const bl=sw.blade; bl.scale.x=1; bl.scale.z=1; if(sw.edge) sw.edge.visible=true; let col=0x7cc8ff, head=null;
   if(K.look==='thin'){ bl.scale.x=0.45; bl.scale.z=0.7; }
+  else if(K.look==='dagger'){ bl.scale.x=0.7; bl.scale.z=0.8; col=0x9fd3ff; }
+  else if(K.look==='short'){ bl.scale.x=1.0; bl.scale.z=1.0; col=0x8fcaff; }
+  else if(K.look==='great'){ bl.scale.x=1.35; bl.scale.z=1.4; col=0x6fb8ff; }
   else if(K.look==='axe'){ bl.scale.x=0.7; bl.scale.z=1.6; col=0x8b5a2b; head=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.26,0.045), new THREE.MeshBasicMaterial({color:0xaab4c3})); head.position.set(0.14,-sw.gripL-sw.bladeL+0.2,0); }
   else if(K.look==='hammer'){ bl.scale.x=0.7; bl.scale.z=1.6; col=0x8b5a2b; head=new THREE.Mesh(new THREE.BoxGeometry(0.17,0.15,0.32), new THREE.MeshBasicMaterial({color:0x9aa4b2})); head.position.set(0,-sw.gripL-sw.bladeL+0.1,0); }
   if(head){ head.name='WPN_HEAD'; head.userData.labPart=false; head.frustumCulled=false; head.material.transparent=true; sw.root.add(head); if(sw.edge) sw.edge.visible=false; try{ (S.rig._mats||(S.rig._mats=[])).push(head.material); }catch(e){} }
   bl.userData.baseCol=col; bl.material.color.setHex(col); }
-function weaponKindTick(){ if(VB_WPN._applied!==(VB_WPN.kind|0)) weaponKindSet(VB_WPN.kind,false); else { try{ weaponLookApply(); }catch(e){} } }
-try{ const k=localStorage.getItem('vb3d_wpn'); if(k!=null && +k>=0 && +k<WPN_KINDS.length) VB_WPN.kind=+k; }catch(e){}
+/* (10-07a) два пристрої + зброя на дві руки: ведуча рука веде обидві, другий телефон нічого не робить — кажемо про це раз */
+function weaponTwoDeviceNote(){ const two=(typeof linkFreshL==='function' && linkFreshL()); const h=weaponHands(); const key=(two?'2':'1')+'/'+h+'/'+weaponKind().id;
+  if(VB_WPN._noteKey===key) return; VB_WPN._noteKey=key; if(!two) return;
+  if(h===2){ showBanner('⚠ '+weaponKind().ua.toUpperCase()+' — ДВІ РУКИ РАЗОМ: ведуча рука веде обидві, другий пристрій не керує (можна від’єднати)','#fbbf24'); logE('ДВА ПРИСТРОЇ: зброя дворучна — лівий клинок вимкнено, ведуча рука веде обидві руки'); }
+  else { showBanner('🗡 ДВІ РУКИ ОКРЕМО: '+weaponKind().ua+' у правій, лівий клинок — з другого пристрою','#86efac'); logE('ДВА ПРИСТРОЇ: одноручна зброя — кожна рука своя'); } }
+function weaponKindTick(){ if(VB_WPN._applied!==(VB_WPN.kind|0)) weaponKindSet(VB_WPN.kind,false); else { try{ weaponLookApply(); }catch(e){} } try{ weaponTwoDeviceNote(); }catch(e){} }
+try{ const k=localStorage.getItem('vb3d_wpn_id'); if(k) VB_WPN.kind=weaponKindIndex(k); }catch(e){}   // (10-07a) за id — старий індекс (0..3) не відповідає новому каталогу
 /* слідування з обмеженням: повертає, де клинок НАСПРАВДІ (p — руків'я, q — поворот), рахує перевантаження, фарбує, тягне нитку */
 function weaponFollow(anchor, qI, dt){
   const rig=LAB.rig, sw=rig.sword; const W=LAB.wf||(LAB.wf={q:null,p:null,qPrev:null,pPrev:null,O:0,rate:0,vel:0,hapT:0,bannerL:0,tinted:false});
@@ -10510,6 +10629,7 @@ function rigPlayerTick(dt){
   catch(e){ if(!S._err){ S._err=true; logE('VB_RIG крок: '+e.message); } }
   finally{ LAB=prev; }
   S.rig.sword.root.visible=!player.disarmed;   // (10-06u) labSetPose щокадру вмикає клинок — без зброї в руці його не має бути
+  try{ if(typeof rigRummageTick==='function') rigRummageTick(S, dt); }catch(e){}   // (10-07a) інвентар відкрито — порпаюсь під ногами
   try{ tetherTick(S); }catch(e){}            // (10-06s) ефірна нитка між тілами
   try{ const gw=S.rig.sword.root.getWorldPosition(new THREE.Vector3()); if(S._gripW) S._gripV=gw.clone().sub(S._gripW).multiplyScalar(1/Math.max(dt,1e-3)); S._gripW=gw; }catch(e){}   // (10-06u) швидкість руків'я — для падіння
   try{ linearWhooshTick(S, dt); }catch(e){}   // (09-22l) свист руки + клац на повній досяжності
@@ -11039,7 +11159,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -11071,7 +11191,7 @@ const SENS_SLIDERS=[
   ['VB_ORI.level','Горизонт = справжній (1) / без компенсації (0)',0,1,0.05],['VB_ORI.autoFull','Вхід: повний екран + портрет (1/0)',0,1,1],
   ['VB_ORI.force','Орієнтація: авто (0) / пристрій (1) / гра (2)',0,2,1],['VB_ORI.rollSign','Знак повороту картинки (1/-1)',-1,1,2],
   ['СОНАР · МУЗИКА'],
-  ['VB_VIEW.full','Повна картинка на всіх пристроях (1) / сліпий сонар (0)',0,1,1],['VB_SONAR.on','Ехо-сонар (1) / звичайна картинка (0)',0,1,1],['VB_SONAR.gain','Сонар: яскравість',0,2,0.05],['VB_SONAR.decay','Сонар: швидкість згасання',0.3,3,0.05],
+  ['VB_VIEW.full','Повна картинка на всіх пристроях (1) / сліпий сонар (0)',0,1,1],['VB_SELF.on','Самозіткнення: руки й меч не крізь тіло (1/0)',0,1,1],['VB_SELF.crossZ','Самозіткнення: рука поперек — перед грудьми, м',0.1,0.45,0.01],['VB_SELF.torsoR','Самозіткнення: радіус корпусу для клинка, м',0.1,0.4,0.01],['VB_SONAR.on','Ехо-сонар (1) / звичайна картинка (0)',0,1,1],['VB_SONAR.gain','Сонар: яскравість',0,2,0.05],['VB_SONAR.decay','Сонар: швидкість згасання',0.3,3,0.05],
   ['VB_SONAR.memory','Сонар: пам\'ять світла',0,0.3,0.01],['VB_SONAR.floor','Сонар: сітка підлоги від Ритму',0,0.3,0.01],['VB_SONAR.self','Сонар: власне тіло (тест)',0,1,0.05],['VB_SONAR.shadow','Сонар: тінь істоти в межах, кл.',0,5,1],
   ['VB_MUSIC.gain','Музика: загальний рівень',0,1,0.05],
   ['ЛІНІЙНИЙ РУХ (рукоять)'],
@@ -11094,7 +11214,7 @@ const SENS_SLIDERS=[
   ['VB_COOP.on','Складність за числом бійців у кімнаті (1/0)',0,1,1],['VB_COOP.k','Ворогів більше на кожного додаткового бійця, ×',0,1.5,0.1],['VB_COOP.oneMentor','Один учитель на команду — веде лідер (1/0)',0,1,1],
   ['VB_NET.pose','Передавати позу рига гравця й мобів (1/0)',0,1,1],['VB_WATCH.side','Спостерігач: завжди збоку (1) / стеження, збоку лише в сутичці (0)',0,1,1],['VB_WATCH.back','Стеження: камера позаду, м',1.5,8,0.1],['VB_WATCH.fh','Стеження: висота камери, м',1,5,0.1],['VB_WATCH.fahead','Стеження: точка погляду попереду, м',0,5,0.1],['VB_WATCH.yawK','Стеження: згладження повороту, 1/с',0.5,10,0.5],
   ['ВАГА ЗБРОЇ · НАЙЯСКРАВІШЕ (10-06u)'],
-  ['VB_WPN.on','Буквальна вага зброї (1/0)',0,1,1],['VB_WPN.kind','Зброя: 0 шпага · 1 меч · 2 сокира · 3 молот',0,3,1],['VB_WPN.lin','Лінійна межа руки при масі 1, м/с',1,12,0.5],
+  ['VB_WPN.on','Буквальна вага зброї (1/0)',0,1,1],['VB_WPN.kind','Зброя: 0 кинджал · 1 шпага · 2 короткий · 3 довгий · 4 дворучний · 5 сокира · 6 молот',0,6,1],['VB_WPN.lin','Лінійна межа руки при масі 1, м/с',1,12,0.5],
   ['VB_WPN.up','Перевантаження росте ×',0.2,3,0.1],['VB_WPN.down','Перевантаження спадає ×',0.1,3,0.1],['VB_WPN.lagRef','Відставання клинка, від якого росте, °',10,90,5],
   ['VB_WPN.dropHeavy','Падає, якщо маса/сила ≥',0.8,3,0.1],['VB_WPN.fall','Падіння видно (1/0)',0,1,1],['VB_WPN.drain','Витривалість при перевантаженні ×',0,12,0.5],['VB_WPN.haptic','Вібро від перевантаження (1/0)',0,1,1],
   ['VB_WATCH.on','Спостерігач: за найактивнішим (1/0)',0,1,1],['VB_WATCH.dist','Спостерігач: відстань збоку, м',2,8,0.2],['VB_WATCH.h','Спостерігач: висота камери, м',0.8,4,0.1],['VB_WATCH.switchK','Перемикатись, коли активніший у ×',1,4,0.1],['VB_WATCH.hold','Не перемикатись частіше, с',1,10,0.5],['VB_WATCH.roomHold','Кімната: не перескакувати частіше, с',2,20,1],
@@ -11222,6 +11342,7 @@ $('btnReq').addEventListener('click', async ()=>{
     try{ if(VB_ORI.autoFull && !document.fullscreenElement && !/iPhone|iPad|iPod/.test(navigator.userAgent||'')) oriFullscreen(); }catch(e){}   // (09-22q) у жесті входу
     $('gate').style.display='none';
     $('pauseBtn').style.display='block';
+    try{ if(!watcherMode()) $('invBtn').style.display='block'; }catch(e){}   // (10-07a) інвентар — бійцю
     if(window.TUT && TUT.requested){ phantomCount=0; }   // туторіал стартує без ворогів
     if(!phantoms.length && phantomCount>0) spawnPhantoms(phantomCount);   // первый спавн — здесь (модуль уже целиком жив, TDZ невозможен)
     started=true; last=0;
@@ -11660,14 +11781,14 @@ setInterval(()=>{
         } else tutHint('⚡ РІЗКО поверни телефон назад ВЕРТИКАЛЬНО — сила вирветься ударом!');
       } }
   }
-  try{ if((mode==='spectator'||mode==='follow'||mode==='action') && !ADV.on){   // (07-18g) глядач мусить бути у пригоді, щоб бачити кімнати
+  try{ if((mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes') && !ADV.on){   // (07-18g) глядач мусить бути у пригоді, щоб бачити кімнати
     let anyRx=false;
     for(const id in NET.remotes){ const r=NET.remotes[id];
       const rx=(r&&(r.rx??(r.latest&&r.latest.rx))); if(Number.isInteger(rx)){ anyRx=true; break; } }
     if(anyRx && !NET._watchAdv){ NET._watchAdv=true;
       try{ $('mAdv').click(); logE('глядач: вмикаю пригоду, щоб бачити кімнати гравців'); }catch(e){} }
   } }catch(e){}
-  try{ if((mode==='spectator'||mode==='follow'||mode==='action') && ADV.on){   // (07-17v) глядач тримається кімнати гравців
+  try{ if((mode==='spectator'||mode==='follow'||mode==='action'||mode==='eyes') && ADV.on){   // (07-17v) глядач тримається кімнати гравців
     let tgt=null, best=-1, curBest=-1; const nowMs=Date.now();                           // (10-06u) кімната — за найактивнішим гравцем
     for(const id in NET.remotes){ const r=NET.remotes[id];
       if(!r || r.spec || !remoteFresh(r)) continue;
@@ -13612,11 +13733,78 @@ resHudEl.style.cssText='position:fixed;right:10px;bottom:46px;z-index:22;display
   'background:rgba(2,12,26,.75);border:1px solid #1e3a5f;border-radius:8px;color:#cbd5e1;'+
   'font:inherit;font-size:12px;letter-spacing:.08em;pointer-events:none';
 document.body.appendChild(resHudEl);
+function resWatchTarget(){   // (10-07a) чий рахунок показувати спостерігачу: за ким стежить камера, інакше — перший живий боєць у кімнаті
+  try{ if(!watcherMode()) return null; const ok=(id)=>{ const r=id&&NET.remotes[id]; return (r&&!r.spec&&r.res&&remoteFresh(r))?id:null; };
+    return ok(WATCH.id)||ok(followTarget)||(watchIds(false)||[]).map(ok).find(x=>x)||(watchIds(true)||[]).map(ok).find(x=>x)||null; }catch(e){ return null; } }
 function resHUD(){
-  const any=RES.wood||RES.stone||RES.iron||RES.crystal;
-  resHudEl.style.display=(any||ADV.on)?'block':'none';
-  resHudEl.textContent='🪵'+RES.wood+' 🪨'+RES.stone+' ⛓'+RES.iron+' ◆'+RES.crystal+((RES.glass||RES.steel)?(' ◇'+RES.glass+' ▦'+RES.steel):'');
+  let R=RES, who='';
+  try{ const id=resWatchTarget(); if(id){ R=NET.remotes[id].res; who=' · '+id.slice(0,4); } else if(watcherMode()){ resHudEl.style.display='none'; return; } }catch(e){}   // (10-07a) спостерігач бачить ресурси гравця
+  const any=R.wood||R.stone||R.iron||R.crystal;
+  resHudEl.style.display=(any||ADV.on||who)?'block':'none';
+  resHudEl.textContent='🪵'+R.wood+' 🪨'+R.stone+' ⛓'+R.iron+' ◆'+R.crystal+((R.glass||R.steel)?(' ◇'+R.glass+' ▦'+R.steel):'')+who;
 }
+window.resHUD=resHUD;
+/* ═══════════════ (10-07a) ІНВЕНТАР 13×13 — без паузи ═══════════════
+   Поле = та сама сітка 13×13. Посередині — фігура гравця; під руками — комірки зброї; на тілі — комірки броні (поки порожні);
+   решта — кишені: ресурси, зброя (7 класів), місце для зілля. Поки відкрито — герой присідає й порпається під ногами. */
+const INVUI={ open:false, k:0, built:false, sel:null };
+window.INVUI=INVUI;
+const INV_LAYOUT=(()=>{ const L={}; const put=(c,r,v)=>{ L[c+','+r]=v; };
+  // фігура (обличчям до глядача: ЙОГО права рука — ліворуч на екрані)
+  put(6,1,{t:'fig head',l:''}); put(6,2,{t:'fig',l:'шия'});
+  for(let r=3;r<=6;r++) for(let c=5;c<=7;c++) put(c,r,{t:'fig',l:''});
+  for(let r=3;r<=6;r++){ put(4,r,{t:'fig',l:''}); put(8,r,{t:'fig',l:''}); }      // руки
+  for(let r=7;r<=9;r++){ put(5,r,{t:'fig',l:''}); put(7,r,{t:'fig',l:''}); }      // ноги
+  // броня (на тілі)
+  put(6,0,{t:'slot',l:'ШОЛОМ',k:'helm'}); put(6,4,{t:'slot',l:'КИРАСА',k:'cuir'});
+  put(3,5,{t:'slot',l:'НАРУЧ',k:'braR'}); put(9,5,{t:'slot',l:'НАРУЧ',k:'braL'});
+  put(5,10,{t:'slot',l:'ПОНІЖ',k:'grvR'}); put(7,10,{t:'slot',l:'ПОНІЖ',k:'grvL'});
+  put(5,11,{t:'slot',l:'ЧОБІТ',k:'bootR'}); put(7,11,{t:'slot',l:'ЧОБІТ',k:'bootL'});
+  // руки → під ними зброя
+  put(4,7,{t:'hand',l:'ПРАВА РУКА',k:'handR'}); put(8,7,{t:'hand',l:'ЛІВА РУКА',k:'handL'});
+  return L; })();
+const INV_POCKETS=[[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2],[10,0],[11,0],[12,0],[10,1],[11,1],[12,1],[10,2],[11,2],[12,2],
+  [0,12],[1,12],[2,12],[3,12],[9,12],[10,12],[11,12],[12,12],[0,11],[1,11],[2,11],[10,11],[11,11],[12,11]];   // кишені: кути поля
+function invBuild(){ const G=$('invGrid'); if(!G) return; G.innerHTML=''; INVUI.cells={};
+  for(let r=0;r<13;r++) for(let c=0;c<13;c++){ const d=document.createElement('div'); d.className='ic'; d.dataset.c=c; d.dataset.r=r;
+    const L=INV_LAYOUT[c+','+r]; if(L){ d.className='ic '+L.t; d.textContent=L.l; if(L.k) d.dataset.k=L.k; }
+    G.appendChild(d); INVUI.cells[c+','+r]=d; }
+  G.onclick=(ev)=>{ const el=ev.target.closest('.ic'); if(!el) return; invTap(el); };
+  INVUI.built=true; }
+function invItems(){ const it=[];
+  for(const k of ['wood','stone','iron','crystal','glass','steel']) if(RES[k]>0) it.push({kind:'res',id:k,icon:RES_ICON[k],n:RES[k],l:RES_NAME[k]});
+  const WI={dagger:'🗡',rapier:'🤺',shortsword:'🔪',longsword:'⚔',greatsword:'🗡🗡',axe:'🪓',hammer:'🔨'};
+  for(const K of WPN_KINDS) it.push({kind:'wpn',id:K.id,icon:WI[K.id]||'⚔',l:K.ua,mass:K.mass});
+  it.push({kind:'potion',id:'potion',icon:'🧪',l:'зілля — скоро',n:0});
+  return it; }
+function invRefresh(){ if(!INVUI.built) invBuild(); const cells=INVUI.cells; if(!cells) return;
+  for(const [c,r] of INV_POCKETS){ const d=cells[c+','+r]; d.className='ic'; d.textContent=''; delete d.dataset.id; delete d.dataset.kind; }
+  const it=invItems(); const K=weaponKind();
+  it.forEach((x,i)=>{ const p=INV_POCKETS[i]; if(!p) return; const d=cells[p[0]+','+p[1]]; d.className='ic '+(x.kind==='res'?'res':'item')+((x.kind==='wpn'&&x.id===K.id)?' eq':'');
+    d.innerHTML='<span class="k">'+x.icon+'</span>'+(x.n!=null?'<span class="n">'+x.n+'</span>':''); d.title=x.l; d.dataset.id=x.id; d.dataset.kind=x.kind; });
+  const hr=cells['4,7'], hl=cells['8,7']; const two=(typeof linkFreshL==='function'&&linkFreshL()); const h=weaponHands();
+  hr.innerHTML='<span class="k">'+(invItems().find(x=>x.id===K.id)||{}).icon+'</span><div style="font-size:8px">'+K.ua+'</div>';
+  hl.innerHTML=h===2?'<div style="font-size:8px">на руків’ї разом</div>':(two?'<div style="font-size:8px">лівий клинок<br>(2-й пристрій)</div>':'<div style="font-size:8px">вільна</div>');
+  const n=$('invNote'); if(n) n.textContent='торкнись зброї в кишені — у праву руку · '+(K.hands===2?'дворучна':'одноручна')+' · хват: '+(VB_WPN.grip||'auto')+' (торкнись правої руки — змінити) · броня й зілля — комірки зарезервовано';
+  try{ const b=$('invBtn'); if(b) b.classList.toggle('on', INVUI.open); }catch(e){} }
+function invTap(el){ const kind=el.dataset.kind, id=el.dataset.id;
+  if(kind==='wpn'){ weaponKindSet(weaponKindIndex(id), true); invRefresh(); return; }
+  if(el.dataset.k==='handR'){ const g=VB_WPN.grip||'auto'; VB_WPN.grip=g==='auto'?'two':g==='two'?'one':'auto'; VB_WPN._noteKey=null; logE('ХВАТ: '+VB_WPN.grip+' → '+(weaponHands()===1?'одна рука':'дві руки')); invRefresh(); return; }
+  if(kind==='res'){ showBanner(RES_ICON[id]+' '+RES_NAME[id]+': '+RES[id],'#cbd5e1'); return; }
+  if(kind==='potion'){ showBanner('🧪 зілля з’являться у наступних збірках','#94a3b8'); return; }
+  if(el.classList.contains('slot')){ showBanner('🛡 '+el.textContent+' — броні ще немає; комірка готова','#fbbf24'); return; } }
+function invToggle(force){ const want=(force!=null)?!!force:!INVUI.open; if(want===INVUI.open) return; INVUI.open=want;
+  const p=$('invPanel'); if(p) p.classList.toggle('on', want); if(want) invRefresh(); else { try{ $('invBtn').classList.remove('on'); }catch(e){} }
+  logE(want?'ІНВЕНТАР: відкрито (гра триває, герой порпається під ногами)':'ІНВЕНТАР: закрито'); }
+window.invToggle=invToggle;
+try{ $('invBtn').onclick=()=>invToggle(); }catch(e){}
+/* поза «порпаюсь під ногами»: присід, корпус уперед, обидві руки вниз; плавно k 0→1 за 0.3 с; меч сховано */
+function rigRummageTick(S, dt){ const want=INVUI.open?1:0; INVUI.k+= (want-INVUI.k)*clamp(dt*8,0,1); const k=INVUI.k; if(k<0.01) return;
+  const J=S.rig.J, rt=S.rig.root; rt.position.y-=0.42*k; J.LEFT_HIP.rotation.x+=-1.6*k; J.RIGHT_HIP.rotation.x+=-1.5*k; J.LEFT_KNEE.rotation.x+=2.3*k; J.RIGHT_KNEE.rotation.x+=2.2*k;
+  J.LEFT_ANKLE.rotation.x+=-0.6*k; J.RIGHT_ANKLE.rotation.x+=-0.6*k; J.TORSO.rotation.x+=0.75*k; J.HEAD.rotation.x+=0.35*k;
+  const t=performance.now()/1000; for(const sd of ['LEFT','RIGHT']){ const sh=J[sd+'_SHOULDER'], el=J[sd+'_ELBOW'], wr=J[sd+'_WRIST']; const ph=(sd==='LEFT'?0:1.7);
+    sh.rotation.x+=(1.15+0.15*Math.sin(t*5+ph))*k - sh.rotation.x*k; sh.rotation.z+=((sd==='LEFT'?-0.25:0.25)-sh.rotation.z)*k; el.rotation.x+=((0.5+0.2*Math.sin(t*6+ph))-el.rotation.x)*k; wr.rotation.set(wr.rotation.x*(1-k),0,0); }
+  if(k>0.5) S.rig.sword.root.visible=false; }
 resHUD();
 // материал розбитого блока → ресурс
 const RES_OF={C:'wood', Si:'stone', Fe:'iron', fragile:'crystal', sand:'stone', salt:'stone', Na:'stone', rubble:'stone', glass:'glass', steel:'steel'};
@@ -15127,7 +15315,7 @@ function sprShowResults(r){
 function raccHudTick(){
   const show = ((RACC.A>1) || RACC.exhausted || SPR.active) && !(typeof DRILL!=='undefined' && DRILL.on);   // (09-30p) у відпрацюванні — панель унизу
   if(!SPR.hud){ const d=document.createElement('div'); d.style.cssText='position:fixed;left:50%;bottom:16%;transform:translateX(-50%);z-index:60;pointer-events:none;padding:5px 10px;border-radius:10px;background:rgba(4,10,20,.72);border:1px solid #1e3a5f;color:#cbd5e1;font:inherit;font-size:12px;white-space:nowrap'; document.body.appendChild(d); SPR.hud=d; }
-  SPR.hud.style.display=show?'block':'none'; if(!show) return;
+  SPR.hud.style.display=(show && !(typeof INVUI!=='undefined'&&INVUI.open))?'block':'none'; if(!show) return;   // (10-07a) в інвентарі — не поверх поля
   const f=clamp(RACC.A/VB_RACC.Amax,0,1), ts=worldTimeScale();
   SPR.hud.textContent=(SPR.active&&SPR.state!=='idle'?('⏱ '+(SPR.state==='run'?SPR.t.toFixed(1):(SPR.res?SPR.res.time.toFixed(1):'0.0'))+'с · '):'')+'⟡ стрічка '+Math.round(f*100)+'% · сили '+Math.round(player.stamina)+(RACC.exhausted?' (виснаження)':'')+' · час ×'+ts.toFixed(2);
 }
