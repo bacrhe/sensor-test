@@ -2144,6 +2144,25 @@ const camLook = new THREE.Vector3();   // сглаженная точка взг
    перемикається лише коли хтось помітно активніший (×switchK) і не частіше ніж раз на hold с. Кімната — за найактивнішим
    гравцем (roomHold с між переходами). Застарілі (мовчать > 6 с) і на паузі камеру не ведуть. ═══ */
 const VB_WATCH={ on:1, dist:3.6, h:1.5, switchK:1.6, hold:3, minAct:0.04, roomHold:6, ahead:0.5 };
+/* ═══ (10-06v) КООП-СКЛАДНІСТЬ. Складність кімнати — від числа БІЙЦІВ, що справді б'ються: я (якщо боєць) + живі
+   гравці в цій кімнаті не на паузі. Спостерігачі (пакетів не шлють або spec), друга рука, гравці з інших кімнат —
+   не рахуються. Спільна ціль кімнати: base·(1+k·(N−1)) ворогів; кожен клієнт доспавнює лише різницю між ціллю й
+   чужими живими мобами в кімнаті (раніше кожен спавнив повний набір — удвох було вдвічі більше). ═══ */
+const VB_COOP={ on:1, k:0.5 };
+function coopFighters(){ let n=(mode==='fighter'&&!player.dead)?1:0; try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!r.av||!remoteFresh(r)) continue; if(!remoteInRoom(r)) continue; if(r.latest&&r.latest.pz) continue; n++; } }catch(e){} return Math.max(1,n); }
+function coopAliveOthers(){ let n=0; try{ const nowMs=Date.now(); for(const key in NET.rphantoms){ const r=NET.rphantoms[key], st=r&&r.latest; if(!st||st.dead||(st.hp!=null&&st.hp<=0)) continue; if((st.t||0)<nowMs-NET_PURGE_MS) continue;
+    const own=key.split('_')[0]; if(own==='forge'||own==='algocrat') continue; const o=NET.remotes[own]; if(!o||o.spec||!remoteFresh(o)||!remoteInRoom(o)) continue; n++; } }catch(e){} return n; }
+function coopTarget(base){ const N=coopFighters(); return {N, T:Math.ceil(base*(1+(VB_COOP.k||0.5)*(N-1)))}; }
+function coopKinds(kinds0){
+  if(!(VB_COOP.on>0) || !kinds0.length) return kinds0;
+  const {N,T}=coopTarget(kinds0.length), others=coopAliveOthers(), n=Math.max(0,T-others);
+  const ext=kinds0.filter(k=>k!=='boss'); if(!ext.length) ext.push('fighter');
+  const out=[]; for(let i=0;i<n;i++) out.push((others===0 && i<kinds0.length) ? kinds0[i] : ext[i%ext.length]);
+  if(N>1||others>0) logE('КООП: бійців у кімнаті '+N+' · спільна ціль '+T+' (база '+kinds0.length+') · чужих живих '+others+' → мої '+out.length);
+  return out;
+}
+function coopWave(n0){ if(!(VB_COOP.on>0)) return n0; const {N,T}=coopTarget(n0), others=coopAliveOthers(); const n=Math.max(1,T-others); if(N>1||others>0) logE('КООП хвиля: бійців '+N+' · ціль '+T+' · чужих живих '+others+' → мої '+n); return n; }
+window.VB_COOP=VB_COOP; window.vbCoop={ fighters:coopFighters, others:coopAliveOthers, kinds:coopKinds };
 var WATCH={ id:null, t:0, side:1, sideFor:null, lastSw:0 };
 window.VB_WATCH=VB_WATCH; window.WATCH=WATCH;
 function remoteActTick(r, dt){ const raw=remoteFresh(r)?(r.actRaw||0):0; r.act=(r.act||0)+(raw-(r.act||0))*clamp((dt||0.016)/0.8,0,1); return r.act; }
@@ -2154,7 +2173,7 @@ function entityAct(e){ if(e.kind==='player'){ if(e.id==='me'){ const S=VB_RIG.pl
   const p=e.ph; if(!p) return 0; return ((p.strikeT||0)>0?1:0)+((p.painT||0)>0?0.6:0)+(p.aware?0.15:0)+((p.hitGlow||0)>0?0.4:0); }
 function watchPick(E, dt){
   WATCH.t+=dt; let best=null, bestA=-1; const cur=E.find(e=>e.id===WATCH.id)||null;
-  for(const e of E){ if(e.kind==='ally') continue; e.act=entityAct(e)+(e.kind==='player'?0.02:0); if(e.act>bestA){ bestA=e.act; best=e; } }
+  for(const e of E){ if(e.kind==='ally' || e.vis===false) continue; e.act=entityAct(e)+(e.kind==='player'?0.02:0); if(e.act>bestA){ bestA=e.act; best=e; } }   // (10-06v) невидимих не дивимось
   if(!best){ WATCH.id=null; return null; }
   if(cur && cur.kind!=='ally' && cur!==best){ if(WATCH.t<(VB_WATCH.hold||3) || !(bestA>(cur.act||0)*(VB_WATCH.switchK||1.6)+0.05)) return cur; }
   if(best.id!==WATCH.id){ WATCH.id=best.id; WATCH.t=0; }
@@ -2170,21 +2189,23 @@ function watchCamApply(e){
 function duelEntities(){
   const E=[];
   if(mode==='fighter' && !player.dead) E.push({id:'me', kind:'player', x:worldX(player.gx), z:worldZ(player.gy), yaw:player.visYaw||0, mesh:(VB_RIG.player&&VB_RIG.player.obj)||player.mesh});
-  try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!remoteFresh(r)) continue; E.push({id, kind:'player', x:worldX(r.gx), z:worldZ(r.gy), yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av&&r.av.mesh}); } }catch(e){}
+  try{ for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!remoteFresh(r)||r.hidden) continue; E.push({id, kind:'player', x:worldX(r.gx), z:worldZ(r.gy), yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av&&r.av.mesh, vis:!!(r.av&&r.av.mesh&&r.av.mesh.visible)}); } }catch(e){}   // (10-06v) приховані не рахуються
   try{ for(const p of phantoms){ if(!p||p.dead||!p.mesh) continue; E.push({id:'ph'+phantoms.indexOf(p), kind:p.ally?'ally':'mob', x:p.mesh.position.x, z:p.mesh.position.z, yaw:p.visYaw||0, mesh:p.mesh, ph:p}); } }catch(e){}
-  try{ for(const k in NET.rphantoms){ const r=NET.rphantoms[k]; if(!r||!r.av||!r.av.mesh||(r.latest&&r.latest.dead)) continue; E.push({id:k, kind:'mob', x:r.av.mesh.position.x, z:r.av.mesh.position.z, yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av.mesh}); } }catch(e){}
+  try{ for(const k in NET.rphantoms){ const r=NET.rphantoms[k]; if(!r||!r.av||!r.av.mesh||r.hidden||!r.av.mesh.visible||(r.latest&&r.latest.dead)) continue; E.push({id:k, kind:'mob', x:r.av.mesh.position.x, z:r.av.mesh.position.z, yaw:(r.latest&&r.latest.yaw)||0, mesh:r.av.mesh, vis:true}); } }catch(e){}
   return E;
 }
 function duelPairPick(){
   const E=duelEntities(), R=(VB_CAM.duelR||3.2)*CELL; let best=null;
   const keep=SPEC.pair; const find=(id)=>E.find(e=>e.id===id);
-  if(keep){ const a=find(keep.a), b=find(keep.b); if(a&&b){ const d=Math.hypot(a.x-b.x,a.z-b.z); if(d<=R*1.35) return {a,b,d,keep:true}; } }
   for(let i=0;i<E.length;i++) for(let j=i+1;j<E.length;j++){ const a=E[i], b=E[j];
     if(a.kind==='mob' && b.kind==='mob' && !(VB_CAM.mobDuel>0)) continue;
     if(a.kind==='ally' || b.kind==='ally') continue;
     const d=Math.hypot(a.x-b.x,a.z-b.z); if(d>R) continue;
     const pri=(a.kind==='player'?1:0)+(b.kind==='player'?1:0)+((a.id===followTarget||b.id===followTarget||a.id==='me'||b.id==='me')?2:0);
     const sc=pri*10-d; if(!best||sc>best.sc) best={a,b,d,sc}; }
+  /* (10-06v) утримуємо стару пару (гістерезис), але пара без гравця ніколи не перекриває пару з гравцем */
+  if(keep){ const a=find(keep.a), b=find(keep.b); if(a&&b){ const d=Math.hypot(a.x-b.x,a.z-b.z); const hasP=(a.kind==='player'||b.kind==='player'), bestP=!!(best&&(best.a.kind==='player'||best.b.kind==='player'));
+    if(d<=R*1.35 && (hasP || !bestP) && !(a.kind==='mob'&&b.kind==='mob'&&!(VB_CAM.mobDuel>0))) return {a,b,d,keep:true}; } }
   return best;
 }
 function duelCamApply(pr, dt){
@@ -3795,7 +3816,7 @@ function applyAdvRoom(rx,ry){
   applyRemoteRoomIfNewer(rx+','+ry);         // общий мир: правки других игроков поверх
   try{ ensureStructRing(rx,ry); }catch(e){ logE('кромка: '+e.message); }   // (09-22h) стіни на кромці — завжди
   try{ neighborGhostsBuild(rx,ry); }catch(e){ logE('сусіди: '+e.message); }   // (09-22i) тіні сусідніх кімнат   // вернуть сохранённые постройки/скан этой комнаты (если были)
-  const kinds = composeRoomEnemies(rx,ry);
+  const kinds = coopKinds(composeRoomEnemies(rx,ry));   // (10-06v) лише моя частка спільної цілі
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
   const bossPh=phantoms.find(p=>p.kind==='boss');
   if(bossPh && st.weight>0.7){ bossPh.size=3; bossPh.hp=520;   // глубокий босс — 3×3
@@ -4468,7 +4489,7 @@ function playerNoiseTick(dt){
   NOISE.acc=Math.max(0,(NOISE.acc||0)+(NOISE.level>1.5?NOISE.level*dt:0)-dt*0.4);
   if(VB_NOISE.spawn>0 && ADV.on && mode==='fighter' && !chessWhite(ADV.rx,ADV.ry) && NOISE.acc>VB_NOISE.at/VB_NOISE.spawn){
     NOISE.acc=0; const alive=phantoms.filter(p=>!p.dead&&!p.ally).length;
-    if(alive<VB_NOISE.cap){ try{ const kinds=composeRoomEnemies(ADV.rx,ADV.ry); const k=kinds[Math.floor(Math.random()*kinds.length)]||'fighter';
+    if(alive+coopAliveOthers()<VB_NOISE.cap*(1+(VB_COOP.k||0.5)*(coopFighters()-1))){ try{ const kinds=composeRoomEnemies(ADV.rx,ADV.ry);   // (10-06v) стеля — спільна на кімнату const k=kinds[Math.floor(Math.random()*kinds.length)]||'fighter';
         const ph=makePhantom(phantoms.length,k); ph.aware=true; phantoms.push(ph); logE('НА ШУМ ЗБІГЛИСЯ: +'+k+' (живих '+(alive+1)+')'); showBanner('👂 на шум збіглися','#f59e0b'); }catch(e){} }
   }
   if(player.strikeT>0) NOISE.level=Math.min(4,NOISE.level+dt*4);
@@ -5068,7 +5089,7 @@ window.VB_STEP=VB_STEP; window.STEP=STEP; try{ window.player=player; }catch(e){}
    при наступному вході в ту саму кімнату — грають напівпрозорою тінню по колу (пауза 3 с між повторами). Чужі записи — через
    кімнату (blade/{room}/replays/{кімната}/{гравець}), до 3 тіней, кожна своїм кольором. Запис — лише коли ти боєць. ═══ */
 var REPLAY={ rec:[], t:0, key:null, ghosts:[], saveT:0, accT:0, shareT:0 };
-window.REPLAY=REPLAY; window.vbNet={ upsert:(id,p)=>upsertRemote(id,p), packet:()=>NET.packet(player), remotes:()=>NET.remotes, replayFlush, replayLoad };
+window.REPLAY=REPLAY; window.vbNet={ upsert:(id,p)=>upsertRemote(id,p), packet:()=>NET.packet(player), remotes:()=>NET.remotes, replayFlush, replayLoad, upsertPh:(k,st)=>upsertRemotePhantom(k,st), rph:()=>NET.rphantoms, adv:()=>ADV };
 function replayGhostsClear(){ for(const g of REPLAY.ghosts){ try{ scene.remove(g.av.mesh); }catch(e){} } REPLAY.ghosts.length=0; }
 function replayGhostAdd(fr, hue, label){
   if(!fr||fr.length<20||REPLAY.ghosts.length>=4) return;
@@ -5664,7 +5685,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-06u · ВАГА ЗБРОЇ: шпага 0.5 / меч 1 / сокира 1.6 / молот 3 (панель відпрацювання ⚖, повзунок VB_WPN.kind) — клинок іде за телефоном не швидше, ніж герой веде таку масу; перевантаження фарбує слід і клинок жовтим → помаранчевим → червоним, тане витривалість, вібро густішає; на червоному важка зброя ВИСЛИЗАЄ З РУК І ПАДАЄ (видно: руків\'я летить додолу, лягає на підлозі; підняти — підійти, або телекінез за 6 с), легка — зриває хват · ефірна нитка від клинка до телефона й у звичайному бою, коли зброя відстає · СПОСТЕРІГАЧ «НАЙЯСКРАВІШЕ»: екшн-камера збоку від найактивнішого (дуель — від пари), на зріст людини; кімната — за найактивнішим гравцем; застарілі й на паузі камеру не ведуть · (10-06t) тіні, живий меч, проба';
+const BUILD_TAG='2026-10-06v · КООП-СКЛАДНІСТЬ: ворогів у кімнаті — за числом бійців, що справді б\'ються з мобами (спостерігачі, друга рука, пауза, сусідні кімнати — не рахуються): разом base·(1+0.5·(N−1)), кожен доспавнює лише до спільної цілі, хвилі й «на шум» — так само · СПОСТЕРІГАЧ: пара моб–моб вимкнена типово, утримувана пара не перекриває пару з гравцем, невидимі не ведуть камеру; у лозі й на екрані — гілка камери, її позиція й ціль · (10-06u) вага зброї, найяскравіше';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -6483,13 +6504,13 @@ function frame(now){
     if(!ids.includes(followTarget)) followTarget = ids[0]||null;
     const r = followTarget && NET.remotes[followTarget];
     const prA=duelPairPick();                                                              // (10-06s) будь-яка дуель у кімнаті — збоку
-    if(prA){ duelCamApply(prA, dt); WATCH.sideFor=null; }
+    if(prA){ duelCamApply(prA, dt); WATCH.sideFor=null; WATCH.branch='дуель '+String(prA.a.id).slice(0,4)+'⚔'+String(prA.b.id).slice(0,4); WATCH.tx=(prA.a.x+prA.b.x)/2; WATCH.tz=(prA.a.z+prA.b.z)/2; }
     else { SPEC.pair=null;
       const E=(VB_WATCH.on>0)?duelEntities().filter(e=>e.kind!=='player' || e.id==='me' || ids.includes(e.id)):[];
       const e=(VB_WATCH.on>0)?watchPick(E,dt):null;
-      if(e) watchCamApply(e);
-      else if(!r) specOrbitTick(dt);
-      else {
+      if(e){ watchCamApply(e); WATCH.branch='найяскравіше '+String(e.id).slice(0,4)+(e.kind==='player'?'':' ('+e.kind+')'); WATCH.tx=e.x; WATCH.tz=e.z; }
+      else if(!r){ specOrbitTick(dt); WATCH.branch='орбіта (нікого)'; WATCH.tx=null; }
+      else { WATCH.branch='за спиною '+String(followTarget).slice(0,4); WATCH.tx=worldX(r.gx); WATCH.tz=worldZ(r.gy);
         const p=r.latest||{}; const yaw=p.yaw||0; const [dx,dz]=dirXZ(yaw);
         const px=worldX(r.gx), pz=worldZ(r.gy);
         if(p.cl){
@@ -6557,7 +6578,7 @@ function frame(now){
       const pinfo = ph ? `фантом(${ph.gx},${ph.gy}) dist${Math.abs(player.gx-ph.gx)+Math.abs(player.gy-ph.gy)}` : 'фантомів немає';
       logE(`state: я(${player.gx},${player.gy}) ${pinfo} `+
            `dir${DSYM[player.dirIdx]} ярус${player.tier} стійка:${stance===STANCE.BEACON?'маяк':'блиск'} pitch${sensor.pitch.toFixed(2)}`);
-    }else if(mode!=='creator'){ let ids=[]; try{ ids=watchIds(); }catch(e){} logE(`наблюдение (${mode}), в комнате: ${ids.length+1} · активних ${ids.filter(id=>(NET.remotes[id].act||0)>VB_WATCH.minAct).length}`+(WATCH.id?` · дивлюсь: ${String(WATCH.id).slice(0,4)}`:'')); }
+    }else if(mode!=='creator'){ let ids=[]; try{ ids=watchIds(); }catch(e){} logE(`наблюдение (${mode}), в комнате: ${ids.length+1} · активних ${ids.filter(id=>(NET.remotes[id].act||0)>VB_WATCH.minAct).length}`+(WATCH.id?` · дивлюсь: ${String(WATCH.id).slice(0,4)}`:'')+` · камера: ${WATCH.branch||'—'} · cam(${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}) → (${camLook.x.toFixed(1)},${camLook.y.toFixed(1)},${camLook.z.toFixed(1)})`+(WATCH.tx!=null?` · ціль(${WATCH.tx.toFixed(1)},${WATCH.tz.toFixed(1)})`:'')+` · кімн(${ADV.on?ADV.rx+','+ADV.ry:'—'})`); }
   }
 
   // камера: карта — жёстко, остальное — плавно
@@ -6579,7 +6600,7 @@ function frame(now){
     `yaw ${sensor.yawFused.toFixed(0)}  pitch ${sensor.pitch.toFixed(2)}  roll ${sensor.roll.toFixed(0)}\n`+
     `compass ${sensor.haveCompass?Math.round(sensor.compass):'—'}  yaw-джерело ${sensor.yawSrc||'—'}  рівно ${sensor.level.toFixed(2)}  speed ${sensor.speed.toFixed(1)}\n`+
     `HP ${Math.round(player.hp)}  ${WEAPONS[playerWpn].label}${ADV.on?'  кімн('+ADV.rx+','+ADV.ry+')':''}  фантомів ${phantoms.filter(p=>!p.dead && !p.ally).length + Object.keys(NET.rphantoms).length}  ${clinch.active?'CLINCH Δ'+clinch.delta.toFixed(0)+' '+pressBar(clinch.pressX):''}\n`+
-    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}${(typeof VB_HAPTIC!=='undefined'&&VB_HAPTIC.lastMs)?(' '+VB_HAPTIC.lastMs+'мс/'+VB_HAPTIC.lastRet):''}  клинок:${(typeof WALLLOCK!=='undefined'&&WALLLOCK.active)?('ЗАЧЕП '+Math.round(WALLLOCK.mis)+'°'):((typeof SWORD_CONTACT!=='undefined')?SWORD_CONTACT.state('player').replace('CONTACT_',''):'—')}`;
+    `NET ${NET.online?'● '+NET.room:'○ offline'}  гравців:${Object.values(NET.remotes).filter(r=>r.spec||remoteFresh(r)).length+1}  вібро:${HAPTICS?'є':'НЕМАЄ(iOS?)'}${(typeof VB_HAPTIC!=='undefined'&&VB_HAPTIC.lastMs)?(' '+VB_HAPTIC.lastMs+'мс/'+VB_HAPTIC.lastRet):''}  клинок:${(typeof WALLLOCK!=='undefined'&&WALLLOCK.active)?('ЗАЧЕП '+Math.round(WALLLOCK.mis)+'°'):((typeof SWORD_CONTACT!=='undefined')?SWORD_CONTACT.state('player').replace('CONTACT_',''):'—')}`+(watcherMode()?`\nКАМЕРА ${WATCH.branch||'—'} · (${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}) → (${camLook.x.toFixed(1)},${camLook.y.toFixed(1)},${camLook.z.toFixed(1)})`:'');   // (10-06v) діагностика камери спостерігача
 
   // баннер/вспышка таймеры
   if(bannerT>0){ bannerT-=dt; if(bannerT<=0) $('banner').style.opacity='0'; }
@@ -9342,7 +9363,7 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.0, fov:96, guardQ:0, lock:1.0, lockFoe:0, lockMax:80, lockRange:6, lockAway:2.5, lockAwayDeg:70, duelSide:0, duelR:3.2, duelDist:1, mobDuel:1, duelSpec:1 };   // (10-06s) камера дуелі збоку   // (09-29k) головна камера не киває за клинком; у тренуванні дивиться на наставника повністю   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0.35, headUp:0.10, headPitch:0.0, fov:96, guardQ:0, lock:1.0, lockFoe:0, lockMax:80, lockRange:6, lockAway:2.5, lockAwayDeg:70, duelSide:0, duelR:3.2, duelDist:1, mobDuel:0, duelSpec:1 };   // (10-06v) моб–моб — лише за повзунком   // (10-06s) камера дуелі збоку   // (09-29k) головна камера не киває за клинком; у тренуванні дивиться на наставника повністю   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
 var CAMLOCK={ target:null };
 /* (09-28i) ЦІЛЬ ДЛЯ ПОГЛЯДУ: у тренуванні — наставник; у бою — найближчий живий ворог у lockRange клітинок
    (тримаємо ту саму, поки жива й не далі lockRange+2). Голова довертається до цілі на частку lock, не більше lockMax°. */
@@ -9541,7 +9562,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP};   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -9592,6 +9613,8 @@ const SENS_SLIDERS=[
   ['SENSCFG.BODY_FOLLOW_SPEED','Корпус доганяє, 1/с',1,15,0.5],['SENSCFG.BODY_TURN_DELAY','Затримка корпусу, с',0,0.6,0.01],
   ['SENSCFG.BODY_SWING_HOLD','Корпус стоїть у махові, с',0,0.8,0.02],
   ['SENSCFG.SWING_GYRO_THRESHOLD','Поріг маху, °/с',60,500,10],['SENSCFG.SWING_ACCEL_THRESHOLD','Поріг маху, м/с²',4,30,0.5],
+  ['КООП-СКЛАДНІСТЬ (10-06v)'],
+  ['VB_COOP.on','Складність за числом бійців у кімнаті (1/0)',0,1,1],['VB_COOP.k','Ворогів більше на кожного додаткового бійця, ×',0,1.5,0.1],
   ['ВАГА ЗБРОЇ · НАЙЯСКРАВІШЕ (10-06u)'],
   ['VB_WPN.on','Буквальна вага зброї (1/0)',0,1,1],['VB_WPN.kind','Зброя: 0 шпага · 1 меч · 2 сокира · 3 молот',0,3,1],['VB_WPN.lin','Лінійна межа руки при масі 1, м/с',1,12,0.5],
   ['VB_WPN.up','Перевантаження росте ×',0.2,3,0.1],['VB_WPN.down','Перевантаження спадає ×',0.1,3,0.1],['VB_WPN.lagRef','Відставання клинка, від якого росте, °',10,90,5],
@@ -13108,7 +13131,7 @@ function wavesTick(dt){
     if(WAVES.R>=7) allyGoMad();                       // край: супутник стає босом
     return;
   }
-  const n=1+Math.floor(Math.random()*2);
+  const n=coopWave(1+Math.floor(Math.random()*2));   // (10-06v) хвиля — за числом бійців
   const kinds=[]; for(let i=0;i<n;i++) kinds.push(['fighter','crawler','flyer'][Math.floor(Math.random()*3)]);
   spawnPhantoms(n, kinds);                             // (07-22c) союзник зберігається всередині
   showBanner('🌊 ХВИЛЯ '+(WAVES.total-WAVES.left+1)+' / '+WAVES.total,'#f59e0b');
