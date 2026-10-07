@@ -2386,10 +2386,11 @@ function linWorldFeed(a, dtE, e){
   _lwV.applyQuaternion(_lwQ.set(q.x,q.y,q.z,q.w)); sensor.lawX=_lwV.x; sensor.lawY=_lwV.y; sensor.lawZ=_lwV.z;
   const g=sensor.gyroMag||0, am=Math.hypot(a.x,a.y,a.z);
   { const spinA=Math.abs(sensor.yawRate||0)+Math.abs(sensor.pitchRate||0)+Math.abs(sensor.rollRate||0);   // рука: ворота обертання й обнулення в спокої
-    if(spinA>(VB_ARM.spinGate||200)){ LINV.gate=0.35; LINV.armed=false; } else LINV.gate=Math.max(0,LINV.gate-dt);
+    if(spinA>(VB_ARM.spinGate||450)){ LINV.gate=(VB_ARM.gateT||0.15); LINV.armed=false; } else LINV.gate=Math.max(0,LINV.gate-dt);   // (10-07e) мах глушить руку лише поки триває
     if(am<(VB_ARM.dead||0.35) && spinA<40) LINV.still+=dt; else LINV.still=0;
     if(LINV.still>0.08){ LINV.v.set(0,0,0); if(LINV.gate<=0) LINV.armed=true; }
-    else if(LINV.gate>0 || !LINV.armed) LINV.v.set(0,0,0);
+    else if(LINV.gate>0){ LINV.v.set(0,0,0); }
+    else if(!LINV.armed){ LINV.armed=true; LINV.v.set(0,0,0); }   // (10-07e) мах скінчився — рахуємо з нуля одразу, не чекаючи повного спокою
     else { LINV.v.addScaledVector(_lwV, dt); LINV.v.multiplyScalar(1-clamp(dt/1.2,0,1)); }
     /* зсув руки — теж у часі датчика: швидкість у систему корпусу (вперед +Z, ліворуч +X), підсилення за напрямками, утримання й м'яке повернення */
     const S=(typeof VB_RIG!=='undefined')&&VB_RIG.player, yb=(S&&S.body&&S.body.visYaw!=null)?S.body.visYaw:(player.visYaw||0);
@@ -2402,14 +2403,14 @@ function linWorldFeed(a, dtE, e){
   if(g>(VB_STEP.gyroMax||150)){ STEPV.spin=VB_STEP.spinHold||0.3; STEPV.armed=false; }
   STEPV.spin=Math.max(0,STEPV.spin-dt); STEPV.cool=Math.max(0,STEPV.cool-dt);
   if(am<(VB_STEP.stillAcc||0.35) && g<(VB_STEP.stillGyro||35)) STEPV.still+=dt; else STEPV.still=0;
-  if(STEPV.still>=(VB_STEP.stillT||0.08)){ STEPV.vx=0; STEPV.vz=0; STEPV.lowT=0; if(STEPV.spin<=0) STEPV.armed=true; return; }   // завмер — швидкість нуль, наступний поштовх рахується
+  if(STEPV.still>=(VB_STEP.stillT||0.08)){ STEPV.vx=0; STEPV.vz=0; STEPV.lowT=0; STEPV.px=0; STEPV.pz=0; if(STEPV.spin<=0) STEPV.armed=true; return; }   // завмер — швидкість нуль, наступний поштовх рахується
   if(STEPV.spin>0 || !STEPV.armed){ STEPV.vx=0; STEPV.vz=0; return; }   // мах — не поштовх
   const leak=clamp(dt/(VB_STEP.leak||1.5),0,1);
   STEPV.vx+=_lwV.x*dt; STEPV.vz+=_lwV.z*dt; STEPV.vx-=STEPV.vx*leak; STEPV.vz-=STEPV.vz*leak;
   const sp=Math.hypot(STEPV.vx,STEPV.vz);
-  if(sp<0.15) STEPV.lowT=0; else STEPV.lowT+=dt;
-  if(sp>=(VB_STEP.vStep||0.6) && STEPV.lowT<=(VB_STEP.rise||0.5) && STEPV.cool<=0){
-    STEPV.want={x:STEPV.vx/sp, z:STEPV.vz/sp, sp, t:performance.now()}; STEPV.armed=false; STEPV.cool=VB_STEP.cd2||0.8; }
+  if(sp<0.15){ STEPV.lowT=0; STEPV.px=0; STEPV.pz=0; STEPV.vPk=0; } else { STEPV.lowT+=dt; STEPV.px=(STEPV.px||0)+STEPV.vx*dt; STEPV.pz=(STEPV.pz||0)+STEPV.vz*dt; STEPV.vPk=Math.max(STEPV.vPk||0, sp); }   // (10-07e) шлях і найбільша швидкість поштовху
+  if((STEPV.vPk||0)>=(VB_STEP.vStep||1.25) && sp>=0.3 && Math.hypot(STEPV.px||0,STEPV.pz||0)>=(VB_STEP.dMin??0.38) && STEPV.lowT<=(VB_STEP.rise||0.8) && STEPV.cool<=0){
+    STEPV.want={x:STEPV.vx/sp, z:STEPV.vz/sp, sp:STEPV.vPk, t:performance.now()}; STEPV.armed=false; STEPV.cool=VB_STEP.cd2||0.8; }
 }
 function onMotion(e){
   const now = performance.now();
@@ -3777,7 +3778,7 @@ function updateStanceAndCamera(dt){
   // (07-18i) у дворуччі камера стоїть за спиною ТІЛА — однаково на обох
   // пристроях; своє плече дає лише бічний зсув, анатомія не дзеркалиться.
   const _camYaw = (window.LINK && LINK.role && typeof linkFreshL==='function' && linkFreshL())
-    ? (player.visYaw||0) : camYawTick(dt);   // (09-29l) камера — за корпусом (у дуелі — на ціль), не за клинком
+    ? (CAMH.yaw=(player.visYaw||0)) : camYawTick(dt);   // (09-29l) камера — за корпусом (у дуелі — на ціль), не за клинком · (10-07e) у двох пристроях курс камери теж оновлюється — джойстик іде туди, куди дивишся
   const [dx,dz] = dirXZ(_camYaw);
   const px=worldX(player.gx), pz=worldZ(player.gy);
   // НЕПРЕРЫВНЫЙ переход в 1-е лицо по |roll| (40°..70° → 0..1), сглажен — без дрожи на пороге.
@@ -3909,7 +3910,8 @@ function updateStanceAndCamera(dt){
     const _S=VB_RIG.player; const el=(_S&&_S.elevAmp!=null)?clamp(_S.elevAmp,-90,90):(-Math.asin(clamp(sensor.pitch||0,-1,1))*180/Math.PI);   // підйом клинка, ° (09-29j: підсилений)
     const pT=clamp(el*(VB_CAM.headPitch??0.3),-25,25);
     CAMH.pitch=(CAMH.pitch==null)?pT:CAMH.pitch+(pT-CAMH.pitch)*clamp(dt*4,0,1);
-    fpYaw=_camYaw; fpPitch=(CAMH.pitch+((VB_FPV.on>0)?(VB_FPV.pitch||0)*clamp(((player.fpSmooth||0)-0.25)/0.5,0,1):0))*Math.PI/180;   // (10-07d) у першій особі погляд трохи вниз — руки й руків'я в кадрі
+    const _kF=(VB_FPV.on>0)?clamp(((player.fpSmooth||0)-0.25)/0.5,0,1):0;
+    fpYaw=_camYaw; fpPitch=(CAMH.pitch+((_kF>0.001)?fpvPitchTick(dt)*_kF:0))*Math.PI/180;   // (10-07e) у першій особі погляд — за клинком угору-вниз (під ноги)
   } else { CAMH.pitch=null; fpYaw=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.yaw : _camYaw; fpPitch=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.pitch*Math.PI/180 : null; }
   if(VB_CAM.duelSide>0 && typeof DUEL!=='undefined' && DUEL.on && DUEL.tgt && !(typeof DRILL!=='undefined'&&DRILL.on)){   // (10-06s) гравцю — дуель збоку (опція)
     const t=DUEL.tgt; const pr={a:{id:'me',kind:'player',x:px,z:pz}, b:{id:'tgt',kind:t.ally?'ally':'mob',x:t.mesh.position.x,z:t.mesh.position.z}}; pr.d=Math.hypot(pr.b.x-pr.a.x,pr.b.z-pr.a.z); duelCamApply(pr, dt); camera.up.set(0,1,0); return; }
@@ -3962,10 +3964,7 @@ function updateStanceAndCamera(dt){
       FPVCAM.rotA=rot;
       const a=rot*Math.PI/180;
       const f=new THREE.Vector3().subVectors(camTarget,camPos).normalize();
-      const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0));
-      if(r.lengthSq()>1e-4){ r.normalize();
-        const up=new THREE.Vector3(0,1,0).multiplyScalar(Math.cos(a)).add(r.multiplyScalar(Math.sin(a)));
-        camera.up.copy(up.normalize()); }
+      { const up=camUpRolled(f,a); if(up) camera.up.copy(up); }   // (10-07e) крен навколо осі погляду
       oriHud(Math.abs(rot)>45 ? -Math.sign(rot)*90 : 0);   // написи — сходинкою, щоб читались (CSS: + = за годинником)
     } else { camera.up.set(0,1,0); oriHud(0); }
   }catch(e){}
@@ -4051,6 +4050,8 @@ function startClinch(foe){
 }
 function endClinch(reason){
   logE('КЛІНЧ кінець: '+reason+' (Δ'+Math.round(clinch.delta)+', тиск '+clinch.pressX.toFixed(2)+', t'+clinch.t.toFixed(1)+')');
+  try{ const f=clinch.foe; if(f && f.remote && !clinch.mirror && reason!=='net'){ NET.sendEvt(f.id,{src:'clinchEnd', reason}); } }catch(e){}   // (10-07e) і в суперника
+  clinch.mirror=false;
   try{                                                    // (07-24) win/lose — за ТЗ п.10
     if(reason==='parry'||reason==='presswin') mentorEmit('PLAYER_WON_CLINCH');
     else if(reason==='disarm'||reason==='pressed') mentorEmit('PLAYER_LOST_CLINCH');
@@ -4115,6 +4116,10 @@ function endClinch(reason){
   }else if(reason==='net'){
     showBanner('◌ ЗВ’ЯЗОК ВТРАЧЕНО — КЛІНЧ РОЗПАВСЯ','#94a3b8');   // без штрафа
     blip(220,0.15,'sine',0.1);
+  }else if(reason==='foe'){   // (10-07e) клінч закінчив суперник
+    const fr=clinch.foeReason||''; clinch.foeReason=null;
+    const T={parry:['✦ СУПЕРНИК ПАРИРУВАВ','#f59e0b'], retreat:['↩ СУПЕРНИК ВІДСТУПИВ','#93c5fd'], disarm:['✦ СУПЕРНИК ВТРАТИВ КЛИНОК','#4ade80'], pressed:['⇡ ПРОДАВИВ КЛИНОК СУПРОТИВНИКА','#4ade80'], spinout:['🌀 СУПЕРНИК ВИРВАВСЯ','#fbbf24'], slipout:['〰 СУПЕРНИК ВИСЛИЗНУВ','#22d3ee'], clash:['⚔ КЛІНЧ РОЗБИТО УДАРОМ','#fbbf24']}[fr]||['◌ КЛІНЧ ЗАВЕРШЕНО','#94a3b8'];
+    showBanner(T[0],T[1]); blip(420,0.1,'sine',0.12);
   }else if(reason==='shattered'){
     showBanner('✷ КЛІНЧ РОЗБИТО ТРЕТЬОЮ СИЛОЮ','#f59e0b');   // третий боец пробил зацеп для всех
     doFlash('#f59e0b');
@@ -4645,6 +4650,9 @@ function applyIncomingHit(h){
   // эхо равновесия: я добил игрока — его клиент прислал сигнал перерождения (не урон)
   if(h.src==='rebirth'){ if(equalizerOn) equalizerRebirth(); return; }
   if(h.src!=='phantom' && !friendlyFire) return;   // урон от игроков — по настройке; от фантомов — всегда
+  if(h.src==='clash'){ try{ pvpClashRecv(h); }catch(e){} return; }          // (10-07e) мій клинок вдарили клинком
+  if(h.src==='clinch'){ try{ pvpClinchRecv(h); }catch(e){} return; }        // (10-07e) клінч почав суперник — і в мене
+  if(h.src==='clinchEnd'){ try{ pvpClinchEndRecv(h); }catch(e){} return; }  // (10-07e) клінч закінчився в суперника — і в мене
   if(h.src==='player' && h.from){ lastPlayerHitFrom=h.from; lastPlayerHitT=performance.now(); }
   const tier = clamp((h.tier|0),0,2);
   damageTier(player, tier, h.dmg||14);
@@ -5928,7 +5936,7 @@ function resolveClinch(){
     if(pc.some(c=>ec.has(c))){ startClinch(ph); logE('БЛОК: клинки зійшлись'); return; }
   }
   // с реальными игроками (PvP-фехтование)
-  if(friendlyFire) for(const id in NET.remotes){
+  if(friendlyFire && !(VB_RIG.on && VB_RIG.player)) for(const id in NET.remotes){   // (10-07e) з ригом клінч із гравцем — лише за справжнім зчепленням клинків (pvpTick), однаково в обох
     const r=NET.remotes[id]; if(r.spec || (r.hp??100)<=0 || !remoteFresh(r)) continue;
     const ec=new Set(remoteBladeCells(r));
     if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) continue;   // (07-17e) рука не фехтує з власним тілом
@@ -6183,8 +6191,98 @@ function segSegClosest(p1,q1,p2,q2){
   const p=p1.clone().add(d1.multiplyScalar(sN)), q=p2.clone().add(d2.multiplyScalar(tN));
   return {dist:p.distanceTo(q),p,q};
 }
-const VB_CLASH={ kick:1.6 };   // (09-22g) тимчасово підкручено, щоб відкидання відчувалось
+const VB_CLASH={ kick:1.6, turn:4, disV:5, disSpan:6, disarm:1 };   // (09-22g) тимчасово підкручено, щоб відкидання відчувалось · (10-07e) turn — розворот ворога, °/(м/с); disV/disSpan — від якої швидкості удару можна вибити меч
 window.VB_CLASH=VB_CLASH;
+/* ═══ (10-07e) БІЙ ІЗ ЖИВИМ ГРАВЦЕМ ═══
+   Раніше з ригом урон гравцю йшов ЛИШЕ через клінч, а клінч кожен клієнт вирішував сам за клітинками — у одного почався, у
+   другого ні. Тепер: (1) мах крізь тіло — урон (стрічка), клинок, утримуваний у тілі, — прожиг; (2) меч об меч — обидва
+   клинки відскакують, слабшого розвертає в бік удару (подія йде йому мережею, двічі не рахується); (3) клінч — лише коли
+   клинки справді зійшлись і тиснуть повільно; хто помітив перший — каже другому, кінець клінчу теж іде обом. */
+const VB_PVP={ on:1, stab:6, stabT:0.45, clashD:0.12, clashV:2.2, turn:4, turnMax:35, bindD:0.15, bindV:1.6, bindT:0.4, dedupe:0.7 };
+window.VB_PVP=VB_PVP;
+const PVP={ stabT:new Map(), cl:new Map(), bind:new Map(), prevTip:new Map(), sep:new Map(), n:{hit:0,clash:0,clinch:0} }; var LAB_PVPD=null;
+window.PVP=PVP;
+function pvpRemotes(){ const out=[]; if(!(VB_PVP.on>0) || !friendlyFire || mode!=='fighter' || player.dead) return out;
+  if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL')) return out;
+  for(const id in NET.remotes){ const r=NET.remotes[id]; if(!r||r.spec||!r.av||r.hidden||(r.hp??100)<=0||!remoteFresh(r)||!sameAdvRoom(r)) continue;
+    if(typeof PAIR!=='undefined' && PAIR.with===id) continue; if(window.LINK && LINK.body && LINK.body.id===id) continue; out.push({id,r}); }
+  return out; }
+function pvpBody(r){ const p=r.av.mesh.position; return {x:p.x, z:p.z, r:0.36, y0:0.05, y1:1.92}; }
+function pvpBlade(id, r){ if(window.__pvpFakeBlade) return window.__pvpFakeBlade(id,r); /* (10-07e) тест підставляє клинок суперника */ const S=r.av&&r.av._rigS; if(!S||!S.rig||!S.rig.root.visible) return null; const sw=S.rig.sword; if(!sw||!sw.root.visible) return null;
+  sw.root.updateWorldMatrix(true,false); const g=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), t=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+  const now=performance.now(), pv=PVP.prevTip.get(id); let v=0, vel=new THREE.Vector3();
+  if(pv && now>pv.t){ const dt=Math.min(0.1,(now-pv.t)/1000); vel=t.clone().sub(pv.p).multiplyScalar(1/Math.max(dt,1e-3)); v=Math.min(vel.length(),30); }
+  PVP.prevTip.set(id,{p:t.clone(),t:now}); return {g,t,v,vel}; }
+function pvpHitRemote(id, r, p, dmg, tag){ const tier=p.y<0.6?0:(p.y<1.35?1:2); dmg=Math.max(1,Math.round(dmg));
+  try{ NET.sendHit(id, tier, dmg, 'player'); }catch(e){} PVP.n.hit++;
+  r.hp=Math.max(0,(r.hp??100)-dmg);   // до його наступного пакета
+  try{ emitSparks(p.x,p.y,p.z,'#ff5a5a',10,2.6); MUSICFX.hit('BODY',0.8,p.x,p.y,p.z); matTransient('BODY',true,p.x,p.y,p.z); if(navigator.vibrate) navigator.vibrate([0,35,20,25]); doFlash('#22c55e'); REVEAL.pulse(p.x,p.z,1.4,0.9,'BODY',4); }catch(e){}
+  logE(tag+': гравець '+String(id).slice(0,4)+' ярус '+tier+' −'+dmg+' (у мене він ~'+Math.round(r.hp)+' HP)'); }
+function pvpTurnSign(dirW){ const S=VB_RIG.player; const yaw=((S&&S.body&&S.body.visYaw!=null)?S.body.visYaw:(player.visYaw||0))*Math.PI/180; return (dirW.x*Math.cos(yaw)+dirW.z*Math.sin(yaw))>=0?1:-1; }
+/* мій відскік від удару по мечу: клинок відлітає завжди; сильніший удар суперника — розсинхрон і розворот корпусу в бік удару */
+function pvpReact(S, away, vHit, vMine, pW, why, dirPush){
+  if(!S||!S.rig) return 0; const dom=vHit-vMine;
+  try{ const sw=S.rig.sword; const g=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), t=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0));
+    const bodyRel=(S.liveBlade&&S.liveBlade.body)||0, rot=bodyRel*Math.PI/180, Y=new THREE.Vector3(0,1,0);
+    const bd=t.clone().sub(g).normalize(), axis=new THREE.Vector3().crossVectors(bd,away);
+    if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp((vHit+vMine*0.3)*5,10,60)*Math.PI/180); S.kickT=1; }
+    S.recoil=clamp(0.4+vHit*0.06,0.4,1); }catch(e){}
+  if(dom<=1.0) return 0;
+  const sgn=pvpTurnSign(dirPush||away), turn=clamp(dom*(VB_PVP.turn||4), 6, VB_PVP.turnMax||35);
+  const imp=clashImpulse(S, away, vHit); imp.bodyV=sgn*turn/1.2;
+  const lvl=dom>5?'BODY':(dom>2.5?'ARM':'WRIST'); const prev=LAB; LAB=S;
+  try{ labLoseControl('удар меч об меч ('+why+', '+vHit.toFixed(1)+' м/с)', imp, lvl); if(lvl!=='BODY') S.body.visYaw=wrap360((S.body.visYaw||0)+sgn*turn*0.6); }catch(e){} finally{ LAB=prev; }
+  logE('УДАР ПО МЕЧУ: '+why+' розвернув мене на '+Math.round(turn)+'° '+(sgn>0?'праворуч':'ліворуч'));
+  return sgn*turn; }
+function pvpClashLocal(id, r, c, vP, velP, RB){
+  const S=VB_RIG.player; const vE=RB.v||0, pW=c.p.clone().lerp(c.q,0.5); PVP.n.clash++;
+  const away=c.p.clone().sub(c.q); if(away.lengthSq()<1e-6 && RB.vel) away.copy(RB.vel); if(away.lengthSq()<1e-6) away.set(0,0.3,1); away.normalize();
+  pvpReact(S, away, vE, vP, pW, 'клинок гравця '+String(id).slice(0,4), (RB.vel&&RB.vel.lengthSq()>0.01)?RB.vel.clone().normalize():away);
+  const dir=(velP&&velP.lengthSq()>0.01)?velP.clone().normalize():away.clone().negate();
+  try{ NET.sendEvt(id,{src:'clash', v:+vP.toFixed(2), vE:+vE.toFixed(2), d:[+dir.x.toFixed(3),+dir.y.toFixed(3),+dir.z.toFixed(3)], p:[+pW.x.toFixed(2),+pW.y.toFixed(2),+pW.z.toFixed(2)]}); }catch(e){}
+  try{ MUSICFX.hit('SWORD', clamp(0.5+(vP+vE)/16,0,1), pW.x,pW.y,pW.z); spatialBlip(pW.x,pW.y,pW.z, 1800+Math.random()*600, 0.09, 'sawtooth', 0.22); emitSparks(pW.x,pW.y,pW.z,'#ffe08a',14,3.0); VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:clamp((vP+vE)/10,0.3,1),obj:'CLASH',surface:'METAL'}); REVEAL.pulse(pW.x,pW.z,2,0.9,'METAL',5); }catch(e){}
+  try{ if(r.av&&r.av._rigS) r.av._rigS.recoil=1; }catch(e){}
+  if(clinch.active && clinch.foe && clinch.foe.remote && clinch.foe.id===id && Math.max(vP,vE)>4){ try{ endClinch('clash'); }catch(e){} }
+  logE('МЕЧ ОБ МЕЧ із гравцем '+String(id).slice(0,4)+': мій '+vP.toFixed(1)+' м/с / його '+vE.toFixed(1)+' м/с'); }
+function pvpClashRecv(h){ const S=VB_RIG.player; if(!S||!S.rig||player.disarmed) return; const now=performance.now();
+  const cl=PVP.cl.get(h.from); if(cl && now-cl.t<(VB_PVP.dedupe||0.7)*1000) return;   // я сам уже відчув цей удар — двічі не рахуємо
+  PVP.cl.set(h.from,{t:now}); PVP.n.clash++;
+  const d=new THREE.Vector3(...((h.d&&h.d.length===3)?h.d:[0,0,1])); if(d.lengthSq()<1e-6) d.set(0,0,1); d.normalize();
+  const vHit=+h.v||0, vMine=Math.min(30,S.bladeSpeed||0), pW=(h.p&&h.p.length===3)?new THREE.Vector3(h.p[0],h.p[1],h.p[2]):null;
+  pvpReact(S, d, vHit, vMine, pW, 'гравець '+String(h.from).slice(0,4), d);
+  try{ if(pW){ MUSICFX.hit('SWORD', clamp(0.5+vHit/12,0,1), pW.x,pW.y,pW.z); emitSparks(pW.x,pW.y,pW.z,'#ffe08a',12,3); } VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:clamp(vHit/8,0.3,1),obj:'CLASH',surface:'METAL'}); }catch(e){}
+  if(clinch.active && clinch.foe && clinch.foe.remote && clinch.foe.id===h.from && vHit>4){ try{ endClinch('clash'); }catch(e){} }
+  logE('МЕЧ ОБ МЕЧ (від гравця '+String(h.from).slice(0,4)+'): його '+vHit.toFixed(1)+' м/с / мій '+vMine.toFixed(1)+' м/с'); }
+function pvpClinchRecv(h){ if(clinch.active || clinch.cd>0 || player.disarmed || player.dead) return; if(!(VB_RIG.on && VB_RIG.player)) return; if(!NET.remotes[h.from]) return;
+  startClinch({remote:true, id:h.from}); PVP.n.clinch++; logE('ФЕХТ: гравець '+String(h.from).slice(0,4)+' зчепив клинки — клінч у нас обох'); }
+function pvpClinchEndRecv(h){ if(!clinch.active || !clinch.foe || !clinch.foe.remote || clinch.foe.id!==h.from) return;
+  clinch.mirror=true;
+  if(h.reason==='presswin'){ endClinch('pressed'); return; }   // мене продавили — так само, як у нього
+  clinch.foeReason=h.reason; endClinch('foe'); }
+function pvpTick(dt){
+  const L=pvpRemotes(); if(!L.length) return;
+  const S=VB_RIG.player; if(!VB_RIG.on||!S||!S.rig) return; const sw=S.rig.sword;
+  const armed=!player.disarmed && sw.root.visible && (typeof SHEATH==='undefined'||SHEATH.drawn);
+  try{ S.obj.updateMatrixWorld(true); }catch(e){}
+  const g=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL,0)), t=sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL*((sw.blade&&sw.blade.scale.y)||1),0));
+  const vP=(window.__pvpFakeVP!=null)?window.__pvpFakeVP:Math.min(30,(S.bladeSpeed||0)), velP=(window.__pvpFakeVel?window.__pvpFakeVel.clone():(S.prevTipVel||new THREE.Vector3()).clone()), now=performance.now();   /* (10-07e) тест може підставити швидкість мого леза */
+  for(const {id,r} of L){
+    const RB=pvpBlade(id,r);
+    if(armed && !clinch.active){ const B=pvpBody(r); let inside=null; for(const f of [0.35,0.55,0.75,0.95]){ const p=g.clone().lerp(t,f); if(inBody(B,p)){ inside=p; break; } }   // клинок тримаєш у тілі — прожиг
+      let st=PVP.stabT.get(id)||0; if(inside){ st+=dt; if(st>=(VB_PVP.stabT||0.45)){ st=0; pvpHitRemote(id,r,inside,VB_PVP.stab||6,'КЛИНОК У ТІЛІ'); } } else st=0; PVP.stabT.set(id,st); }
+    if(!RB || !armed){ PVP.bind.set(id,0); continue; }
+    const c=segSegClosest(g,t,RB.g,RB.t); const dist=(c.dist!=null)?c.dist:c.p.distanceTo(c.q);
+    const cl=PVP.cl.get(id)||{t:0};
+    const ax=new THREE.Vector3().crossVectors(t.clone().sub(g),RB.t.clone().sub(RB.g)); const sd=(ax.lengthSq()>1e-6)?c.q.clone().sub(c.p).dot(ax.normalize()):dist;   // знак розділення: клинок проскочив крізь клинок між кадрами — теж дотик
+    const psd=PVP.sep.get(id); const crossed=(psd!=null && dist<0.35 && Math.sign(sd)!==Math.sign(psd) && Math.abs(psd)>1e-4); PVP.sep.set(id, dist<0.35?sd:null); LAB_PVPD=dist;
+    if((dist<=(VB_PVP.clashD||0.12) || crossed) && (vP>(VB_PVP.clashV||2.2) || RB.v>(VB_PVP.clashV||2.2)) && now-cl.t>350){   // меч об меч
+      PVP.cl.set(id,{t:now}); pvpClashLocal(id, r, c, vP, velP, RB); PVP.bind.set(id,0); continue; }
+    if(dist<=(VB_PVP.bindD||0.15) && vP<(VB_PVP.bindV||1.6) && RB.v<(VB_PVP.bindV||1.6)*1.5 && !clinch.active && clinch.cd<=0){   // клинки зійшлись і тиснуть — клінч у обох
+      const b=(PVP.bind.get(id)||0)+dt; PVP.bind.set(id,b);
+      if(b>=(VB_PVP.bindT||0.4)){ PVP.bind.set(id,0); startClinch({remote:true, id}); PVP.n.clinch++; try{ NET.sendEvt(id,{src:'clinch'}); }catch(e){} logE('ФЕХТ: клинки зійшлись і тиснуть — клінч із гравцем '+String(id).slice(0,4)+' (у нього теж)'); } }
+    else PVP.bind.set(id,0);
+  }
+}
 function clashImpulse(S, away, rel){
   const sw=S.rig.sword.root, B=S.liveBlade||{lag:0,pitch:0,roll:0};
   const dr=Math.PI/180, Q=THREE.Quaternion, AX=new THREE.Vector3(1,0,0), AY=new THREE.Vector3(0,1,0);
@@ -6206,7 +6304,7 @@ function swordClashTick(dt){
     if(!ph||ph.dead||ph.noBlade||ph.disarmed||ph.clinging||(ph.ally&&!ph.allyMad)) continue;
     if(Math.max(Math.abs(ph.gx-player.gx),Math.abs(ph.gy-player.gy))>3) continue;
     ph.clashCd=Math.max(0,(ph.clashCd||0)-dt); if(ph.clashCd>0) continue;
-    let H; try{ H=handInfo(ph); }catch(e){ continue; }
+    let H; try{ H=(window.__mobFakeH?window.__mobFakeH(ph):handInfo(ph)); }catch(e){ continue; }   // (10-07e) тест підставляє клинок ворога
     const a=new THREE.Vector3(H.hx,H.hy,H.hz), b=new THREE.Vector3(H.tipX,H.tipY,H.tipZ);
     const c=segSegClosest(g,t,a,b);
     const flat=Math.hypot(c.p.x-c.q.x, c.p.z-c.q.z), dy=Math.abs(c.p.y-c.q.y);
@@ -6223,13 +6321,22 @@ function swordClashTick(dt){
       if(axis.lengthSq()>1e-6){ axis.normalize().applyAxisAngle(Y,rot); S.kickQ=new THREE.Quaternion().setFromAxisAngle(axis, clamp(rel*6*(VB_CLASH.kick||1),20,80)*Math.PI/180); S.kickT=1; }
       S.recoil=clamp(0.45+rel*0.06,0.45,1);
     }catch(e){}
-    if(enemyStrikes || imp>0.6){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', clashImpulse(S,away,rel), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
+    const dominate = vP > vE + 2.0;   // (10-07e) мій удар сильніший — мене не вибиває, лише легкий відскік
+    if((enemyStrikes && vE>=vP*0.8) || (!dominate && imp>1.0)){ const prev=LAB; LAB=S; try{ labLoseControl('зіткнення клинків '+rel.toFixed(1)+' м/с', clashImpulse(S,away,rel), imp>1.1?'ARM':'WRIST'); }catch(e){} finally{ LAB=prev; } }
     try{ if(ph._rigS) ph._rigS.recoil=1; }catch(e){}                                              // ворога теж відкидає — видно
     if(vP>vE+2){ const sx=Math.sign(ph.gx-player.gx), sy=Math.sign(ph.gy-player.gy); const nx=clamp(ph.gx+sx,0,12), ny=clamp(ph.gy+sy,0,12);
       if((sx||sy) && !isCellOccupied(nx,ny,ph)){ ph.gx=nx; ph.gy=ny; ph._knockT=0.3; logE('ворога відкинуло на клітинку'); } }
     try{ if(CLING.list.length) clingShake({position:c.p}); }catch(e){}                           // об чужий клинок струшується повзун
     if(typeof clinch!=='undefined' && clinch.active && enemyStrikes){ try{ endClinch('clash'); }catch(e){} }   // його удар розриває клінч — тримати телефон нерухомо більше не «перемога»
     ph.ai.stunT=clamp(0.2+(vP-vE)*0.06+0.15, 0.15, 0.9); ph.strikeT=0; if(ph.ai) ph.ai.windT=0; ph._showT=0.6; ph.aware=true;
+    if(dominate){ const tv=S.prevTipVel||new THREE.Vector3(), ya=(ph.visYaw||0)*Math.PI/180, sgE=((tv.x*Math.cos(ya)+tv.z*Math.sin(ya))>=0)?1:-1;   // (10-07e) ворога розвертає в бік удару
+      const turnE=clamp((vP-vE)*(VB_CLASH.turn??4),8,40); ph.visYaw=wrap360((ph.visYaw||0)+sgE*turnE); ph._clashTurn=sgE*turnE; ph.ai.stunT=Math.max(ph.ai.stunT,0.5);
+      const pDis=clamp((vP-(VB_CLASH.disV??5))/(VB_CLASH.disSpan??6),0,0.85)*(enemyStrikes?0.6:1)*(ph.boss?0.25:1)*(VB_CLASH.disarm??1);
+      if(!ph.disarmed && !ph.noBlade && Math.random()<pDis){ ph.disarmed=true; ph.disarmT=0; try{ spawnDrop(ph.gx,ph.gy,ph.wpn||'sword'); }catch(e){} ph.ai.stunT=Math.max(ph.ai.stunT,1.2);
+        setTimeout(()=>{ if(!ph.dead) ph.disarmed=false; }, 6000);
+        try{ showBanner('⚔ ВИБИВ МЕЧ — ворог без зброї','#4ade80'); if(navigator.vibrate) navigator.vibrate([0,40,30,90]); MUSICFX.hit('SWORD',1,c.p.x,c.p.y,c.p.z); spatialBlip(c.p.x,c.p.y,c.p.z,2400,0.12,'triangle',0.2); }catch(e){}
+        logE('ВИБИВ МЕЧ у '+(ph.kind||'ворога')+': удар '+vP.toFixed(1)+' м/с проти '+vE.toFixed(1)+' (шанс '+Math.round(pDis*100)+'%)'); }
+      else logE('ВОРОГА РОЗВЕРНУЛО ударом по клинку на '+Math.round(turnE)+'° (шанс вибити '+Math.round(pDis*100)+'%)'); }
     try{ MUSICFX.hit('SWORD', clamp(0.5+imp*0.5,0,1), c.p.x,c.p.y,c.p.z); }catch(e){}
     try{ spatialBlip(c.p.x,c.p.y,c.p.z, 1800+Math.random()*600, 0.09, 'sawtooth', 0.22); }catch(e){}
     try{ VB_HAPTIC.play('HAPTIC_IMPACT',{intensity:clamp(imp,0.3,1),obj:'CLASH',surface:'METAL'}); }catch(e){}
@@ -6554,7 +6661,7 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
   if(mode!=='creator' && (player.moveLockT||0)>0) return;     // Раздел 6: жидкость замедляет — движение на кулдауне (в творце — свободно)
   if(mode==='creator') creatorTouch();
   if(clinch.active) endClinch('retreat');  // шаг разрывает клинч (отступ) — затем сам шаг
-  const f = (CAM.view==='top'||CAM.view==='fixed') ? [0,-1] : DIRV[player.dirIdx];   // (09-22i) зверху/фіксована: «вгору» на екрані = північ
+  const f = (CAM.view==='top'||CAM.view==='fixed') ? [0,-1] : DIRV[yawToDirIdx((typeof CAMH!=='undefined'&&CAMH.yaw!=null)?CAMH.yaw:(player.visYaw||0))];   // (09-22i) зверху/фіксована: «вгору» на екрані = північ · (10-07e) свайп — відносно камери, як і джойстик
   const r = [-f[1], f[0]];                // вправо (перпендикуляр)
   let mx=0,my=0;
   if(Math.abs(dx)>Math.abs(dy)){ const s=dx>0?1:-1; mx=r[0]*s; my=r[1]*s; }  // вбок
@@ -6636,7 +6743,7 @@ const VB_PROBE={ noise:0.8, slow:1.5, fast:12, gyroFast:1500, clip2g:19.2 };
    зрушиш. Тепер: зсув руків'я від тіла більший за go (м) — тіло робить крок у ту клітинку, куди пішов меч, а зсув
    руки меншає на sub (тіло підійшло під меч). Поштовх триває — через cd с ще крок, і так далі: іде людина — іде й
    персонаж. back/side — чи крокувати назад і вбік. У відпрацюванні вимкнено (drill=1 — увімкнути). */
-const VB_STEP={ on:1, go:0.45, sub:0.55, cd:0.6, back:1, side:0, drill:0, haptic:1, settle:0.9, hold:0.1, cont:0.5, vmin:0.25, gyroMax:150, tipMax:99, drain:6, dropAcc:22, dropMass:1.3, tau:0.35, vStep:0.6, rise:0.5, cd2:0.8, spinHold:0.3, stillAcc:0.35, stillGyro:35, stillT:0.08, leak:1.5, doors:0 };   // (10-07d) vStep — швидкість поштовху для кроку, м/с; doors — чи пускати поштовхом у двері
+const VB_STEP={ on:1, go:0.45, sub:0.55, cd:0.6, back:1, side:0, drill:0, haptic:1, settle:0.9, hold:0.1, cont:0.5, vmin:0.25, gyroMax:150, tipMax:99, drain:6, dropAcc:22, dropMass:1.3, tau:0.35, vStep:1.25, dMin:0.38, rise:0.8, cd2:0.8, spinHold:0.3, stillAcc:0.35, stillGyro:35, stillT:0.08, leak:1.5, doors:0 };   // (10-07d) vStep — швидкість поштовху для кроку, м/с; doors — чи пускати поштовхом у двері
 var STEP={ t:0, n:0, logT:0, lastDir:'', lockT:0, lx:0, lz:0, overT:0 };
 window.VB_STEP=VB_STEP; window.STEP=STEP; try{ window.player=player; }catch(e){}
 /* ═══ (10-06t) ТІНІ МИНУЛОГО. Свої рухи в кімнаті (позиція, курс корпусу, хват і кватерніон клинка) пишуться 10 Гц, останні keep с;
@@ -7228,7 +7335,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-07d · ПЕРША ОСОБА: камера в очах рига (не позаду голови), горизонт = справжній за будь-якого нахилу телефона, погляд крізь екран (в альбомній клинок лягає поперек, тіло не розвертається), руків’я біля обличчя — меч і руки в кадрі; клинок у бік руки — лікоть усередину · ЛІНІЙНИЙ РУХ: фізичний знак прискорення (поштовх уперед більше не тягне назад), рука ×1.3 замість ×6.8, без мертвої зони й асиметрії, крок — за швидкістю поштовху (один поштовх — один крок), мах і тремтіння не крокують, у двері — лише свайпом · (10-07c) кімнати глядача, нахил другої руки, свої клинки';
+const BUILD_TAG='2026-10-07e · ПЕРША ОСОБА: погляд за клинком угору-вниз (клинок униз — камера під ноги), картинка й тіло не перевертаються, руків’я — з нижнього краю екрана й завжди в кадрі (альбомна під ліву руку — руків’я ліворуч, клинок праворуч) · МАЯК — лише майже в альбомній, малий крен помітно зсуває меч · ЛІНІЙНИЙ РУХ: меч живіший, крок — лише від довгого поштовху · ДЖОЙСТИК у двох пристроях більше не веде назад · БІЙ ПО МЕРЕЖІ: клинок крізь тіло ранить, меч об меч розвертає суперника, клінч в обох одночасно · МОБИ: сильний удар по клинку вибиває меч · ДВА ПРИСТРОЇ: руки й клинки не проходять одне крізь одне, проскок лівого клинка — дзвін';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7545,6 +7652,10 @@ const NET = {
   sendHit(targetId, tier, dmg, src){
     if(!this.online||!this.db) return;
     push(ref(this.db,`blade/${this.room}/hits/${targetId}`), {from:this.myId, tier, dmg, src:src||'player', t:Date.now()}).catch(()=>{});
+  },
+  sendEvt(targetId, obj){   // (10-07e) подія бою (меч об меч, клінч): той самий канал; dmg≈0 — старий клієнт не втратить HP
+    if(!this.online||!this.db) return;
+    push(ref(this.db,`blade/${this.room}/hits/${targetId}`), Object.assign({from:this.myId, tier:1, dmg:0.0001, t:Date.now()}, obj||{})).catch(()=>{});
   },
   // «УБОРЩИК»: стереть из БД узлы ушедшего игрока, чей onDisconnect так и не сработал.
   // После удаления onValue у ВСЕХ клиентов штатно вызовет removeRemote/removeRemotePhantom.
@@ -8153,6 +8264,7 @@ function frame(now){
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   try{ npcClashTick(dtW); }catch(e){}                                                                   // (09-22i) наставник × ворог
   renderRemotes(now, dt);              // чужие игроки
+  try{ if(mode==='fighter') pvpTick(dt); }catch(e){ if(!window.__pvpErr){ window.__pvpErr=1; logE('БІЙ З ГРАВЦЕМ: '+e.message); } }   // (10-07e) урон, меч об меч, клінч — з живими гравцями
   try{ remoteRibbonDraw(); }catch(e){}  // (09-22r) стрічки леза інших гравців
   renderRemotePhantoms(now, dt);       // общие фантомы чужих владельцев
   NET.tick(dt);                        // отправка пакета + своих фантомов (~12 Гц)
@@ -8935,7 +9047,7 @@ function labTwoHandGripCore(rig){
     const upW=sw.sockets.GRIP_UPPER.getWorldPosition(new THREE.Vector3());
     const ck=(LAB.isGame&&LAB.crossK)||0;   // (10-07a) хват поперек грудей — лікоть іде далі назовні й униз, передпліччя лягає перед грудьми
     const fk=(LAB.isGame&&LAB.fpvK&&LAB.fpvD)?LAB.fpvK:0;   // (10-07d) перша особа: лікоть — з протилежного від клинка боку, трохи вниз і назовні
-    const poleM=new THREE.Vector3((0.7+0.4*ck)*px,-0.6-0.2*ck,-0.3+1.0*ck).normalize(); if(fk>0.001 && (LAB.fpvCross||0)>0.001){ poleM.add(LAB.fpvD.clone().negate().add(new THREE.Vector3(0,-0.3,0)).multiplyScalar(LAB.fpvCross*fk*(VB_FPV.cross||0))).normalize(); }   // перехресний хват — лікоть усередину (ліворуч для правої руки)
+    const poleM=new THREE.Vector3((0.7+0.4*ck)*px,-0.6-0.2*ck,-0.3+1.0*ck).normalize(); if(fk>0.001 && (LAB.fpvCross||0)>0.001){ poleM.lerp(new THREE.Vector3(0.15*px,-0.75,0.65).normalize(), clamp(LAB.fpvCross*fk*(VB_FPV.cross||0),0,1)).normalize(); }   // (10-07e) навхрест (руків'я з протилежного боку, клинок — у бік руки): лікоть униз і вперед під кистю, а не крізь груди
     const r=labIK2(rig.J[MA+'_SHOULDER'],rig.J[MA+'_ELBOW'],rig.J[MA+'_WRIST'],upW,dm.upper,dm.fore+dm.hand*0.6,poleM.applyQuaternion(rootQ),tipW);   // поперек: лікоть уперед-назовні, як при обіймах
     LAB.ikR=r; if(!r.reach) LAB.warn.push(MA+'_HAND_OFF_GRIP'); if(r.stretch>0.97) LAB.warn.push('ARM_EXTENSION_TOO_HIGH'); if(r.elbowDeg<18) LAB.warn.push('ELBOW_LIMIT');
     if(LAB===VB_RIG.player && !rig.isAstral && VB_WPN.on>0 && weaponHands()===1){ LAB.ikL=null; LAB.gripErrL=0; return; }   // (10-06u) одноручна зброя (або хват «одна рука»): друга рука вільна
@@ -9176,14 +9288,14 @@ function labLiveStep(dt){
         const gx=sensor.gXs||0, gy=sensor.gYs||0, gz=sensor.gZs||0, gm=Math.hypot(gx,gy,gz)||9.8;
         const phi=Math.asin(clamp(Math.abs(gx)/gm,0,1))*180/Math.PI;
         const d0=VB_ARM.rollDead??4, f0=Math.max(d0+2,VB_ARM.rollFull??30);
-        const k0=clamp((phi-d0)/(f0-d0),0,1), k=k0*k0*(3-2*k0);
+        const k=clamp((phi-d0)/(f0-d0),0,1);   // (10-07e) лінійно — помітно вже з малих нахилів
         /* датчик приведено до вигляду «вектор униз»: gx>0 → «униз» дивиться в правий край → піднято ЛІВИЙ край */
         const raised=(gx>=0?-1:1)*((VB_ARM.rollDir||1)>=0?1:-1);           // +1 — піднято правий край, −1 — лівий
         if(k>0.02) LAB.rollSide=raised; else if(k<=0.001) LAB.rollSide=0;   // між ними — тримаємо попередній бік
         LAB.rollK=k; LAB.rollPhi=phi;
         LAB.rollShS=(LAB.rollShS||0)+(raised*k*VB_ARM.rollShift*s-(LAB.rollShS||0))*clamp(dt*8,0,1);
         anchor.x-=LAB.rollShS;                                            // −X у ригу — праворуч гравця
-        if(k>0.3 && LAB.rollLogSide!==raised){ LAB.rollLogSide=raised; try{ logE('КРЕН: піднято '+(raised>0?'правий':'лівий')+' край ('+Math.round(phi)+'°) → рукоять '+(raised>0?'праворуч':'ліворуч')); }catch(e){} }
+        if(k>0.6 && LAB.rollLogSide!==raised){ LAB.rollLogSide=raised; try{ logE('КРЕН: піднято '+(raised>0?'правий':'лівий')+' край ('+Math.round(phi)+'°) → рукоять '+(raised>0?'праворуч':'ліворуч')); }catch(e){} }
         else if(k<0.05) LAB.rollLogSide=0;
       } else { LAB.rollSide=0; LAB.rollK=0; }
       anchor.y=Math.max(anchor.y,0.34*s);                              // не нижче коліна — до підлоги не притискається
@@ -9254,15 +9366,31 @@ function labLiveStep(dt){
       LAB.guardK=_gk; LAB.intendQ=qI.clone();
       LAB.fpvK=_fv; LAB.fpvD=null;
       if(_fv>0.001){ const d=new THREE.Vector3(0,-1,0).applyQuaternion(qI);          // напрям клинка в системі кореня (+Z уперед, −X праворуч)
-        const rl=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*Math.PI/180, lean=clamp(Math.sin(rl),-1,1)*(VB_FPV.lean||0)*_fv;   // телефон нахилено праворуч — корпус хилиться праворуч
+        const rl=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*Math.PI/180, lean=Math.sin(2*rl)*(VB_FPV.lean||0)*_fv;   // телефон нахилено праворуч — корпус хилиться праворуч · (10-07e) найбільше на 45°, в альбомній — рівно (очі не з'їжджають убік)
         rig.J.TORSO.rotation.z+=lean; if(rig.J.PELVIS) rig.J.PELVIS.rotation.z+=lean*0.3;
         let eR=LAB.eyeR||new THREE.Vector3(0,S0.y+0.22*s,0.08*s); try{ LAB.obj.updateMatrixWorld(true); const hs=rig.P.headSize||0.22; eR=rig.root.worldToLocal(rig.J.HEAD.localToWorld(new THREE.Vector3(0,hs*VB_FPV.eyeUp*s,hs*VB_FPV.eyeFwd*s))); }catch(e){}   // очі — у ПОТОЧНІЙ позі
-        const one=(typeof weaponHands==='function' && weaponHands()===1); let Hh;
-        if(one){ const w=clamp(-d.x*HS,0,1);                                        // клинок у бік руки меча — «перехресний» хват: лікоть усередину, кисть трохи вперед
+        const one=(typeof weaponHands==='function' && weaponHands()===1); let Hh=null;
+        /* (10-07e) РУКІВ'Я — З НИЖНЬОГО КРАЮ ЕКРАНА: там, де рука тримає телефон. Портрет — унизу по центру; альбомна під праву руку —
+           праворуч, під ліву — ліворуч (клинок тоді праворуч, права рука — навхрест перед обличчям). Камера йде за клинком угору-вниз —
+           руки з нею. Не ближче zMin до грудей. Другий меч (2-й пристрій) — руки розходяться. */
+        if((VB_FPV.scr??1)>0){ const two=!!LAB.swordLOn, gx=one?(two?(VB_FPV.gLx??0.42):(VB_FPV.gx??0.16)):(VB_FPV.g2x??0.05);
+          const land=Math.abs(Math.sin(rl));   // 0 — портрет, 1 — альбомна
+          const P0=fpvScreenRoot(rig, eR, gx*HS*(1-land), one?(VB_FPV.gy??-0.5):(VB_FPV.g2y??-0.56)*(1-(VB_FPV.land2??0.45)*land), (one?(VB_FPV.gD??0.36):(VB_FPV.g2D??0.3))*s*(1-0.15*land));   // дворучна в альбомній — ближче до середини: друга рука має дістати
+          if(P0){ P0.y-=(VB_FPV.landDown??0.12)*land*s;                                    // в альбомній — руків'я збоку на рівні підборіддя, не очей
+            if(P0.x*HS>0.03*s){ const wc=clamp((P0.x*HS-0.03*s)/(0.15*s),0,1);              // руків'я на чужому боці (альбомна під іншу руку): корпус довертається туди — плече руки вперед, рука дістає навхрест
+              P0.x=eR.x+(P0.x-eR.x)*(VB_FPV.crossK??0.75); const tw=(VB_FPV.crossTwist??0.45)*wc*_fv; rig.J.TORSO.rotation.y+=tw*HS; if(rig.J.PELVIS) rig.J.PELVIS.rotation.y+=tw*0.35*HS; LAB.fpvTwist=tw; } else LAB.fpvTwist=0;
+            const rk=Math.cos(rl)*Math.cos(rl)*(VB_FPV.rollK??0.25); P0.x-=(LAB.rollShS||0)*rk;   // малий крен — ще й лінійний зсув убік (у повній альбомній — лише екран)
+            P0.y=Math.min(P0.y, eR.y-(one?(VB_FPV.yTop1??0.12):(VB_FPV.yTop2??0.2))*s); P0.z=Math.min(P0.z, eR.z+(one?(VB_FPV.zMax1??0.46):(VB_FPV.zMax2??0.4))*s);   // не вище підборіддя й не далі витягнутої руки (дворучна — обидві мають дістати)
+            P0.z=Math.max(P0.z,(VB_FPV.zMin??0.22)*s);
+            { const Pc=fpvClampToView(rig, eR, P0, VB_FPV.vx??0.72, VB_FPV.vy??0.74); P0.copy(Pc); }   // руків'я завжди в кадрі
+            if(one){ const w=clamp(-d.x*HS,0,1); Hh=P0.sub(d.clone().multiplyScalar((VB_FPV.h1||0)*s)); LAB.fpvCross=w; }
+            else { const gd=(rig.sword.gd||0.12*s); Hh=P0.add(d.clone().multiplyScalar(gd*0.5)); LAB.fpvCross=0; } } }
+        if(Hh){}
+        else if(one){ const w=clamp(-d.x*HS,0,1);                                        // клинок у бік руки меча — «перехресний» хват: лікоть усередину, кисть трохи вперед
           Hh=new THREE.Vector3(eR.x+VB_FPV.c1x*s*HS, eR.y+VB_FPV.c1y*s, eR.z+(VB_FPV.c1z+(VB_FPV.crossFwd||0)*w)*s).sub(d.clone().multiplyScalar((VB_FPV.h1||0)*s)); LAB.fpvCross=w; }   // кисть праворуч на рівні голови, меч обертається в ній
         else { const gd=(rig.sword.gd||0.12*s), w2=clamp(d.x*HS,0,1); Hh=new THREE.Vector3(eR.x+VB_FPV.c2x*s*HS, eR.y+VB_FPV.c2y*s, eR.z+(VB_FPV.c2z-0.06*w2)*s).add(d.clone().multiplyScalar(gd*0.5)); LAB.fpvCross=0; }   // дворучна: середина руків'я перед підборіддям; клинок у бік другої руки — руки схрещено, руків'я ближче
-        Hh.add(armOff.clone().multiplyScalar(s*0.5));
-        anchor.lerp(Hh,_fv); LAB.fpvD=d; LAB.eyeNowR=eR; }
+        Hh.add(armOff.clone().multiplyScalar(s*(VB_FPV.armK??1.0)));   // (10-07e) у першій особі лінійний рух руки — повністю
+        anchor.lerp(Hh,_fv); LAB.fpvD=d; LAB.eyeNowR=eR; LAB.fpvHh=Hh.clone(); }
       const resolvePen=()=>{                                              // меч не входить у неруйнівне
         LAB.intendedDepth=0;
         const _M4=THREE.Matrix4, _gameP=(LAB.isGame||LAB.flags.sensor);
@@ -9672,11 +9800,14 @@ function ownBladesResolve(S, dt, resolveOnly){
   let a=seg(R), b=seg(Lw), c=segSegClosest(a.g,a.t,b.g,b.t); const idt=1/Math.max(dt,1e-3);
   const va=OB.pa?c.p.clone().sub(OB.pa).multiplyScalar(idt):new THREE.Vector3(), vb=OB.pb?c.q.clone().sub(OB.pb).multiplyScalar(idt):new THREE.Vector3();
   let n=c.q.clone().sub(c.p), dist=c.dist, crossed=false;
-  if(OB.nPrev && c.dist<0.3*sc){ const sg=n.dot(OB.nPrev); if(sg<0){ crossed=true; dist=-sg; n=OB.nPrev.clone(); } }
+  /* (10-07e) другий телефон шле дані ~15–20 разів на секунду — швидкий мах перескакує крізь правий клинок за один крок. Проскок ловимо
+     в ширшому вікні (0.6 м), але лише коли найближчі точки — посеред лез, не на кінцях */
+  const _int=(seg,P)=>{ const L=seg.t.clone().sub(seg.g), l2=L.lengthSq(); const u=l2>1e-9?P.clone().sub(seg.g).dot(L)/l2:0; return u>0.03 && u<0.97; };
+  if(OB.nPrev && c.dist<0.6*sc && _int(a,c.p) && _int(b,c.q)){ const sg=n.dot(OB.nPrev); if(sg<0){ crossed=true; dist=-sg; n=OB.nPrev.clone(); } }
   if(!crossed){ if(n.lengthSq()<1e-10) n.crossVectors(a.d,b.d); if(n.lengthSq()<1e-10) n.set(1,0,0); n.normalize(); }
   const rC=gapOf(n);
   if(!resolveOnly){ OB.pa=c.p.clone(); OB.pb=c.q.clone(); }
-  if(!crossed && dist>=rC){ if(!resolveOnly){ OB.touch=false; OB.nPrev=(c.dist<0.3*sc)?n.clone():null; } return {dist:c.dist}; }
+  if(!crossed && dist>=rC){ if(!resolveOnly){ OB.touch=false; OB.nPrev=(c.dist<0.6*sc)?n.clone():null; } return {dist:c.dist}; }
   const need0=crossed?(dist+rC):(rC-dist);
   const mR=Math.max(0.2,weaponKind().mass||1), mL=Math.max(0.2,weaponKindL().mass||1), wL=mR/(mR+mL), wR=mL/(mR+mL);
   const rot=(sw, P, dir, amt)=>{ const o=sw.root.position, lever=Math.max(0.12*sc, P.distanceTo(o)), dd=new THREE.Vector3(0,-1,0).applyQuaternion(sw.root.quaternion);
@@ -9691,10 +9822,12 @@ function ownBladesResolve(S, dt, resolveOnly){
     if(sd<=0) need=-sd+gapOf(nT);                                   // ще по той бік — тягнемо далі
     else { const n2=nn.normalize(); need=gapOf(n2)-c.dist; }        // на своєму боці — добираємо зазор
   }
-  if(!resolveOnly) OB.nPrev=(c.dist<0.3*sc)?nT.clone():null;
+  if(!resolveOnly) OB.nPrev=(c.dist<0.6*sc)?nT.clone():null;
   const closing=va.clone().sub(vb).dot(n);   // >0 — клинки йдуть назустріч
-  if(!resolveOnly && !OB.touch && OB.cd<=0 && (closing>(VB_SELF.clashV||1.2) || crossed)){
-    OB.cd=0.22; OWNCLASH.n++; const v=Math.max(closing,1.2), I=clamp(v/6,0.35,1);
+  /* (10-07e) другий телефон сам міряє швидкість свого клинка — це надійніше, ніж різниця положень між рідкими пакетами */
+  const vRem=(window.LINK && LINK.remoteL && (Date.now()-(LINK.remoteL.t||0))<400)?Math.min(20,+LINK.remoteL.speed||0):0, vMain=S.speedS||0;
+  if(!resolveOnly && !OB.touch && OB.cd<=0 && (closing>(VB_SELF.clashV||1.2) || crossed || vRem>3 || vMain>3)){
+    OB.cd=0.22; OWNCLASH.n++; const v=Math.max(closing,1.2,vRem*0.6,vMain*0.6), I=clamp(v/6,0.35,1);
     const pW=rig.root.localToWorld(c.p.clone().lerp(c.q,0.5)); OWNCLASH.last={x:pW.x,y:pW.y,z:pW.z,v,t:Date.now()};
     try{ MUSICFX.hit('SWORD', clamp(0.35+v/8,0,1), pW.x,pW.y,pW.z); }catch(e){}
     try{ spatialBlip(pW.x,pW.y,pW.z, 1900+Math.random()*700, 0.08, 'triangle', 0.18); }catch(e){}
@@ -9709,6 +9842,27 @@ function ownBladesResolve(S, dt, resolveOnly){
   if(!resolveOnly) OB.touch=true;
   return {dist:c.dist, need:need0, crossed, rr:!!rr};
 }
+/* (10-07e) ДВІ РУКИ — ДВА ТІЛА: передпліччя (лікоть→кисть) не проходять одне крізь одне — ліва рука відсувається; клинок не проходить
+   крізь другу руку — відхиляється навколо свого хвату (як від стіни). Повертає сумарний зсув, м. */
+function ownArmsResolve(S, swL, solveL){
+  if(!(VB_SELF.on>0) || !(VB_SELF.arms??1)) return 0; const rig=S.rig, J=rig.J, s=rig.P.scale||1, V=THREE.Vector3; let tot=0;
+  const LH=!!S.mirror, MA=LH?'LEFT':'RIGHT', SA=LH?'RIGHT':'LEFT', ar=(VB_SELF.armR??0.05)*s, hand=rig.dims.hand||0.09;
+  const fore=(side)=>{ const E=J[side+'_ELBOW'].getWorldPosition(new V()), W=J[side+'_WRIST'].getWorldPosition(new V()); return {E, H:W.clone().add(W.clone().sub(E).normalize().multiplyScalar(hand*0.8))}; };
+  for(let it=0; it<3; it++){ rig.root.updateMatrixWorld(true); const A=fore(MA), B=fore(SA);
+    const c=segSegClosest(A.E,A.H,B.E,B.H); if(c.dist>=2*ar) break;
+    let n=c.q.clone().sub(c.p); if(n.lengthSq()<1e-8) n=new V(LH?-1:1,0,0).applyQuaternion(rig.root.getWorldQuaternion(new THREE.Quaternion())); n.normalize();
+    const push=2*ar-c.dist+0.004*s; const pW=swL.root.getWorldPosition(new V()).add(n.multiplyScalar(push)); swL.root.position.copy(swL.root.parent.worldToLocal(pW)); swL.root.updateMatrixWorld(true);
+    try{ solveL(); }catch(e){} tot+=push; }
+  /* клинок ↔ чуже передпліччя */
+  const rotAway=(sw, other)=>{ for(let it=0; it<3; it++){ rig.root.updateMatrixWorld(true); const g=sw.root.localToWorld(new V(0,-sw.gripL,0)), t=sw.root.localToWorld(new V(0,-sw.gripL-sw.bladeL*((sw.blade&&sw.blade.scale.y)||1),0));
+      const F=fore(other), c=segSegClosest(g,t,F.E,F.H), need=ar+0.015*s-c.dist; if(need<=0) return 0;
+      let n=c.p.clone().sub(c.q); if(n.lengthSq()<1e-8) n=new V(0,1,0); n.normalize();
+      const o=sw.root.getWorldPosition(new V()), lever=Math.max(0.12*s, c.p.distanceTo(o)), bd=t.clone().sub(g).normalize(), axW=new V().crossVectors(bd,n); if(axW.lengthSq()<1e-8) return 0; axW.normalize();
+      const th=Math.min(Math.asin(clamp(need/lever,0,1))*1.05, 0.5); const pq=sw.root.parent.getWorldQuaternion(new THREE.Quaternion()), axL=axW.clone().applyQuaternion(pq.clone().invert());
+      sw.root.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axL, th)); sw.root.updateMatrixWorld(true); tot+=need; } return 0; };
+  rotAway(swL, MA); rotAway(rig.sword, SA);
+  if(tot>0.002){ try{ solveL(); rig.root.updateMatrixWorld(true); const sw=rig.sword; labAimJoint(J[MA+'_WRIST'], sw.root.localToWorld(new V(0,-sw.gripL-sw.bladeL,0))); }catch(e){} }
+  return tot; }
 function weaponKindL(){ return WPN_KINDS[weaponKindIndex(VB_WPN.kindL||'dagger')]; }
 function rigLeftSwordEnsure(S){ const rig=S.rig; if(rig.swordL) return rig.swordL;
   const sw=labBuildSword(rig.P.scale||1, 1.0); sw.root.name='SWORD_L_ROOT'; rig.root.add(sw.root); sw.root.visible=false;
@@ -9735,7 +9889,13 @@ function rigLeftSwordTick(S, dt){
     const ck=LAB.crossK; labAnchorSelf(anchor, rig, s, HS, S0); S.crossKL=LAB.crossK; LAB.crossK=ck;
     const fvL=fpvK(); let dL=null;
     let wL=0; if(fvL>0.001){ const eR=S.eyeNowR||S.eyeR||new THREE.Vector3(0,S0.y+0.22*s,0.08*s); dL=new THREE.Vector3(0,-1,0).applyQuaternion(labMkQ(yawRel, pitchA, 0));   // (10-07d) перша особа: ліва кисть — ліворуч на рівні голови
-      wL=clamp(-dL.x*HS,0,1); anchor.lerp(new THREE.Vector3(eR.x+VB_FPV.c1x*s*HS, eR.y+VB_FPV.c1y*s, eR.z+(VB_FPV.c1z+(VB_FPV.crossFwd||0)*wL)*s).sub(dL.clone().multiplyScalar((VB_FPV.h1||0)*s)), fvL); }
+      wL=clamp(-dL.x*HS,0,1);
+      let PL=null; if((VB_FPV.scr??1)>0){ const rlL=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*Math.PI/180, landL=Math.abs(Math.sin(rlL));   // (10-07e) ліве руків'я — теж із нижнього краю екрана, дзеркально до правого
+        PL=fpvScreenRoot(rig, eR, (VB_FPV.gLx??0.42)*HS*(1-landL), (VB_FPV.gy??-0.5), (VB_FPV.gD??0.36)*s*(1-0.15*landL));
+        if(PL){ PL.y-=(VB_FPV.landDown??0.12)*landL*s; if(PL.x*HS>0.03*s) PL.x=eR.x+(PL.x-eR.x)*(VB_FPV.crossK??0.75);
+          PL.y=Math.min(PL.y, eR.y-(VB_FPV.yTop1??0.12)*s); PL.z=Math.min(PL.z, eR.z+(VB_FPV.zMax1??0.46)*s); PL.z=Math.max(PL.z,(VB_FPV.zMin??0.26)*s);
+          PL.copy(fpvClampToView(rig, eR, PL, VB_FPV.vx??0.72, VB_FPV.vy??0.74)); PL.sub(dL.clone().multiplyScalar((VB_FPV.h1||0)*s)); } }
+      anchor.lerp(PL||new THREE.Vector3(eR.x+VB_FPV.c1x*s*HS, eR.y+VB_FPV.c1y*s, eR.z+(VB_FPV.c1z+(VB_FPV.crossFwd||0)*wL)*s).sub(dL.clone().multiplyScalar((VB_FPV.h1||0)*s)), fvL); }
     const a=S.anchorLS||(S.anchorLS=anchor.clone()); a.lerp(anchor, clamp(dt*18,0,1));
     swL.root.position.copy(a); swL.root.quaternion.copy(labMkQ(yawRel, pitchA, 0));
     if(S.kickL && S.kickL.t>0){ swL.root.quaternion.premultiply(new THREE.Quaternion().slerp(S.kickL.q, S.kickL.t*S.kickL.t)); S.kickL.t=Math.max(0,S.kickL.t-dt/0.28); }   // (10-07c) відскік після дзвону
@@ -9748,6 +9908,7 @@ function rigLeftSwordTick(S, dt){
       S.ikL2=labIK2(rig.J[SA+'_SHOULDER'],rig.J[SA+'_ELBOW'],rig.J[SA+'_WRIST'],upW,dm.upper,dm.fore+dm.hand*0.6,pl.applyQuaternion(rootQ),tipW); };
     solveL();
     S.armFixL=labArmBodyFix(rig, SA, swL.root, solveL);   // (10-07c) ліва рука не крізь тіло
+    try{ S.armsSep=ownArmsResolve(S, swL, solveL); }catch(e){}   // (10-07e) передпліччя не крізь передпліччя, клинок не крізь другу руку
     { const th=labSwordSelfResolve(rig, swL, s, HS); const ob2=ownBladesResolve(S, dt, true); if(th>0.001 || (ob2&&ob2.need)) solveL(); if(ob2&&ob2.rr&&ob) ob.rr=true; }   // кисть зсунулась — лезо й свої клинки ще раз
     if(ob && ob.rr){ try{ rig.root.updateMatrixWorld(true); const sw=rig.sword; labAimJoint(rig.J[MA+'_WRIST'], sw.root.localToWorld(new THREE.Vector3(0,-sw.gripL-sw.bladeL,0))); }catch(e){} }   // правий клинок відхилився — кисть за ним
   }catch(e){ if(!S._errL){ S._errL=true; logE('ЛІВИЙ МЕЧ: помилка '+e.message); } } finally{ LAB=prev; }
@@ -9848,9 +10009,9 @@ const VB_YAW={ gyro:1.0, inGame:0, tau:12.0, deadErr:25, sign:1, holdRate:25, ho
 window.VB_YAW=VB_YAW; window.VB_SRC=VB_SRC; window.VB_BODY=VB_BODY; window.vbSensor=sensor;   // (09-29k) для перевірок
 window.VB_ANG=VB_ANG;
 const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRight:1.0, gLeft:1.0, gUp:1.15, gDown:1.65,   // VB_SENS_CFG від 16.09
-  dead:0.35, soft:0.45, biasTau:6.0, spinGate:200,
-  moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.8, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
-  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.4, rollDead:4, rollFull:30, rollDir:1 };   // (09-22l) ширше + тіло за рукою; (09-24d) крен → зсув рукояті вбік від малих нахилів
+  dead:0.35, soft:0.45, biasTau:6.0, spinGate:450, gateT:0.15,
+  moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.5, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
+  lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.55, rollDead:3, rollFull:40, rollDir:1 };   // (09-22l) ширше + тіло за рукою; (09-24d) крен → зсув рукояті вбік від малих нахилів
 window.VB_ARM=VB_ARM;
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
@@ -10599,6 +10760,11 @@ function ribHitSweep(a0,b0,a1,b1,P,now){
     const _Ea=ribAccContact({object:'ENEMY_'+(ph.kind||''), angle:60, speed:RIB.spd}); ribDamage(ph, hp, P+_Ea*0.8, RIB.E, 'РІЗ');   // (09-24b) накопичене — у ворога
     RIB.hits.set(ph, now+0.3);
   }
+  try{ for(const {id,r} of pvpRemotes()){ const k='p:'+id; if((RIB.hits.get(k)||0)>now) continue;   // (10-07e) і живих гравців — мах крізь тіло ранить
+    const B=pvpBody(r), hp=pts.find(p=>inBody(B,p)); if(!hp) continue;
+    const _Ea=ribAccContact({object:'PLAYER', angle:60, speed:RIB.spd});
+    pvpHitRemote(id, r, hp, clamp(6+(P+_Ea*0.8)*0.9+(RIB.E||0)*2.2,6,60)*(VB_RIBBON.dmgK||1)*((typeof WEAPONS!=='undefined'&&WEAPONS[playerWpn])?WEAPONS[playerWpn].dmg:1)*((player.mods&&player.mods.dmg)||1), 'РІЗ');
+    RIB.hits.set(k, now+0.35); } }catch(e){}
 }
 function ribHitLinger(now){
   if(!RIB.S.length) return;
@@ -10616,6 +10782,10 @@ function ribHitLinger(now){
       RIB.hits.set(ph, now+0.4); break;
     }
   }
+  try{ for(const {id,r} of pvpRemotes()){ const k='p:'+id; if((RIB.hits.get(k)||0)>now) continue; const B=pvpBody(r);   // (10-07e) гравець вбіг у стрічку
+    for(const q of RIB.S){ const age=now-q.t; if(age<0.06||age>q.life*0.7) continue; const mid=q.a1.clone().lerp(q.b1,0.6); if(!inBody(B,mid)&&!inBody(B,q.b1)) continue;
+      let sum=0; for(const rr of RIB.S) if(rr.st===q.st) sum+=rr.p; pvpHitRemote(id,r,mid,Math.max(6,sum*0.12),'ВРІЗАВСЯ У СТРІЧКУ');
+      for(const rr of RIB.S) if(rr.st===q.st) rr.life=Math.min(rr.life, now-rr.t+0.15); RIB.hits.set(k, now+0.4); break; } } }catch(e){}
 }
 function ribDamage(ph, p, P, E, tag){
   const tier = p.y<0.6?0:(p.y<1.35?1:2);
@@ -11030,6 +11200,7 @@ function rigNpcTick(av, dt, opts){
       if(av.rs.gL && av.rs.qL){ const swL=rigLeftSwordEnsure(S); swL.root.visible=true; try{ weaponLookSword(swL, WPN_KINDS[weaponKindIndex(av.rs.wkL||'dagger')], S.rig); }catch(e){} swL.root.position.set(av.rs.gL[0],av.rs.gL[1],av.rs.gL[2]); swL.root.quaternion.copy(av.rs.qL); swL.blade.scale.y=1; }
       else if(S.rig.swordL) S.rig.swordL.root.visible=false; }catch(e){} finally{ LAB=prev2; } }
   else if(opts.remote && S.swordFree){ const prev2=LAB; LAB=S; try{ labSwordMode(false); }catch(e){} finally{ LAB=prev2; } if(opts.remote && S.rig.swordL) S.rig.swordL.root.visible=false; }
+  if(!opts.remote){ try{ S.rig.sword.root.visible=!av.disarmed && !av.noBlade; }catch(e){} }   // (10-07e) вибитий меч — не в руці
   try{ npcRibbonTick(av,S); }catch(e){}   // (09-28h) стрічка клинка NPC
 }
 
@@ -11226,39 +11397,96 @@ function sonarEntityTick(av, dt){
 }
 
 /* ═══════════════════════ МАЯК: камера + орієнтація екрана (2026-09-21) ═══════════════════════ */
-const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:78, exitDeg:66, holdS:0.25, tStart:70, tEnd:88, head:1, headBack:0, headUp:0, headPitch:0.0, fov:96, guardQ:0, lock:1.0, lockFoe:0, lockMax:80, lockRange:6, lockAway:2.5, lockAwayDeg:70, duelSide:0, duelR:3.2, duelDist:1, mobDuel:0, duelSpec:1 };   // (10-06v) моб–моб — лише за повзунком   // (10-06s) камера дуелі збоку   // (09-29k) головна камера не киває за клинком; у тренуванні дивиться на наставника повністю   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
+const VB_CAM={ axis:1, sensH:1.0, sensV:1.0, enterDeg:83, exitDeg:72, holdS:0.25, tStart:78, tEnd:87, head:1, headBack:0, headUp:0, headPitch:0.0, fov:96, guardQ:0, lock:1.0, lockFoe:0, lockMax:80, lockRange:6, lockAway:2.5, lockAwayDeg:70, duelSide:0, duelR:3.2, duelDist:1, mobDuel:0, duelSpec:1 };   // (10-06v) моб–моб — лише за повзунком   // (10-06s) камера дуелі збоку   // (09-29k) головна камера не киває за клинком; у тренуванні дивиться на наставника повністю   // (09-27a) камера «голова»; (09-28i/29j) lock — наставник у тренуванні, lockFoe — ворог у бою (вимк), lockAway — відпустити, якщо довго дивишся вбік
 /* ═══ (10-07d) ПЕРША ОСОБА. Камера — В ОЧАХ рига (раніше 0.35 м позаду й 0.2 м вище голови — «тіло без голови»), без затримки
    кадру; горизонт на екрані — завжди паралельний справжньому, за будь-якого нахилу телефона (не сходинкою 0/90°); погляд і
    корпус — за задньою кришкою телефона (куди дивишся крізь екран), а меч — за верхнім краєм: в альбомній клинок лягає поперек,
    а не розвертає тіло; руки тримають меч так, що клинок продовжує передпліччя: одноручна — кисть праворуч на рівні голови,
    лікоть ліворуч перед собою; дворучна — обидві кисті перед підборіддям; корпус хилиться за клинком. Лівша — дзеркально. ═══ */
-const VB_FPV={ on:1, eyeUp:0.60, eyeFwd:0.45, horizon:1, view:1, arms:1, c1x:-0.13, c1y:-0.07, c1z:0.38, h1:0.04, c2x:-0.04, c2y:-0.16, c2z:0.29, cross:1.0, crossFwd:0.06, lean:0.20, poleDown:0.45, poleK:0, pitch:-12 };   // c1/c2 — де кисть (одноручна) / центр хвату (дворучна) відносно ОЧЕЙ, м (система кореня: −x праворуч, +z уперед)
+const VB_FPV={ on:1, eyeUp:0.60, eyeFwd:0.45, horizon:1, view:1, arms:1, c1x:-0.13, c1y:-0.07, c1z:0.38, h1:0.04, c2x:-0.04, c2y:-0.16, c2z:0.29, cross:1.0, crossFwd:0.06, lean:0.12, poleDown:0.45, poleK:0, pitch:-12,
+  follow:1, pK:0.6, p0:-50, p0L:-20, pMin:-58, pMax:28, pTau:0.10, pTauFast:0.30, flatM:0.72, scr:1, gx:0.16, gy:-0.50, gD:0.36, g2x:0.05, g2y:-0.56, g2D:0.3, land2:0.45, gLx:0.42, zMin:0.26, rollK:0.25, armK:1.0, yTop1:0.12, yTop2:0.24, zMax1:0.46, zMax2:0.32, vx:0.72, vy:0.74, landDown:0.12, crossK:0.75, crossTwist:0.45 };   // (10-07e) погляд за клинком: pK — частка нахилу задньої кришки, p0 — звична поза (°), pMin/pMax — межі; руків'я — точка ЕКРАНА gx/gy (−1…1, у системі телефона) на відстані gD від очей   // c1/c2 — де кисть (одноручна) / центр хвату (дворучна) відносно ОЧЕЙ, м (система кореня: −x праворуч, +z уперед)
 window.VB_FPV=VB_FPV;
-const FPVCAM={ k:0, tp:new THREE.Vector3(), tt:new THREE.Vector3(), yaw:0, pitch:null, hb:0, rot:0, rotA:null, last:null };
+const FPVCAM={ k:0, tp:new THREE.Vector3(), tt:new THREE.Vector3(), yaw:0, pitch:null, hb:0, rot:0, rotA:null, last:null, lastRaw:null, P:null, pitchDeg:null, uS:null };
 window.FPVCAM=FPVCAM;
 function fpvHeadCam(){ return (VB_FPV.on>0) && (VB_CAM.head|0)===1 && mode==='fighter' && (CAM.view==='auto'||CAM.view==='fp') && !(typeof linkFresh==='function' && linkFresh()) && !clinch.active; }
 function fpvK(){ if(!fpvHeadCam()) return 0; return clamp(((player.fpSmooth||0)-0.25)/0.5,0,1); }
 function fpvEyeWorld(out){ const S=VB_RIG.player; if(!S||!S.rig||!S.rig.J.HEAD) return null; const rig=S.rig, s=rig.P.scale||1, hs=rig.P.headSize||0.22;
   S.obj.updateMatrixWorld(true); return rig.J.HEAD.localToWorld((out||new THREE.Vector3()).set(0,hs*VB_FPV.eyeUp*s,hs*VB_FPV.eyeFwd*s)); }
-function fpvViewAz(){ const q=sensor.quatFull; if(!q) return FPVCAM.last; const b=new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w));
-  if(Math.hypot(b.x,b.z)<0.3) return FPVCAM.last;   // задня кришка дивиться в підлогу чи стелю — курс погляду не визначений, тримаємо останній
-  FPVCAM.last=wrap360(Math.atan2(b.x,-b.z)*180/Math.PI+((typeof DUEL!=='undefined'&&DUEL.off)||0)); return FPVCAM.last; }
+/* (10-07e) «ВЕРХ ЕКРАНА» — неперервно. Світовий верх у системі екрана (з кватерніона, вже з поворотом ОС); біля «екран лежить»
+   і далі (клинок униз, верхній край нижче за нижній) верх екрана лишається тим самим краєм — картинка НЕ перевертається на 180°.
+   Екран стоїть (≥ flatM) — завжди справжній верх: випадковий переворот не застрягає. */
+function fpvScreenUp(){ const q=sensor.quatFull; if(!q) return FPVCAM.uS;
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w).invert()); const m=Math.hypot(up.x,up.y);
+  if(m>0.2){ let ux=up.x/m, uy=up.y/m; const pu=FPVCAM.uS;
+    if(m<(VB_FPV.flatM||0.72)){   // екран далеко від вертикалі: верх картинки — з боку ВЕРХНЬОГО краю (там клинок), а не руки; біля альбомної — неперервно
+      if(Math.abs(uy)>=0.35){ if(uy<0){ ux=-ux; uy=-uy; } } else if(pu && ux*pu[0]+uy*pu[1]<0){ ux=-ux; uy=-uy; } }
+    FPVCAM.uS=[ux,uy]; }
+  else if(FPVCAM.uS){ const now=performance.now(), du=clamp((now-(FPVCAM.uT||now))/1000,0,0.1), k=clamp(du/0.6,0,1), pu=FPVCAM.uS, ty=(pu[1]>=0?1:-1);   // екран лежить: горизонту немає — верх картинки м'яко повертається до верхнього краю
+    const ux=pu[0]*(1-k), uy=pu[1]+(ty-pu[1])*k, n=Math.hypot(ux,uy)||1; FPVCAM.uS=[ux/n,uy/n]; }
+  FPVCAM.uT=performance.now(); return FPVCAM.uS; }
+/* (10-07e) КУРС ПОГЛЯДУ: куди дивишся крізь екран — задня кришка плюс «верх екрана» (горизонтально). Клинок униз (екран лицем угору
+   й далі) — курс лишається вперед, а не перекидається назад, як було від однієї лише задньої кришки. P — нахил погляду крізь екран
+   (неперервно й за −90°: клинок під ноги). */
+function fpvBackTick(){ const q=sensor.quatFull; if(!q) return FPVCAM.last; const Q=new THREE.Quaternion(q.x,q.y,q.z,q.w);
+  const u=fpvScreenUp()||[0,1]; const b=new THREE.Vector3(0,0,-1).applyQuaternion(Q), us=new THREE.Vector3(u[0],u[1],0).applyQuaternion(Q);
+  const fx=b.x+us.x, fz=b.z+us.z; if(Math.hypot(fx,fz)>=0.25) FPVCAM.lastRaw=wrap360(Math.atan2(fx,-fz)*180/Math.PI);
+  if(FPVCAM.lastRaw==null) return FPVCAM.last;
+  const ar=FPVCAM.lastRaw*Math.PI/180; FPVCAM.P=Math.atan2(b.y, b.x*Math.sin(ar)-b.z*Math.cos(ar))*180/Math.PI;
+  FPVCAM.last=wrap360(FPVCAM.lastRaw+((typeof DUEL!=='undefined'&&DUEL.off)||0)); return FPVCAM.last; }
+function fpvViewAz(){ return fpvBackTick(); }
+/* (10-07e) НАХИЛ КАМЕРИ — ЗА КЛИНКОМ: клинок униз — погляд униз аж під ноги, угору — угору (частка pK нахилу задньої кришки від звичної
+   пози p0; в альбомній звична поза рівніша — p0L). Швидкий мах — камера йде повільніше, без хитавиці. */
+function fpvPitchTick(dt){ fpvBackTick(); const P=FPVCAM.P; const base=(VB_FPV.pitch||0);
+  if(P==null || !(VB_FPV.follow>0)){ FPVCAM.pitchDeg=base; return base; }
+  const u=FPVCAM.uS||[0,1], land=Math.abs(u[0]), p0=lerp(VB_FPV.p0??-50, VB_FPV.p0L??-20, land);
+  const tgt=clamp(base+(VB_FPV.pK??0.6)*(P-p0), VB_FPV.pMin??-58, VB_FPV.pMax??28);
+  const tau=((sensor.gyroMag||0)>220)?(VB_FPV.pTauFast||0.3):(VB_FPV.pTau||0.1);
+  FPVCAM.pitchDeg=(FPVCAM.pitchDeg==null)?tgt:FPVCAM.pitchDeg+(tgt-FPVCAM.pitchDeg)*clamp(dt/tau,0,1); return FPVCAM.pitchDeg; }
 function horizonRotCont(dt){   // кут екрана відносно справжньої вертикалі, ° — неперервно (без сходинки), екран лежить — тримаємо
-  const gx=(sensor.gXs??sensor.gX), gy=(sensor.gYs??sensor.gY), gz=(sensor.gZs??sensor.gZ??0);
-  if(gx==null||gy==null) return FPVCAM.rot||0;
-  const g=Math.hypot(gx,gy,gz)||9.8, plane=Math.hypot(gx,gy)/g; if(plane<0.2) return FPVCAM.rot||0;
-  let a=Math.atan2(gx,-gy)*180/Math.PI*(((VB_ORI.rollSign||1)>=0)?1:-1);
-  const osA=oriAngle(); if(osA){ const d1=angDiff(a,osA), d2=angDiff(a,-osA); a=Math.abs(d1)<Math.abs(d2)?d1:d2; }   // ОС уже повернула екран — лишок
-  const w=clamp((plane-0.2)/0.2,0,1), cur=FPVCAM.rot||0; let r=cur+angDiff(a,cur)*w*clamp(dt/0.035,0,1); r=wrap360(r); if(r>180) r-=360; FPVCAM.rot=r; return r; }
+  /* (10-07e) з «верху екрана» (кватерніон уже в системі екрана — поворот ОС врахований): лінія горизонту та сама, що й раніше, але
+     коли клинок іде вниз за «екран лежить», картинка НЕ перевертається догори дриґом — лишається той самий верх */
+  const u=fpvScreenUp();
+  if(!u){ const gx=(sensor.gXs??sensor.gX), gy=(sensor.gYs??sensor.gY), gz=(sensor.gZs??sensor.gZ??0);
+    if(gx==null||gy==null) return FPVCAM.rot||0;
+    const g=Math.hypot(gx,gy,gz)||9.8, plane=Math.hypot(gx,gy)/g; if(plane<0.2) return FPVCAM.rot||0;
+    let a=Math.atan2(gx,-gy)*180/Math.PI*(((VB_ORI.rollSign||1)>=0)?1:-1);
+    const osA=oriAngle(); if(osA){ const d1=angDiff(a,osA), d2=angDiff(a,-osA); a=Math.abs(d1)<Math.abs(d2)?d1:d2; }
+    const w=clamp((plane-0.2)/0.2,0,1), cur=FPVCAM.rot||0; let r=cur+angDiff(a,cur)*w*clamp(dt/0.035,0,1); r=wrap360(r); if(r>180) r-=360; FPVCAM.rot=r; return r; }
+  const a=Math.atan2(-u[0],u[1])*180/Math.PI*(((VB_ORI.rollSign||1)>=0)?1:-1);
+  const cur=FPVCAM.rot||0; let r=cur+angDiff(a,cur)*clamp(dt/0.035,0,1); r=wrap360(r); if(r>180) r-=360; FPVCAM.rot=r; return r; }
 /* (10-07d) РУКІВ'Я — ТАМ, ДЕ ТЕЛЕФОН: точка екрана (sx, sy у системі телефона: картинка повернута на крен, тож це й система
    екрана) на відстані D від очей → у систему кореня рига. Клинок іде вздовж телефона — у кадрі він продовжує руку знизу вгору. */
-function fpvGripRoot(eR, sx, sy, D){ const dr=Math.PI/180, pitch=((CAMH.pitch||0)+(VB_FPV.pitch||0))*dr, roll=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*dr;
+function fpvGripRoot(eR, sx, sy, D){ const dr=Math.PI/180, pitch=(FPVCAM.pitchDeg!=null?FPVCAM.pitchDeg:((CAMH.pitch||0)+(VB_FPV.pitch||0)))*dr, roll=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*dr;
   const f=new THREE.Vector3(0,Math.sin(pitch),Math.cos(pitch)), up0=new THREE.Vector3(0,Math.cos(pitch),-Math.sin(pitch)), R=new THREE.Vector3(-1,0,0);   // корінь: +Z уперед, −X праворуч
   const sUp=up0.clone().multiplyScalar(Math.cos(roll)).add(R.clone().multiplyScalar(Math.sin(roll))), sRight=R.clone().multiplyScalar(Math.cos(roll)).sub(up0.clone().multiplyScalar(Math.sin(roll)));
   const tv=Math.tan(clamp(camera.fov||96,30,140)*dr/2), th=tv*clamp(camera.aspect||0.5,0.2,4);
   return eR.clone().add(f.multiplyScalar(D)).add(sRight.multiplyScalar(sx*th*D)).add(sUp.multiplyScalar(sy*tv*D)); }
-function fpvCamUp(rotDeg, pos, look){ const a=rotDeg*Math.PI/180; const f=new THREE.Vector3().subVectors(look,pos).normalize(); const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0));
-  if(r.lengthSq()>1e-4){ r.normalize(); camera.up.copy(new THREE.Vector3(0,1,0).multiplyScalar(Math.cos(a)).add(r.multiplyScalar(Math.sin(a))).normalize()); } }
+/* (10-07e) КРЕН КАМЕРИ навколо осі погляду: «рівний» верх U = r×f (не світовий Y — при погляді вниз кут крену спотворювався) */
+function camUpRolled(f, a){ const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)); if(r.lengthSq()<1e-6) return null; r.normalize();
+  const U=new THREE.Vector3().crossVectors(r,f).normalize(); return U.multiplyScalar(Math.cos(a)).add(r.multiplyScalar(Math.sin(a))).normalize(); }
+function fpvCamUp(rotDeg, pos, look){ const a=rotDeg*Math.PI/180; const f=new THREE.Vector3().subVectors(look,pos).normalize(); const up=camUpRolled(f,a); if(up) camera.up.copy(up); }
+/* (10-07e) база камери першої особи у світі: f, right, up (з креном) і півкути кадру */
+function fpvCamBasis(){ if(FPVCAM.pitch==null) return null; const dr=Math.PI/180; const [fdx,fdz]=dirXZ(FPVCAM.yaw||0), p=FPVCAM.pitch, a=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*dr;
+  const f=new THREE.Vector3(fdx*Math.cos(p), Math.sin(p), fdz*Math.cos(p)).normalize(); const R=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)); if(R.lengthSq()<1e-6) return null; R.normalize();
+  const U=new THREE.Vector3().crossVectors(R,f).normalize(); const up=U.clone().multiplyScalar(Math.cos(a)).add(R.clone().multiplyScalar(Math.sin(a))), right=R.clone().multiplyScalar(Math.cos(a)).sub(U.clone().multiplyScalar(Math.sin(a)));
+  const tv=Math.tan(clamp(camera.fov||96,30,140)*dr/2), th=tv*clamp(camera.aspect||0.5,0.2,4); return {f,up,right,tv,th}; }
+/* (10-07e) руків'я ЗАВЖДИ В КАДРІ: точку (система кореня) — у координати екрана, обрізаємо до mx/my, назад */
+function fpvClampToView(rig, eR, P, mx, my){ try{ const B=fpvCamBasis(); if(!B) return P; rig.root.updateMatrixWorld(true);
+  const eW=rig.root.localToWorld(eR.clone()), pW=rig.root.localToWorld(P.clone()), v=pW.sub(eW); let z=v.dot(B.f); const zMin=0.18; if(z<zMin) z=zMin;
+  let sx=v.dot(B.right)/(z*B.th), sy=v.dot(B.up)/(z*B.tv); const sx2=clamp(sx,-mx,mx), sy2=clamp(sy,-my,my); if(sx2===sx && sy2===sy && v.dot(B.f)>=zMin) return P;
+  const W=eW.clone().add(B.f.clone().multiplyScalar(z)).add(B.right.clone().multiplyScalar(sx2*B.th*z)).add(B.up.clone().multiplyScalar(sy2*B.tv*z));
+  return rig.root.worldToLocal(W); }catch(e){ return P; } }
+/* (10-07e) ТОЧКА ЕКРАНА (sx, sy — −1…1 у системі ТЕЛЕФОНА: картинка повернута на крен, тож це й фізичний екран) на відстані D
+   уздовж погляду → у систему кореня рига. Камера — та сама, що малює кадр: курс FPVCAM.yaw, нахил FPVCAM.pitch, крен FPVCAM.rotA. */
+function fpvScreenRoot(rig, eR, sx, sy, D){ try{ if(FPVCAM.pitch==null) return null; const dr=Math.PI/180;
+  const [fdx,fdz]=dirXZ(FPVCAM.yaw||0), p=FPVCAM.pitch, a=((FPVCAM.rotA!=null)?FPVCAM.rotA:0)*dr;
+  const f=new THREE.Vector3(fdx*Math.cos(p), Math.sin(p), fdz*Math.cos(p)).normalize();
+  const R=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)); if(R.lengthSq()<1e-6) return null; R.normalize(); const U=new THREE.Vector3().crossVectors(R,f).normalize();
+  const up=U.clone().multiplyScalar(Math.cos(a)).add(R.clone().multiplyScalar(Math.sin(a))), right=R.clone().multiplyScalar(Math.cos(a)).sub(U.clone().multiplyScalar(Math.sin(a)));
+  const tv=Math.tan(clamp(camera.fov||96,30,140)*dr/2), th=tv*clamp(camera.aspect||0.5,0.2,4);
+  rig.root.updateMatrixWorld(true); const eW=rig.root.localToWorld(eR.clone());
+  const Pw=eW.add(f.multiplyScalar(D)).add(right.multiplyScalar(sx*th*D)).add(up.multiplyScalar(sy*tv*D));
+  return rig.root.worldToLocal(Pw); }catch(e){ return null; } }
 var CAMLOCK={ target:null };
 /* (09-28i) ЦІЛЬ ДЛЯ ПОГЛЯДУ: у тренуванні — наставник; у бою — найближчий живий ворог у lockRange клітинок
    (тримаємо ту саму, поки жива й не далі lockRange+2). Голова довертається до цілі на частку lock, не більше lockMax°. */
@@ -11479,7 +11707,7 @@ const SENS_SLIDERS=[
   ['VB_ARM.gAll','Лінійний рух: загальна чутливість ×',0.5,5,0.05],['VB_ARM.bodyFollow','Лінійний рух: тіло йде за рукою (випад)',0,2,0.05],['VB_CLASH.kick','Зіткнення клинків: сила відкидання',0.3,3,0.05],
   ['VB_RIG.on','Новий риг у грі (1) / старі фігури (0)',0,1,1],['VB_KATA.on','Вороги: стійки й удари кендзюцу (1/0)',0,1,1],['VB_KATA.rec','Вороги: запечені записи гравця (1/0)',0,1,1],['VB_KATA.recP','Вороги: частка ударів із записів',0,1,0.05],['VB_KATAQ.wG','Ката: вага положення руків\'я (0 — лише напрям клинка)',0,1,0.05],['VB_KATAQ.solo','Ката: удар сам — потрібно відсотків (доджьо і жрець)',20,90,5],['VB_KATAQ.need','Доджьо: разом із тінню — потрібно відсотків',20,90,5],['VB_KATAQ.tol','Доджьо: допуск «у тіні»',0.15,0.6,0.05],['VB_KATAQ.ghostSpeed','Доджьо: швидкість тіні (частка від бойової)',0.2,1,0.1],['VB_KATAQ.rubber','Доджьо: тінь чекає, коли відстаєш (0 — ні, 1 — повністю)',0,1,0.1],['VB_SPAR.speed','Спаринг: швидкість удару наставника (частка від бойової)',0.2,1,0.05],['VB_SPAR.far','Спаринг: наставник підходить, якщо далі клітинок',1.8,4,0.1],['VB_SPAR.clashR','Спаринг: допуск зустрічі клинків, м (більше — легше відбити)',0.1,0.5,0.02],['VB_SPAR.bodyR','Спаринг: клинок у тілі ближче, ніж м — «пропустив»',0.15,0.5,0.01],['VB_SPAR.hint','Спаринг: підказка — смуга й тон, куди ставити клинок (1 — так)',0,1,1],
   ['VB_CAM.head','Альбомна: камера — голова (1) / старий приціл уздовж клинка (0)',0,1,1],['VB_CAM.headBack','Голова: камера позаду голови, м',0,0.8,0.05],['VB_CAM.headUp','Голова: камера вище очей, м',-0.2,0.4,0.02],
-  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_FPV.horizon','Перша особа: горизонт = справжній за будь-якого нахилу (1/0)',0,1,1],['VB_FPV.view','Перша особа: погляд крізь екран, меч — за верхнім краєм (1) / усе за клинком (0)',0,1,1],['VB_FPV.arms','Перша особа: меч — продовження руки (1/0)',0,1,1],['VB_FPV.lean','Перша особа: нахил корпусу за клинком',0,0.5,0.02],['VB_FPV.c1x','Перша особа: кисть праворуч від очей, м (−)',-0.35,0.1,0.01],['VB_FPV.c1y','Перша особа: кисть нижче очей, м (−)',-0.35,0.15,0.01],['VB_FPV.c1z','Перша особа: кисть перед очима, м',0.2,0.55,0.01],['VB_FPV.cross','Перша особа: лікоть усередину, коли клинок у бік руки',0,2,0.1],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_DUEL.foe','Дуель: фіксація на ворогові в бою (1 — так, 0 — ні; у тренуванні — завжди)',0,1,1],['VB_DUEL.range','Дуель: ворог ближче, ніж клітинок — фіксація',2,10,1],['VB_DUEL.release','Дуель: далі, ніж клітинок — фіксацію знято',4,14,1],['VB_DUEL.follow','Дуель: як швидко світ іде за ціллю',2,30,1],['VB_DUEL.small','Дуель: захоплювати й дрібноту — повзунів, літунів, стрільців (1 — так)',0,1,1],['VB_DUEL.steady','Дуель: стабільна камера — без маяка, повороту картинки й повільного часу (1 — так)',0,1,1],
+  ['VB_CAM.headPitch','Голова: нахил погляду за клинком (0 — рівно)',0,1,0.05],['VB_FPV.horizon','Перша особа: горизонт = справжній за будь-якого нахилу (1/0)',0,1,1],['VB_FPV.follow','Перша особа: погляд за клинком угору-вниз (1/0)',0,1,1],['VB_FPV.pK','Перша особа: наскільки погляд іде за клинком (частка)',0,1,0.05],['VB_FPV.scr','Перша особа: руків\'я з нижнього краю екрана (1/0)',0,1,1],['VB_FPV.view','Перша особа: погляд крізь екран, меч — за верхнім краєм (1) / усе за клинком (0)',0,1,1],['VB_FPV.arms','Перша особа: меч — продовження руки (1/0)',0,1,1],['VB_FPV.lean','Перша особа: нахил корпусу за клинком',0,0.5,0.02],['VB_FPV.c1x','Перша особа: кисть праворуч від очей, м (−)',-0.35,0.1,0.01],['VB_FPV.c1y','Перша особа: кисть нижче очей, м (−)',-0.35,0.15,0.01],['VB_FPV.c1z','Перша особа: кисть перед очима, м',0.2,0.55,0.01],['VB_FPV.cross','Перша особа: лікоть усередину, коли клинок у бік руки',0,2,0.1],['VB_CAM.fov','Голова: кут огляду, °',60,120,2],['VB_CAM.guardQ','Стійка набік: доворот клинка до вуха (0 — як телефон)',0,1,0.1],['VB_DUEL.foe','Дуель: фіксація на ворогові в бою (1 — так, 0 — ні; у тренуванні — завжди)',0,1,1],['VB_DUEL.range','Дуель: ворог ближче, ніж клітинок — фіксація',2,10,1],['VB_DUEL.release','Дуель: далі, ніж клітинок — фіксацію знято',4,14,1],['VB_DUEL.follow','Дуель: як швидко світ іде за ціллю',2,30,1],['VB_DUEL.small','Дуель: захоплювати й дрібноту — повзунів, літунів, стрільців (1 — так)',0,1,1],['VB_DUEL.steady','Дуель: стабільна камера — без маяка, повороту картинки й повільного часу (1 — так)',0,1,1],
   ['VB_CAM.axis','Старий приціл: задня камера (1) / клинок (0)',0,1,1],['VB_CAM.duelSide','Дуель: камера збоку, як у файтингах (1) / з-за спини (0)',0,1,1],['VB_CAM.duelR','Екшн-камера: дуель — коли сутності ближче, кл.',1.5,6,0.1],['VB_CAM.duelDist','Екшн-камера: відстань ×',0.5,2,0.05],['VB_CAM.mobDuel','Екшн-камера спостерігача: і моб проти моба (1/0)',0,1,1],['VB_CAM.duelSpec','Спостерігач «згори»: дуель теж збоку (1/0)',0,1,1],['VB_RESYNC.drain','Три тіла: витривалість за метр розходження, 1/с',0,10,0.5],['VB_RIG.tether','Три тіла: ефірна нитка в розсинхроні (1/0)',0,1,1],
   ['VB_CAM.sensH','Приціл: чутливість по горизонталі',0.3,3,0.05],['VB_CAM.sensV','Приціл: чутливість по вертикалі',0.3,3,0.05],
   ['VB_CAM.tStart','Перехід в альбомну: початок, °',20,85,1],['VB_CAM.tEnd','Перехід в альбомну: повністю на, °',50,90,1],
@@ -11521,7 +11749,7 @@ const SENS_SLIDERS=[
   ['VB_REPLAY.on','Тіні минулого (1/0)',0,1,1],['VB_REPLAY.watch','Тіні минулого у спостерігача (1/0)',0,1,1],['VB_REPLAY.keep','Тіні: записувати останні, с',20,180,10],['VB_REPLAY.share','Тіні: ділитись через кімнату (1/0)',0,1,1],['VB_REPLAY.alpha','Тіні: прозорість тіла',0.15,0.9,0.05],
   ['VB_PROBE.slow','Проба: «повільно» нижче, м/с²',0.5,5,0.1],['VB_PROBE.fast','Проба: «швидко» вище, м/с²',5,30,0.5],['VB_PROBE.gyroFast','Проба: «швидко» — гіро вище, °/с',300,2500,50],
   ['КРОК ЗА МЕЧЕМ (10-05q)'],
-  ['VB_STEP.on','Крок за мечем: тіло йде за руків\'ям (1/0)',0,1,1],['VB_STEP.vStep','Крок за мечем: швидкість поштовху телефона для кроку, м/с',0.3,1.5,0.05],['VB_STEP.doors','Крок за мечем: пускати поштовхом у двері (1/0)',0,1,1],['VB_STEP.go','Крок за мечем: зсув руків\'я для кроку, м',0.2,1.0,0.02],['VB_STEP.sub','Крок за мечем: на скільки рука повертається після кроку, м',0.2,1.0,0.05],
+  ['VB_STEP.on','Крок за мечем: тіло йде за руків\'ям (1/0)',0,1,1],['VB_STEP.vStep','Крок за мечем: швидкість поштовху телефона для кроку, м/с',0.3,2.5,0.05],['VB_STEP.dMin','Крок за мечем: шлях поштовху для кроку, м (менші поштовхи — лише меч)',0.1,0.8,0.02],['VB_STEP.doors','Крок за мечем: пускати поштовхом у двері (1/0)',0,1,1],['VB_STEP.go','Крок за мечем: зсув руків\'я для кроку, м',0.2,1.0,0.02],['VB_STEP.sub','Крок за мечем: на скільки рука повертається після кроку, м',0.2,1.0,0.05],
   ['VB_STEP.cd','Крок за мечем: пауза між кроками, с',0.1,1,0.02],['VB_STEP.cont','Крок за мечем: рука далеко й далі йде — кроки самі через, с',0.2,1.5,0.05],['VB_STEP.vmin','Крок за мечем: …якщо рука ще йде швидше за, м/с',0.05,1,0.05],['VB_STEP.settle','Крок за мечем: після кроку не рахувати гальмування як крок назад, с',0,1.5,0.05],['VB_STEP.back','Крок за мечем: і назад (1/0)',0,1,1],['VB_STEP.side','Крок за мечем: і вбік (1/0)',0,1,1],['VB_STEP.drill','Крок за мечем і у відпрацюванні (1/0)',0,1,1],['VB_STEP.tau','Крок за мечем: згладжування зсуву руки, с (більше — лише довга тяга)',0.1,1.2,0.05],['VB_STEP.gyroMax','Крок за мечем: не крокувати, якщо телефон обертається швидше, °/с',30,400,10],['VB_STEP.tipMax','Крок за мечем: …або вістря летить швидше, м/с',1,10,0.5],
   ['VB_STEP.drain','Ефірна рука далеко: витрата витривалості ×',0,20,0.5],['VB_STEP.dropAcc','Важкий меч: ривок, що вириває меч із рук, м/с² (÷ маса/сила)',8,40,1],['VB_STEP.dropMass','Важкий меч: від якої маси можна випустити',1,4,0.1],['VB_BODY.calmK','Мирний час: корпус і камера за телефоном швидше ×',1,3,0.1],
   ['ВІДПРАЦЮВАННЯ · КЛАСИФІКАТОР (09-30p)'],
@@ -11540,7 +11768,8 @@ function sensGet(path){ const [r,k]=path.split('.'); return SENS_ROOTS[r][k]; }
 function sensSet(path,v){ const [r,k]=path.split('.'); SENS_ROOTS[r][k]=v; }
 function sensSnapshot(){ const o={}; for(const it of SENS_SLIDERS) if(it.length>1){ let v=sensGet(it[0]); try{ if(DRILL.on && DRILL.saveAng && (it[0]==='VB_ANG.pitch'||it[0]==='VB_ANG.pitchDown')) v=DRILL.saveAng[it[0].slice(7)]; }catch(e){} o[it[0]]=+(+v).toFixed(3); } return o; }   // (09-30p) стиль відпрацювання не зберігається як налаштування
 const SENS_DEFAULTS=sensSnapshot();
-const SENS_MIG=5;   // (10-07d) лінійний рух ×1.3 (було ×6.8), тіло за рукою 0.6, камера в очах, знак горизонту з фізики   // (10-06y) тіні вимк, повна картинка   // (09-29k) камера на наставнику 1.0, нахил камери 0, прогноз 0, пороги доджьо   // (09-24d) міграція збережених налаштувань: авто-рука вимк, крен → новий зсув; (09-27a) rollSign → 1
+const SENS_MIG=6;   // (10-07e) МАЯК лише майже в альбомній, крен лінійно й помітніше, рука ×1.5, крок — лише довгий поштовх
+//   // (10-07d) лінійний рух ×1.3 (було ×6.8), тіло за рукою 0.6, камера в очах, знак горизонту з фізики   // (10-06y) тіні вимк, повна картинка   // (09-29k) камера на наставнику 1.0, нахил камери 0, прогноз 0, пороги доджьо   // (09-24d) міграція збережених налаштувань: авто-рука вимк, крен → новий зсув; (09-27a) rollSign → 1
 function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d_sens_cfg')||'null'); if(sv){ for(const p in sv) if(p in SENS_DEFAULTS) sensSet(p,+sv[p]); logE('ЧУТЛИВІСТЬ: завантажено збережені налаштування ('+Object.keys(sv).length+')');
   if((+sv._mig||0)<1){ sensSet('VB_HAND.auto',0);   // (10-07d) лише для дуже старих збережень — раніше спрацьовувало на КОЖНЕ оновлення й повертало правшу if(Math.abs((+sv['VB_ARM.rollShift']||0)-0.3)<0.001) sensSet('VB_ARM.rollShift',SENS_DEFAULTS['VB_ARM.rollShift']);
     try{ if(typeof HAND!=='undefined' && HAND.side!=='R'){ HAND.side='R'; localStorage.setItem('vb_hand','R'); logE('СТІЙКА: повернуто правшу (ліва рука вмикалась нахилом випадково)'); } }catch(e){}
@@ -11550,6 +11779,8 @@ function sensSettingsLoad(){ try{ const sv=JSON.parse(localStorage.getItem('vb3d
   if((+sv._mig||0)<5){ for(const p of ['VB_ARM.gAll','VB_ARM.gFwd','VB_ARM.gBack','VB_ARM.gRight','VB_ARM.gLeft','VB_ARM.gUp','VB_ARM.gDown','VB_ARM.bodyFollow','VB_CAM.headBack','VB_CAM.headUp','VB_STEP.gyroMax','VB_STEP.cd','VB_STEP.settle']) if(p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]);
     if((VB_ORI.rollSign||1)<0) sensSet('VB_ORI.rollSign',1);
     sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 10-07d — лінійний рух спокійніший і з правильним знаком, камера першої особи в очах'); }
+  if((+sv._mig||0)<6){ for(const p of ['VB_CAM.tStart','VB_CAM.tEnd','VB_CAM.enterDeg','VB_CAM.exitDeg','VB_ARM.gAll','VB_ARM.rollShift','VB_ARM.rollDead','VB_ARM.rollFull','VB_STEP.vStep','VB_STEP.dMin','VB_FPV.follow','VB_FPV.pK','VB_FPV.scr']) if(p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]);
+    sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 10-07e — стійка МАЯК лише майже в альбомній, крен зсуває меч помітніше, рука живіша, крок — лише довгий поштовх, погляд за клинком'); }
   if((+sv._mig||0)<4){ sensSet('VB_REPLAY.on',0); sensSet('VB_VIEW.full',1); sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 10-06y — тіні минулого вимк, повна картинка увімк'); }
   if((+sv._mig||0)<3){ for(const p of ['VB_CAM.lock','VB_CAM.lockMax','VB_CAM.headPitch','VB_CAM.lockAwayDeg','VB_PRED.k','VB_KATAQ.need','VB_KATAQ.tol','VB_KATAQ.solo']) if(p in SENS_DEFAULTS) sensSet(p,SENS_DEFAULTS[p]);
     sensSettingsSave(); logE('ЧУТЛИВІСТЬ: оновлено під 09-29k — камера на наставнику повністю, без кивання за клинком, прогноз вимк, пороги доджьо типові'); } } }catch(e){} }
@@ -11592,7 +11823,7 @@ function sensSettingsOpen(){
 window.sensSettingsOpen=sensSettingsOpen; window.VB_SENS_CFG=sensSnapshot;
 
 /* (09-22l) типові = ваш останній VB_SENS_CFG; «СКИНУТИ» повертає саме до них */
-try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 1.0, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 78, "VB_CAM.exitDeg": 66, "VB_CAM.tStart": 70, "VB_CAM.tEnd": 88, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": 1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 1.3, "VB_ARM.gBack": 1.3, "VB_ARM.gRight": 1.3, "VB_ARM.gLeft": 1.3, "VB_ARM.gUp": 1.3, "VB_ARM.gDown": 1.3, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 0.6}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
+try{ const D={"VB_MOVE.joy": 1, "VB_ROOMS.on": 1, "VB_WORLD.seamless": 1, "VB_WORLD.range": 2, "VB_ARM.gAll": 1.5, "VB_CLASH.kick": 1.6, "VB_RIG.on": 1, "VB_CAM.axis": 0, "VB_CAM.sensH": 1, "VB_CAM.sensV": 1, "VB_CAM.enterDeg": 83, "VB_CAM.exitDeg": 72, "VB_CAM.tStart": 78, "VB_CAM.tEnd": 87, "VB_CAM.holdS": 0.25, "VB_ORI.level": 1, "VB_ORI.force": 0, "VB_ORI.rollSign": 1, "VB_SONAR.on": 1, "VB_SONAR.gain": 1, "VB_SONAR.decay": 1, "VB_SONAR.memory": 0.08, "VB_SONAR.floor": 0, "VB_SONAR.self": 0.25, "VB_SONAR.shadow": 2, "VB_MUSIC.gain": 0.7, "VB_ARM.gFwd": 1.3, "VB_ARM.gBack": 1.3, "VB_ARM.gRight": 1.3, "VB_ARM.gLeft": 1.3, "VB_ARM.gUp": 1.3, "VB_ARM.gDown": 1.3, "VB_ARM.dead": 0.35, "VB_ARM.holdT": 3, "VB_ARM.kReturn": 2, "VB_ARM.tiltCouple": 0, "VB_ANG.yaw": 1, "VB_ANG.pitch": 1, "VB_ANG.roll": 1, "SENSCFG.BLADE_RESPONSE": 1, "VB_PRED.k": 1, "VB_NORTH.lock": 0, "VB_NORTH.offset": 0, "VB_YAW.gyro": 1, "VB_YAW.inGame": 0, "VB_YAW.tau": 12, "VB_YAW.deadErr": 25, "SENSCFG.BODY_FOLLOW_SPEED": 7, "SENSCFG.BODY_TURN_DELAY": 0.13, "SENSCFG.BODY_SWING_HOLD": 0.26, "SENSCFG.SWING_GYRO_THRESHOLD": 210, "SENSCFG.SWING_ACCEL_THRESHOLD": 14, "VB_RESYNC.pull": 1.6, "VB_WEAPON.mass": 1, "VB_WEAPON.strength": 1, "VB_ARM.bodyFollow": 0.6}; for(const k in D){ try{ sensSet(k,D[k]); if(k in SENS_DEFAULTS) SENS_DEFAULTS[k]=D[k]; }catch(e){} } }catch(e){}
 try{ sensSettingsLoad(); }catch(e){}
 try{ if(PERF.done && PERF.tier && PERF.tier!=='high') perfApply(PERF.tier,true); }catch(e){}   // (09-22q) рівень пристрою
 /* (09-22o) разова поправка: лінійний рух на повну (3.0) → трохи менше (2.6); перехід в альбомну — біля 90° */
