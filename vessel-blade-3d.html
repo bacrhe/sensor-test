@@ -7354,7 +7354,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-08a · 📖 ГРИМУАР МОРЗЕ (міні-гра): набери першу літеру крапками й тире → розгортає елементи з повним кодом; код підбираєш сам, 📜 абетка — підглянути · ПІДВАЛ/ТАЙНИК більше не замикає: потайні двері відчиняє і засув ЗСЕРЕДИНИ, а раз відчинені — лишаються назавжди · КИСТЬ замість кружечка: долоня з пальцями й великим, стискається на хваті · ІНВЕНТАР: кнопка ✋ ВІЛЬНІ РУКИ';
+const BUILD_TAG='2026-10-08b · КИСТЬ У РИЗІ замість кубика: долоня, пальці по дві фаланги, великий — стискає руківʼя, порожня повертається долонею вгору й до себе, вільна — розкрита, на хваті кулак · ДАКТИЛЬ: кожна літера морзе (гра чи гримуар) — кисть показує жест латинської дактильної абетки на 0.9 с · 📖 ГРИМУАР МОРЗЕ (міні-гра) · ПІДВАЛ/ТАЙНИК не замикає (засув зсередини, відчинені двері — назавжди) · ІНВЕНТАР: ✋ вільні руки';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -8189,7 +8189,7 @@ function frame(now){
     }
     updateAvatarMesh(player, now);
     try{ rigPlayerTick(dt); }catch(e){ if(!window.__rigErr){ window.__rigErr=1; logE('VB_RIG: '+e.message); } }   // (09-21) новий риг гравця у грі
-    try{ freeTick(dt); mechTick(dt); }catch(e){ if(!window.__freeErr){ window.__freeErr=1; logE('ВІЛЬНІ РУКИ: '+e.message); } }   // (10-07g) вільні руки й механізми
+    try{ freeTick(dt); mechTick(dt); rigHandsTick(dt); }catch(e){ if(!window.__freeErr){ window.__freeErr=1; logE('ВІЛЬНІ РУКИ: '+e.message); } }   // (10-07g) вільні руки й механізми
     try{ stepFollowTick(dt); }catch(e){ if(!window.__stepErr){ window.__stepErr=1; logE('КРОК ЗА МЕЧЕМ: '+e.message); } }   // (10-05q)
     try{ probeTick(dt); }catch(e){ if(!window.__probeErr){ window.__probeErr=1; logE('ПРОБА: '+e.message); } }   // (10-06t)
     try{ weaponKindTick(); weaponFallTick(dt); }catch(e){ if(!window.__wpnErr){ window.__wpnErr=1; logE('ВАГА: '+e.message); } }   // (10-06u)
@@ -8799,6 +8799,21 @@ function labLabel(text,color,scale){
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,transparent:true}));
   sp.scale.set((scale||0.5)*2,(scale||0.5)*0.5,1); sp.userData.label=true; return sp;
 }
+/* (10-08b) КИСТЬ У РИЗІ замість кубика: долоня + 4 пальці по дві фаланги + великий, у системі зап'ястя.
+   Пальці йдуть уздовж −Y (продовжують передпліччя), долоня дивиться у +Z (туди, де руків'я); великий — з боку тіла.
+   f=[вказівний, середній, підмізинний, мізинець] 0 — прямий, 1 — зігнутий; t — великий; sp — розведення (V). */
+function labBuildHand(side,s,mat){ const sx=(side==='RIGHT')?-1:1; const g=new THREE.Group(); g.name=side.toLowerCase()+'_hand_rig';
+  g.add(labBox(side.toLowerCase()+'_palm',0.08*s,0.09*s,0.028*s,mat,0,-0.045*s,0.008*s));
+  const fingers=[]; const fx=[0.03,0.01,-0.01,-0.03], fl=[1.06,1.12,1.0,0.84];   // x: від великого пальця (−sx·… → +X для правої) до мізинця
+  for(let i=0;i<4;i++){ const b=new THREE.Group(); b.position.set(-sx*fx[i]*s,-0.09*s,0.006*s); const l1=0.044*s*fl[i], l2=0.032*s*fl[i];
+    b.add(labBox(side[0]+'f'+i+'a',0.016*s,l1,0.02*s,mat,0,-l1/2,0)); const t=new THREE.Group(); t.position.y=-l1; t.add(labBox(side[0]+'f'+i+'b',0.015*s,l2,0.018*s,mat,0,-l2/2,0)); b.add(t); g.add(b); fingers.push({b,t}); }
+  const th=new THREE.Group(); th.position.set(-sx*0.044*s,-0.028*s,0.014*s); th.rotation.z=-sx*0.95; const tl=0.048*s;
+  th.add(labBox(side[0]+'thumb_a',0.018*s,tl,0.022*s,mat,0,-tl/2,0)); const tt=new THREE.Group(); tt.position.y=-tl; tt.add(labBox(side[0]+'thumb_b',0.016*s,0.03*s,0.02*s,mat,0,-0.015*s,0)); th.add(tt); g.add(th);
+  const H={ g, fingers, thumb:th, sx, cur:{f:[0.15,0.15,0.15,0.15],t:0.15,sp:0}, sup:0,
+    set(f,t,sp){ for(let i=0;i<4;i++){ const c=clamp(f[i],0,1); fingers[i].b.rotation.x=-c*1.45; fingers[i].t.rotation.x=-c*1.5; fingers[i].b.rotation.z=(sp||0)*(1-c)*(i===0?-sx*0.32:i===1?sx*0.14:0); }
+      const tc=clamp(t,0,1); th.rotation.x=-tc*1.1; tt.rotation.x=-tc*0.9; },
+    pose(tg,k){ const c=this.cur; for(let i=0;i<4;i++) c.f[i]+=(tg.f[i]-c.f[i])*k; c.t+=(tg.t-c.t)*k; c.sp+=((tg.sp||0)-c.sp)*k; this.set(c.f,c.t,c.sp); } };
+  H.set(H.cur.f,H.cur.t,0); return H; }
 /* CHARACTER_BASE: один ріг для всіх профілів. */
 function labBuildRig(profileName){
   const P=Object.assign({},RIG_PROFILES.PLAYER,RIG_PROFILES[profileName]||{});
@@ -8824,9 +8839,10 @@ function labBuildRig(profileName){
     const el=labJoint(side+'_ELBOW',0,-upper,0,sh);
     el.add(labBox(side.toLowerCase()+'_forearm',0.095*s,fore,0.095*s,mL,0,-fore/2,0));
     const wr=labJoint(side+'_WRIST',0,-fore,0,el);
-    wr.add(labBox(side.toLowerCase()+'_hand',0.09*s,hand,0.06*s,mSk,0,-hand/2,0.01));
+    let hnd=null; if(profileName==='PLAYER'){ hnd=labBuildHand(side,s,mSk); wr.add(hnd.g); }   // (10-08b) гравцю — справжня кисть; решті — кубик (економія)
+    else wr.add(labBox(side.toLowerCase()+'_hand',0.09*s,hand,0.06*s,mSk,0,-hand/2,0.01));
     const sock=labJoint(side+'_HAND_WEAPON',0,-hand*0.6,0.02,wr); sock.userData.socket=true;
-    return {sh,el,wr,sock};
+    return {sh,el,wr,sock,hnd};
   };
   const aL=arm('LEFT',1), aR=arm('RIGHT',-1);   // обличчям у +Z права рука — на -X
   J.LEFT_SHOULDER=aL.sh; J.LEFT_ELBOW=aL.el; J.LEFT_WRIST=aL.wr; J.RIGHT_SHOULDER=aR.sh; J.RIGHT_ELBOW=aR.el; J.RIGHT_WRIST=aR.wr;
@@ -8849,7 +8865,7 @@ function labBuildRig(profileName){
   if(P.spikes) for(let i=0;i<3;i++) J.HEAD.add(labBox('spike'+i,0.04*s,0.14*s,0.04*s,labMat(hue,0.5),(i-1)*0.07*s,P.headSize*1.2*s,0));
   if(P.crown) J.HEAD.add(labBox('crown',P.headSize*1.2*s,0.06*s,P.headSize*1.2*s,labMat(0.12,0.6,0.9),0,P.headSize*1.15*s,0));
   const parts=[]; root.traverse(o=>{ if(o.isMesh && o.userData.labPart) parts.push(o); });
-  return {root,J,sword,parts,P,sockets:{RIGHT_HAND_WEAPON:aR.sock,LEFT_HAND_WEAPON:aL.sock},dims:{hipH,torsoH,upper,fore,hand}};
+  return {root,J,sword,parts,P,sockets:{RIGHT_HAND_WEAPON:aR.sock,LEFT_HAND_WEAPON:aL.sock},dims:{hipH,torsoH,upper,fore,hand},hands:{R:aR.hnd,L:aL.hnd}};
 }
 const TWO_HAND_GRIP_DISTANCE=0.13;   // відстань між кистями на руків'ї (параметр рига, п.23)
 function labBuildSword(s,bladeL){
@@ -9227,6 +9243,8 @@ const VB_TWO={ bodyL:0.33, tau:0.25 };
 window.VB_TWO=VB_TWO;
 /* (10-07g) вільні руки: налаштування — тут, щоб повзунки (SENS_ROOTS) бачили їх при завантаженні */
 const VB_HANDS={ on:1, grabR:0.24, letGo:0.5, autoDraw:1, beacon:1, reach:0.92, ray:0.5 };
+const VB_FINGERS={ on:1, supUp:1.0, supIn:0.9, supMax:80, dactT:0.9, restF:0.22, restT:0.18 };   // (10-08b) кисть із пальцями: супінація порожньої долоні, дактиль — тут, щоб SENS_ROOTS бачив
+
 window.VB_HANDS=VB_HANDS;
 const TWOB={ yL:null, hold:null, d:0, w:0 }; window.TWOB=TWOB;
 function twoBodyBlend(tgt, dt){
@@ -12193,7 +12211,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -12215,6 +12233,7 @@ const SENS_SLIDERS=[
   ['VB_FPV.pDead','Перша особа: мертва зона нахилу погляду, °',0,25,1],['VB_FPV.pTau','Перша особа: погляд угору-вниз — плавність, с',0.05,0.8,0.01],['VB_FPV.flatYaw','Перша особа: телефон лежить — курс за клинком (1) / крізь екран (0)',0,1,1],
   ['VB_SLIDE.on','Лезо по лезу: іскри й ударна хвиля (1/0)',0,1,1],['VB_SLIDE.vWave','Ударна хвиля: середня швидкість ковзання, м/с',0.3,3,0.05],['VB_SLIDE.cover','Ударна хвиля: частка леза від гарди до вістря',0.3,0.9,0.05],['VB_SLIDE.cd','Ударна хвиля: перезарядка, с',0.5,8,0.5],
   ['VB_LINK2.mirror','Друга рука: показує те саме тіло з обома клинками (1) / власне (0)',0,1,1],
+  ['VB_FINGERS.supUp','Кисть порожня: долоня вгору (частка)',0,1.5,0.05],['VB_FINGERS.supIn','Кисть порожня: долоня до себе (частка)',-1.5,1.5,0.05],['VB_FINGERS.dactT','Дактиль: тримати жест, с',0.3,3,0.1],['VB_FINGERS.on','Кисть із пальцями й дактиль (1/0)',0,1,1],
   ['VB_HANDS.grabR','Вільні руки: хват — рука ближче за, м',0.12,0.6,0.01],['VB_HANDS.ray','Вільні руки: рука дістає вздовж телефона до, м',0.15,1,0.01],['VB_HANDS.reach','Вільні руки: як далеко тягнеться рука (частка)',0.55,1,0.01],['VB_HANDS.autoDraw','Вільні руки: вдарили — зброя сама в руки (1/0)',0,1,1],['VB_HANDS.beacon','Вільні руки: механізми цокають (1/0)',0,1,1],
   ['VB_TWO.bodyL','Дві руки: корпус і камера повертаються до лівої руки на частку (0 — лише за правою, ⅓ — типово)',0,0.5,0.01],
   ['VB_PRESS.on','Свої клинки: тиск крізь — упор, витривалість, розсинхрон, випадання (1/0)',0,1,1],['VB_PRESS.yieldL','Тиск: лівий клинок пружно відхиляється до, °',5,60,1],['VB_PRESS.drain','Тиск: витривалість тане, од/с',0,40,1],
@@ -13013,7 +13032,7 @@ function handFx(v){ if(!v||!v.k) return; const k=v.k, I=clamp(+v.i||0.5,0.1,1), 
    кисті (храповик — назад вільно); кришку скрині піднімаєш; за щабель драбини тягнеш униз — і лізеш. Поки руки вільні, механізми тихо
    цокають — їх чути й без екрана. Вдарили — зброя сама в руках.
    ДІМ: у південно-східному куті — тайник за потайними дверима (важіль — на східній стіні), у тайнику скриня й колесо люка в ПІДВАЛ. */
-const FREE={ on:false, since:0, hp0:100, hands:{R:null,L:null}, grab:{R:null,L:null}, marks:null, hintT:{} };
+const FREE={ on:false, since:0, hp0:100, hands:{R:null,L:null}, grab:{R:null,L:null}, near:{R:null,L:null}, hintT:{} };
 window.FREE=FREE;
 function freeSwordShow(sw, show, force){ if(!sw||!sw.root) return; const ud=sw.root.userData; show=!!show; if(!force && show===!ud.freeHidden) return;   // force — щокадру: риг сам вмикає свої частини
   for(const n of ['SWORD_GRIP','SWORD_POMMEL','SWORD_GUARD','SWORD_BLADE','WPN_HEAD']){ const o=sw.root.getObjectByName(n); if(o) o.visible=show; }
@@ -13033,7 +13052,6 @@ function freeSet(on, why){
     try{ const near=MECH.list.filter(m=>!m.done && m.kind!=='hatch' && m.pos && m.pos.distanceTo(new THREE.Vector3(p.x,1.1,p.z))<9); if(near.length) freeSay('Руки вільні. Поруч: '+near.map(m=>m.label).join(', ')+'. Їх чути — тихе цокання.'); }catch(e){}
   } else { try{ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0; }catch(e){}
     try{ if(S&&S.rig){ freeSwordShow(S.rig.sword,true); if(S.rig.swordL) freeSwordShow(S.rig.swordL,true); } }catch(e){}
-    try{ if(FREE.marks){ FREE.marks.R.g.visible=false; FREE.marks.L.g.visible=false; } }catch(e){}
     logE('⚔ ЗБРОЯ В РУКАХ'+(why?(' ('+why+')'):'')+' — клинки знову ріжуть і ранять');
     try{ showBanner('⚔ ЗБРОЯ В РУКАХ','#9ff0ff'); spatialBlip(p.x,1.4,p.z,2600,0.18,'sawtooth',0.1); buzz([0,40]); }catch(e){} }
   freeBtnSync(); try{ linkFx('free',{on:on?1:0}); }catch(e){} }
@@ -13041,23 +13059,7 @@ function freeToggle(src){
   if(handRole()){ const cur=!!(LINK.body&&LINK.body.fh); LINK.freeReq={on:!cur, t:Date.now()};
     try{ showBanner(!cur?'✋ ВІЛЬНІ РУКИ — прошу тіло…':'⚔ ЗБРОЯ — прошу тіло…','#fde68a'); }catch(e){} logE('ДРУГА РУКА: прошу тіло '+(!cur?'звільнити руки':'дати зброю')); return; }
   freeSet(!FREE.on, src||'кнопка ✋'); }
-/* (10-08a) КИСТЬ замість кружечка: долоня + 4 пальці + великий; пози — розкрита / хват / вказує */
-function buildHandMesh(col){ const g=new THREE.Group(); g.frustumCulled=false; g.renderOrder=6;
-  const mat=new THREE.MeshBasicMaterial({color:col, transparent:true, opacity:0.85, depthWrite:false, fog:false});
-  const palm=new THREE.Mesh(new THREE.BoxGeometry(0.078,0.1,0.03), mat); palm.position.y=0.02; g.add(palm);
-  const fingers=[]; const fx=[-0.028,-0.0095,0.0095,0.028], flen=[0.9,1.08,1.1,0.95];
-  for(let i=0;i<4;i++){ const base=new THREE.Group(); base.position.set(fx[i],0.07,0);
-    const s1=new THREE.Mesh(new THREE.BoxGeometry(0.015,0.05*flen[i],0.02), mat); s1.position.y=0.025*flen[i]; base.add(s1);
-    const tip=new THREE.Group(); tip.position.y=0.05*flen[i]; const s2=new THREE.Mesh(new THREE.BoxGeometry(0.014,0.04*flen[i],0.018), mat); s2.position.y=0.02*flen[i]; tip.add(s2); base.add(tip);
-    g.add(base); fingers.push({base, tip, len:flen[i]}); }
-  const th=new THREE.Group(); th.position.set(-0.042,-0.01,0.014); th.rotation.z=0.95;
-  const t1=new THREE.Mesh(new THREE.BoxGeometry(0.018,0.05,0.022), mat); t1.position.y=0.025; th.add(t1); g.add(th);
-  g.traverse(x=>{ x.frustumCulled=false; });
-  const H={ g, mat, fingers, thumb:th,
-    pose(curl, idx){ for(let i=0;i<fingers.length;i++){ const f=fingers[i]; let c=curl; if(idx && i===1) c=0.05; f.base.rotation.x=-c*1.5; f.tip.rotation.x=-c*1.5; } th.rotation.x=-clamp(curl*0.8,0,1.1); } };
-  try{ scene.add(g); }catch(e){} g.visible=false; return H; }
-function freeMarks(){ if(FREE.marks) return FREE.marks;
-  FREE.marks={R:buildHandMesh(0x9ff0ff), L:buildHandMesh(0xfcd34d)}; return FREE.marks; }
+/* (10-08b) кисть тепер живе у ризі (labBuildHand) — окремого кружечка/руки у світі більше немає */
 function freeHandOf(sw,S,k){ sw.root.updateMatrixWorld(true); const s=(S.rig.P&&S.rig.P.scale)||1;
   const palm=sw.root.getWorldPosition(new THREE.Vector3()), tip=sw.root.localToWorld(new THREE.Vector3(0,-0.12*s,0)), dir=tip.clone().sub(palm).normalize();
   let fake=false; try{ if(window.__fakeHand && window.__fakeHand[k]){ const fp=window.__fakeHand[k](); if(fp){ tip.copy(fp); fake=true; } } }catch(e){}   // тестовий гачок
@@ -13076,14 +13078,43 @@ function freeTick(dt){
   freeSwordShow(S.rig.sword,false,true); if(S.rig.swordL) freeSwordShow(S.rig.swordL,false,true);
   FREE.hands.R=S.rig.sword.root.visible?freeHandOf(S.rig.sword,S,'R'):null;
   FREE.hands.L=(S.swordLOn&&S.rig.swordL&&S.rig.swordL.root.visible)?freeHandOf(S.rig.swordL,S,'L'):null;
-  const M=freeMarks(), now=performance.now(), sc=(S.rig&&S.rig.P.scale)||1;
-  for(const k of ['R','L']){ const h=FREE.hands[k], H=M[k]; H.g.visible=!!h; if(!h) continue;
-    const g=FREE.grab[k], nb=g?null:mechNearest(h,(VB_HANDS.grabR||0.24)*2.2,k), near=!!nb;
-    H.g.position.copy(h.palm.clone().add(h.dir.clone().multiplyScalar(0.02)));
-    try{ H.g.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), h.dir.clone().normalize()); }catch(e){}
-    const curl=g?1.0:(near?0.55+0.25*Math.sin(now/120):0.12); H.pose(curl, false); H.g.scale.setScalar(sc);
-    H.mat.color.setHex(g?(k==='R'?0x6ee7ff:0xfde047):(k==='R'?0x9ff0ff:0xfcd34d)); H.mat.opacity=g?0.98:(near?0.9:0.62); }
+  for(const k of ['R','L']){ const h=FREE.hands[k]; if(!h){ FREE.near[k]=null; continue; }
+    const g=FREE.grab[k]; FREE.near[k]=g?null:mechNearest(h,(VB_HANDS.grabR||0.24)*2.2,k); }
   mechHandsTick(dt); }
+/* ═══ (10-08b) КИСТІ РИГА: пози пальців щокадру + ДАКТИЛЬ (жести латинської дактильної абетки на літери морзе) ═══
+   У бою кисть стискає руків'я; порожня — напіврозкрита, долоня повернута вгору й до себе (супінація за VB_FINGERS);
+   вільні руки — розкрита, біля механізму стискається, на хваті — кулак; літера морзе → кисть на 0.9 с показує жест. */
+const DACTYL={ A:{f:[1,1,1,1],t:.15}, B:{f:[0,0,0,0],t:1}, C:{f:[.5,.5,.5,.5],t:.5}, D:{f:[0,.8,.8,.8],t:.65}, E:{f:[.85,.85,.85,.85],t:.9},
+  F:{f:[.75,0,0,0],t:.7}, G:{f:[0,1,1,1],t:0}, H:{f:[0,0,1,1],t:.7}, I:{f:[1,1,1,0],t:.7}, J:{f:[1,1,1,0],t:.7}, K:{f:[0,.35,1,1],t:.3,sp:.6},
+  L:{f:[0,1,1,1],t:0}, M:{f:[.75,.75,.75,1],t:1}, N:{f:[.75,.75,1,1],t:1}, O:{f:[.6,.6,.6,.6],t:.6}, P:{f:[0,.35,1,1],t:.3,sp:.6}, Q:{f:[0,1,1,1],t:0},
+  R:{f:[0,0,1,1],t:.7,sp:-.5}, S:{f:[1,1,1,1],t:.95}, T:{f:[.9,1,1,1],t:.75}, U:{f:[0,0,1,1],t:.7}, V:{f:[0,0,1,1],t:.7,sp:1}, W:{f:[0,0,0,1],t:.7,sp:.6},
+  X:{f:[.5,1,1,1],t:.6}, Y:{f:[1,1,1,0],t:0}, Z:{f:[0,1,1,1],t:.65} };
+const DACT={ L:null, until:0, k:'R', n:0 }; window.DACT=DACT;
+function dactylShow(L, src){ if(!DACTYL[L]) return false; if(handRole()) return false; const S=VB_RIG.player; if(!S||!S.rig||!S.rig.hands) return false;
+  const leftFree=!(S.swordLOn || (typeof weaponHands==='function' && weaponHands()===2));
+  const k=(FREE.on)?'R':(leftFree?'L':null); if(!k){ logE('ДАКТИЛЬ '+L+': обидві руки на зброї — жест не показую'); return false; }
+  DACT.L=L; DACT.k=k; DACT.until=performance.now()+(VB_FINGERS.dactT||0.9)*1000; DACT.n++;
+  logE('ДАКТИЛЬ: '+L+' ('+(k==='R'?'права':'ліва')+' кисть'+(src?', '+src:'')+')'); return true; }
+window.dactylShow=dactylShow;
+const _HP_GRIP={f:[.95,.95,.95,.95],t:.85}, _HP_FIST={f:[1,1,1,1],t:.9}, _HP_OPEN={f:[.1,.1,.1,.1],t:.1};
+function rigHandsTick(dt){ if(!(VB_FINGERS.on>0)) return; const S=VB_RIG.player; if(!S||!S.rig||!S.rig.hands) return; const Hs=S.rig.hands; if(!Hs.R&&!Hs.L) return;
+  const now=performance.now(), kk=clamp(dt*12,0,1), rest={f:[VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF],t:VB_FINGERS.restT};
+  const two=(typeof weaponHands==='function' && weaponHands()===2);
+  for(const k of ['R','L']){ const H=Hs[k]; if(!H) continue; let tg=rest, sup=0;
+    const holds=!FREE.on && (k==='R' || S.swordLOn || two);
+    if(DACT.L && DACT.k===k && now<DACT.until) tg=DACTYL[DACT.L];
+    else if(holds) tg=_HP_GRIP;
+    else if(FREE.on){ const g=FREE.grab[k], nb=FREE.near[k]; tg=g?_HP_FIST:(nb?{f:[.5,.5,.5,.5].map(v=>v+0.12*Math.sin(now/120)),t:.45}:_HP_OPEN); }
+    H.pose(tg,kk);
+    /* супінація порожньої кисті: долоня — вгору й до себе, наскільки дозволяє вісь передпліччя */
+    if(!holds && !(FREE.on&&FREE.grab[k])){ try{ const wr=S.rig.J[k==='R'?'RIGHT_WRIST':'LEFT_WRIST']; const q=wr.getWorldQuaternion(new THREE.Quaternion());
+        const axis=new THREE.Vector3(0,-1,0).applyQuaternion(q), n0=new THREE.Vector3(0,0,1).applyQuaternion(q);
+        const inward=new THREE.Vector3(k==='R'?1:-1,0,0).applyQuaternion(S.rig.root.getWorldQuaternion(new THREE.Quaternion()));
+        const des=new THREE.Vector3(0,VB_FINGERS.supUp,0).add(inward.multiplyScalar(VB_FINGERS.supIn)); des.sub(axis.clone().multiplyScalar(des.dot(axis)));
+        const nC=n0.clone().sub(axis.clone().multiplyScalar(n0.dot(axis)));
+        if(des.lengthSq()>1e-6 && nC.lengthSq()>1e-6){ des.normalize(); nC.normalize(); let ang=Math.atan2(new THREE.Vector3().crossVectors(nC,des).dot(axis), nC.dot(des)); const mx=(VB_FINGERS.supMax||100)*Math.PI/180; sup=-clamp(ang,-mx,mx); } }catch(e){} }
+    H.sup+=(sup-H.sup)*clamp(dt*6,0,1); H.g.rotation.y=H.sup; }
+  if(DACT.L && now>=DACT.until) DACT.L=null; }
 /* ── МЕХАНІЗМИ ── */
 const MECH={ list:[], room:'', beaconT:0, anim:[], busy:false, hatchT:0, hintT:{} };
 window.MECH=MECH;
@@ -15660,7 +15691,7 @@ const SPELL_UA={ H:'ВОДЕНЬ', C:'ВУГЛЕЦЬ', O:'КИСЕНЬ', Na:'Н�
   plasma:'ПЛАЗМА', liquid:'ВОДА', gas:'ГАЗ' };
 const ENCH={t:0, tL:0};   // (07-17d) t — правий клинок, tL — лівий
 window.ENCH=ENCH;
-const MI={sym:'', word:'', t0:0, lastUp:0, active:false};
+const MI={sym:'', word:'', t0:0, lastUp:0, active:false}; window.MI=MI;
 const morseHud=document.createElement('div');
 morseHud.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:23;display:none;'+
   'padding:8px 16px;background:rgba(2,8,20,.9);border:1px solid #7c3aed;border-radius:10px;color:#c4b5fd;'+
@@ -15697,7 +15728,7 @@ setInterval(()=>{ try{
   const idle=performance.now()-MI.lastUp;
   if(MI.sym && idle>900){                             // пауза — літера
     const L=MORSE_AB[MI.sym]||'?';
-    MI.word+=L; MI.sym=''; morseShow();
+    MI.word+=L; MI.sym=''; morseShow(); try{ if(L!=='?') dactylShow(L,'морзе'); }catch(e){}   // (10-08b) кисть показує жест літери
   }
   if(!MI.sym && MI.word && idle>1900){                // довша пауза — КАСТ
     const w=MI.word; MI.word=''; morseShow();
@@ -15805,7 +15836,7 @@ function grimSpeakMorse(code){ return (code||'').split('').map(q=>q==='.'?'кр�
 function grimBuild(){ if(GRIM.el) return GRIM.el;
   const p=document.createElement('div'); p.id='grimPanel';
   p.style.cssText='position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;'
-    +'background:rgba(2,6,16,.94);color:#e9d8ff;font:inherit;padding:14px 12px;gap:9px;overflow:auto;-webkit-tap-highlight-color:transparent';
+    +'background:rgba(2,6,16,.74);color:#e9d8ff;font:inherit;padding:14px 12px;gap:9px;overflow:auto;-webkit-tap-highlight-color:transparent';
   p.innerHTML=''
     +'<div style="font-size:14px;letter-spacing:.14em;color:#c4b5fd">📖 ГРИМУАР МОРЗЕ</div>'
     +'<div id="grimHint" style="font-size:11px;color:#8b93a7;max-width:min(96vw,560px);text-align:center;line-height:1.45"></div>'
@@ -15841,10 +15872,11 @@ function grimCommit(){ const sym=GRIM.sym; GRIM.sym=''; if(!sym){ grimRender(); 
   const L=MORSE_AB[sym];
   if(!L){ GRIM.found=null; const r=GRIM.el&&GRIM.el.querySelector('#grimRes'); if(r) r.innerHTML='<b style="letter-spacing:.2em">'+grimDD(sym)+'</b> — немає такої літери в морзе. Спробуй іншу комбінацію.'; try{ ttsSpeak('Немає такої літери. Спробуй іншу комбінацію.',{}); }catch(e){} try{ blip(160,0.3,'sawtooth',0.14); }catch(e){} grimRender(); return; }
   grimFound(L); }
-function grimFound(L){ GRIM.found=L; if(!GRIM.learned.includes(L)){ GRIM.learned.push(L); grimSave(); } grimRenderResult(L); grimSpeakFound(); grimRender(); try{ blip(680,0.12,'sine',0.14); }catch(e){} }
+function grimFound(L){ GRIM.found=L; if(!GRIM.learned.includes(L)){ GRIM.learned.push(L); grimSave(); } grimRenderResult(L); grimSpeakFound(); grimRender(); try{ blip(680,0.12,'sine',0.14); }catch(e){} try{ dactylShow(L,'гримуар'); }catch(e){} }
 function grimRenderResult(L){ const p=GRIM.el; if(!p) return; const r=p.querySelector('#grimRes'); if(!r) return;
   const code=MORSE_OF[L]||'', els=grimGroup(L);
   let h='<div style="font-size:16px;color:#fde68a">Літера <b>'+L+'</b> &nbsp; <span style="letter-spacing:.2em;color:#c4b5fd">'+grimDD(code)+'</span></div>';
+  h+='<div style="font-size:11px;color:#9ff0ff">✋ дактиль: кисть показує жест «'+L+'» (видно крізь сторінку, у 1-й особі)</div>';
   if(!els.length){ h+='<div style="color:#8b93a7;margin-top:4px">Елементів на «'+L+'» немає. Код літери вивчено.</div>'; r.innerHTML=h; return; }
   h+='<div style="margin-top:6px;color:#9ca3af;font-size:11px">Елементи на «'+L+'» ('+els.length+'):</div>';
   h+='<div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">';
