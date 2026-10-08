@@ -75,6 +75,8 @@ h1 span{color:#1e3a5f;font-size:10px}
 #invPanel .ic.hand .k{font-size:15px}
 #invPanel .ic.slot.grip{border-style:solid;border-color:#fde68a;color:#fde68a;background:rgba(253,211,77,.12);cursor:pointer}
 #invPanel .ic.slot.close{border-style:solid;border-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,.12);cursor:pointer}
+#invPanel .ic.slot.hands2{border-style:solid;border-color:#b45309;color:#fde68a;background:rgba(180,83,9,.16);cursor:pointer}
+#invPanel .ic.slot.hands2.on{border-color:#9ff0ff;color:#9ff0ff;background:rgba(10,26,48,.72)}
 #invPanel .ic.res{color:#e2e8f0;background:rgba(30,58,95,.55)}
 #invPanel .ic .n{position:absolute;right:2px;bottom:1px;font-size:9px;color:#fde68a}
 #invPanel .ic .k{font-size:12px}
@@ -7352,7 +7354,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-07g · АЛЬБОМНА СТРОГО: вхід лише майже на боці (78°), назад — лише майже плашмя чи в портреті (15°) · СВОЇ КЛИНКИ НЕПРОХІДНІ: тиснеш крізь — упор, витривалість тане, розсинхрон, лівий випадає · СТРІЧКА ЛІВОГО КЛИНКА — та сама фізика: мах, накопичення, перший дотик, ярість · НАВЧАННЯ «ДВІ РУКИ»: стовп лівим — зараховано, правим чи хвилею — пояснення й нова спроба · ДВІ РУКИ: корпус і камера ⅔ за правою, ⅓ до лівої · ✋ ВІЛЬНІ РУКИ: зброю сховано, руками — важіль, колесо, скриня, люк у ПІДВАЛ, драбина';
+const BUILD_TAG='2026-10-08a · 📖 ГРИМУАР МОРЗЕ (міні-гра): набери першу літеру крапками й тире → розгортає елементи з повним кодом; код підбираєш сам, 📜 абетка — підглянути · ПІДВАЛ/ТАЙНИК більше не замикає: потайні двері відчиняє і засув ЗСЕРЕДИНИ, а раз відчинені — лишаються назавжди · КИСТЬ замість кружечка: долоня з пальцями й великим, стискається на хваті · ІНВЕНТАР: кнопка ✋ ВІЛЬНІ РУКИ';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -13031,7 +13033,7 @@ function freeSet(on, why){
     try{ const near=MECH.list.filter(m=>!m.done && m.kind!=='hatch' && m.pos && m.pos.distanceTo(new THREE.Vector3(p.x,1.1,p.z))<9); if(near.length) freeSay('Руки вільні. Поруч: '+near.map(m=>m.label).join(', ')+'. Їх чути — тихе цокання.'); }catch(e){}
   } else { try{ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0; }catch(e){}
     try{ if(S&&S.rig){ freeSwordShow(S.rig.sword,true); if(S.rig.swordL) freeSwordShow(S.rig.swordL,true); } }catch(e){}
-    try{ if(FREE.marks){ FREE.marks.R.visible=false; FREE.marks.L.visible=false; } }catch(e){}
+    try{ if(FREE.marks){ FREE.marks.R.g.visible=false; FREE.marks.L.g.visible=false; } }catch(e){}
     logE('⚔ ЗБРОЯ В РУКАХ'+(why?(' ('+why+')'):'')+' — клинки знову ріжуть і ранять');
     try{ showBanner('⚔ ЗБРОЯ В РУКАХ','#9ff0ff'); spatialBlip(p.x,1.4,p.z,2600,0.18,'sawtooth',0.1); buzz([0,40]); }catch(e){} }
   freeBtnSync(); try{ linkFx('free',{on:on?1:0}); }catch(e){} }
@@ -13039,9 +13041,23 @@ function freeToggle(src){
   if(handRole()){ const cur=!!(LINK.body&&LINK.body.fh); LINK.freeReq={on:!cur, t:Date.now()};
     try{ showBanner(!cur?'✋ ВІЛЬНІ РУКИ — прошу тіло…':'⚔ ЗБРОЯ — прошу тіло…','#fde68a'); }catch(e){} logE('ДРУГА РУКА: прошу тіло '+(!cur?'звільнити руки':'дати зброю')); return; }
   freeSet(!FREE.on, src||'кнопка ✋'); }
+/* (10-08a) КИСТЬ замість кружечка: долоня + 4 пальці + великий; пози — розкрита / хват / вказує */
+function buildHandMesh(col){ const g=new THREE.Group(); g.frustumCulled=false; g.renderOrder=6;
+  const mat=new THREE.MeshBasicMaterial({color:col, transparent:true, opacity:0.85, depthWrite:false, fog:false});
+  const palm=new THREE.Mesh(new THREE.BoxGeometry(0.078,0.1,0.03), mat); palm.position.y=0.02; g.add(palm);
+  const fingers=[]; const fx=[-0.028,-0.0095,0.0095,0.028], flen=[0.9,1.08,1.1,0.95];
+  for(let i=0;i<4;i++){ const base=new THREE.Group(); base.position.set(fx[i],0.07,0);
+    const s1=new THREE.Mesh(new THREE.BoxGeometry(0.015,0.05*flen[i],0.02), mat); s1.position.y=0.025*flen[i]; base.add(s1);
+    const tip=new THREE.Group(); tip.position.y=0.05*flen[i]; const s2=new THREE.Mesh(new THREE.BoxGeometry(0.014,0.04*flen[i],0.018), mat); s2.position.y=0.02*flen[i]; tip.add(s2); base.add(tip);
+    g.add(base); fingers.push({base, tip, len:flen[i]}); }
+  const th=new THREE.Group(); th.position.set(-0.042,-0.01,0.014); th.rotation.z=0.95;
+  const t1=new THREE.Mesh(new THREE.BoxGeometry(0.018,0.05,0.022), mat); t1.position.y=0.025; th.add(t1); g.add(th);
+  g.traverse(x=>{ x.frustumCulled=false; });
+  const H={ g, mat, fingers, thumb:th,
+    pose(curl, idx){ for(let i=0;i<fingers.length;i++){ const f=fingers[i]; let c=curl; if(idx && i===1) c=0.05; f.base.rotation.x=-c*1.5; f.tip.rotation.x=-c*1.5; } th.rotation.x=-clamp(curl*0.8,0,1.1); } };
+  try{ scene.add(g); }catch(e){} g.visible=false; return H; }
 function freeMarks(){ if(FREE.marks) return FREE.marks;
-  const mk=(col)=>{ const m=new THREE.Mesh(new THREE.SphereGeometry(0.045,10,8), new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.7,depthWrite:false,blending:THREE.AdditiveBlending,fog:false})); m.frustumCulled=false; m.visible=false; m.renderOrder=6; try{ scene.add(m); }catch(e){} return m; };
-  FREE.marks={R:mk(0x9ff0ff), L:mk(0xfcd34d)}; return FREE.marks; }
+  FREE.marks={R:buildHandMesh(0x9ff0ff), L:buildHandMesh(0xfcd34d)}; return FREE.marks; }
 function freeHandOf(sw,S,k){ sw.root.updateMatrixWorld(true); const s=(S.rig.P&&S.rig.P.scale)||1;
   const palm=sw.root.getWorldPosition(new THREE.Vector3()), tip=sw.root.localToWorld(new THREE.Vector3(0,-0.12*s,0)), dir=tip.clone().sub(palm).normalize();
   let fake=false; try{ if(window.__fakeHand && window.__fakeHand[k]){ const fp=window.__fakeHand[k](); if(fp){ tip.copy(fp); fake=true; } } }catch(e){}   // тестовий гачок
@@ -13060,10 +13076,13 @@ function freeTick(dt){
   freeSwordShow(S.rig.sword,false,true); if(S.rig.swordL) freeSwordShow(S.rig.swordL,false,true);
   FREE.hands.R=S.rig.sword.root.visible?freeHandOf(S.rig.sword,S,'R'):null;
   FREE.hands.L=(S.swordLOn&&S.rig.swordL&&S.rig.swordL.root.visible)?freeHandOf(S.rig.swordL,S,'L'):null;
-  const M=freeMarks(), now=performance.now();
-  for(const k of ['R','L']){ const h=FREE.hands[k], m=M[k]; m.visible=!!h; if(!h) continue;
-    const g=FREE.grab[k], nb=g?null:mechNearest(h,(VB_HANDS.grabR||0.24)*2.2,k), near=!!nb; m.position.copy(g?(g.hp||h.tip):(nb?nb.hp:h.tip));
-    m.scale.setScalar(g?1.8:(near?1.35+0.25*Math.sin(now/90):1)); m.material.opacity=g?1:(near?0.95:0.55); }
+  const M=freeMarks(), now=performance.now(), sc=(S.rig&&S.rig.P.scale)||1;
+  for(const k of ['R','L']){ const h=FREE.hands[k], H=M[k]; H.g.visible=!!h; if(!h) continue;
+    const g=FREE.grab[k], nb=g?null:mechNearest(h,(VB_HANDS.grabR||0.24)*2.2,k), near=!!nb;
+    H.g.position.copy(h.palm.clone().add(h.dir.clone().multiplyScalar(0.02)));
+    try{ H.g.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), h.dir.clone().normalize()); }catch(e){}
+    const curl=g?1.0:(near?0.55+0.25*Math.sin(now/120):0.12); H.pose(curl, false); H.g.scale.setScalar(sc);
+    H.mat.color.setHex(g?(k==='R'?0x6ee7ff:0xfde047):(k==='R'?0x9ff0ff:0xfcd34d)); H.mat.opacity=g?0.98:(near?0.9:0.62); }
   mechHandsTick(dt); }
 /* ── МЕХАНІЗМИ ── */
 const MECH={ list:[], room:'', beaconT:0, anim:[], busy:false, hatchT:0, hintT:{} };
@@ -13260,21 +13279,25 @@ function mechClimbUp(){ logE('ПІДВАЛ: лізу драбиною нагор
   mechGoRoom(6,6,HOMEC.inside[0],'підйом');
   setTimeout(()=>{ try{ if(advHome()){ logE('ДІМ: виліз із підвалу в тайник'); freeSay('Ти вдома, у тайнику. Вихід — на захід.'); } }catch(e){} }, 900); }
 function mechBuildHome(){ const C=HOMEC; const has=(x,y)=>{ const o=obstacleAt(x,y); return !!(o&&o.alive); };
+  const unlocked=mechGet('home.door');   // (10-08a) відчинені потайні двері — НАЗАВЖДИ, інакше можна замкнутись усередині
   const wallsUp=C.walls.every(([x,y])=>has(x,y)); let doorUp=has(C.door[0],C.door[1]);
   if(!wallsUp){ if(handRole()) return;   // друга рука світ не будує — тайник прийде зі знімком
-    const all=[...C.walls, C.door, ...C.inside]; const free=all.every(([x,y])=>!has(x,y) && !mechBlockedRaw(x,y));
+    const need=unlocked?[...C.walls, ...C.inside]:[...C.walls, C.door, ...C.inside]; const free=need.every(([x,y])=>!has(x,y) && !mechBlockedRaw(x,y));
     if(!free){ logE('ТАЙНИК: південно-східний кут дому зайнятий — не будую'); return; }
-    window.__structBuild=true; try{ for(const [x,y] of C.walls) addObstacle(x,y,'Si',new Set(),C.wallTint,1.1,'cube',0,null,0,true); addObstacle(C.door[0],C.door[1],'Si',new Set(),C.doorTint,1.1,'cube',0,null,0,true); /* камінь: мітла дому прибирає лише «приблудні» стіни */ } finally{ window.__structBuild=false; }
-    doorUp=true; try{ snapshotRoom(); }catch(e){} logE('ТАЙНИК: у південно-східному куті дому — стіни й потайні двері ('+C.door+')'); }
-  mechLever({id:'home.lever', gx:C.lever.gx, gy:C.lever.gy, face:C.lever.face, h:C.lever.h, label:'важіль на східній стіні', done:!doorUp,
-    onDone:()=>{ mechDoorOpen(C.door[0],C.door[1]); freeSay('Клац. Потайні двері поїхали в підлогу — прохід у кут, на захід від важеля, з південного боку.'); }});
+    window.__structBuild=true; try{ for(const [x,y] of C.walls) addObstacle(x,y,'Si',new Set(),C.wallTint,1.1,'cube',0,null,0,true); if(!unlocked) addObstacle(C.door[0],C.door[1],'Si',new Set(),C.doorTint,1.1,'cube',0,null,0,true); /* камінь: мітла дому прибирає лише «приблудні» стіни */ } finally{ window.__structBuild=false; }
+    doorUp=!unlocked; try{ snapshotRoom(); }catch(e){} logE('ТАЙНИК: у південно-східному куті дому — стіни'+(unlocked?' (двері вже відчинені — прохід відкрито)':' й потайні двері ('+C.door+')')); }
+  const openDoor=(src)=>{ mechDoorOpen(C.door[0],C.door[1]); mechSet('home.door',1); const L=mechById('home.lever'); if(L&&!L.done){ L.done=true; L.ang=L.dnA; try{ mechLeverPose(L); }catch(e){} } };
+  mechLever({id:'home.lever', gx:C.lever.gx, gy:C.lever.gy, face:C.lever.face, h:C.lever.h, label:'важіль потайних дверей (на східній стіні)', done:!doorUp,
+    onDone:()=>{ openDoor('важіль'); freeSay('Клац. Потайні двері поїхали в підлогу — прохід у кут, на захід від важеля, з південного боку.'); }});
+  if(doorUp){ mechLever({id:'home.release', gx:C.door[0], gy:C.door[1], face:'W', h:1.0, label:'засув потайних дверей (зсередини тайника)', done:false,
+    onDone:()=>{ openDoor('засув'); freeSay('Засув відсунуто зсередини — потайні двері поїхали в підлогу. Вихід на захід.'); }}); }   // (10-08a) АВАРІЙНИЙ вихід: двері відчиняються і зсередини, щоб не замкнутись
   mechChest({id:'home.chest', gx:C.chest[0], gy:C.chest[1], yaw:-Math.PI/2, label:'скриня в тайнику', done:mechGet('home.chest'), onDone:mechChestReward});
   const vDone=mechGet('home.valve');
   mechValve({id:'home.valve', gx:C.valve.gx, gy:C.valve.gy, face:C.valve.face, h:C.valve.h, R:0.24, need:540, label:'колесо люка в тайнику', done:vDone,
     onDone:()=>{ mechSet('home.valve',1); const H=mechById('home.hatch'); if(H) mechHatchOpen(H); freeSay('Колесо докручено — люк у підлозі відчинився. Стань на нього, і спустишся в підвал.'); }});
   mechHatch({id:'home.hatch', gx:C.hatch[0], gy:C.hatch[1], label:'люк у підвал', done:vDone});
-  if(doorUp && !MECH._homeHint){ MECH._homeHint=true; logE('ДІМ: у південно-східному куті — ТАЙНИК за потайними дверима; важіль — на східній стіні біля кута (клітинка (11,8)); узятись — вільними руками ✋');
-    if(!mechGet('hint.home')){ mechSet('hint.home',1); setTimeout(()=>{ try{ if(advHome()) freeSay('У південно-східному куті дому — тайник. Важіль на східній стіні. Звільни руки кнопкою з долонею — і візьмись за нього.'); }catch(e){} }, 7000); } } }
+  if(doorUp && !MECH._homeHint){ MECH._homeHint=true; logE('ДІМ: у південно-східному куті — ТАЙНИК за потайними дверима; важіль — на східній стіні біля кута (клітинка (11,8)); зсередини двері відчиняє засув біля проходу; узятись — вільними руками ✋');
+    if(!mechGet('hint.home')){ mechSet('hint.home',1); setTimeout(()=>{ try{ if(advHome()) freeSay('У південно-східному куті дому — тайник. Важіль на східній стіні відчиняє потайні двері. Звільни руки кнопкою з долонею — і візьмись за нього. Якщо опинишся замкненим усередині — засув біля проходу відчинить двері зсередини.'); }catch(e){} }, 7000); } } }
 function mechBlockedRaw(x,y){ try{ return !!phantomAtCell(x,y); }catch(e){ return false; } }
 function mechBuildCellar(){ mechLadder({id:'cellar.ladder', gx:CELLAR.ladder[0], gy:CELLAR.ladder[1], face:'N', label:'драбина нагору', onDone:()=>mechClimbUp()}); }
 function mechBuild(){ mechClear(); if(!ADV.on) return; MECH.room=ADV.rx+','+ADV.ry;
@@ -15251,9 +15274,10 @@ const INV_LAYOUT=(()=>{ const L={}; const put=(c,r,v)=>{ L[c+','+r]=v; };
   // руки → під ними зброя
   put(3,7,{t:'hand',l:'ПРАВА РУКА',k:'handR',w:2,h:2}); put(8,7,{t:'hand',l:'ЛІВА РУКА',k:'handL',w:2,h:2});   // (10-07b) 2×2 — видно назву зброї
   put(5,12,{t:'slot grip',l:'ХВАТ',k:'grip',w:3,h:1}); put(11,12,{t:'slot close',l:'✕ ЗАКРИТИ',k:'close',w:2,h:1});
+  put(8,12,{t:'slot hands2',l:'✋ ВІЛЬНІ РУКИ',k:'free',w:2,h:1});   // (10-08a) звільнити руки прямо з інвентаря
   return L; })();
 const INV_POCKETS=[[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2],[10,0],[11,0],[12,0],[10,1],[11,1],[12,1],[10,2],[11,2],[12,2],
-  [0,12],[1,12],[2,12],[3,12],[9,12],[10,12],[0,11],[1,11],[2,11],[10,11],[11,11],[12,11]];   // кишені: кути поля (11-12,12 — закрити, 5-7,12 — хват)
+  [0,12],[1,12],[2,12],[3,12],[10,12],[0,11],[1,11],[2,11],[10,11],[11,11],[12,11]];   // кишені: кути поля (11-12,12 — закрити, 5-7,12 — хват, 8-9,12 — вільні руки)
 function invBuild(){ const G=$('invGrid'); if(!G) return; G.innerHTML=''; INVUI.cells={};
   const covered=new Set(); for(const key in INV_LAYOUT){ const L=INV_LAYOUT[key]; if(!(L.w>1||L.h>1)) continue; const [c0,r0]=key.split(',').map(Number); for(let dc=0;dc<(L.w||1);dc++) for(let dr=0;dr<(L.h||1);dr++) if(dc||dr) covered.add((c0+dc)+','+(r0+dr)); }
   for(let r=0;r<13;r++) for(let c=0;c<13;c++){ if(covered.has(c+','+r)) continue; const d=document.createElement('div'); d.className='ic'; d.dataset.c=c; d.dataset.r=r;
@@ -15279,6 +15303,7 @@ function invRefresh(){ if(!INVUI.built) invBuild(); const cells=INVUI.cells; if(
   hl.innerHTML='<div class="hd">ЛІВА РУКА'+(INVUI.hand==='L'?' ◀':'')+'</div>'+(h===2?'<div class="nm">на руків’ї разом</div>':('<span class="k">'+ic(KL.id)+'</span><div class="nm">'+KL.ua+(two?'':'<br>чекає 2-й телефон')+'</div>'));
   hr.classList.toggle('sel', INVUI.hand==='R'); hl.classList.toggle('sel', INVUI.hand==='L');
   const gc=cells['5,12']; if(gc) gc.innerHTML='<div class="nm">ХВАТ: <b>'+({auto:'авто',one:'1 рука',two:'2 руки'}[VB_WPN.grip||'auto'])+'</b></div>';
+  const fc=cells['8,12']; if(fc){ const on=(typeof FREE!=='undefined'&&FREE.on); fc.classList.toggle('on',on); fc.innerHTML='<div class="nm">'+(on?'⚔ ВЗЯТИ ЗБРОЮ':'✋ ВІЛЬНІ РУКИ')+'</div>'; }
   cells.__eq=K.id; it2.forEach((x,i)=>{ const p=INV_POCKETS[i]; if(!p) return; const d=cells[p[0]+','+p[1]]; if(x.kind==='wpn') d.classList.toggle('eqL', x.id===KL.id && h===1); });
   const n=$('invNote'); if(n) n.innerHTML='<b>1.</b> торкнись РУКИ (права/ліва) — куди класти → <b>2.</b> торкнись зброї в кишені — покласти · ◀ позначає обрану руку · жовта рамка — у правій, зелена — у лівій · ХВАТ: авто / 1 рука / 2 руки · ліва зброя діє з другого телефона («ДРУГА РУКА» на воротах)';
   try{ const b=$('invBtn'); if(b) b.classList.toggle('on', INVUI.open); }catch(e){} }
@@ -15287,6 +15312,7 @@ function invTap(el){ const kind=el.dataset.kind, id=el.dataset.id;
     else weaponKindSet(weaponKindIndex(id), true); invRefresh(); return; }
   if(el.dataset.k==='handR'||el.dataset.k==='handL'){ INVUI.hand=(el.dataset.k==='handL')?'L':'R'; showBanner((INVUI.hand==='L'?'◀ ЛІВА РУКА':'◀ ПРАВА РУКА')+' — тепер торкнись зброї в кишені','#fde68a'); invRefresh(); return; }
   if(el.dataset.k==='grip'){ const g=VB_WPN.grip||'auto'; VB_WPN.grip=g==='auto'?'two':g==='two'?'one':'auto'; VB_WPN._noteKey=null; logE('ХВАТ: '+VB_WPN.grip+' → '+(weaponHands()===1?'одна рука':'дві руки')); showBanner('ХВАТ: '+({auto:'авто (як просить зброя)',one:'одна рука',two:'дві руки'}[VB_WPN.grip]),'#fde68a'); invRefresh(); return; }
+  if(el.dataset.k==='free'){ try{ freeToggle('інвентар'); }catch(e){} invRefresh(); return; }
   if(el.dataset.k==='close'){ invToggle(false); return; }
   if(kind==='res'){ showBanner(RES_ICON[id]+' '+RES_NAME[id]+': '+RES[id],'#cbd5e1'); return; }
   if(kind==='potion'){ showBanner('🧪 зілля з’являться у наступних збірках','#94a3b8'); return; }
@@ -15643,6 +15669,7 @@ document.body.appendChild(morseHud);
 function morseShow(){ const txt=(MI.word?MI.word+' ':'')+MI.sym;
   if(txt){ morseHud.textContent='⚡ '+txt; morseHud.style.display='block'; } else morseHud.style.display='none'; }
 function morseUiBlocked(){
+  if(window.GRIM && GRIM.open) return true;                                 // (10-08a) відкритий гримуар — тапи йдуть у нього, не в закляття
   if(window.LINK && (LINK.role==='sword'||LINK.role==='swordL'))            // (07-17d) у руки СВОЯ абетка
     return !started || paused || tutModalEl.style.display!=='none';
   return !started || mode!=='fighter' || paused || player.dead
@@ -15747,6 +15774,113 @@ setTimeout(()=>{ try{
   $('mNew').parentNode.insertBefore(b, $('mNew'));
   b.onclick=()=>{ closeMenu(); tutModal(SCROLLS.morse.t, SCROLLS.morse.d, [{t:'ЗРОЗУМІЛО ▷'}]); };
 }catch(e){} }, 700);
+/* ═══════════════ (10-08a) ГРИМУАР МОРЗЕ — міні-гра пошуку літер ═══════════════
+   Відкрий гримуар (📖 вгорі або меню паузи). Набери ПЕРШУ літеру елемента крапками й тире:
+   тап по полю — короткий «·», довгий «−», або кнопки · −. Пауза чи ⏎ — пошук літери.
+   Знайдена літера розгортає всі елементи, що з неї починаються, з повним морзе кожного.
+   Код літери САМ не підказується — його згадай, перебери або подивись в інтернеті (це міні-гра);
+   📜 «абетка» — показати/сховати всю таблицю, якщо захочеш підглянути. */
+const GRIM_EL={ H:'Водень', He:'Гелій', Li:'Літій', Be:'Берилій', B:'Бор', C:'Вуглець', N:'Азот', O:'Кисень', F:'Фтор', Ne:'Неон',
+  Na:'Натрій', Mg:'Магній', Al:'Алюміній', Si:'Кремній', P:'Фосфор', S:'Сірка', Cl:'Хлор', Ar:'Аргон', K:'Калій', Ca:'Кальцій',
+  Sc:'Скандій', Ti:'Титан', V:'Ванадій', Cr:'Хром', Mn:'Марганець', Fe:'Залізо', Co:'Кобальт', Ni:'Нікель', Cu:'Мідь', Zn:'Цинк',
+  Ga:'Галій', Ge:'Германій', As:'Арсен', Se:'Селен', Br:'Бром', Kr:'Криптон', Rb:'Рубідій', Sr:'Стронцій', Y:'Ітрій', Zr:'Цирконій',
+  Nb:'Ніобій', Mo:'Молібден', Tc:'Технецій', Ru:'Рутеній', Rh:'Родій', Pd:'Паладій', Ag:'Срібло', Cd:'Кадмій', In:'Індій', Sn:'Олово',
+  Sb:'Сурма', Te:'Телур', I:'Йод', Xe:'Ксенон', Cs:'Цезій', Ba:'Барій', La:'Лантан', Ce:'Церій', Pr:'Празеодим', Nd:'Неодим',
+  Pm:'Прометій', Sm:'Самарій', Eu:'Європій', Gd:'Гадоліній', Tb:'Тербій', Dy:'Диспрозій', Ho:'Гольмій', Er:'Ербій', Tm:'Тулій', Yb:'Ітербій',
+  Lu:'Лютецій', Hf:'Гафній', Ta:'Тантал', W:'Вольфрам', Re:'Реній', Os:'Осмій', Ir:'Іридій', Pt:'Платина', Au:'Золото', Hg:'Ртуть',
+  Tl:'Талій', Pb:'Свинець', Bi:'Бісмут', Po:'Полоній', At:'Астат', Rn:'Радон', Fr:'Францій', Ra:'Радій', Ac:'Актиній', Th:'Торій',
+  Pa:'Протактиній', U:'Уран', Np:'Нептуній', Pu:'Плутоній', Am:'Америцій', Cm:'Кюрій', Bk:'Берклій', Cf:'Каліфорній', Es:'Ейнштейній', Fm:'Фермій',
+  Md:'Менделевій', No:'Нобелій', Lr:'Лоуренсій', Rf:'Резерфордій', Db:'Дубній', Sg:'Сиборгій', Bh:'Борій', Hs:'Гасій', Mt:'Мейтнерій', Ds:'Дармштадтій',
+  Rg:'Рентгеній', Cn:'Коперніцій', Nh:'Ніхоній', Fl:'Флеровій', Mc:'Московій', Lv:'Ліверморій', Ts:'Теннессін', Og:'Оганесон' };
+const GRIM_ACTIVE={ H:1, C:1, O:1, Na:1, Si:1, Cl:1, Fe:1 };   // діють як закляття у цьому світі (решта — лор/довідка)
+const GRIMBTN='padding:9px 12px;font:inherit;font-size:13px;background:#1a1340;border:1px solid #6d28d9;border-radius:9px;color:#e9d8ff;letter-spacing:.04em;cursor:pointer;';
+const GRIM={ open:false, sym:'', found:null, showRef:false, t0:0, lastT:0, el:null,
+  learned:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_grim_learned')||'[]'); }catch(e){ return []; } })() };
+window.GRIM=GRIM;
+function grimSave(){ try{ localStorage.setItem('vb3d_grim_learned', JSON.stringify(GRIM.learned)); }catch(e){} }
+function grimGroup(L){ const out=[]; for(const s in GRIM_EL){ if(s[0].toUpperCase()===L) out.push(s); } out.sort((a,b)=>a.localeCompare(b)); return out; }
+function grimDD(sym){ return (sym||'').split('').map(q=>q==='.'?'·':'−').join(''); }
+function grimSymMorse(sym){ return sym.toUpperCase().split('').map(c=>grimDD(MORSE_OF[c]||'?')).join(' / '); }
+function grimSpeakMorse(code){ return (code||'').split('').map(q=>q==='.'?'крапка':'тире').join(' '); }
+function grimBuild(){ if(GRIM.el) return GRIM.el;
+  const p=document.createElement('div'); p.id='grimPanel';
+  p.style.cssText='position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;'
+    +'background:rgba(2,6,16,.94);color:#e9d8ff;font:inherit;padding:14px 12px;gap:9px;overflow:auto;-webkit-tap-highlight-color:transparent';
+  p.innerHTML=''
+    +'<div style="font-size:14px;letter-spacing:.14em;color:#c4b5fd">📖 ГРИМУАР МОРЗЕ</div>'
+    +'<div id="grimHint" style="font-size:11px;color:#8b93a7;max-width:min(96vw,560px);text-align:center;line-height:1.45"></div>'
+    +'<div id="grimIn" style="font-size:34px;letter-spacing:.2em;min-height:44px;color:#fde68a">·</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">'
+      +'<button id="grimDot" style="'+GRIMBTN+'font-size:26px;width:68px">·</button>'
+      +'<button id="grimDash" style="'+GRIMBTN+'font-size:26px;width:68px">−</button>'
+      +'<button id="grimEnter" style="'+GRIMBTN+'">⏎ знайти</button>'
+      +'<button id="grimBack" style="'+GRIMBTN+'">⌫</button>'
+      +'<button id="grimReplay" style="'+GRIMBTN+'">🔊 ще раз</button>'
+    +'</div>'
+    +'<div id="grimRes" style="min-height:40px;max-width:min(96vw,560px);width:100%;box-sizing:border-box;background:rgba(10,20,40,.6);border:1px solid #3b2f6b;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5">Набери літеру — і тут розгорнуться елементи на неї.</div>'
+    +'<div id="grimIdx" style="max-width:min(96vw,560px);display:flex;flex-wrap:wrap;gap:3px;justify-content:center"></div>'
+    +'<div id="grimRef" style="display:none;max-width:min(96vw,560px);box-sizing:border-box;font-size:11px;line-height:1.9;color:#cbd5e1;background:rgba(10,20,40,.5);border:1px solid #243149;border-radius:10px;padding:10px 12px"></div>'
+    +'<div style="display:flex;gap:8px">'
+      +'<button id="grimRefBtn" style="'+GRIMBTN+'">📜 абетка</button>'
+      +'<button id="grimClose" style="'+GRIMBTN+'border-color:#ef4444;color:#fca5a5">✕ закрити</button>'
+    +'</div>';
+  document.body.appendChild(p); GRIM.el=p;
+  const bg=(e)=>e.target && e.target.closest && e.target.closest('button,#grimRes,#grimRef,#grimIdx');
+  p.addEventListener('touchstart',(e)=>{ if(bg(e)) return; GRIM.t0=performance.now(); },{passive:true});
+  p.addEventListener('touchend',(e)=>{ if(bg(e)) return; const d=performance.now()-GRIM.t0; if(d>1200||d<=0) return; grimAdd(d<280?'.':'-'); },{passive:true});
+  p.addEventListener('mousedown',(e)=>{ if(bg(e)) return; GRIM.t0=performance.now(); });
+  p.addEventListener('mouseup',(e)=>{ if(bg(e)) return; const d=performance.now()-GRIM.t0; if(d>1200||d<=0) return; grimAdd(d<280?'.':'-'); });
+  const B=(id,fn)=>{ const b=p.querySelector('#'+id); if(b) b.onclick=(ev)=>{ ev.stopPropagation(); fn(); }; };
+  B('grimDot',()=>grimAdd('.')); B('grimDash',()=>grimAdd('-')); B('grimEnter',()=>grimCommit()); B('grimBack',()=>grimDel());
+  B('grimReplay',()=>grimSpeakFound()); B('grimRefBtn',()=>grimToggleRef()); B('grimClose',()=>grimOpen(false));
+  const idx=p.querySelector('#grimIdx'); if(idx) idx.onclick=(ev)=>{ const s=ev.target.closest('[data-l]'); if(s){ const L=s.getAttribute('data-l'); if(GRIM.learned.includes(L)){ GRIM.found=L; grimRenderResult(L); grimSpeakFound(); grimRender(); } } };
+  return p; }
+function grimAdd(dd){ GRIM.sym+=dd; GRIM.lastT=performance.now(); try{ blip(dd==='.'?900:520, dd==='.'?0.06:0.15,'sine',0.13); }catch(e){} grimRender(); }
+function grimDel(){ GRIM.sym=GRIM.sym.slice(0,-1); try{ blip(300,0.04,'square',0.08); }catch(e){} grimRender(); }
+function grimCommit(){ const sym=GRIM.sym; GRIM.sym=''; if(!sym){ grimRender(); return; }
+  const L=MORSE_AB[sym];
+  if(!L){ GRIM.found=null; const r=GRIM.el&&GRIM.el.querySelector('#grimRes'); if(r) r.innerHTML='<b style="letter-spacing:.2em">'+grimDD(sym)+'</b> — немає такої літери в морзе. Спробуй іншу комбінацію.'; try{ ttsSpeak('Немає такої літери. Спробуй іншу комбінацію.',{}); }catch(e){} try{ blip(160,0.3,'sawtooth',0.14); }catch(e){} grimRender(); return; }
+  grimFound(L); }
+function grimFound(L){ GRIM.found=L; if(!GRIM.learned.includes(L)){ GRIM.learned.push(L); grimSave(); } grimRenderResult(L); grimSpeakFound(); grimRender(); try{ blip(680,0.12,'sine',0.14); }catch(e){} }
+function grimRenderResult(L){ const p=GRIM.el; if(!p) return; const r=p.querySelector('#grimRes'); if(!r) return;
+  const code=MORSE_OF[L]||'', els=grimGroup(L);
+  let h='<div style="font-size:16px;color:#fde68a">Літера <b>'+L+'</b> &nbsp; <span style="letter-spacing:.2em;color:#c4b5fd">'+grimDD(code)+'</span></div>';
+  if(!els.length){ h+='<div style="color:#8b93a7;margin-top:4px">Елементів на «'+L+'» немає. Код літери вивчено.</div>'; r.innerHTML=h; return; }
+  h+='<div style="margin-top:6px;color:#9ca3af;font-size:11px">Елементи на «'+L+'» ('+els.length+'):</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">';
+  for(const s of els){ const nm=GRIM_EL[s], act=GRIM_ACTIVE[s];
+    h+='<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid rgba(60,70,100,.3);padding:2px 0">'
+      +'<span><b style="color:'+(act?'#9ff0ff':'#e9d8ff')+'">'+s+'</b> '+(act?'⚡':'')+' <span style="color:#9ca3af">'+nm+'</span></span>'
+      +'<span style="letter-spacing:.14em;color:#c4b5fd;font-size:12px;white-space:nowrap">'+grimSymMorse(s)+'</span></div>'; }
+  h+='</div><div style="color:#64748b;font-size:10px;margin-top:5px">⚡ — діє як закляття тут і зараз. Двобуквений символ = перша / друга літери поспіль.</div>';
+  r.innerHTML=h; }
+function grimSpeakFound(){ const L=GRIM.found; if(!L) return; const code=MORSE_OF[L]||'', els=grimGroup(L);
+  let say='Літера '+L+'. '+grimSpeakMorse(code)+'. '+(els.length?('Елементи: '+els.map(s=>GRIM_EL[s]).join(', ')+'.'):'Елементів немає.');
+  try{ ttsSpeak(say,{}); }catch(e){} }
+function grimToggleRef(){ GRIM.showRef=!GRIM.showRef; const p=GRIM.el, rf=p&&p.querySelector('#grimRef'); if(!rf) return;
+  if(GRIM.showRef){ const AZ='ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    rf.innerHTML='<div style="color:#fde68a;margin-bottom:4px">АБЕТКА МОРЗЕ (A–Z) — підглянути:</div>'+AZ.map(L=>'<span style="display:inline-block;min-width:92px"><b>'+L+'</b> '+grimDD(MORSE_OF[L]||'')+'</span>').join(''); rf.style.display='block'; }
+  else rf.style.display='none'; }
+function grimRender(){ const p=GRIM.el; if(!p) return;
+  const inp=p.querySelector('#grimIn'); if(inp) inp.textContent=GRIM.sym?grimDD(GRIM.sym):'·';
+  const hint=p.querySelector('#grimHint'); if(hint) hint.innerHTML='Тап по полю: короткий «·», довгий «−» (або кнопки). Пауза чи ⏎ — пошук. <b>Код підбери сам</b>, або розгорни 📜 абетку.';
+  const idx=p.querySelector('#grimIdx'); if(idx){ let h=''; const AZ='ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    for(const L of AZ){ const learned=GRIM.learned.includes(L), cur=GRIM.found===L;
+      h+='<span data-l="'+L+'" style="display:inline-block;min-width:20px;text-align:center;padding:2px 3px;border-radius:4px;cursor:'+(learned?'pointer':'default')+';border:1px solid '+(cur?'#fde68a':learned?'#6d28d9':'#243149')+';background:'+(cur?'rgba(253,230,138,.18)':learned?'rgba(109,40,217,.2)':'rgba(10,20,40,.4)')+';color:'+(learned?'#e9d8ff':'#55607a')+';font-size:12px">'+(learned?L:'•')+'</span>'; }
+    idx.innerHTML=h; } }
+function grimOpen(v){ const want=(v!=null)?!!v:!GRIM.open; GRIM.open=want; const p=grimBuild(); p.style.display=want?'flex':'none';
+  if(want){ GRIM.sym=''; grimRender(); logE('📖 ГРИМУАР відкрито — набирай першу літеру елемента крапками й тире'); try{ showBanner('📖 ГРИМУАР МОРЗЕ — набери першу літеру елемента','#c4b5fd'); }catch(e){} try{ ttsSpeak('Гримуар. Набери першу літеру елемента крапками і тире. Пауза — пошук.',{}); }catch(e){} }
+  else logE('📖 ГРИМУАР закрито'); }
+window.grimOpen=grimOpen;
+setInterval(()=>{ try{ if(GRIM.open && GRIM.sym && performance.now()-GRIM.lastT>2500) grimCommit(); }catch(e){} }, 150);   // довга пауза (2,5 с) — щоб повільний набір не обривало; надійніше — ⏎
+setTimeout(()=>{ try{ const b=document.createElement('button'); b.id='grimBtn'; b.textContent='📖'; b.title='гримуар морзе — пошук літер';
+  b.style.cssText='position:fixed;top:6px;right:192px;z-index:16;font:inherit;font-size:14px;padding:4px 8px;background:#1a1340;border:1px solid #6d28d9;border-radius:8px;color:#e9d8ff';
+  document.body.appendChild(b); b.onclick=()=>grimOpen(true);
+  setInterval(()=>{ try{ b.style.display=(started && mode==='fighter' && !(window.LINK&&LINK.role))?'block':'none'; }catch(e){} }, 700);
+}catch(e){} }, 760);
+setTimeout(()=>{ try{ const b=document.createElement('button'); b.id='mGrim'; b.textContent='📖 ГРИМУАР МОРЗЕ (пошук літер)';
+  $('mNew').parentNode.insertBefore(b, $('mNew')); b.onclick=()=>{ closeMenu(); grimOpen(true); }; }catch(e){} }, 720);
+
 /* ════ ГУЧНОСТІ (07-15): 🎵 музика · ✨ ефекти · 🎙 голос гравців ════ */
 setTimeout(()=>{ try{
   const box=document.createElement('div');
