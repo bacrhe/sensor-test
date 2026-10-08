@@ -6696,7 +6696,8 @@ function commitStep(nx,ny,quiet){   // (09-22p) спільний крок: св�
   if(occ){
     if(quiet && (player._bumpT||0)>performance.now()) return false;   // безперервний біг — не спамити ударами об стіну
     player._bumpT=performance.now()+350;
-    blip(120,0.07,'square',0.12);
+    if(window.FEEL && FEEL.on && (occ.kind==='obstacle'||occ.kind==='edge')){ try{ const P0=player.mesh.position; spatialNoise(P0.x,1.2,P0.z,320,1.2,0.08,0.08); buzz([0,18]); }catch(e){} }   // (10-08c) руки на стіні — зупиняють долоні, не обличчя
+    else blip(120,0.07,'square',0.12);
     const _logOk = !quiet || (player._bumpLogT||0)<performance.now(); if(_logOk) player._bumpLogT=performance.now()+1500;
     if(occ.kind==='trail'){ if(_logOk) logE('шлейф: назад не пройти ('+nx+','+ny+')'); }
     else if(occ.kind==='obstacle' || occ.kind==='edge'){ if(_logOk) logE('стіна: ('+nx+','+ny+')'); }
@@ -6940,6 +6941,7 @@ function playerFreeMove(wx,wy,v,dt){
     if(!commitStep(tx,ty,true)){ if(tx!==P.gx && commitStep(tx,P.gy,true)){} else if(ty!==P.gy) commitStep(P.gx,ty,true); }
   }
   P.cx=clamp(nx,P.gx-0.49,P.gx+0.49); P.cy=clamp(ny,P.gy-0.49,P.gy+0.49);
+  try{ playerWallClamp(P); }catch(e){}   // (10-08c) тіло не впирається грудьми в стіну — зупиняється на VB_FEEL.gap
 }
 function contStop(){ if(player && player._cont){ if(typeof VB_FREE!=='undefined' && VB_FREE.on){ player.moveV=0; return; } player._cont=false; } }   // (09-22u) вільний рух — стоїмо там, де зупинились
 // мышь — для теста на десктопе
@@ -7354,7 +7356,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-08b · КИСТЬ У РИЗІ замість кубика: долоня, пальці по дві фаланги, великий — стискає руківʼя, порожня повертається долонею вгору й до себе, вільна — розкрита, на хваті кулак · ДАКТИЛЬ: кожна літера морзе (гра чи гримуар) — кисть показує жест латинської дактильної абетки на 0.9 с · 📖 ГРИМУАР МОРЗЕ (міні-гра) · ПІДВАЛ/ТАЙНИК не замикає (засув зсередини, відчинені двері — назавжди) · ІНВЕНТАР: ✋ вільні руки';
+const BUILD_TAG='2026-10-08c · КИСТІ: великий палець — з правильного боку (права: долоня до обличчя — великий праворуч) · СПРАВЖНІЙ ХВАТ: руківʼя крізь кулак, вказівний біля гарди, кисть обертається разом із клинком, рука дотягується; дворучне — обидві кисті · НАЩУПУВАННЯ СТІНИ: вільні руки біля стіни — тіло стає за 0.45 м, долоні на стіні там, куди показуєш (у 1-й особі — куди дивишся), механізм під долонею — хват; у стіну більше не впираєшся грудьми · ЗАСУВ у тайнику — на несучій східній стіні; механізм без стіни не висить у повітрі · ДАКТИЛЬ ІЗ РУХОМ: кисть перед очима, G/H убік, P/Q униз, C/O боком, J — гачок із поворотом, Z — зигзаг · МЕНЮ: «ТАЙНИК: зачинити двері знову» — перевірити важіль і засув';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -8189,7 +8191,7 @@ function frame(now){
     }
     updateAvatarMesh(player, now);
     try{ rigPlayerTick(dt); }catch(e){ if(!window.__rigErr){ window.__rigErr=1; logE('VB_RIG: '+e.message); } }   // (09-21) новий риг гравця у грі
-    try{ freeTick(dt); mechTick(dt); rigHandsTick(dt); }catch(e){ if(!window.__freeErr){ window.__freeErr=1; logE('ВІЛЬНІ РУКИ: '+e.message); } }   // (10-07g) вільні руки й механізми
+    try{ freeTick(dt); mechTick(dt); }catch(e){ if(!window.__freeErr){ window.__freeErr=1; logE('ВІЛЬНІ РУКИ: '+e.message); } }   // (10-07g) вільні руки й механізми
     try{ stepFollowTick(dt); }catch(e){ if(!window.__stepErr){ window.__stepErr=1; logE('КРОК ЗА МЕЧЕМ: '+e.message); } }   // (10-05q)
     try{ probeTick(dt); }catch(e){ if(!window.__probeErr){ window.__probeErr=1; logE('ПРОБА: '+e.message); } }   // (10-06t)
     try{ weaponKindTick(); weaponFallTick(dt); }catch(e){ if(!window.__wpnErr){ window.__wpnErr=1; logE('ВАГА: '+e.message); } }   // (10-06u)
@@ -8204,6 +8206,7 @@ function frame(now){
     if(clinch.active) renderClinchGuideAndAstral();   // бледный ориентир + живой астрал
     else if(WALLLOCK.active) renderClinchGuideAndAstral(WALLLOCK.mis, WALLLOCK.lockLen);   // (09-13d) зачеп: силует + астрал
     else updateBlade(player);
+    try{ rigHandsVisual(dt); }catch(e){ if(!window.__hvPErr){ window.__hvPErr=1; logE('КИСТІ: '+e.message); } }   // (10-08c) кисті: хват руківʼя, дактиль, стіна — після всієї фізики
   }else if(mode==='spectator'){
     SPEC.bannerT-=dt; const pr=(VB_CAM.duelSpec>0)?duelPairPick():null;                   // (10-06s) згори, але дуель — збоку
     if(pr) duelCamApply(pr, dt); else { SPEC.pair=null; specOrbitTick(dt); }
@@ -8799,21 +8802,24 @@ function labLabel(text,color,scale){
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,transparent:true}));
   sp.scale.set((scale||0.5)*2,(scale||0.5)*0.5,1); sp.userData.label=true; return sp;
 }
-/* (10-08b) КИСТЬ У РИЗІ замість кубика: долоня + 4 пальці по дві фаланги + великий, у системі зап'ястя.
-   Пальці йдуть уздовж −Y (продовжують передпліччя), долоня дивиться у +Z (туди, де руків'я); великий — з боку тіла.
-   f=[вказівний, середній, підмізинний, мізинець] 0 — прямий, 1 — зігнутий; t — великий; sp — розведення (V). */
-function labBuildHand(side,s,mat){ const sx=(side==='RIGHT')?-1:1; const g=new THREE.Group(); g.name=side.toLowerCase()+'_hand_rig';
+/* (10-08c) КИСТЬ У РИЗІ: долоня + 4 пальці по дві фаланги + великий, у системі запʼястя. Пальці — уздовж −Y (продовжують
+   передпліччя), долоня — у +Z. ПРАВА кисть: великий і вказівний — з боку −X (назовні від тіла, як у людини в анатомічній позі),
+   мізинець — з боку тіла (+X); долоня до обличчя — великий праворуч. Ліва — дзеркально.
+   f=[вказівний, середній, підмізинний, мізинець] 0 — прямий, 1 — зігнутий; t — великий (згин через долоню); sp — розведення (V/K/W, R — навхрест);
+   ta — відведення великого (0 — уздовж вказівного, 1 — убік, «L»); hk — гачок вказівного (X). */
+function labBuildHand(side,s,mat){ const sx=(side==='RIGHT')?1:-1; const g=new THREE.Group(); g.name=side.toLowerCase()+'_hand_rig';
   g.add(labBox(side.toLowerCase()+'_palm',0.08*s,0.09*s,0.028*s,mat,0,-0.045*s,0.008*s));
-  const fingers=[]; const fx=[0.03,0.01,-0.01,-0.03], fl=[1.06,1.12,1.0,0.84];   // x: від великого пальця (−sx·… → +X для правої) до мізинця
+  const fingers=[]; const fx=[0.03,0.01,-0.01,-0.03], fl=[1.06,1.12,1.0,0.84];   // x: вказівний (−sx·0.03 — до великого) … мізинець
   for(let i=0;i<4;i++){ const b=new THREE.Group(); b.position.set(-sx*fx[i]*s,-0.09*s,0.006*s); const l1=0.044*s*fl[i], l2=0.032*s*fl[i];
     b.add(labBox(side[0]+'f'+i+'a',0.016*s,l1,0.02*s,mat,0,-l1/2,0)); const t=new THREE.Group(); t.position.y=-l1; t.add(labBox(side[0]+'f'+i+'b',0.015*s,l2,0.018*s,mat,0,-l2/2,0)); b.add(t); g.add(b); fingers.push({b,t}); }
-  const th=new THREE.Group(); th.position.set(-sx*0.044*s,-0.028*s,0.014*s); th.rotation.z=-sx*0.95; const tl=0.048*s;
+  const th=new THREE.Group(); th.position.set(-sx*0.044*s,-0.028*s,0.014*s); const tl=0.048*s;
   th.add(labBox(side[0]+'thumb_a',0.018*s,tl,0.022*s,mat,0,-tl/2,0)); const tt=new THREE.Group(); tt.position.y=-tl; tt.add(labBox(side[0]+'thumb_b',0.016*s,0.03*s,0.02*s,mat,0,-0.015*s,0)); th.add(tt); g.add(th);
-  const H={ g, fingers, thumb:th, sx, cur:{f:[0.15,0.15,0.15,0.15],t:0.15,sp:0}, sup:0,
-    set(f,t,sp){ for(let i=0;i<4;i++){ const c=clamp(f[i],0,1); fingers[i].b.rotation.x=-c*1.45; fingers[i].t.rotation.x=-c*1.5; fingers[i].b.rotation.z=(sp||0)*(1-c)*(i===0?-sx*0.32:i===1?sx*0.14:0); }
-      const tc=clamp(t,0,1); th.rotation.x=-tc*1.1; tt.rotation.x=-tc*0.9; },
-    pose(tg,k){ const c=this.cur; for(let i=0;i<4;i++) c.f[i]+=(tg.f[i]-c.f[i])*k; c.t+=(tg.t-c.t)*k; c.sp+=((tg.sp||0)-c.sp)*k; this.set(c.f,c.t,c.sp); } };
-  H.set(H.cur.f,H.cur.t,0); return H; }
+  const H={ g, fingers, thumb:th, sx, cur:{f:[0.85,0.85,0.85,0.85],t:0.8,sp:0,ta:0.5,hk:0}, sup:0,
+    set(f,t,sp,ta,hk){ for(let i=0;i<4;i++){ const c=clamp(f[i],0,1), ct=(i===0&&hk>0)?clamp(c+(1-c)*hk,0,1):c; fingers[i].b.rotation.x=-c*1.45; fingers[i].t.rotation.x=-ct*1.5;
+        fingers[i].b.rotation.z=(sp||0)*(1-c)*(i===0?-sx*0.32:i===1?sx*0.14:0); }
+      const tc=clamp(t,0,1), so=0.25+0.95*clamp(ta??0.7,0,1); th.rotation.z=-sx*(so*(1-tc)-0.45*tc); th.rotation.x=-tc*1.0; tt.rotation.x=-tc*0.9; },
+    pose(tg,k){ const c=this.cur; for(let i=0;i<4;i++) c.f[i]+=(tg.f[i]-c.f[i])*k; c.t+=(tg.t-c.t)*k; c.sp+=((tg.sp||0)-c.sp)*k; c.ta+=((tg.ta??0.7)-c.ta)*k; c.hk+=((tg.hk||0)-c.hk)*k; this.set(c.f,c.t,c.sp,c.ta,c.hk); } };
+  H.set(H.cur.f,H.cur.t,0,H.cur.ta,0); return H; }
 /* CHARACTER_BASE: один ріг для всіх профілів. */
 function labBuildRig(profileName){
   const P=Object.assign({},RIG_PROFILES.PLAYER,RIG_PROFILES[profileName]||{});
@@ -9243,7 +9249,9 @@ const VB_TWO={ bodyL:0.33, tau:0.25 };
 window.VB_TWO=VB_TWO;
 /* (10-07g) вільні руки: налаштування — тут, щоб повзунки (SENS_ROOTS) бачили їх при завантаженні */
 const VB_HANDS={ on:1, grabR:0.24, letGo:0.5, autoDraw:1, beacon:1, reach:0.92, ray:0.5 };
-const VB_FINGERS={ on:1, supUp:1.0, supIn:0.9, supMax:80, dactT:0.9, restF:0.22, restT:0.18 };   // (10-08b) кисть із пальцями: супінація порожньої долоні, дактиль — тут, щоб SENS_ROOTS бачив
+const VB_FINGERS={ on:1, supUp:1.0, supIn:0.9, supMax:80, dactT:0.9, restF:0.22, restT:0.18, follow:0.8, twMax:70, stretchMax:1.2, sepMin:0.045, penTol:0.006, gapMax:0.035, gripTw:45, gcY:0.08, gcZ:0.035, signF:0.34, signD:0.11, signS:0.10 };
+const VB_FEEL={ on:1, dist:0.95, off:1.15, gap:0.45, snap:0.2, approach:0.6, say:1, aimD:0.7 };   // (10-08c) нащупування стіни вільними руками
+window.VB_FEEL=VB_FEEL; window.VB_FINGERS=VB_FINGERS;   // (10-08b) кисть із пальцями: супінація порожньої долоні, дактиль — тут, щоб SENS_ROOTS бачив
 
 window.VB_HANDS=VB_HANDS;
 const TWOB={ yL:null, hold:null, d:0, w:0 }; window.TWOB=TWOB;
@@ -11518,6 +11526,7 @@ function tetherTick(S){
 function rigPlayerTick(dt){
   if(!VB_RIG.on){ if(VB_RIG.player){ VB_RIG.player.obj.visible=false; if(player.blade) player.blade.visible=true; if(player.blade2) player.blade2.visible=true; } return; }
   const S=rigPlayerEnsure(); if(!S) return;
+  try{ rigArmsRestore(S.rig); }catch(e){}   // (10-08c) візуальне подовження руки минулого кадру — геть до фізики
   if(handRole() && VB_LINK2.mirror>0){ S.obj.visible=false; player.mesh.visible=false; if(player.blade) player.blade.visible=false; if(player.blade2) player.blade2.visible=false; return; }   // (10-07f) ДРУГА РУКА: власного тіла й фізики немає — на екрані те саме тіло, що й на головному
   const obj=S.obj; obj.visible=!player.dead && !(typeof clinch!=='undefined' && clinch.active);
   S.rig.sword.root.visible=!player.disarmed;
@@ -12211,7 +12220,7 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
-const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS,VB_FEEL};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -12233,7 +12242,7 @@ const SENS_SLIDERS=[
   ['VB_FPV.pDead','Перша особа: мертва зона нахилу погляду, °',0,25,1],['VB_FPV.pTau','Перша особа: погляд угору-вниз — плавність, с',0.05,0.8,0.01],['VB_FPV.flatYaw','Перша особа: телефон лежить — курс за клинком (1) / крізь екран (0)',0,1,1],
   ['VB_SLIDE.on','Лезо по лезу: іскри й ударна хвиля (1/0)',0,1,1],['VB_SLIDE.vWave','Ударна хвиля: середня швидкість ковзання, м/с',0.3,3,0.05],['VB_SLIDE.cover','Ударна хвиля: частка леза від гарди до вістря',0.3,0.9,0.05],['VB_SLIDE.cd','Ударна хвиля: перезарядка, с',0.5,8,0.5],
   ['VB_LINK2.mirror','Друга рука: показує те саме тіло з обома клинками (1) / власне (0)',0,1,1],
-  ['VB_FINGERS.supUp','Кисть порожня: долоня вгору (частка)',0,1.5,0.05],['VB_FINGERS.supIn','Кисть порожня: долоня до себе (частка)',-1.5,1.5,0.05],['VB_FINGERS.dactT','Дактиль: тримати жест, с',0.3,3,0.1],['VB_FINGERS.on','Кисть із пальцями й дактиль (1/0)',0,1,1],
+  ['VB_FINGERS.supUp','Кисть порожня: долоня вгору (частка)',0,1.5,0.05],['VB_FINGERS.supIn','Кисть порожня: долоня до себе (частка)',-1.5,1.5,0.05],['VB_FINGERS.dactT','Дактиль: тримати жест, с',0.3,3,0.1],['VB_FINGERS.follow','Хват: кисть повертається з клинком навколо його осі (частка)',0,1,0.05],['VB_FINGERS.gripTw','Хват: кромка відносно пальців, °',-180,180,5],['VB_FINGERS.signF','Дактиль: кисть перед очима на, м',0.2,0.6,0.01],['VB_FINGERS.signD','Дактиль: нижче очей на, м',-0.1,0.3,0.01],['VB_FEEL.on','Нащупування стіни вільними руками (1/0)',0,1,1],['VB_FEEL.dist','Нащупування: стіна ближче за, м',0.6,1.4,0.05],['VB_FEEL.gap','Тіло не ближче до стіни за, м',0.3,0.57,0.01],['VB_FEEL.snap','Нащупування: механізм під долонею в межах, м',0.08,0.4,0.01],['VB_FINGERS.on','Кисть із пальцями й дактиль (1/0)',0,1,1],
   ['VB_HANDS.grabR','Вільні руки: хват — рука ближче за, м',0.12,0.6,0.01],['VB_HANDS.ray','Вільні руки: рука дістає вздовж телефона до, м',0.15,1,0.01],['VB_HANDS.reach','Вільні руки: як далеко тягнеться рука (частка)',0.55,1,0.01],['VB_HANDS.autoDraw','Вільні руки: вдарили — зброя сама в руки (1/0)',0,1,1],['VB_HANDS.beacon','Вільні руки: механізми цокають (1/0)',0,1,1],
   ['VB_TWO.bodyL','Дві руки: корпус і камера повертаються до лівої руки на частку (0 — лише за правою, ⅓ — типово)',0,0.5,0.01],
   ['VB_PRESS.on','Свої клинки: тиск крізь — упор, витривалість, розсинхрон, випадання (1/0)',0,1,1],['VB_PRESS.yieldL','Тиск: лівий клинок пружно відхиляється до, °',5,60,1],['VB_PRESS.drain','Тиск: витривалість тане, од/с',0,40,1],
@@ -13069,7 +13078,7 @@ function freeHandPt(h, target){ if(h.fake) return h.tip.clone(); const a=h.palm.
   const t=clamp(target.clone().sub(a).dot(ab)/Math.max(1e-6,ab.lengthSq()),0,1); return a.add(ab.multiplyScalar(t)); }
 function freeTick(dt){
   if(handRole()){ try{ const fh=!!(LINK.body&&LINK.body.fh&&(Date.now()-(LINK.body.t||0))<4000); if(fh!==FREE.on){ FREE.on=fh; freeBtnSync(); } mechApplyRemote(LINK.body&&LINK.body.mech); }catch(e){} return; }
-  if(!FREE.on){ for(const k of ['R','L']) if(FREE.grab[k]) mechRelease(k,'зброя в руках'); return; }
+  if(!FREE.on){ for(const k of ['R','L']) if(FREE.grab[k]) mechRelease(k,'зброя в руках'); try{ const S0=VB_RIG.player; if(S0&&S0.rig) feelTick(dt,S0); }catch(e){} return; }
   if(player.dead || mode!=='fighter'){ freeSet(false,player.dead?'загибель':'інший режим'); return; }
   if((player.hp||0)>FREE.hp0) FREE.hp0=player.hp;
   if(VB_HANDS.autoDraw>0 && (player.hp||0)<FREE.hp0-0.5){ freeSet(false,'тебе вдарили — зброя сама в руках'); return; }
@@ -13078,42 +13087,253 @@ function freeTick(dt){
   freeSwordShow(S.rig.sword,false,true); if(S.rig.swordL) freeSwordShow(S.rig.swordL,false,true);
   FREE.hands.R=S.rig.sword.root.visible?freeHandOf(S.rig.sword,S,'R'):null;
   FREE.hands.L=(S.swordLOn&&S.rig.swordL&&S.rig.swordL.root.visible)?freeHandOf(S.rig.swordL,S,'L'):null;
+  try{ feelTick(dt,S); feelHands(); }catch(e){ if(!window.__feelErr){ window.__feelErr=1; logE('НАЩУПУВАННЯ: '+e.message); } }   // (10-08c) стіна попереду — долоні на стіні
   for(const k of ['R','L']){ const h=FREE.hands[k]; if(!h){ FREE.near[k]=null; continue; }
     const g=FREE.grab[k]; FREE.near[k]=g?null:mechNearest(h,(VB_HANDS.grabR||0.24)*2.2,k); }
   mechHandsTick(dt); }
-/* ═══ (10-08b) КИСТІ РИГА: пози пальців щокадру + ДАКТИЛЬ (жести латинської дактильної абетки на літери морзе) ═══
-   У бою кисть стискає руків'я; порожня — напіврозкрита, долоня повернута вгору й до себе (супінація за VB_FINGERS);
-   вільні руки — розкрита, біля механізму стискається, на хваті — кулак; літера морзе → кисть на 0.9 с показує жест. */
-const DACTYL={ A:{f:[1,1,1,1],t:.15}, B:{f:[0,0,0,0],t:1}, C:{f:[.5,.5,.5,.5],t:.5}, D:{f:[0,.8,.8,.8],t:.65}, E:{f:[.85,.85,.85,.85],t:.9},
-  F:{f:[.75,0,0,0],t:.7}, G:{f:[0,1,1,1],t:0}, H:{f:[0,0,1,1],t:.7}, I:{f:[1,1,1,0],t:.7}, J:{f:[1,1,1,0],t:.7}, K:{f:[0,.35,1,1],t:.3,sp:.6},
-  L:{f:[0,1,1,1],t:0}, M:{f:[.75,.75,.75,1],t:1}, N:{f:[.75,.75,1,1],t:1}, O:{f:[.6,.6,.6,.6],t:.6}, P:{f:[0,.35,1,1],t:.3,sp:.6}, Q:{f:[0,1,1,1],t:0},
-  R:{f:[0,0,1,1],t:.7,sp:-.5}, S:{f:[1,1,1,1],t:.95}, T:{f:[.9,1,1,1],t:.75}, U:{f:[0,0,1,1],t:.7}, V:{f:[0,0,1,1],t:.7,sp:1}, W:{f:[0,0,0,1],t:.7,sp:.6},
-  X:{f:[.5,1,1,1],t:.6}, Y:{f:[1,1,1,0],t:0}, Z:{f:[0,1,1,1],t:.65} };
-const DACT={ L:null, until:0, k:'R', n:0 }; window.DACT=DACT;
+/* ═══ (10-08c) КИСТІ: ХВАТ РУКІВʼЯ · ДАКТИЛЬ ІЗ РУХОМ · НАЩУПУВАННЯ СТІНИ ═══
+   Візуальний прохід — НАПРИКІНЦІ кадру, після всієї фізики (наступного кадру поза й IK самі скидають суглоби, у фізику не тече):
+   · ХВАТ: кисть обхоплює руківʼя — вказівний біля гарди, мізинець до навершя, руківʼя проходить крізь кулак; кисть повертається
+     разом із клинком навколо його осі (VB_FINGERS.follow — частка), рука дотягується IK-ом до запʼястя. Дворучне — обидві кисті.
+   · ДАКТИЛЬ: кисть підноситься перед обличчям (у 1-й особі — перед камерою), долоня від себе; форма пальців + орієнтація
+     (G/H — пальці вбік, P/Q — униз, C/O — боком) + рух (J — гачок униз із поворотом долоні, Z — зигзаг вказівним); кожна літера — легкий поштовх.
+   · НАЩУПУВАННЯ: вільні руки й стіна попереду (≤ VB_FEEL.dist) — тіло підходить до стіни на VB_FEEL.gap, долоні лягають на стіну там,
+     куди показує телефон; ведеш — ковзають із шерехом; механізм під долонею (важіль, засув, колесо, щабель) — «нащупав» і хват;
+     тягнеш долоню по стіні — тягнеш механізм. Ближче за gap тіло до стіни не підходить — не впираєшся грудьми. */
+const DACTYL={
+  A:{f:[1,1,1,1],t:0,ta:0}, B:{f:[0,0,0,0],t:1,ta:.3}, C:{f:[.45,.45,.45,.45],t:.4,ta:.7,ori:'side'}, D:{f:[0,.85,.85,.85],t:.7,ta:.4},
+  E:{f:[.85,.85,.85,.85],t:.95,ta:.3}, F:{f:[.75,0,0,0],t:.65,ta:.5,sp:.5}, G:{f:[0,1,1,1],t:0,ta:.15,ori:'horiz'}, H:{f:[0,0,1,1],t:.7,ta:.3,ori:'horiz'},
+  I:{f:[1,1,1,0],t:.8,ta:.3}, J:{f:[1,1,1,0],t:.8,ta:.3,mv:'J'}, K:{f:[0,.35,1,1],t:.3,ta:.5,sp:.6}, L:{f:[0,1,1,1],t:0,ta:1},
+  M:{f:[.8,.8,.8,1],t:1,ta:.2}, N:{f:[.8,.8,1,1],t:1,ta:.2}, O:{f:[.6,.6,.6,.6],t:.6,ta:.6,ori:'side'}, P:{f:[0,.35,1,1],t:.3,ta:.5,sp:.6,ori:'down'},
+  Q:{f:[0,1,1,1],t:0,ta:.15,ori:'down'}, R:{f:[0,0,1,1],t:.7,ta:.3,sp:-.6}, S:{f:[1,1,1,1],t:.95,ta:.3}, T:{f:[.9,1,1,1],t:.75,ta:.35},
+  U:{f:[0,0,1,1],t:.7,ta:.3}, V:{f:[0,0,1,1],t:.7,ta:.3,sp:1}, W:{f:[0,0,0,1],t:.7,ta:.3,sp:.6}, X:{f:[.3,1,1,1],t:.7,ta:.3,hk:1},
+  Y:{f:[1,1,1,0],t:0,ta:1}, Z:{f:[0,1,1,1],t:.7,ta:.3,mv:'Z'} };
+const DACT={ L:null, t0:0, until:0, dur:0.9, k:'R', side:'RIGHT', n:0 }; window.DACT=DACT;
 function dactylShow(L, src){ if(!DACTYL[L]) return false; if(handRole()) return false; const S=VB_RIG.player; if(!S||!S.rig||!S.rig.hands) return false;
-  const leftFree=!(S.swordLOn || (typeof weaponHands==='function' && weaponHands()===2));
-  const k=(FREE.on)?'R':(leftFree?'L':null); if(!k){ logE('ДАКТИЛЬ '+L+': обидві руки на зброї — жест не показую'); return false; }
-  DACT.L=L; DACT.k=k; DACT.until=performance.now()+(VB_FINGERS.dactT||0.9)*1000; DACT.n++;
-  logE('ДАКТИЛЬ: '+L+' ('+(k==='R'?'права':'ліва')+' кисть'+(src?', '+src:'')+')'); return true; }
+  const main=S.mirror?'LEFT':'RIGHT', second=S.mirror?'RIGHT':'LEFT';
+  const secondBusy=!FREE.on && !!(S.swordLOn || (typeof weaponHands==='function' && weaponHands()===2));
+  const side=FREE.on?main:(secondBusy?null:second);
+  if(!side){ logE('ДАКТИЛЬ '+L+': обидві руки на зброї — жест не показую'); return false; }
+  const D=DACTYL[L], dur=D.mv?1.4:(VB_FINGERS.dactT||0.9);
+  DACT.L=L; DACT.side=side; DACT.k=(side===main)?'R':'L'; DACT.t0=performance.now(); DACT.dur=dur; DACT.until=DACT.t0+dur*1000; DACT.n++;
+  logE('ДАКТИЛЬ: '+L+' ('+(side==='RIGHT'?'права':'ліва')+' кисть'+(D.mv?', рух '+D.mv:'')+(D.ori?', '+({side:'боком',horiz:'пальці вбік',down:'униз'}[D.ori]):'')+(src?', '+src:'')+')'); return true; }
 window.dactylShow=dactylShow;
-const _HP_GRIP={f:[.95,.95,.95,.95],t:.85}, _HP_FIST={f:[1,1,1,1],t:.9}, _HP_OPEN={f:[.1,.1,.1,.1],t:.1};
-function rigHandsTick(dt){ if(!(VB_FINGERS.on>0)) return; const S=VB_RIG.player; if(!S||!S.rig||!S.rig.hands) return; const Hs=S.rig.hands; if(!Hs.R&&!Hs.L) return;
-  const now=performance.now(), kk=clamp(dt*12,0,1), rest={f:[VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF],t:VB_FINGERS.restT};
-  const two=(typeof weaponHands==='function' && weaponHands()===2);
-  for(const k of ['R','L']){ const H=Hs[k]; if(!H) continue; let tg=rest, sup=0;
-    const holds=!FREE.on && (k==='R' || S.swordLOn || two);
-    if(DACT.L && DACT.k===k && now<DACT.until) tg=DACTYL[DACT.L];
-    else if(holds) tg=_HP_GRIP;
-    else if(FREE.on){ const g=FREE.grab[k], nb=FREE.near[k]; tg=g?_HP_FIST:(nb?{f:[.5,.5,.5,.5].map(v=>v+0.12*Math.sin(now/120)),t:.45}:_HP_OPEN); }
+const _HP_GRIP={f:[.95,.95,.95,.95],t:.85,ta:.45}, _HP_FIST={f:[1,1,1,1],t:.9,ta:.4}, _HP_OPEN={f:[.1,.1,.1,.1],t:.1,ta:.7}, _HP_FLAT={f:[.04,.04,.04,.04],t:.12,ta:.8}, _HP_HALF={f:[.5,.5,.5,.5],t:.45,ta:.5};
+const _hvV=THREE.Vector3, _hvQ=THREE.Quaternion;
+function hvSigned(a,b,ax){ return Math.atan2(new _hvV().crossVectors(a,b).dot(ax), a.dot(b)); }
+/* кисть зі світових напрямів: пальці (від запʼястя) і нормаль долоні — права трійка (xw = yw × zw) для обох рук */
+function hvHandQ(E2, pN){ const yw=E2.clone().negate().normalize(); const zw=pN.clone().sub(yw.clone().multiplyScalar(pN.dot(yw))); if(zw.lengthSq()<1e-8) zw.set(0,0,1); zw.normalize();
+  const xw=new _hvV().crossVectors(yw,zw).normalize(); return new _hvQ().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xw,yw,zw)); }
+function hvWristNow(S, side){ const wr=S.rig.J[side+'_WRIST']; S.rig.root.updateMatrixWorld(true); return { p:wr.getWorldPosition(new _hvV()), q:wr.getWorldQuaternion(new _hvQ()) }; }
+/* рука дотягується до запʼястя Pw (IK плече→лікоть→запʼястя; площина ліктя — та, що була), кисть — світова орієнтація Qh;
+   не дотягнулась — кисть лишається на місці (зсув у системі запʼястя), щоб не злітати з руківʼя */
+function hvArmTo(S, side, Pw, Qh, H, handAt){
+  const rig=S.rig, J=rig.J, dm=rig.dims, sh=J[side+'_SHOULDER'], el=J[side+'_ELBOW'], wr=J[side+'_WRIST'];
+  rig.root.updateMatrixWorld(true);
+  const Sh=sh.getWorldPosition(new _hvV()), E0=el.getWorldPosition(new _hvV());
+  const u=Pw.clone().sub(Sh); if(u.lengthSq()<1e-8) return; u.normalize();
+  const pole=E0.clone().sub(Sh); pole.sub(u.clone().multiplyScalar(pole.dot(u))); if(pole.lengthSq()<1e-6) pole.set(0,-1,0); pole.normalize();
+  const dd=Pw.distanceTo(Sh), Lm=(dm.upper+dm.fore)*0.995, kS=(dd>Lm)?Math.min(VB_FINGERS.stretchMax||1.2, dd/Lm*1.002):1;   // не дотягується — рука трохи довшає (рівномірно), щоб кисть лишилась на руківʼї
+  if(kS>1.0001) rigArmStretch(rig, side, kS);
+  labIK2(sh, el, wr, Pw, dm.upper*kS, dm.fore*kS, pole, null);
+  wr.parent.updateMatrixWorld(true);
+  wr.quaternion.copy(wr.parent.getWorldQuaternion(new _hvQ()).invert().multiply(Qh)); wr.updateMatrixWorld(true);
+  if(H){ const w=wr.getWorldPosition(new _hvV()), err=(handAt||Pw).clone().sub(w); H.g.rotation.set(0,0,0);
+    if(err.lengthSq()>1e-6) H.g.position.copy(err.applyQuaternion(Qh.clone().invert())); else H.g.position.set(0,0,0); H.g.updateMatrixWorld(true); } }
+function rigArmStretch(rig, side, k){ const J=rig.J, dm=rig.dims, el=J[side+'_ELBOW'], wr=J[side+'_WRIST'], sh=J[side+'_SHOULDER'], lo=side.toLowerCase();
+  el.position.y=-dm.upper*k; wr.position.y=-dm.fore*k; const um=sh.getObjectByName(lo+'_upperarm'), fm=el.getObjectByName(lo+'_forearm'); if(um) um.scale.y=k; if(fm) fm.scale.y=k; rig._armK=rig._armK||{}; rig._armK[side]=k; }
+function hvSaveArm(S, side){ const J=S.rig.J; return ['_SHOULDER','_ELBOW','_WRIST'].map(n=>J[side+n].quaternion.clone()); }
+function hvLoadArm(S, side, qs){ const J=S.rig.J; ['_SHOULDER','_ELBOW','_WRIST'].forEach((n,i)=>J[side+n].quaternion.copy(qs[i])); rigArmStretch(S.rig, side, 1); S.rig.root.updateMatrixWorld(true); }
+/* два клинки: найменша відстань «передпліччя ↔ передпліччя» і «клинок ↔ чуже передпліччя» (як у фізиці рук) */
+function hvSep(S){ const rig=S.rig, J=rig.J, sw=rig.sword, swL=rig.swordL; rig.root.updateMatrixWorld(true);
+  const fore=(s)=>{ const E=J[s+'_ELBOW'].getWorldPosition(new _hvV()), W=J[s+'_WRIST'].getWorldPosition(new _hvV()); return [E, W.clone().add(W.clone().sub(E).normalize().multiplyScalar(0.07))]; };
+  const seg=(w)=>[w.root.localToWorld(new _hvV(0,-w.gripL,0)), w.root.localToWorld(new _hvV(0,-w.gripL-w.bladeL*((w.blade&&w.blade.scale.y)||1),0))];
+  const FR=fore('RIGHT'), FL=fore('LEFT'), bR=seg(sw), bL=seg(swL);
+  return Math.min(segSegClosest(FR[0],FR[1],FL[0],FL[1]).dist, segSegClosest(bR[0],bR[1],FL[0],FL[1]).dist, segSegClosest(bL[0],bL[1],FR[0],FR[1]).dist); }
+function rigArmsRestore(rig){ if(!rig||!rig._armK) return; for(const side in rig._armK){ if(rig._armK[side]!==1) rigArmStretch(rig, side, 1); } }
+/* ХВАТ: вісь руківʼя a (до клинка) = лінія кісточок (мізинець→вказівний); пальці E2 ⟂ a — від плеча (найменший згин запʼястя),
+   повернуті до «природного» положення відносно кромки на частку follow (кромка — між кісточками середніх фаланг, gripTw від пальців) */
+function hvGrip(S, side, sw, sock, twK){
+  const s=S.rig.P.scale||1, swQ=sw.root.getWorldQuaternion(new _hvQ());
+  const a=new _hvV(0,-1,0).applyQuaternion(swQ).normalize(), e=new _hvV(1,0,0).applyQuaternion(swQ).normalize();
+  const G=sock.getWorldPosition(new _hvV()), Sh=S.rig.J[side+'_SHOULDER'].getWorldPosition(new _hvV()), right=(side==='RIGHT');
+  const E2r=e.clone().applyAxisAngle(a,(right?-1:1)*(VB_FINGERS.gripTw??45)*Math.PI/180);
+  let f=G.clone().sub(Sh); f.sub(a.clone().multiplyScalar(f.dot(a))); const fl=f.length(); let E2;
+  if(fl<1e-3) E2=E2r.clone();
+  else { f.multiplyScalar(1/fl); const mx=(VB_FINGERS.twMax??70)*Math.PI/180; E2=f.clone().applyAxisAngle(a, clamp(hvSigned(f,E2r,a)*clamp(VB_FINGERS.follow??0.8,0,1)*(twK??1),-mx,mx)); if(fl<0.12) E2.lerp(E2r,1-fl/0.12); }   // поворот кисті від «природного» — не більше twMax, щоб запʼястя лишалось з боку плеча; рука майже вздовж руківʼя — лише від клинка
+  E2.sub(a.clone().multiplyScalar(E2.dot(a))); if(E2.lengthSq()<1e-8) E2.copy(E2r); E2.normalize();
+  return hvGripQ(side, a, E2, G, s); }
+/* кисть на руківʼї з пальцями E2 ⟂ осі a: орієнтація й місце запʼястя (воно ходить по колу ~9 см навколо руківʼя) */
+function hvGripQ(side, a, E2, G, s){ const ax=new _hvV().crossVectors(a,E2), pN=(side==='RIGHT')?ax:ax.clone().negate();
+  const Qh=hvHandQ(E2,pN), gc=new _hvV(0,-(VB_FINGERS.gcY??0.08)*s,(VB_FINGERS.gcZ??0.035)*s).applyQuaternion(Qh);
+  return {Qh, Pw:G.clone().sub(gc), a, E2, G, s}; }
+function hvGripTurn(g, side, th){ return hvGripQ(side, g.a, g.E2.clone().applyAxisAngle(g.a, th), g.G, g.s); }
+/* ДАКТИЛЬ: місце й орієнтація кисті в момент ts від початку жесту; w — вага (плавний вхід і вихід) */
+function hvSign(S, side, now){
+  const D=DACTYL[DACT.L]; if(!D) return null; const s=S.rig.P.scale||1, right=(side==='RIGHT');
+  const ts=(now-DACT.t0)/1000, dur=DACT.dur; let fwd, up, rt, base;
+  if(fpvK()>0.5){ const cq=camera.getWorldQuaternion(new _hvQ()); fwd=new _hvV(0,0,-1).applyQuaternion(cq); up=new _hvV(0,1,0).applyQuaternion(cq); rt=new _hvV(1,0,0).applyQuaternion(cq);
+    const eye=fpvEyeWorld(new _hvV())||camera.getWorldPosition(new _hvV());
+    base=eye.clone().add(fwd.clone().multiplyScalar(VB_FINGERS.signF??0.34)).add(up.clone().multiplyScalar(-(VB_FINGERS.signD??0.11))).add(rt.clone().multiplyScalar((right?1:-1)*(VB_FINGERS.signS??0.10))); }
+  else { const rq=S.rig.root.getWorldQuaternion(new _hvQ()); fwd=new _hvV(0,0,1).applyQuaternion(rq); up=new _hvV(0,1,0); rt=new _hvV(-1,0,0).applyQuaternion(rq);
+    base=S.rig.root.localToWorld(new _hvV((right?-1:1)*0.17*s,1.42*s,0.34*s)); }
+  const med=rt.clone().multiplyScalar(right?-1:1);   // до середини тіла
+  let fing=up.clone(), pN=fwd.clone().multiplyScalar(Math.cos(0.61)).add(med.clone().multiplyScalar(Math.sin(0.61)));   // долоня від себе, на 35° до середини
+  if(D.ori==='side') pN=fwd.clone().multiplyScalar(Math.cos(1.35)).add(med.clone().multiplyScalar(Math.sin(1.35)));
+  else if(D.ori==='horiz'){ fing=med.clone().add(fwd.clone().multiplyScalar(0.25)).normalize(); pN=fwd.clone().negate(); }
+  else if(D.ori==='down'){ fing=up.clone().multiplyScalar(-0.8).add(fwd.clone().multiplyScalar(0.6)).normalize(); pN=fwd.clone().negate().add(up.clone().multiplyScalar(-0.4)).normalize(); }
+  const pos=base.clone(), p=clamp((ts-0.15)/Math.max(0.2,dur-0.35),0,1);
+  if(D.mv==='J'){ const d1=Math.min(1,p/0.6), d2=Math.max(0,(p-0.6)/0.4);
+    pos.add(up.clone().multiplyScalar(-0.08*d1+0.03*d2)).add(med.clone().multiplyScalar(0.05*d2)); pN.applyAxisAngle(fing,(right?1:-1)*p*Math.PI/2); }
+  else if(D.mv==='Z'){ const P=[[-0.05,0.04],[0.05,0.04],[-0.05,-0.04],[0.05,-0.04]], u=p*3, i=Math.min(2,Math.floor(u)), fr=u-i;
+    pos.add(rt.clone().multiplyScalar(P[i][0]+(P[i+1][0]-P[i][0])*fr)).add(up.clone().multiplyScalar(P[i][1]+(P[i+1][1]-P[i][1])*fr)); }
+  if(ts<0.22) pos.add(fwd.clone().multiplyScalar(0.025*Math.sin(Math.PI*ts/0.22)));   // легкий поштовх — літеру «поставлено»
+  const Qh=hvHandQ(fing,pN), pc=new _hvV(0,-0.05*s,0.01*s).applyQuaternion(Qh);
+  return {Qh, Pw:pos.sub(pc), w:clamp(Math.min(ts/0.15,(dur-ts)/0.15),0,1), p}; }
+/* ── НАЩУПУВАННЯ СТІНИ ── */
+const FEEL={ on:false, k:0, n:null, p0:null, gx:0, gy:0, dn:0, c:{R:null,L:null}, cv:{R:null,L:null}, act:{R:false,L:false}, found:{R:null,L:null}, fpt:{R:null,L:null}, vel:{R:0,L:0}, sayT:{}, scrT:0, onT:0, n2:0 };
+window.FEEL=FEEL;
+function feelRayBox(px,pz,dx,dz,cx,cz,h){ let t0=-Infinity, t1=Infinity, nx=0, nz=0;
+  if(Math.abs(dx)<1e-9){ if(px<cx-h||px>cx+h) return null; } else { let ta=(cx-h-px)/dx, tb=(cx+h-px)/dx, na=-1; if(ta>tb){ const q=ta; ta=tb; tb=q; na=1; } if(ta>t0){ t0=ta; nx=na; nz=0; } t1=Math.min(t1,tb); }
+  if(Math.abs(dz)<1e-9){ if(pz<cz-h||pz>cz+h) return null; } else { let ta=(cz-h-pz)/dz, tb=(cz+h-pz)/dz, na=-1; if(ta>tb){ const q=ta; ta=tb; tb=q; na=1; } if(ta>t0){ t0=ta; nx=0; nz=na; } t1=Math.min(t1,tb); }
+  if(t0>t1||t1<0) return null; return {t:Math.max(0,t0), nx, nz}; }
+function feelSolid(o){ return !!(o && o.alive && o.solid && !o.pass && (o.h||1)>=0.9); }
+/* найближча грань твердої стіни вздовж погляду тіла (5×5 клітинок навколо): нормаль — до гравця */
+function feelPick(P, fwd){
+  const g0x=Math.round((player._cont&&player.cx!=null)?player.cx:player.gx), g0y=Math.round((player._cont&&player.cy!=null)?player.cy:player.gy); let best=null;
+  for(let y=g0y-2;y<=g0y+2;y++) for(let x=g0x-2;x<=g0x+2;x++){ const o=obstacleAt(x,y); if(!feelSolid(o)) continue;
+    const r=feelRayBox(P.x,P.z,fwd.x,fwd.z,worldX(x),worldZ(y),0.43); if(!r) continue;
+    if(!best||r.t<best.t) best={t:r.t, gx:x, gy:y, n:new _hvV(r.nx,0,r.nz)}; }
+  if(!best) return null; best.p0=new _hvV(P.x+fwd.x*best.t, 1.0, P.z+fwd.z*best.t); return best; }
+/* тіло не підходить до грані твердої стіни ближче за VB_FEEL.gap (грань сусідньої клітинки — 0.57 від центру) */
+function playerWallClamp(P){ if(!P||P.cx==null) return; const g=(window.VB_FEEL&&VB_FEEL.gap!=null)?VB_FEEL.gap:0.45, lim=clamp(0.57-g,0,0.49);
+  if(feelSolid(obstacleAt(P.gx+1,P.gy))) P.cx=Math.min(P.cx,P.gx+lim); if(feelSolid(obstacleAt(P.gx-1,P.gy))) P.cx=Math.max(P.cx,P.gx-lim);
+  if(feelSolid(obstacleAt(P.gx,P.gy+1))) P.cy=Math.min(P.cy,P.gy+lim); if(feelSolid(obstacleAt(P.gx,P.gy-1))) P.cy=Math.max(P.cy,P.gy-lim); }
+/* механізм під долонею: відстань у площині стіни та точка хвату (ручка, обід, щабель) */
+function feelAnchor(m, C, W){ const n=W.n; if(m.n && m.n.dot(n)<0.7) return null;
+  const onPl=(X)=>X.clone().sub(n.clone().multiplyScalar(n.dot(X.clone().sub(W.p0)))), offPl=(X)=>Math.abs(n.dot(X.clone().sub(W.p0)));
+  const sn=(VB_FEEL.snap||0.2);
+  if(m.kind==='lever'){ if(m.done||offPl(m.pivot)>0.2) return null; const d=onPl(m.knobW).distanceTo(C); return d<=sn+0.05?{d, p:m.knobW.clone()}:null; }
+  if(m.kind==='valve'){ if(m.done||offPl(m.c)>0.25) return null; const c=onPl(m.c), v=C.clone().sub(c), dl=v.length(); if(dl>m.R+sn*0.8) return null;
+    if(dl<1e-3) v.copy(m.e1); v.setLength(m.R); return {d:Math.abs(dl-m.R)*0.5, p:m.c.clone().add(v)}; }
+  if(m.kind==='ladder'){ let best=null; for(const r of m.rungs){ if(offPl(r)>0.3) continue; const rp=onPl(r), dy=Math.abs(rp.y-C.y), lat=Math.abs(m.side.dot(C.clone().sub(rp)));
+      if(lat>0.32||dy>sn) continue; if(!best||dy<best.d){ const a=clamp(m.side.dot(C.clone().sub(r)),-0.2,0.2); best={d:dy, p:r.clone().add(m.side.clone().multiplyScalar(a))}; } } return best; }
+  return null; }
+function feelFoundFx(k, m, p){ try{ spatialBlip(p.x,p.y,p.z,({lever:1500,valve:760,ladder:980})[m.kind]||900,0.04,'square',0.11); }catch(e){} try{ buzz([0,25]); }catch(e){}
+  const now=performance.now(); if(now-(FEEL.sayT[m.id]||0)>4000){ FEEL.sayT[m.id]=now; logE('НАЩУПАВ: '+m.label+' ('+(k==='R'?'права':'ліва')+' долоня)');
+    if(VB_FEEL.say>0){ try{ ttsSpeak(String(m.label).split(' (')[0],{}); }catch(e){} } } }
+function feelOn(W){ const F=FEEL; if(F.on) return; F.on=true; F.found.R=F.found.L=null; F.fpt.R=F.fpt.L=null; F.n2++;
+  logE('НАЩУПУЮ: долоні на стіні ('+W.gx+','+W.gy+') — веди телефоном, долоня ковзає; механізм під нею — хват');
+  try{ const P=player.mesh.position; spatialNoise(P.x-W.n.x*0.45,1.2,P.z-W.n.z*0.45,260,1,0.12,0.12); buzz([0,30,40,20]); }catch(e){}
+  const now=performance.now(); if(VB_FEEL.say>0 && now-(F.onT||0)>15000){ F.onT=now; freeSay('Руки на стіні. Веди телефоном — шукай.'); } }
+function feelOff(){ const F=FEEL; if(!F.on) return; F.on=false; F.found.R=F.found.L=null; F.fpt.R=F.fpt.L=null; logE('НАЩУПУЮ: руки зі стіни'); }
+function feelTick(dt, S){
+  const F=FEEL, want=FREE.on && (VB_FEEL.on>0) && mode==='fighter' && !player.dead && !handRole() && !(typeof clinch!=='undefined'&&clinch.active) && !((typeof INVUI!=='undefined')&&INVUI.open);
+  F.k=clamp(F.k+(F.on?dt:-dt)/0.2,0,1); if(!F.on && F.k<=0){ F.c.R=F.c.L=null; F.cv.R=F.cv.L=null; }
+  if(!want){ feelOff(); return; }
+  const P=player.mesh.position, rq=S.rig.root.getWorldQuaternion(new _hvQ()), fwd=new _hvV(0,0,1).applyQuaternion(rq); fwd.y=0; if(fwd.lengthSq()<1e-6) return; fwd.normalize();
+  const dnOf=(W)=>W.n.dot(new _hvV(P.x-W.p0.x,0,P.z-W.p0.z));
+  let W=feelPick(P,fwd); if(W){ W.dn=dnOf(W); if(W.dn>(VB_FEEL.dist||0.95) || -fwd.dot(W.n)<0.5) W=null; }
+  if(!W && F.on && F.n){ const o=obstacleAt(F.gx,F.gy), Wk={gx:F.gx,gy:F.gy,n:F.n,p0:F.p0}; Wk.dn=dnOf(Wk); if(feelSolid(o) && Wk.dn<=(VB_FEEL.off||1.15) && -fwd.dot(F.n)>0.26) W=Wk; }   // тримаємось тієї ж стіни, поки дивимось на неї
+  if(!W){ feelOff(); return; }
+  F.n=W.n; F.p0=W.p0; F.gx=W.gx; F.gy=W.gy; F.dn=W.dn; feelOn(W);
+  /* тіло підходить до стіни на gap, якщо сам не йдеш */
+  const gap=VB_FEEL.gap||0.45;
+  if(!JOY.on && !((player.dashT||0)>0) && W.dn>gap+0.02){ const Pp=player; if(!Pp._cont){ Pp._cont=true; Pp.cx=Pp.gx; Pp.cy=Pp.gy; }
+    const st=Math.min(W.dn-gap, (VB_FEEL.approach||0.6)*dt); Pp.cx-=W.n.x*st; Pp.cy-=W.n.z*st; playerWallClamp(Pp); }
+  /* точки дотику долонь: промінь від плеча вздовж телефона до площини стіни; без телефона — долоня спирається перед плечем */
+  const J=S.rig.J, dm=S.rig.dims, LH=!!S.mirror, MA=LH?'LEFT':'RIGHT', SA=LH?'RIGHT':'LEFT', R=(dm.upper+dm.fore+dm.hand*0.5)*0.97;
+  for(const k of ['R','L']){ const side=(k==='R')?MA:SA, h=FREE.hands[k];
+    const Sh=J[side+'_SHOULDER'].getWorldPosition(new _hvV()), foot=Sh.clone().sub(W.n.clone().multiplyScalar(W.n.dot(Sh.clone().sub(W.p0))));
+    let C=null, O=Sh, D=h?h.dir.clone().normalize():null;
+    if(h && k==='R' && fpvK()>0.5){ try{ const eye=fpvEyeWorld(new _hvV())||camera.getWorldPosition(new _hvV()); D=new _hvV(0,0,-1).applyQuaternion(camera.getWorldQuaternion(new _hvQ())).normalize();
+        O=eye.clone().sub(W.n.clone().multiplyScalar(W.n.dot(eye.clone().sub(W.p0)))).add(W.n.clone().multiplyScalar(VB_FEEL.aimD||0.7)); }catch(e){} }   // 1-ша особа: рука йде туди, куди дивишся; промінь — ніби з 0.7 м від стіни, щоб помірний нахил вів долоню по всій стіні
+    if(D){ const den=D.dot(W.n); if(den<-0.12){ const t=W.n.dot(W.p0.clone().sub(O))/den; if(t>0) C=O.clone().add(D.clone().multiplyScalar(t)); } }
+    if(!C){ C=foot.clone(); C.y-=0.15; }
+    { const off=C.clone().sub(foot); if(off.length()>0.95) off.setLength(0.95); C=foot.clone().add(off); C.y=clamp(C.y,0.2,2.2); }   // сирa точка — куди показує телефон (нею тягнеш механізми)
+    const dPl=Sh.distanceTo(foot), mo=Math.sqrt(Math.max(0,R*R-dPl*dPl)), offv=C.clone().sub(foot); if(offv.length()>mo) offv.setLength(mo); const Cv=foot.clone().add(offv);   // долоня лягає лише в межах руки
+    const prev=F.c[k]; if(prev){ const v=C.distanceTo(prev)/Math.max(dt,1e-3); F.vel[k]+=(v-F.vel[k])*clamp(dt*8,0,1); prev.lerp(C,clamp(dt*14,0,1)); } else { F.c[k]=C; F.vel[k]=0; }
+    if(F.cv[k]) F.cv[k].lerp(Cv,clamp(dt*14,0,1)); else F.cv[k]=Cv;
+    F.act[k]=!!h;
+    let fm=null, fp=null;
+    if(h && !h.fake && !FREE.grab[k]){ for(const m of MECH.list){ if(m.unmounted || m.kind==='hatch' || m.kind==='chest') continue; const q=feelAnchor(m, F.c[k], W); if(q && q.p.distanceTo(Sh)<=R+0.15 && (!fm || q.d<fm.d)){ fm={m,d:q.d}; fp=q.p; } } }
+    const was=F.found[k]; F.found[k]=fm?fm.m:null; F.fpt[k]=fp; if(fm && fm.m!==was) feelFoundFx(k, fm.m, fp); }
+  /* шерех долонь, що ковзають по стіні */
+  F.scrT-=dt; if(F.scrT<=0){ for(const k of ['R','L']){ const c=F.c[k]; if(c && F.act[k] && F.vel[k]>0.12 && !FREE.grab[k]){ try{ spatialNoise(c.x,c.y,c.z,900+clamp(F.vel[k],0,2)*900,1.5,0.09,clamp(0.02+F.vel[k]*0.03,0.02,0.07)); }catch(e){} F.scrT=0.12; } } }
+}
+/* у режимі стіни «рука» для механізмів — точка на стіні: нащупаний механізм — його ручка; хват — тягнеш долонею по стіні */
+function feelHands(){ const F=FEEL; if(!F.on || !F.n) return;
+  for(const k of ['R','L']){ const h=FREE.hands[k]; if(!h || h.fake) continue; const c=F.c[k]; if(!c) continue; const G=FREE.grab[k]; let tip;
+    if(G){ if(!G.wallOff) G.wallOff=(G.hp||G.p0||c).clone().sub(c); tip=c.clone().add(G.wallOff); }
+    else if(F.fpt[k]) tip=F.fpt[k].clone();
+    else tip=c.clone().add(F.n.clone().multiplyScalar(0.03));
+    FREE.hands[k]={k, palm:h.palm, tip, dir:h.dir, fake:true, wall:true}; } }
+/* ── ПРОХІД КИСТЕЙ: наприкінці кадру ── */
+function rigHandsVisual(dt){
+  if(!(VB_FINGERS.on>0) || mode!=='fighter' || player.dead || handRole()) return;
+  const S=VB_RIG.player; if(!S||!S.rig||!S.rig.hands||!S.obj||!S.obj.visible) return;
+  const rig=S.rig, Hs=rig.hands; if(!Hs.R&&!Hs.L) return;
+  const now=performance.now(), kk=clamp(dt*12,0,1), LH=!!S.mirror, MA=LH?'LEFT':'RIGHT', SA=LH?'RIGHT':'LEFT';
+  const two=(typeof weaponHands==='function' && weaponHands()===2), live=(rig.sword.root.parent===rig.root);
+  const rummage=(typeof INVUI!=='undefined' && INVUI.k>0.05);
+  const rest={f:[VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF,VB_FINGERS.restF],t:VB_FINGERS.restT,ta:.7};
+  const holds={};
+  if(live && !FREE.on && !player.disarmed && rig.sword.root.visible){ holds[MA]={sw:rig.sword, sock:rig.sword.sockets.GRIP_UPPER}; if(two) holds[SA]={sw:rig.sword, sock:rig.sword.sockets.GRIP_LOWER}; }
+  if(!FREE.on && S.swordLOn && rig.swordL && rig.swordL.root.visible && !holds[SA]) holds[SA]={sw:rig.swordL, sock:rig.swordL.sockets.GRIP_UPPER};
+  const twoBl=!!(holds.RIGHT && holds.LEFT && rig.swordL && holds.LEFT.sw===rig.swordL), phys={}, tgt={}, heldSides=['RIGHT','LEFT'].filter(sd=>holds[sd]);
+  for(const sd of heldSides) phys[sd]=hvSaveArm(S,sd);   // поза рук із фізики — щоб було куди відступити
+  for(const side of ['RIGHT','LEFT']){ const H=Hs[side==='RIGHT'?'R':'L']; if(!H) continue; const k=(side===MA)?'R':'L';
+    H.g.position.set(0,0,0);
+    const signing=!!(DACT.L && DACT.side===side && now<DACT.until);
+    let tg=rest, relaxed=false;
+    if(holds[side]){ if(!rummage){ try{ let g=hvGrip(S,side,holds[side].sw,holds[side].sock,1); hvArmTo(S,side,g.Pw,g.Qh,H); if(H.g.position.length()>0.03){ g=hvGrip(S,side,holds[side].sw,holds[side].sock,0); hvArmTo(S,side,g.Pw,g.Qh,H); } tgt[side]=g; }catch(e){ if(!window.__hvErr){ window.__hvErr=1; logE('КИСТЬ хват: '+e.message); } } } tg=_HP_GRIP; }
+    else if(FREE.on && FEEL.k>0.001 && FEEL.c[k] && FEEL.n && !rummage){
+      const G=FREE.grab[k], fp=FEEL.fpt[k], n=FEEL.n, s=rig.P.scale||1;
+      const E2=new _hvV(0,1,0); E2.sub(n.clone().multiplyScalar(n.dot(E2))).normalize(); E2.applyAxisAngle(n,(side==='RIGHT'?-1:1)*0.21);   // пальці вгору й трохи назовні
+      const Qh=hvHandQ(E2, n.clone().negate()); let Pw;
+      if(G||fp){ let hp=G?((G.m&&G.m.kind==='lever'&&G.m.knobW)?G.m.knobW.clone():(G.hp||G.p0).clone()):fp.clone();
+        const Sh=rig.J[side+'_SHOULDER'].getWorldPosition(new _hvV()), dm=rig.dims, Rr=(dm.upper+dm.fore+dm.hand*0.5)+0.03, dv=hp.clone().sub(Sh); if(dv.length()>Rr) hp=Sh.clone().add(dv.setLength(Rr));
+        Pw=hp.sub(new _hvV(0,-(VB_FINGERS.gcY??0.08)*s,(VB_FINGERS.gcZ??0.035)*s).applyQuaternion(Qh)); tg=G?_HP_FIST:_HP_HALF; }
+      else { Pw=(FEEL.cv[k]||FEEL.c[k]).clone().add(n.clone().multiplyScalar(0.022*s)).sub(new _hvV(0,-0.05*s,0).applyQuaternion(Qh)); tg=_HP_FLAT; }
+      const cur=hvWristNow(S,side), w=FEEL.k; try{ hvArmTo(S,side,cur.p.clone().lerp(Pw,w),cur.q.clone().slerp(Qh,w),H); }catch(e){} }
+    else if(FREE.on){ const g=FREE.grab[k], nb=FREE.near[k]; tg=g?_HP_FIST:(nb?{f:[.5,.5,.5,.5].map(v=>v+0.12*Math.sin(now/120)),t:.45,ta:.5}:_HP_OPEN); relaxed=!g; }
+    else relaxed=true;
+    if(signing && !rummage){ try{ const sg=hvSign(S,side,now); if(sg){ const cur=hvWristNow(S,side); hvArmTo(S,side,cur.p.clone().lerp(sg.Pw,sg.w),cur.q.clone().slerp(sg.Qh,sg.w),H); tg=DACTYL[DACT.L]; relaxed=false; } }catch(e){ if(!window.__hvSErr){ window.__hvSErr=1; logE('ДАКТИЛЬ поза: '+e.message); } } }
     H.pose(tg,kk);
     /* супінація порожньої кисті: долоня — вгору й до себе, наскільки дозволяє вісь передпліччя */
-    if(!holds && !(FREE.on&&FREE.grab[k])){ try{ const wr=S.rig.J[k==='R'?'RIGHT_WRIST':'LEFT_WRIST']; const q=wr.getWorldQuaternion(new THREE.Quaternion());
-        const axis=new THREE.Vector3(0,-1,0).applyQuaternion(q), n0=new THREE.Vector3(0,0,1).applyQuaternion(q);
-        const inward=new THREE.Vector3(k==='R'?1:-1,0,0).applyQuaternion(S.rig.root.getWorldQuaternion(new THREE.Quaternion()));
-        const des=new THREE.Vector3(0,VB_FINGERS.supUp,0).add(inward.multiplyScalar(VB_FINGERS.supIn)); des.sub(axis.clone().multiplyScalar(des.dot(axis)));
+    let sup=0;
+    if(relaxed){ try{ const wr=rig.J[side+'_WRIST']; const q=wr.getWorldQuaternion(new _hvQ());
+        const axis=new _hvV(0,-1,0).applyQuaternion(q), n0=new _hvV(0,0,1).applyQuaternion(q);
+        const inward=new _hvV(side==='RIGHT'?1:-1,0,0).applyQuaternion(rig.root.getWorldQuaternion(new _hvQ()));
+        const des=new _hvV(0,VB_FINGERS.supUp,0).add(inward.multiplyScalar(VB_FINGERS.supIn)); des.sub(axis.clone().multiplyScalar(des.dot(axis)));
         const nC=n0.clone().sub(axis.clone().multiplyScalar(n0.dot(axis)));
-        if(des.lengthSq()>1e-6 && nC.lengthSq()>1e-6){ des.normalize(); nC.normalize(); let ang=Math.atan2(new THREE.Vector3().crossVectors(nC,des).dot(axis), nC.dot(des)); const mx=(VB_FINGERS.supMax||100)*Math.PI/180; sup=-clamp(ang,-mx,mx); } }catch(e){} }
-    H.sup+=(sup-H.sup)*clamp(dt*6,0,1); H.g.rotation.y=H.sup; }
+        if(des.lengthSq()>1e-6 && nC.lengthSq()>1e-6){ des.normalize(); nC.normalize(); const ang=hvSigned(nC,des,axis), mx=(VB_FINGERS.supMax||80)*Math.PI/180; sup=-clamp(ang,-mx,mx); } }catch(e){} }
+    H.sup+=(sup-H.sup)*clamp(dt*6,0,1);
+    if(relaxed) H.g.rotation.set(0,H.sup,0); }
+  /* візуальна рука не має пройти крізь тіло, чужий клинок чи чуже передпліччя (те, що вже стереже фізика) — інакше рука ближче до фізичної пози;
+     кисть лишається на руківʼї (між передпліччям і кистю тоді невеликий проміжок) */
+  const sides=heldSides.filter(sd=>tgt[sd]);
+  if(sides.length && !rummage){ try{ const tol=VB_FINGERS.penTol||0.006, need=VB_FINGERS.sepMin||0.045, two=twoBl&&!!tgt.RIGHT&&!!tgt.LEFT;
+    const meas=()=>{ const pen={}; for(const sd of sides){ const b=labArmBodyPen(rig,sd); pen[sd]=b?b.pen:0; } return {pen, sep:two?hvSep(S):9}; };
+    const m1=meas();
+    if(!(sides.every(sd=>m1.pen[sd]<=tol) && (!two || m1.sep>=need))){
+      const solve=(sd,g,w)=>{ hvLoadArm(S,sd,phys[sd]); const cur=hvWristNow(S,sd), H=Hs[sd==='RIGHT'?'R':'L']; hvArmTo(S,sd,cur.p.clone().lerp(g.Pw,w),g.Qh,H,g.Pw); };
+      const place=(w)=>{ for(const sd of sides) solve(sd,tgt[sd],w); };
+      /* фізична поза — мірило: візуальна рука не має бути гіршою за неї (якщо фізика сама трохи «в тілі», візуал кращий — лишаємо) */
+      place(0); const m0=meas(), lim={}; for(const sd of sides) lim[sd]=Math.max(tol,m0.pen[sd]+0.002);
+      const okRel=(m)=>sides.every(sd=>m.pen[sd]<=lim[sd]) && (!two || m.sep>=Math.min(need,m0.sep-0.002));
+      if(okRel(m1)) place(1);
+      else {
+        /* 1) кисть лишається і на руківʼї, і на руці: повертаємо її навколо руківʼя (запʼястя йде по колу) — найменший поворот, що виводить руку з тіла */
+        place(1);
+        for(const sd of sides){ if(meas().pen[sd]<=lim[sd]) continue; const H=Hs[sd==='RIGHT'?'R':'L'];
+          const cost=()=>Math.max(0,meas().pen[sd]-lim[sd])+Math.max(0,H.g.position.length()-0.02);
+          let best={g:tgt[sd], c:cost()};
+          for(const th of [30,-30,60,-60,90,-90,120,-120]){ const g=hvGripTurn(tgt[sd],sd,th*Math.PI/180); solve(sd,g,1); const c=cost(); if(c<best.c-1e-4) best={g,c}; if(c<=0) break; }
+          tgt[sd]=best.g; solve(sd,best.g,1); }
+        /* 2) не вийшло — відступ до фізичної пози, але щілина між передпліччям і кистю не більша за gapMax (кисть не «відлітає» від руки) */
+        if(!okRel(meas())){ const gm=VB_FINGERS.gapMax??0.035; let lo=0, hi=1; place(0); for(const sd of sides){ const d=hvWristNow(S,sd).p.distanceTo(tgt[sd].Pw); if(d>gm) lo=Math.max(lo,1-gm/d); }
+          place(lo); if(okRel(meas())){ for(let it=0; it<4; it++){ const w=(lo+hi)/2; place(w); if(okRel(meas())) lo=w; else hi=w; } place(lo); } } } } }catch(e){ if(!window.__hvGErr){ window.__hvGErr=1; logE('КИСТІ запобіжник: '+e.message); } } }
   if(DACT.L && now>=DACT.until) DACT.L=null; }
 /* ── МЕХАНІЗМИ ── */
 const MECH={ list:[], room:'', beaconT:0, anim:[], busy:false, hatchT:0, hintT:{} };
@@ -13126,7 +13346,7 @@ const CELLAR={ rx:19, ry:6, arrive:[6,1], ladder:[6,0] };
 window.CELLAR=CELLAR;
 function cellarIs(rx,ry){ return rx===CELLAR.rx && ry===CELLAR.ry; }
 const HOMEC={ walls:[[9,9],[10,9],[11,9],[9,11]], door:[9,10], inside:[[10,10],[11,10],[10,11],[11,11]], chest:[11,10], hatch:[10,11],
-  lever:{gx:12,gy:8,face:'E',h:1.15}, valve:{gx:11,gy:12,face:'S',h:1.05}, wallTint:0x4a3b2e, doorTint:0x5b4633 };
+  lever:{gx:12,gy:8,face:'E',h:1.15,len:0.22}, valve:{gx:11,gy:12,face:'S',h:1.2}, release:{gx:12,gy:11,face:'E',h:1.15,len:0.22}, wallTint:0x4a3b2e, doorTint:0x5b4633 };   // (10-08c) засув — на несучій зовнішній стіні, не на дверях
 window.HOMEC=HOMEC;
 const mmat=(c,o)=>new THREE.MeshBasicMaterial({color:c, transparent:o!=null, opacity:(o==null?1:o)});
 function mechFrame(gx,gy,face,h){ const nd={N:[0,1],S:[0,-1],W:[1,0],E:[-1,0]}[face]||[0,1]; const n=new THREE.Vector3(nd[0],0,nd[1]);
@@ -13142,11 +13362,11 @@ function mechLever(o){ const F=mechFrame(o.gx,o.gy,o.face,o.h), n=F.n, up=new TH
   const slot=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.36,0.02), mmat(0x07090d)); slot.position.copy(F.p.clone().add(n.clone().multiplyScalar(0.025))); slot.lookAt(slot.position.clone().add(n)); g.add(slot);
   const pivot=F.p.clone().add(n.clone().multiplyScalar(0.05));
   const arm=new THREE.Group(); arm.position.copy(pivot); g.add(arm);
-  const rod=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.30,0.035), mmat(0x9aa4b2)); rod.position.y=0.15; arm.add(rod);
-  const knob=new THREE.Mesh(new THREE.SphereGeometry(0.055,12,10), mmat(0xdc2626)); knob.position.y=0.30; arm.add(knob);
+  const LL=o.len||0.30; const rod=new THREE.Mesh(new THREE.BoxGeometry(0.035,LL,0.035), mmat(0x9aa4b2)); rod.position.y=LL/2; arm.add(rod);
+  const knob=new THREE.Mesh(new THREE.SphereGeometry(0.055,12,10), mmat(0xdc2626)); knob.position.y=LL; arm.add(knob);
   const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.03,8,6), mmat(0x7f1d1d)); lamp.position.copy(F.p.clone().add(new THREE.Vector3(0,0.27,0)).add(n.clone().multiplyScalar(0.03))); g.add(lamp);
   g.traverse(x=>{ x.frustumCulled=false; }); scene.add(g);
-  const m={id:o.id, kind:'lever', label:o.label||'важіль', g, arm, knob, lamp, pivot, n, up, len:0.30, upA:55, dnA:-55, ang:o.done?-55:55, done:!!o.done, onDone:o.onDone, pos:pivot.clone(), tickA:0};
+  const m={id:o.id, kind:'lever', label:o.label||'важіль', g, arm, knob, lamp, pivot, n, up, len:LL, upA:55, dnA:-55, ang:o.done?-55:55, done:!!o.done, onDone:o.onDone, pos:pivot.clone(), tickA:0, mount:[o.gx,o.gy]};
   mechLeverPose(m); MECH.list.push(m); return m; }
 function mechLeverDir(m,a){ const r=a*Math.PI/180; return m.n.clone().multiplyScalar(Math.cos(r)).add(m.up.clone().multiplyScalar(Math.sin(r))).normalize(); }
 function mechLeverPose(m){ const d=mechLeverDir(m,m.ang); m.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d); m.knobW=m.pivot.clone().add(d.multiplyScalar(m.len));
@@ -13163,7 +13383,7 @@ function mechValve(o){ const F=mechFrame(o.gx,o.gy,o.face,o.h), n=F.n, R=o.R||0.
   g.traverse(x=>{ x.frustumCulled=false; }); scene.add(g);
   const e1=new THREE.Vector3(0,1,0).sub(n.clone().multiplyScalar(n.y)).normalize(), e2=new THREE.Vector3().crossVectors(n,e1).normalize();
   const need=o.need||540;
-  const m={id:o.id, kind:'valve', label:o.label||'колесо', g, spin, c, n, e1, e2, R, need, turn:o.done?need:0, dir:o.done?1:0, done:!!o.done, onDone:o.onDone, pos:c.clone(), clickA:0, logK:0};
+  const m={id:o.id, kind:'valve', label:o.label||'колесо', g, spin, c, n, e1, e2, R, need, turn:o.done?need:0, dir:o.done?1:0, done:!!o.done, onDone:o.onDone, pos:c.clone(), clickA:0, logK:0, mount:[o.gx,o.gy]};
   spin.rotation.z=(m.dir||1)*m.turn*Math.PI/180; MECH.list.push(m); return m; }
 /* скриня на підставці: кришку піднімаєш за передній край */
 function mechChest(o){ const g=new THREE.Group(); g.position.set(worldX(o.gx),0,worldZ(o.gy)); g.rotation.y=o.yaw||0; g.frustumCulled=false;
@@ -13199,7 +13419,7 @@ function mechLadder(o){ const F=mechFrame(o.gx,o.gy,o.face,0), n=F.n, side=new T
   for(const sx of [-0.22,0.22]){ const r=new THREE.Mesh(new THREE.BoxGeometry(0.05,2.6,0.05), mmat(0x8b5a2b)); r.position.copy(base.clone().add(side.clone().multiplyScalar(sx)).add(new THREE.Vector3(0,1.3,0))); g.add(r); }
   for(let y=0.35;y<=2.2;y+=0.3){ const c=base.clone().add(new THREE.Vector3(0,y,0)); const r=new THREE.Mesh(new THREE.BoxGeometry(0.44,0.04,0.04), mmat(0xa16207)); r.position.copy(c); r.lookAt(c.clone().add(n)); g.add(r); rungs.push(c); }
   g.traverse(x=>{ x.frustumCulled=false; }); scene.add(g);
-  const m={id:o.id, kind:'ladder', label:o.label||'драбина', g, rungs, side, n, done:false, onDone:o.onDone, pos:base.clone().add(new THREE.Vector3(0,1.2,0))};
+  const m={id:o.id, kind:'ladder', label:o.label||'драбина', g, rungs, side, n, done:false, onDone:o.onDone, pos:base.clone().add(new THREE.Vector3(0,1.2,0)), mount:[o.gx,o.gy]};
   MECH.list.push(m); return m; }
 /* відстань руки до місця хвату */
 /* точка руки біля механізму: для колеса — де промінь перетинає площину колеса (або найближча до центру) */
@@ -13214,7 +13434,7 @@ function mechGrabDist(m,h){ const p=mechHandPt(m,h);
   if(m.kind==='ladder'){ let best=Infinity, rung=null; for(const c of m.rungs){ const q=freeHandPt(h,c), v=q.clone().sub(c), a=clamp(v.dot(m.side),-0.22,0.22), d=v.sub(m.side.clone().multiplyScalar(a)).length(); if(d<best){ best=d; rung=c; } } return {d:best, p, rung}; }
   return {d:Infinity}; }
 function mechNearest(h, r, k){ let best=null;
-  for(const m of MECH.list){ if(k && FREE.grab[k==='R'?'L':'R'] && FREE.grab[k==='R'?'L':'R'].m===m) continue; const q=mechGrabDist(m,h); if(q.d<=r && (!best || q.d<best.d)) best={m,d:q.d,hp:q.p||h.tip,rung:q.rung||null}; }
+  for(const m of MECH.list){ if(m.unmounted) continue; if(k && FREE.grab[k==='R'?'L':'R'] && FREE.grab[k==='R'?'L':'R'].m===m) continue; const q=mechGrabDist(m,h); if(q.d<=r && (!best || q.d<best.d)) best={m,d:q.d,hp:q.p||h.tip,rung:q.rung||null}; }
   return best; }
 function mechAnchor(m,G){ if(m.kind==='lever') return m.knobW; if(m.kind==='valve') return m.c; if(m.kind==='chest') return mechChestFront(m); if(m.kind==='ladder') return (G&&G.rung)?G.rung:(G&&G.p0?G.p0:m.pos); return m.pos; }
 function mechRoll(k){ if(k==='R') return (sensor.roll!=null)?+sensor.roll:null; try{ return (LINK.remoteL && LINK.remoteL.roll!=null && (Date.now()-(LINK.remoteL.t||0))<600)?+LINK.remoteL.roll:null; }catch(e){ return null; } }
@@ -13263,6 +13483,8 @@ function mechManip(m,G,h,dt,k,hp){
     return; } }
 /* анімації (двері в підлогу, кришка, люк), підказки, маячки, спуск у люк — щокадру */
 function mechTick(dt){
+  for(const m of MECH.list){ if(!m.mount) continue; const o=obstacleAt(m.mount[0],m.mount[1]), ok=!!(o&&o.alive&&o.solid);   // (10-08c) механізм на стіні — без стіни не висить у повітрі
+    if(ok===!!m.unmounted){ m.unmounted=!ok; try{ m.g.visible=ok; }catch(e){} if(!ok){ for(const k of ['R','L']) if(FREE.grab[k]&&FREE.grab[k].m===m) mechRelease(k,'стіни немає'); logE('МЕХАНІЗМ: '+m.label+' — стіни ('+m.mount+') немає, ховаю'); } } }
   for(let i=MECH.anim.length-1;i>=0;i--){ const A=MECH.anim[i]; A.t+=dt; const k=clamp(A.t/A.T,0,1);
     if(A.kind==='door'){ try{ A.o.mesh.position.y=A.y0-A.h*k; }catch(e){} if(Math.floor(A.t/0.2)!==Math.floor((A.t-dt)/0.2)){ try{ spatialNoise(A.x,0.6,A.z,180,1,0.18,0.1); }catch(e){} }
       if(k>=1){ const o=A.o; o.alive=false; try{ scene.remove(o.mesh); freeMesh(o.mesh); }catch(e){} const j=obstacles.indexOf(o); if(j>=0) obstacles.splice(j,1); try{ snapshotRoom(); }catch(e){}
@@ -13280,12 +13502,12 @@ function mechTick(dt){
   if(H && !MECH.busy){ MECH.hatchT+=dt; if(MECH.hatchT>0.7){ MECH.hatchT=0; mechDescend(); } } else MECH.hatchT=0;
   /* маячки: поки руки вільні, механізми тихо цокають (їх чути) */
   if(FREE.on && VB_HANDS.beacon>0){ MECH.beaconT-=dt; if(MECH.beaconT<=0){ MECH.beaconT=1.3; const P=player.mesh.position;
-      for(const m of MECH.list){ if((m.done && m.kind!=='hatch' && m.kind!=='ladder') || (m.kind==='hatch' && !m.open)) continue; const d=Math.hypot(m.pos.x-P.x,m.pos.z-P.z); if(d>9) continue;
+      for(const m of MECH.list){ if(m.unmounted || (m.done && m.kind!=='hatch' && m.kind!=='ladder') || (m.kind==='hatch' && !m.open)) continue; const d=Math.hypot(m.pos.x-P.x,m.pos.z-P.z); if(d>9) continue;
         try{ spatialBlip(m.pos.x,m.pos.y,m.pos.z,({lever:1200,valve:700,chest:480,hatch:200,ladder:950})[m.kind]||800,0.035,'triangle',clamp(0.09-d*0.007,0.02,0.09)); }catch(e){} } } }
   if(MECH.doorBeacon){ MECH.doorBeacon.t-=dt; if(MECH.doorBeacon.t<=0) MECH.doorBeacon=null; else if(Math.floor(MECH.doorBeacon.t/1.5)!==Math.floor((MECH.doorBeacon.t+dt)/1.5)){ try{ spatialBlip(MECH.doorBeacon.x,1.0,MECH.doorBeacon.z,760,0.05,'sine',0.08); }catch(e){} } }
   /* зброя в руках, а поруч механізм — підказка: звільни руки */
   if(!FREE.on){ const P=player.mesh.position, now=performance.now();
-    for(const m of MECH.list){ if(m.done || m.kind==='hatch') continue; const d=Math.hypot(m.pos.x-P.x,m.pos.z-P.z); if(d>1.6) continue;
+    for(const m of MECH.list){ if(m.done || m.unmounted || m.kind==='hatch') continue; const d=Math.hypot(m.pos.x-P.x,m.pos.z-P.z); if(d>1.6) continue;
       if(now-(MECH.hintT[m.id]||0)<25000) continue; MECH.hintT[m.id]=now;
       try{ showBanner('✋ Тут '+m.label+' — звільни руки (кнопка ✋ угорі), щоб узятись','#fde68a'); }catch(e){} logE('МЕХАНІЗМ поруч: '+m.label+' — руки зайняті зброєю, підказую ✋'); } } }
 function mechDoorOpen(gx,gy){ const o=obstacleAt(gx,gy); if(!o||!o.alive) return false; if(MECH.anim.some(A=>A.kind==='door'&&A.o===o)) return true;
@@ -13318,22 +13540,38 @@ function mechBuildHome(){ const C=HOMEC; const has=(x,y)=>{ const o=obstacleAt(x
     window.__structBuild=true; try{ for(const [x,y] of C.walls) addObstacle(x,y,'Si',new Set(),C.wallTint,1.1,'cube',0,null,0,true); if(!unlocked) addObstacle(C.door[0],C.door[1],'Si',new Set(),C.doorTint,1.1,'cube',0,null,0,true); /* камінь: мітла дому прибирає лише «приблудні» стіни */ } finally{ window.__structBuild=false; }
     doorUp=!unlocked; try{ snapshotRoom(); }catch(e){} logE('ТАЙНИК: у південно-східному куті дому — стіни'+(unlocked?' (двері вже відчинені — прохід відкрито)':' й потайні двері ('+C.door+')')); }
   const openDoor=(src)=>{ mechDoorOpen(C.door[0],C.door[1]); mechSet('home.door',1); const L=mechById('home.lever'); if(L&&!L.done){ L.done=true; L.ang=L.dnA; try{ mechLeverPose(L); }catch(e){} } };
-  mechLever({id:'home.lever', gx:C.lever.gx, gy:C.lever.gy, face:C.lever.face, h:C.lever.h, label:'важіль потайних дверей (на східній стіні)', done:!doorUp,
+  mechLever({id:'home.lever', gx:C.lever.gx, gy:C.lever.gy, face:C.lever.face, h:C.lever.h, len:C.lever.len, label:'важіль потайних дверей (на східній стіні)', done:!doorUp,
     onDone:()=>{ openDoor('важіль'); freeSay('Клац. Потайні двері поїхали в підлогу — прохід у кут, на захід від важеля, з південного боку.'); }});
-  if(doorUp){ mechLever({id:'home.release', gx:C.door[0], gy:C.door[1], face:'W', h:1.0, label:'засув потайних дверей (зсередини тайника)', done:false,
-    onDone:()=>{ openDoor('засув'); freeSay('Засув відсунуто зсередини — потайні двері поїхали в підлогу. Вихід на захід.'); }}); }   // (10-08a) АВАРІЙНИЙ вихід: двері відчиняються і зсередини, щоб не замкнутись
+  if(doorUp){ mechLever({id:'home.release', gx:C.release.gx, gy:C.release.gy, face:C.release.face, h:C.release.h, len:C.release.len, label:'засув потайних дверей (зсередини тайника, на східній стіні біля кута)', done:false,
+    onDone:()=>{ openDoor('засув'); freeSay('Засув відсунуто — потайні двері поїхали в підлогу. Вихід на захід, через прохід біля драбини.'); }}); }   // (10-08a/c) АВАРІЙНИЙ вихід зсередини; засув — на зовнішній несучій стіні
   mechChest({id:'home.chest', gx:C.chest[0], gy:C.chest[1], yaw:-Math.PI/2, label:'скриня в тайнику', done:mechGet('home.chest'), onDone:mechChestReward});
   const vDone=mechGet('home.valve');
   mechValve({id:'home.valve', gx:C.valve.gx, gy:C.valve.gy, face:C.valve.face, h:C.valve.h, R:0.24, need:540, label:'колесо люка в тайнику', done:vDone,
     onDone:()=>{ mechSet('home.valve',1); const H=mechById('home.hatch'); if(H) mechHatchOpen(H); freeSay('Колесо докручено — люк у підлозі відчинився. Стань на нього, і спустишся в підвал.'); }});
   mechHatch({id:'home.hatch', gx:C.hatch[0], gy:C.hatch[1], label:'люк у підвал', done:vDone});
-  if(doorUp && !MECH._homeHint){ MECH._homeHint=true; logE('ДІМ: у південно-східному куті — ТАЙНИК за потайними дверима; важіль — на східній стіні біля кута (клітинка (11,8)); зсередини двері відчиняє засув біля проходу; узятись — вільними руками ✋');
-    if(!mechGet('hint.home')){ mechSet('hint.home',1); setTimeout(()=>{ try{ if(advHome()) freeSay('У південно-східному куті дому — тайник. Важіль на східній стіні відчиняє потайні двері. Звільни руки кнопкою з долонею — і візьмись за нього. Якщо опинишся замкненим усередині — засув біля проходу відчинить двері зсередини.'); }catch(e){} }, 7000); } } }
+  if(doorUp && !MECH._homeHint){ MECH._homeHint=true; logE('ДІМ: у південно-східному куті — ТАЙНИК за потайними дверима; важіль — на східній стіні біля кута (клітинка (11,8)); зсередини двері відчиняє засув на східній стіні тайника, біля кута (клітинка (11,11), лицем на схід); узятись — вільними руками ✋');
+    if(!mechGet('hint.home')){ mechSet('hint.home',1); setTimeout(()=>{ try{ if(advHome()) freeSay('У південно-східному куті дому — тайник. Важіль на східній стіні відчиняє потайні двері. Звільни руки кнопкою з долонею — і візьмись за нього. Якщо опинишся замкненим усередині — засув на східній стіні, у кутку біля колеса, відчинить двері зсередини.'); }catch(e){} }, 7000); } } }
 function mechBlockedRaw(x,y){ try{ return !!phantomAtCell(x,y); }catch(e){ return false; } }
 function mechBuildCellar(){ mechLadder({id:'cellar.ladder', gx:CELLAR.ladder[0], gy:CELLAR.ladder[1], face:'N', label:'драбина нагору', onDone:()=>mechClimbUp()}); }
 function mechBuild(){ mechClear(); if(!ADV.on) return; MECH.room=ADV.rx+','+ADV.ry;
   try{ if(advHome()) mechBuildHome(); else if(cellarIs(ADV.rx,ADV.ry)) mechBuildCellar(); }catch(e){ logE('МЕХАНІЗМИ: '+e.message); }
   if(MECH.list.length) logE('МЕХАНІЗМИ ('+MECH.room+'): '+MECH.list.map(m=>m.label+(m.done||m.open?' ✓':'')).join(' · ')+' — руками (✋)'); }
+/* (10-08c) ПЕРЕВІРКА: зачинити потайні двері знову (важіль і засув — як нові); скриня й колесо лишаються як є */
+function homeDoorReset(){ const C=HOMEC, [dx,dy]=C.door;
+  if(handRole()) return;
+  if(!ADV.on || !advHome()){ logE('ТАЙНИК: зачинити двері можна лише вдома'); try{ freeSay('Це працює лише вдома.'); }catch(e){} return; }
+  if(player.gx===dx && player.gy===dy){ logE('ТАЙНИК: стоїш у дверному прорізі ('+dx+','+dy+') — відійди на крок'); try{ freeSay('Відійди з дверного прорізу на крок.'); }catch(e){} return; }
+  if(!C.walls.every(([x,y])=>{ const o=obstacleAt(x,y); return !!(o&&o.alive); })){ logE('ТАЙНИК: стін тайника немає — нічого зачиняти'); return; }
+  const od=obstacleAt(dx,dy); if(od&&od.alive){ logE('ТАЙНИК: двері й так зачинені'); return; }
+  if(MECH.anim.some(A=>A.kind==='door')){ logE('ТАЙНИК: двері ще їдуть — зачекай'); return; }
+  mechSet('home.door',0);
+  window.__structBuild=true; try{ addObstacle(dx,dy,'Si',new Set(),C.doorTint,1.1,'cube',0,null,0,true); } finally{ window.__structBuild=false; }
+  try{ snapshotRoom(); }catch(e){}
+  mechBuild();
+  const inside=C.inside.some(([x,y])=>x===player.gx&&y===player.gy);
+  logE('ТАЙНИК: потайні двері знову зачинено'+(inside?' — ти всередині: засув на східній стіні біля кута (стань у (11,11) лицем на схід)':' — важіль на східній стіні (стань у (11,8) лицем на схід)'));
+  try{ freeSay(inside?'Двері зачинились. Ти всередині — засув на східній стіні, у кутку.':'Двері зачинились. Важіль — на східній стіні біля кута.'); }catch(e){} }
+window.homeDoorReset=homeDoorReset;
 function mechCompact(){ const o={}; for(const m of MECH.list){ if(m.kind==='lever'&&m.done) o.l=1; if(m.kind==='valve'&&m.done) o.v=1; if(m.kind==='chest'&&m.open) o.c=1; if(m.kind==='hatch'&&m.open) o.h=1; } return o; }
 function mechApplyRemote(st){ if(!st) return; for(const m of MECH.list){
   if(m.kind==='lever' && st.l && !m.done){ m.done=true; m.ang=m.dnA; mechLeverPose(m); }
@@ -15911,7 +16149,9 @@ setTimeout(()=>{ try{ const b=document.createElement('button'); b.id='grimBtn'; 
   setInterval(()=>{ try{ b.style.display=(started && mode==='fighter' && !(window.LINK&&LINK.role))?'block':'none'; }catch(e){} }, 700);
 }catch(e){} }, 760);
 setTimeout(()=>{ try{ const b=document.createElement('button'); b.id='mGrim'; b.textContent='📖 ГРИМУАР МОРЗЕ (пошук літер)';
-  $('mNew').parentNode.insertBefore(b, $('mNew')); b.onclick=()=>{ closeMenu(); grimOpen(true); }; }catch(e){} }, 720);
+  $('mNew').parentNode.insertBefore(b, $('mNew')); b.onclick=()=>{ closeMenu(); grimOpen(true); };
+  const r=document.createElement('button'); r.id='mHomeDoor'; r.textContent='🚪 ТАЙНИК: зачинити двері знову (перевірити важіль / засув)';
+  $('mNew').parentNode.insertBefore(r, $('mNew')); r.onclick=()=>{ closeMenu(); try{ homeDoorReset(); }catch(e){ logE('ТАЙНИК: '+e.message); } }; }catch(e){} }, 720);
 
 /* ════ ГУЧНОСТІ (07-15): 🎵 музика · ✨ ефекти · 🎙 голос гравців ════ */
 setTimeout(()=>{ try{
