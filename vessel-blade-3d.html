@@ -1638,6 +1638,7 @@ export { OutputShader };
   <button id="mFull">⛶ ПОВНИЙ ЕКРАН</button>
   <button id="mJoy">🕹 РУХ: СВАЙПИ</button>
   <button id="mInvert">↕ ІНВЕРСІЯ НАХИЛУ: ВИМК</button>
+  <button id="mPose">🧍 ГРАЮ: СТОЯЧИ</button>
   <button id="mCopy">⧉ КОПІЮВАТИ ЛОГ</button>
   <button id="mWipe">🧹 СКИНУТИ ЗБЕРЕЖЕННЯ (квест/ресурси)</button>
   <button id="mCache">♻ СКИД КЕШУ + ПЕРЕЗАВАНТАЖЕННЯ</button>
@@ -1987,7 +1988,7 @@ const _oEulerF=new THREE.Euler(), _oQuatF=new THREE.Quaternion(), _oQuatN=new TH
 function orientationFullQuat(alpha,beta,gamma){
   const o=((typeof screen!=='undefined'&&screen.orientation&&screen.orientation.angle)|| (typeof window!=='undefined'&&window.orientation)||0)*Math.PI/180;
   _oEulerF.set((beta||0)*Math.PI/180,(alpha||0)*Math.PI/180,-(gamma||0)*Math.PI/180,'YXZ');
-  _oQuatF.setFromEuler(_oEulerF); _oQuatF.multiply(_q1h); _oQuatN.copy(_oQuatF); _oQuatF.multiply(_q0h.setFromAxisAngle(_upZh,-o));   // (09-29k) _oQuatN — природна система пристрою (без повороту екрана), для гравітації
+  _oQuatF.setFromEuler(_oEulerF); _oQuatF.multiply(_q1h); if(typeof PPOSE!=='undefined' && PPOSE.on) _oQuatF.multiply(PPOSE.qInv); _oQuatN.copy(_oQuatF); _oQuatF.multiply(_q0h.setFromAxisAngle(_upZh,-o));   // (10-11b) поза гравця — у натуральній системі   // (09-29k) _oQuatN — природна система пристрою (без повороту екрана), для гравітації
   sensor.quatFull={x:_oQuatF.x,y:_oQuatF.y,z:_oQuatF.z,w:_oQuatF.w};
 }
 // Приоритет источников азимута: 'deviceorientationabsolute' (магнитометр, привязан к
@@ -2035,7 +2036,7 @@ function onOrient(e){
   sensor.headRaw = wrap360(sensor.headRel + (VB_SRC.absOff||0));
   try{ orientationFullQuat(e.alpha,e.beta,e.gamma);
        if(VB_SRC.absOff){ _oQuatF.premultiply(_yQ.setFromAxisAngle(_yAx,-(VB_SRC.absOff)*Math.PI/180)); sensor.quatFull={x:_oQuatF.x,y:_oQuatF.y,z:_oQuatF.z,w:_oQuatF.w}; }   // кватерніон у тій самій системі, що й курс
-       oriDerive(); }catch(err){}
+       oriDerive(); if(typeof PPOSE!=='undefined' && PPOSE.on) sensor.roll=poseRoll(); }catch(err){}   // (10-11b) лежачи — крен із поверненої гравітації
   sensor.compass = sensor.headRaw; sensor.haveCompass = true;
   if(!VB_SRC.logged){ VB_SRC.logged=true; sensor.yawSrc='GYRO'; logE('СЕНСОР: джерело азимуту = ГІРОСКОП ОС (deviceorientation) · компас підтягує північ повільно (τ '+VB_SRC.absTau+' с)'); }
 }
@@ -2410,7 +2411,7 @@ window.LINACC=LINACC;
 function linDevConv(){ return SENSCAL.decided ? -SENSCAL.s : (IS_IOS?-1:1); }   // +1 — сирі дані за стандартом W3C (гравітація «угору»)
 function linPhys(e, ggRaw){ const la=e.acceleration; if(!la || la.x==null) return {x:0,y:0,z:0};
   const lx=la.x||0, ly=la.y||0, lz=la.z||0, L=Math.hypot(lx,ly,lz);
-  if(!LINACC.decided && ggRaw && sensor.gSyn && L>2.5 && L<30 && (performance.now()-(sensor.tOriG||0))<250){
+  if(!LINACC.decided && ggRaw && sensor.gSyn && L>2.5 && L<30 && (performance.now()-(sensor.tOriG||0))<250 && !(typeof PPOSE!=='undefined'&&PPOSE.on)){
     const c=linDevConv(), gx0=-c*sensor.gSyn.x, gy0=-c*sensor.gSyn.y, gz0=-c*sensor.gSyn.z;   // гравітація в сирому вигляді пристрою
     const gx=ggRaw.x||0, gy=ggRaw.y||0, gz=ggRaw.z||0;
     const dP=Math.hypot(gx-lx-gx0, gy-ly-gy0, gz-lz-gz0), dM=Math.hypot(gx+lx-gx0, gy+ly-gy0, gz+lz-gz0);
@@ -2466,15 +2467,16 @@ function onMotion(e){
   const now = performance.now();
   const dt = lastMotT ? clamp((now-lastMotT)/1000, 0, 0.1) : 0.016;
   lastMotT = now;
-  const r = e.rotationRate || {};
+  const _po=(typeof PPOSE!=='undefined' && PPOSE.on);
+  const r = _po ? poseRate(e.rotationRate||{}) : (e.rotationRate || {});           // (10-11b) поза: кутові швидкості у віртуальній системі
   sensor.rRateA = r.alpha || 0;
-  const ggRaw = e.accelerationIncludingGravity;
+  const ggRaw = _po ? poseVec(e.accelerationIncludingGravity) : e.accelerationIncludingGravity;
   if(ggRaw){ sensor.gXr=ggRaw.x||0; sensor.gYr=ggRaw.y||0; sensor.gZr=ggRaw.z||0; }   // сирий вектор — для перевірки «вістря вгору»
   const ggAcc = sNorm(ggRaw);
   /* (09-29k) гравітація з кватерніона ОС, якщо він є (свіжий або телефон майже не обертається); акселерометр — лише запасний */
   const synFresh = !!(sensor.gSyn && ((now-(sensor.tOriG||0))<500 || (sensor.gyroMag||0)<20));
   const gg = synFresh ? sensor.gSyn : ggAcc;
-  if(!synFresh && ggAcc){ gravDerive(ggAcc, GSIGN(), now, false); if(!(window.LAB&&LAB.on)){ try{ autoPitchAxis(ggAcc); }catch(err){} } }
+  if(!synFresh && ggAcc){ gravDerive(ggAcc, GSIGN(), now, false); if(!(window.LAB&&LAB.on) && !_po){ try{ autoPitchAxis(ggAcc); }catch(err){} } }
   sensor.gyroMag=Math.hypot(r.alpha||0, r.beta||0, r.gamma||0);
   const cgx=(gg&&gg.x)||0, cgy=(gg&&gg.y)||0, cgz=(gg&&gg.z)||9.4;
   const gmag=Math.hypot(cgx,cgy,cgz)||9.4;
@@ -2484,7 +2486,7 @@ function onMotion(e){
   sensor.haveGyro = sensor.haveGyro || Math.abs(sensor.yawRateFull)>8;
   sensor.spin=Math.abs(omegaG);
   sensor.haveGyro = sensor.haveGyro || sensor.spin>8;
-  const a = linPhys(e, ggRaw);                                    // (10-07d) фізичний знак (раніше — sNorm, як у гравітації)
+  const a = _po ? poseVec(linPhys(e, e.accelerationIncludingGravity)) : linPhys(e, ggRaw);   // (10-07d) фізичний знак · (10-11b) поза — поворот
   sensor.ax=a.x||0; sensor.ay=a.y||0; sensor.az=a.z||0;
   try{ linWorldFeed(a, dt, e); }catch(err){}
   sensor.tMotion=now; if(ggRaw) sensor.gIncl=Math.hypot(ggRaw.x||0,ggRaw.y||0,ggRaw.z||0);   // (10-06t) для проби прискорення
@@ -3966,7 +3968,7 @@ function updateStanceAndCamera(dt){
     const pT=clamp(el*(VB_CAM.headPitch??0.3),-25,25);
     CAMH.pitch=(CAMH.pitch==null)?pT:CAMH.pitch+(pT-CAMH.pitch)*clamp(dt*4,0,1);
     const _kF=(VB_FPV.on>0)?clamp(((player.fpSmooth||0)-0.25)/0.5,0,1):0;
-    fpYaw=_camYaw; { const _pN=CAMH.pitch+((_kF>0.001)?fpvPitchTick(dt)*_kF:0), _ck=(typeof CALM!=='undefined')?CALM.k*CALM.k*(3-2*CALM.k):0; fpPitch=((_ck>0.001)?lerp(_pN, calmPitchTick(dt), _ck):_pN)*Math.PI/180; }   // (10-10c) вільні руки — нахил сталий, не за телефоном   // (10-07e) у першій особі погляд — за клинком угору-вниз (під ноги)
+    fpYaw=_camYaw; { const _pN=CAMH.pitch+((_kF>0.001)?fpvPitchTick(dt)*_kF:0), _ck=(typeof CALM!=='undefined')?CALM.k*CALM.k*(3-2*CALM.k):0; fpPitch=(((_ck>0.001)?lerp(_pN, calmPitchTick(dt), _ck):_pN)+((typeof KD!=='undefined')?KD.k*(VB_KD.camUp||22):0))*Math.PI/180; }   // (10-11b) лежачи — погляд угору на ворога   // (10-10c) вільні руки — нахил сталий, не за телефоном   // (10-07e) у першій особі погляд — за клинком угору-вниз (під ноги)
   } else { CAMH.pitch=null; fpYaw=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.yaw : _camYaw; fpPitch=(typeof CAMAIM!=='undefined' && CAMAIM.on) ? CAMAIM.pitch*Math.PI/180 : null; }
   if(VB_CAM.duelSide>0 && typeof DUEL!=='undefined' && DUEL.on && DUEL.tgt && !(typeof DRILL!=='undefined'&&DRILL.on)){   // (10-06s) гравцю — дуель збоку (опція)
     const t=DUEL.tgt; const pr={a:{id:'me',kind:'player',x:px,z:pz}, b:{id:'tgt',kind:t.ally?'ally':'mob',x:t.mesh.position.x,z:t.mesh.position.z}}; pr.d=Math.hypot(pr.b.x-pr.a.x,pr.b.z-pr.a.z); duelCamApply(pr, dt); camera.up.set(0,1,0); return; }
@@ -4151,12 +4153,16 @@ function endClinch(reason){
     buzz([0,200]);
   }else if(reason==='pressed'){
     // тебя ПРОДАВИЛИ: клинок отброшен — это разоружение, заработанное противником
+    const _kdT=(typeof kdTierFor==='function' && clinch.foe && !clinch.foe.remote && (VB_KD.on>0))?kdTierFor(clinch.foe):null;
+    if(_kdT && _kdT.tier>=3){ player.stamina=0; kdStart(clinch.foe, _kdT); }   // (10-11b) продавив набагато сильніший — не вибив, а збив з ніг
+    else {
     player.disarmed=true; player.stamina=0; player.disarmT=0;
     dropBlade(player);
     showBanner('⇣ ПРОДАВЛЕНО — КЛИНОК ВІДКИНУТО','#ef4444');
     doFlash('#ef4444');
     blip(60,0.7,'sawtooth',0.24);
     buzz([0,260]);
+    }
   }else if(reason==='presswin'){
     showBanner('⇡ ПРОДАВИВ КЛИНОК СУПРОТИВНИКА','#4ade80');
     doFlash('#4ade80');
@@ -4680,6 +4686,7 @@ function damageTier(av, tier, amount){
   if(av.dead) return;
   if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
   try{ amount=magicDmgIn(av, amount); }catch(e){}   // (10-10a) залізна шкіра, ослаблені вороги, удар будить сплячого
+  try{ if(av!==player && typeof KD!=='undefined' && KD.on) amount=Math.max(1,Math.round(amount*(VB_KD.dmgOut||0.6))); }catch(e){}   // (10-11b) з землі бʼєш слабше
   try{ if(av===player && B2.shieldT>0){ amount=Math.round(amount*0.5); try{ spatialBlip(player.mesh.position.x,1.3,player.mesh.position.z,880,0.06,'sine',0.1); }catch(e){} } }catch(e){}   // (10-09b) щит (SOS, коло палички) — удари вдвічі слабші
   if(tier===0){
     // ноги → теряется мобильность (Ритм/Выносливость).
@@ -6716,6 +6723,7 @@ function updatePhantoms(dt){
       if(tgt.local && !player.dead){   // ВСЕГДА уязвим: потеря оружия ≠ неуязвимость (щит !disarmed убран)
         if(typeof mentorIntercept==='function' && mentorIntercept(ph, D.dmg)){ ai.burnCd=D.cd; }   // (07-24)
         else if(typeof guardBlocks==='function' && guardBlocks(ph)){ ai.burnCd=D.cd*1.3; }        // (09-22r) захисна стійка
+        else if(typeof kdOnHit==='function' && kdOnHit(ph, D)){ ai.burnCd=Math.max(D.cd, 0.9); doFlash('#ef4444'); }   // (10-11b) розвернуло / вибило / НОКДАУН / лежачи
         else{
         damageTier(player, ph.tier, D.dmg);
         // (09-10b, ТЗ п.22) навчальний ворог не рубає безперервною серією:
@@ -6759,6 +6767,7 @@ function stepRelative(dx, dy){            // dx,dy — экранный свай
 }
 function commitStep(nx,ny,quiet){   // (09-22p) спільний крок: свайп, джойстик-кроки, плавний біг
   try{ if(CLIMB.on || CUT.on) return false; }catch(e){}
+  try{ if(typeof KD!=='undefined' && KD.on && KD.rollT<=0){ const [fx,fz]=dirXZ(player.visYaw||0); if(((nx-player.gx)*fx+(ny-player.gy)*fz)>-0.2) return false; } }catch(e){}   // (10-11b) лежачи — лише назад
   if(mode!=='creator' && (player.moveLockT||0)>0) return false;   // рідина/слиз — сповільнення
   if(nx===player.gx && ny===player.gy) return false;           // упёрлись в край
   let occ = isCellOccupied(nx,ny,player);
@@ -7018,6 +7027,7 @@ function contMove(ux,uy,v,dt){
 function playerFreeMove(wx,wy,v,dt){
   const P=player;
   try{ if(CLIMB.on || CUT.on) return; }catch(e){}
+  try{ if(typeof KD!=='undefined' && KD.on){ const [fx,fz]=dirXZ(player.visYaw||0); if((wx*fx+wy*fz)>-0.2) return; v*=(VB_KD.crawl||0.35); } }catch(e){}   // (10-11b) лежачи — лише відповзти назад
   if(!P._cont){ P._cont=true; P.cx=P.gx; P.cy=P.gy; }
   const nx=P.cx+wx*v*dt, ny=P.cy+wy*v*dt;
   const tx=clamp(Math.round(nx),0,12), ty=clamp(Math.round(ny),0,12);
@@ -7440,7 +7450,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-11a · ⏺ ТЕЙКИ: тримай ⏺ — пише датчики на рідній частоті (орієнтація, ω, a, a+g), стан гри щокадру, події й відео з камер (фронт + тил, екран навпіл) · 🎥 ОПЕРАТОР на другому телефоні: його камера пише той самий тейк, на екрані — датчики тіла, ⏺ з будь-якого боку · у ДОДЖЬО та ВІДПРАЦЮВАННІ ⏺ замість відліку · хлопок — мітка синхронізації · похідні: кутове прискорення, швидкість · ТЕЙКИ: перегляд по кадрах із графіками, поділитись (json + відео), прогін крізь гру';
+const BUILD_TAG='2026-10-11b · 🧍 ПОЗА ГРАВЦЯ: стоячи / сидячи / лежачи — калібрування нейтралі (тримай зручно 1.2 с): екран донизу й нахил — не присід і не альбомна · ✶ НОКДАУН — третя сила удару: ×1.3 розвернуло, ×1.8 вибило, ×1.9 і важкий удар (бос, сокира) — збитий з ніг: лежиш, відмахуйся (мах ≥2.5 м/с у бік ворога), перекат — різкий крен, назад — повзеш; встанеш сам при витривалості 35 · 10-11a: ⏺ ТЕЙКИ (датчики + камери + відгук), 🎥 ОПЕРАТОР, ⏺ замість відліку';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -8197,6 +8207,7 @@ function frame(now){
   last=now;
 
   sensorYawTick(dt);        // (09-11) канали сенсорів: клинок миттєво, мах — за порогами
+  try{ poseTick(dt); }catch(e){}   // (10-11b) калібрування пози
   try{ stillMonitorTick(dt); }catch(e){}
   try{ duelTick(dt); }catch(e){}
   try{ viewFullTick(); }catch(e){}   // (10-06y) повна картинка — перемикач діє одразу
@@ -8248,6 +8259,7 @@ function frame(now){
     try{ leftBladeTick(dt); }catch(e){}   // (07-17c) друга рука — окремий клинок
     try{ updateBlade2(); }catch(e){}      // (07-17j) її світловий клинок
     updateClinch(dt);
+    try{ kdTick(dt); }catch(e){ if(!window.__kdErr){ window.__kdErr=1; logE('НОКДАУН: '+e.message); } }   // (10-11b)
     handleDeath(player, dt);
 
     // без клинка слишком долго → телекинез возвращает меч
@@ -8589,9 +8601,10 @@ function obstSurface(o){
 }
 function gameBuildColliders(){
   const alive=obstacles.filter(o=>o.alive && !o.pass);
-  const sig=alive.length+':'+alive.map(o=>o.gx*13+o.gy).join(',')+((typeof SPR!=='undefined'&&SPR.dummy)?':D'+SPR.dummyRev:'');
+  const _fl=(typeof KD!=='undefined' && KD.k>0.5)?-0.9:0;   // (10-11b) лежиш — клинок над тілом, підлога не заважає (тіло опущене на 0.78 м)
+  const sig=alive.length+':'+alive.map(o=>o.gx*13+o.gy).join(',')+((typeof SPR!=='undefined'&&SPR.dummy)?':D'+SPR.dummyRev:'')+(_fl?':KD':'');
   if(sig===GAMEC.sig) return GAMEC.list;
-  const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-20,-2,-20],[20,0,20]),
+  const L=[SWORD_COLLIDERS.make('FLOOR','FLOOR','GROUND',[-20,-3,-20],[20,_fl,20]),
            SWORD_COLLIDERS.make('CEILING','CEILING','SOLID',[-20,3.8,-20],[20,4.8,20])];   // (09-22d) 3.8 м, як у LAB
   for(const o of alive){
     if(o._hW==null){ try{ const b=new THREE.Box3().setFromObject(o.mesh); o._hW=Math.max(0.3,b.max.y); }catch(e){ o._hW=TIER_H*2; } }
@@ -9385,6 +9398,7 @@ function labLiveStep(dt){
       if(LAB.isGame && LAB.mirror){ const J=LAB.rig.J;                                  // (09-22v) лівша: стійка дзеркальна — права нога вперед
         for(const [a,b] of [['LEFT_HIP','RIGHT_HIP'],['LEFT_KNEE','RIGHT_KNEE'],['LEFT_ANKLE','RIGHT_ANKLE']]){ const ra=J[a].rotation, rb=J[b].rotation; const t=[ra.x,-ra.y,-ra.z]; ra.set(rb.x,-rb.y,-rb.z); rb.set(t[0],t[1],t[2]); }
         if(J.PELVIS) J.PELVIS.rotation.y=-J.PELVIS.rotation.y; }
+      try{ if(LAB.isGame && typeof kdPoseApply==='function') kdPoseApply(rig); }catch(e){}   // (10-11b) нокдаун — на спині
       const I=labLiveInputs(dt);
       const N=LAB.neutral||{yaw:0,pitch:0,roll:0};
       // ігровий sensor.pitch = -sin(кута підйому): ярус 2 при від'ємному pitch. Тут — явно в градуси підйому.
@@ -11655,7 +11669,7 @@ function rigPlayerTick(dt){
   if(handRole() && VB_LINK2.mirror>0){ S.obj.visible=false; player.mesh.visible=false; if(player.blade) player.blade.visible=false; if(player.blade2) player.blade2.visible=false; return; }   // (10-07f) ДРУГА РУКА: власного тіла й фізики немає — на екрані те саме тіло, що й на головному
   const obj=S.obj; obj.visible=!player.dead && !(typeof clinch!=='undefined' && clinch.active);
   S.rig.sword.root.visible=!player.disarmed;
-  obj.position.copy(player.mesh.position);
+  obj.position.copy(player.mesh.position); try{ if(typeof KD!=='undefined' && KD.k>0.001) obj.position.y-=(VB_KD.drop||0.78)*KD.k; }catch(e){}   // (10-11b) лежить
   player.mesh.visible=false; if(player.blade) player.blade.visible=false; if(player.blade2) player.blade2.visible=false;
   if(player.dead) return;
   S.body.visYaw=player.visYaw||S.body.visYaw;
@@ -12379,9 +12393,11 @@ try{
 
 /* ═══ НАЛАШТУВАННЯ ЧУТЛИВОСТІ (09-16): повзунки на живі параметри, збереження в localStorage,
    копіювання набору одним JSON — щоб підібране на телефоні стало значеннями за замовчуванням. ═══ */
+const VB_POSE={ on:1, calT:1.2, still:40 }; window.VB_POSE=VB_POSE;   // (10-11b) поза гравця
+const VB_KD={ on:1, t1:1.3, t2:1.8, t3:1.9, minF:3.4, minF2:2.2, bossStr:2.4, foeStr:0.9, guard:0.3, up:35, minDown:1.5, regen:5, stam0:6, dmgIn:1.3, dmgOut:0.6, hitStam:3, parrySpd:2.5, parryAng:65, parryCost:5, rollRate:260, rollDeg:55, rollT:0.45, rollI:0.6, rollCost:8, crawl:0.35, immune:6, immune2:4, camUp:30, drop:0.78 }; window.VB_KD=VB_KD;   // (10-11b) нокдаун
 const VB_TAKE={ on:1, cue:1, cam:'both', res:720, fps:30, audio:1, kbps:4000, maxSec:40, keep:40, sensHz:8, clap:1, clapA:16, hud:1, mirror:1 };   // (10-11a) тейки: тут, бо повзунки чутливості читають корені при старті
 window.VB_TAKE=VB_TAKE;
-const SENS_ROOTS={VB_TAKE,VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS,VB_FEEL,VB_CLIMB,VB_CUT,VB_MECH,VB_ARMCALM};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_POSE,VB_KD,VB_TAKE,VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS,VB_FEEL,VB_CLIMB,VB_CUT,VB_MECH,VB_ARMCALM};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -12453,6 +12469,8 @@ const SENS_SLIDERS=[
   ['VB_WPN.up','Перевантаження росте ×',0.2,3,0.1],['VB_WPN.down','Перевантаження спадає ×',0.1,3,0.1],['VB_WPN.lagRef','Відставання клинка, від якого росте, °',10,90,5],
   ['VB_WPN.dropHeavy','Падає, якщо маса/сила ≥',0.8,3,0.1],['VB_WPN.fall','Падіння видно (1/0)',0,1,1],['VB_WPN.drain','Витривалість при перевантаженні ×',0,12,0.5],['VB_WPN.haptic','Вібро від перевантаження (1/0)',0,1,1],
   ['VB_WATCH.on','Спостерігач: за найактивнішим (1/0)',0,1,1],['VB_WATCH.dist','Спостерігач: відстань збоку, м',2,8,0.2],['VB_WATCH.h','Спостерігач: висота камери, м',0.8,4,0.1],['VB_WATCH.switchK','Перемикатись, коли активніший у ×',1,4,0.1],['VB_WATCH.hold','Не перемикатись частіше, с',1,10,0.5],['VB_WATCH.roomHold','Кімната: не перескакувати частіше, с',2,20,1],
+  ['ПОЗА · НОКДАУН (10-11b)'],
+  ['VB_POSE.on','Поза гравця: поправка (1/0)',0,1,1],['VB_POSE.calT','Поза: спокій для калібрування, с',0.5,3,0.1],['VB_KD.on','Нокдаун (1/0)',0,1,1],['VB_KD.t1','Удар: розвернуло від ×',1,3,0.1],['VB_KD.t2','Удар: вибило зброю від ×',1.2,4,0.1],['VB_KD.t3','Удар: НОКДАУН від ×',1.5,5,0.1],['VB_KD.minF','Нокдаун: сила удару ворога не менше',1,8,0.2],['VB_KD.bossStr','Сила удару боса ×',0.5,5,0.1],['VB_KD.up','Підвестись при витривалості',10,90,5],['VB_KD.regen','Лежачи: витривалість +/с',0,20,0.5],['VB_KD.dmgIn','Лежачи: удари по тобі ×',0.5,3,0.1],['VB_KD.dmgOut','Лежачи: твої удари ×',0.1,1.5,0.05],['VB_KD.parrySpd','Відмахнутись: вістря від, м/с',0.5,8,0.25],['VB_KD.rollRate','Перекат: крен від, °/с',80,600,10],['VB_KD.rollDeg','Перекат: крен за 0.35 с, °',20,120,5],['VB_KD.camUp','Лежачи: камера вгору, °',0,45,1],
   ['ТЕЙКИ · ЗАПИС (10-11a)'],
   ['VB_TAKE.cue','⏺ замість відліку в додзьо/відпрацюванні (1/0)',0,1,1],['VB_TAKE.res','Камера: висота кадру, px',360,1080,120],['VB_TAKE.fps','Камера: кадрів/с',15,60,5],['VB_TAKE.kbps','Відео: кбіт/с',1000,12000,500],['VB_TAKE.audio','Мікрофон у відео (1/0)',0,1,1],['VB_TAKE.maxSec','Тейк: межа, с',5,120,5],['VB_TAKE.keep','Тейків зберігати',5,200,5],['VB_TAKE.sensHz','Оператору: датчики, Гц',2,20,1],['VB_TAKE.clapA','Хлопок: поріг, м/с²',8,40,1],['VB_TAKE.hud','HUD датчиків над камерою (1/0)',0,1,1],['VB_TAKE.mirror','Фронт дзеркально (1/0)',0,1,1],
   ['МЕРЕЖА · ТІНІ · ПРОБА (10-06t)'],
@@ -13354,6 +13372,109 @@ function mechCamFocus(dt, third){ if(!(VB_MFOCUS.on>0)) return; const t=mechFocu
   const nf=f.clone().lerp(d, FOC.k*(third?0.6:1)); if(nf.lengthSq()<1e-6) return; nf.normalize(); camLook.copy(cp.clone().add(nf.clone().multiplyScalar(dist)));
   if(!third){ const back=(VB_MFOCUS.back??0.32)*FOC.k; if(back>0.002){ const P=cp.clone().sub(nf.clone().multiplyScalar(back)); try{ fpvCamClampWalls(P, cp); }catch(e){} camera.position.copy(P); camLook.copy(P.clone().add(nf.clone().multiplyScalar(dist))); } }   // (10-10b) трохи назад від очей — колесо чи скриня й кисть на них видно цілком, а не впритул
   if(!third && FPVCAM.rotA!=null) fpvCamUp(FPVCAM.rotA, camera.position, camLook); camera.lookAt(camLook); }
+/* ═══ (10-11b) ПОЗА ГРАВЦЯ: СТОЯЧИ · СИДЯЧИ · ЛЕЖАЧИ ═══
+   Гра читає телефон як меч стоячого бійця: екран догори, клинок горизонтально = спокій. Лежачи на спині телефон тримають
+   екраном до обличчя (донизу) й трохи піднятим — для гри це «присів, клинок у підлогу, екран перевернувся» (звідси й
+   випадкова АЛЬБОМНА). Поза — поворот у системі пристрою (кватерніон PPOSE.q), що робить із реального телефона «віртуальний»:
+   нейтраль, у якій тримаєш, стає «клинок горизонтально, екран догори». Калібрування: обрав позу → тримай телефон зручно 1.2 с
+   у спокої → гра запамʼятовує середню гравітацію й будує поворот: спершу навколо довгої осі (екран догори), потім навколо
+   поперечної (зручний нахил = горизонт). Азимут клинка — справжній: довга вісь телефона = меч, її поворот не чіпає.
+   Крен: поворот чистий (без дзеркала) — той самий фізичний рух кисті дає ту саму відповідь гри, що й стоячи (перевірено
+   у стенді: екран донизу + той самий крен = той самий знак). PPOSE.rollSign лише позначає «екран був донизу» у лозі.
+   Усе — у натуральній системі пристрою до решти обчислень (orientationFullQuat, onMotion): далі гра не знає, що гравець лежить. */
+const PPOSE={ mode:'stand', on:false, q:null, qInv:null, rollSign:1, cal:null, phi:0, theta:0, g:new THREE.Vector3() };
+window.PPOSE=PPOSE;
+const PPOSE_UA={stand:'СТОЯЧИ', sit:'СИДЯЧИ', lie:'ЛЕЖАЧИ'};
+function poseFrom(g){ const r=Math.hypot(g.x,g.z); const phi=Math.atan2(g.x,-g.z);   // навколо довгої осі: x'→0, z'<0 (екран догори)
+  const gy=g.y; const b=Math.atan2(-gy, r);                                           // навколо поперечної: y'→0, z'<0 (нахил = горизонт)
+  const qY=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), phi), qX=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), b);
+  const q=qX.multiply(qY); return {q, phi, theta:b, rollSign:(Math.cos(phi)<0)?-1:1}; }
+function poseSet(mode, P, src){ PPOSE.mode=mode; if(mode==='stand' || !P){ PPOSE.q=null; PPOSE.qInv=null; PPOSE.on=false; PPOSE.rollSign=1; PPOSE.phi=0; PPOSE.theta=0; }
+  else { PPOSE.q=P.q.clone(); PPOSE.qInv=P.q.clone().invert(); PPOSE.rollSign=P.rollSign; PPOSE.phi=P.phi; PPOSE.theta=P.theta; PPOSE.on=(VB_POSE.on>0); }
+  try{ localStorage.setItem('vb_pose_v1', JSON.stringify({mode, q:PPOSE.q?[PPOSE.q.x,PPOSE.q.y,PPOSE.q.z,PPOSE.q.w]:null, rollSign:PPOSE.rollSign, phi:PPOSE.phi, theta:PPOSE.theta})); }catch(e){}
+  try{ const b=$('mPose'); if(b) b.textContent='🧍 ГРАЮ: '+PPOSE_UA[mode]+(PPOSE.on?' · нейтраль '+Math.round(PPOSE.theta*180/Math.PI)+'°'+(PPOSE.rollSign<0?' · екран донизу':''):''); }catch(e){}
+  logE('ПОЗА: '+PPOSE_UA[mode].toLowerCase()+(PPOSE.on?' — поворот: навколо клинка '+Math.round(PPOSE.phi*180/Math.PI)+'°, нахил нейтралі '+Math.round(PPOSE.theta*180/Math.PI)+'°'+(PPOSE.rollSign<0?' · екран був донизу':''):' — без поправок')+(src?' ('+src+')':'')); }
+function poseLoad(){ try{ const v=JSON.parse(localStorage.getItem('vb_pose_v1')||'null'); if(v && v.mode && v.mode!=='stand' && v.q){ const q=new THREE.Quaternion(v.q[0],v.q[1],v.q[2],v.q[3]); poseSet(v.mode, {q, rollSign:v.rollSign||1, phi:v.phi||0, theta:v.theta||0}, 'збережено'); } else poseSet('stand', null); }catch(e){} }
+function poseCalStart(mode){ PPOSE.cal={mode, t:0, n:0, s:new THREE.Vector3(), wait:0}; PPOSE.on=false; PPOSE.mode=mode;
+  try{ const b=$('mPose'); if(b) b.textContent='🧍 ГРАЮ: '+PPOSE_UA[mode]+' · тримай зручно…'; }catch(e){}
+  try{ showBanner('🧍 '+PPOSE_UA[mode]+': тримай телефон так, як зручно, і не рухай','#fbbf24'); ttsSpeak((mode==='lie'?'Лежачи. ':'Сидячи. ')+'Тримай телефон так, як зручно, і не рухай — секунду.',{critical:true}); }catch(e){}
+  logE('ПОЗА: калібрую «'+PPOSE_UA[mode].toLowerCase()+'» — чекаю спокою '+(VB_POSE.calT||1.2)+' с'); }
+function poseTick(dt){ const C=PPOSE.cal; if(!C) return; C.wait+=dt; const g=sensor.gSyn; if(!g) return;
+  if((sensor.gyroMag||0)>(VB_POSE.still||40) || Math.abs(Math.hypot(g.x,g.y,g.z)-9.81)>1.5){ C.t=0; C.n=0; C.s.set(0,0,0); if(C.wait>8 && !C.warned){ C.warned=true; try{ showBanner('🧍 не рухай телефон — чекаю спокою','#f59e0b'); }catch(e){} } return; }
+  C.t+=dt; C.n++; C.s.x+=g.x; C.s.y+=g.y; C.s.z+=g.z;
+  if(C.t>=(VB_POSE.calT||1.2) && C.n>=8){ const m=C.s.clone().multiplyScalar(1/C.n).normalize(); PPOSE.cal=null; const P=poseFrom(m); poseSet(C.mode, P, 'калібрування');
+    try{ showBanner('🧍 '+PPOSE_UA[C.mode]+' — позу запамʼятовано','#22c55e'); ttsSpeak('Позу запамʼятовано. Так, як тримаєш зараз — це клинок прямо перед собою.',{}); buzz([0,40,40,40]); }catch(e){} } }
+function poseCycle(){ const o=['stand','sit','lie']; const nx=o[(o.indexOf(PPOSE.mode)+1)%o.length]; if(nx==='stand'){ PPOSE.cal=null; poseSet('stand',null,'меню'); try{ showBanner('🧍 СТОЯЧИ — без поправок','#94a3b8'); }catch(e){} } else poseCalStart(nx); }
+window.poseCycle=poseCycle; window.poseCalStart=poseCalStart;
+/* поворот сирих векторів пристрою (гравітація/прискорення — у натуральній системі) */
+const _poV=new THREE.Vector3();
+function poseVec(v){ if(!PPOSE.on||!v) return v; _poV.set(v.x||0,v.y||0,v.z||0).applyQuaternion(PPOSE.q); return {x:_poV.x,y:_poV.y,z:_poV.z}; }
+function poseRate(r){ if(!PPOSE.on||!r) return r; _poV.set(r.beta||0, r.gamma||0, r.alpha||0).applyQuaternion(PPOSE.q); return {alpha:_poV.z, beta:_poV.x, gamma:_poV.y}; }   // чистий поворот: фізичний сенс крену той самий, що стоячи — без дзеркала
+function poseRoll(){ const g=sensor.gSyn; if(!g) return sensor.roll||0; return Math.atan2(g.x, -g.z)*180/Math.PI; }   // як γ ОС, але з поверненої гравітації
+/* ═══ (10-11b) НОКДАУН — третя, найвища сила удару. Сила удару = маса зброї × (1 + сила маху) + довжина; у ворога — зі зброї
+   (WEAPONS.w/5), виду (бос ×2.4) і довжини клинка; у гравця — своя зброя, власний мах у момент удару (RIB.spd) і витривалість.
+   Різниця ×1.3 — розвернуло (розсинхрон тіла), ×1.8 — вибило зброю, ×2.2 і сам удар важкий (≥ minF) — НОКДАУН: лежиш на спині,
+   ворог нависає, клинок над собою: мах назустріч удару (≥ parrySpd м/с, у бік ворога) — відбив; різкий крен — перекат убік;
+   назад — повзеш; вперед не підеш. Удари, що влучили, важчі (dmgIn), свої — слабші (dmgOut). Підвестись — самому не можна:
+   тіло встає само, щойно витривалість повернеться до VB_KD.up (лежачи мʼязи відновлюються швидше, regen). */
+const KD={ on:false, k:0, t:0, iT:0, rollT:0, rollDir:0, lastT:-99, n:0, by:'', win:[], relT:0, muffT:0, lastRoll:0 };
+window.KD=KD;
+function kdActive(){ return KD.on || KD.k>0.02; }
+function kdPower(ph){ const W=(typeof WEAPONS!=='undefined' && WEAPONS[ph.wpn||'sword'])||{w:5}; const mE=(W.w||5)/5, sE=ph.boss?(VB_KD.bossStr||2.4):(VB_KD.foeStr||0.9)*(ph.swingSpeed||1), LE=(ph.swordLen||1.2)/1.35; return mE*(1+sE)+LE; }   // бос: повільний, але вага тіла — у кожному ударі
+function kdPlayerPower(){ let mP=1, LP=1; try{ const L=weaponLimits(); mP=L.mass||1; LP=((L.K&&L.K.len)||1.35)/1.35; }catch(e){ mP=(VB_WEAPON.mass||1); } const sP=clamp(((typeof RIB!=='undefined'&&RIB.spd)||0)/8,0,1.2)+(VB_KD.guard||0.3); const st=0.5+0.5*clamp((player.stamina||0)/100,0,1); return (mP*(1+sP)+LP)*st; }
+function kdTierFor(ph){ const Fe=kdPower(ph), Fp=kdPlayerPower(), r=Fe/Math.max(0.2,Fp); const now=performance.now()/1000;
+  let tier=0; if(r>=(VB_KD.t3||2.2) && Fe>=(VB_KD.minF||3.4) && (now-KD.lastT)>(VB_KD.immune||6)) tier=3; else if(r>=(VB_KD.t2||1.8) && Fe>=(VB_KD.minF2||2.2)) tier=2; else if(r>=(VB_KD.t1||1.3)) tier=1;
+  return {tier, Fe, Fp, r}; }
+function kdSideOf(ph){ const [fx,fz]=dirXZ(player.visYaw||0); const dx=ph.gx-player.gx, dz=ph.gy-player.gy; return ((-fz)*dx+fx*dz)>=0?1:-1; }   // + ворог праворуч
+/* удар ворога, що влучив (не відбитий і не перехоплений наставником): повертає true, якщо оброблено тут */
+function kdOnHit(ph, D){ if(!(VB_KD.on>0) || player.dead || !ph) return false; const dmg=(D&&D.dmg)||12; const now=performance.now()/1000;
+  if(KD.on){ if(KD.iT>0){ logE('НОКДАУН: перекат — удар '+(ph.kind||'')+' повз'); return true; }
+    if(kdParry(ph)) return true;
+    damageTier(player, ph.tier, Math.round(dmg*(VB_KD.dmgIn||1.3))); player.stamina=clamp(player.stamina-(VB_KD.hitStam||3),0,100); try{ doFlash('#ef4444'); buzz([0,90]); }catch(e){}
+    logE('НОКДАУН: удар '+(ph.kind||'')+' згори влучив → HP '+Math.round(player.hp)+' · витривалість '+Math.round(player.stamina)); try{ takeEvent('kdhit',{hp:Math.round(player.hp)}); }catch(e){} return true; }
+  const T=kdTierFor(ph); if(T.tier<=0) return false;
+  damageTier(player, ph.tier, dmg);
+  if(T.tier>=3){ kdStart(ph, T); return true; }
+  const side=kdSideOf(ph), wpn=(ph.wpn||'sword'), line='сила удару '+T.Fe.toFixed(1)+' проти твоєї '+T.Fp.toFixed(1)+' (×'+T.r.toFixed(1)+')';
+  if(T.tier===2){ if(!player.disarmed && now-(KD.t2T||-99)>(VB_KD.immune2||4)){ KD.t2T=now; player.disarmed=true; player.disarmT=0; try{ dropBlade(player); }catch(e){} try{ showBanner('✖ ВИБИТО — удар заважкий','#ef4444'); doFlash('#ef4444'); blip(60,0.6,'sawtooth',0.22); buzz([0,220]); }catch(e){} logE('ВИБИТО: '+(ph.kind||'')+' '+wpn+' — '+line+' — зброю вибило з рук'); try{ takeEvent('kdtier',{tier:2,r:+T.r.toFixed(2)}); }catch(e){} }
+    else { try{ labLoseControl('удар '+wpn+' заважкий — '+line, {yawV:90*side, bodyV:40*side}, 'BODY'); }catch(e){} } return true; }
+  try{ labLoseControl('удар '+wpn+' — '+line, {yawV:120*side, bodyV:60*side}, 'BODY'); }catch(e){} try{ buzz([0,60,30,40]); }catch(e){} logE('РОЗВЕРНУЛО: '+(ph.kind||'')+' '+wpn+' — '+line); try{ takeEvent('kdtier',{tier:1,r:+T.r.toFixed(2)}); }catch(e){} return true; }
+function kdParry(ph){ const spd=(typeof RIB!=='undefined'&&RIB.spd)||0; if(spd<(VB_KD.parrySpd||2.5)) return false; let d=null; try{ d=phoneDirW(); }catch(e){} if(!d) return false;
+  const dx=ph.gx-player.gx, dz=ph.gy-player.gy; const ang=Math.atan2(dx,-dz)*180/Math.PI, bl=Math.atan2(d.x,-d.z)*180/Math.PI; if(Math.abs(angDiff(ang,bl))>(VB_KD.parryAng||65)) return false;
+  ph.ai=ph.ai||{}; ph.ai.stunT=0.5; ph.strikeT=0; ph.ai.windT=0; ph._showT=0.6; player.stamina=clamp(player.stamina-(VB_KD.parryCost||5),0,100);
+  try{ const x=(worldX(ph.gx)+worldX(player.gx))/2, z=(worldZ(ph.gy)+worldZ(player.gy))/2; MUSICFX.hit('SWORD',0.6,x,0.9,z); spatialBlip(x,0.9,z,2100,0.08,'sawtooth',0.16); emitSparks(x,0.9,z,'#fde68a',10,2.4); if(navigator.vibrate) navigator.vibrate([0,45,30,45]); }catch(e){}
+  logE('НОКДАУН: відмахнувся ('+spd.toFixed(1)+' м/с) — удар '+(ph.kind||'')+' відбито · витривалість '+Math.round(player.stamina)); try{ takeEvent('kdparry',{spd:+spd.toFixed(1)}); }catch(e){} return true; }
+function kdStart(ph, T){ if(KD.on) return; KD.on=true; KD.t=0; KD.iT=0.5; KD.n++; KD.by=(ph&&ph.kind)||'?'; KD.rollT=0; KD.win.length=0; KD.lastT=performance.now()/1000; KD.muffT=1.2;
+  player.stamina=Math.min(player.stamina, VB_KD.stam0||6); player.activityExhaustion=Math.min(player.activityExhaustion||0, 50);
+  try{ if(clinch.active) endClinch('shattered'); }catch(e){} try{ if(typeof WALLLOCK!=='undefined' && WALLLOCK.active) WALLLOCK.active=false; }catch(e){}
+  try{ doFlash('#ef4444'); buzz([0,320,80,160]); blip(45,0.7,'sawtooth',0.3); const p=player.mesh.position; spatialNoise(p.x,0.3,p.z,120,0.6,0.9,0.3); setWorldMuffle(0.6); }catch(e){}
+  try{ showBanner('✶ НОКДАУН — відмахуйся, встанеш, коли повернуться сили','#ef4444'); ttsSpeak('Нокдаун! Відмахуйся. Встанеш, коли повернуться сили.',{critical:true,rate:1.05}); }catch(e){}
+  const wpn=(ph&&ph.wpn)||'sword'; logE('✶ НОКДАУН: '+KD.by+' '+wpn+' — сила удару '+T.Fe.toFixed(1)+' проти твоєї '+T.Fp.toFixed(1)+' (×'+T.r.toFixed(1)+') — збитий з ніг · витривалість '+Math.round(player.stamina)+' → підвестись при '+(VB_KD.up||35));
+  try{ takeEvent('kd',{by:KD.by, wpn, r:+T.r.toFixed(2), Fe:+T.Fe.toFixed(2), Fp:+T.Fp.toFixed(2)}); }catch(e){} }
+function kdEnd(why){ if(!KD.on) return; KD.on=false; KD.iT=0.8; KD.lastT=performance.now()/1000; try{ setWorldMuffle(0); }catch(e){}
+  if(why!=='загибель'){ try{ showBanner('⇧ ПІДВІВСЯ','#4ade80'); ttsSpeak('Встав.',{rate:1.1}); buzz([0,40,40,40]); blip(520,0.12,'sine',0.16); }catch(e){} }
+  logE('НОКДАУН: кінець — '+(why||'')+' · лежав '+KD.t.toFixed(1)+' с · витривалість '+Math.round(player.stamina)); try{ takeEvent('kdend',{why:why||'', t:+KD.t.toFixed(2)}); }catch(e){} }
+window.kdStart=kdStart; window.kdEnd=kdEnd; window.kdTierFor=kdTierFor;
+function kdRoll(dir){ if(!KD.on || KD.rollT>0) return false; const [fx,fz]=dirXZ(player.visYaw||0); const rx=-fz, rz=fx; const nx=Math.round(player.gx+rx*dir), ny=Math.round(player.gy+rz*dir);
+  let free=false; try{ free=nx>=0&&nx<=12&&ny>=0&&ny<=12 && !obstacleAt(nx,ny) && !isCellOccupied(nx,ny,player) && !(typeof structEdgeBlocked==='function' && structEdgeBlocked(nx,ny)); }catch(e){ free=false; }
+  if(!free){ logE('НОКДАУН: перекат '+(dir>0?'праворуч':'ліворуч')+' — нема куди'); try{ buzz([0,30]); }catch(e){} KD.rollT=0.3; return false; }
+  player.gx=nx; player.gy=ny; player._cont=false; try{ player.cx=nx; player.cy=ny; }catch(e){} KD.rollT=VB_KD.rollT||0.45; KD.rollDir=dir; KD.iT=Math.max(KD.iT, VB_KD.rollI||0.6); player.stamina=clamp(player.stamina-(VB_KD.rollCost||8),0,100);
+  try{ buzz([0,25,20,25]); const p=player.mesh.position; spatialNoise(p.x,0.3,p.z,300,0.4,0.5,0.14); }catch(e){} logE('НОКДАУН: перекат '+(dir>0?'праворуч':'ліворуч')+' → ('+nx+','+ny+') · витривалість '+Math.round(player.stamina)); try{ takeEvent('kdroll',{dir}); }catch(e){} return true; }
+window.kdRoll=kdRoll;
+function kdTick(dt){ const tgt=KD.on?1:0; KD.k+=(tgt-KD.k)*clamp(dt/(KD.on?0.3:0.5),0,1); if(KD.iT>0) KD.iT=Math.max(0,KD.iT-dt); if(KD.rollT>0) KD.rollT=Math.max(0,KD.rollT-dt);
+  if(KD.muffT>0){ KD.muffT-=dt; if(KD.muffT<=0){ try{ setWorldMuffle(0); }catch(e){} } }
+  if(!KD.on) return; KD.t+=dt; if(player.dead){ kdEnd('загибель'); return; }
+  player.stamina=clamp(player.stamina+dt*(VB_KD.regen||5),0,100);
+  /* перекат: різкий крен ≥ rollDeg за ≤ 0.35 с і швидкість ≥ rollRate */
+  const roll=sensor.roll||0; KD.win.push([KD.t,roll]); while(KD.win.length && KD.t-KD.win[0][0]>0.35) KD.win.shift();   // вікно — в ігровому часі
+  if(KD.rollT<=0 && Math.abs(sensor.rollRate||0)>=(VB_KD.rollRate||260) && KD.win.length>2){ const d=roll-KD.win[0][1]; if(Math.abs(d)>=(VB_KD.rollDeg||55)) kdRoll(d>0?1:-1); }
+  if(KD.t>=(VB_KD.minDown||1.5) && player.stamina>=(VB_KD.up||35)) kdEnd('сили повернулись'); }
+/* поза рига: на спині, ноги до ворога, голова піднята до нього; перекат — поворот таза */
+function kdPoseApply(rig){ const k=KD.k; if(k<=0.001 || !rig || !rig.J) return; const J=rig.J; const a=(Math.PI/2-0.22)*k;
+  try{ J.PELVIS.rotation.x-=a; J.LEFT_HIP.rotation.x+=a*0.9; J.RIGHT_HIP.rotation.x+=a*0.9; J.LEFT_KNEE.rotation.x+=0.35*k; J.RIGHT_KNEE.rotation.x+=0.35*k; J.TORSO.rotation.x-=0.1*k; J.HEAD.rotation.x+=0.55*k;
+    if(KD.rollT>0){ const u=1-KD.rollT/Math.max(0.05,VB_KD.rollT||0.45); J.PELVIS.rotation.z+=Math.sin(u*Math.PI)*0.9*KD.rollDir; } }catch(e){} }
+function kdInit(){ try{ const b=$('mPose'); if(b){ b.onclick=()=>{ closeMenu(); poseCycle(); }; } }catch(e){} poseLoad(); }
+try{ kdInit(); }catch(e){ console.warn('kdInit',e); }
 /* ═══ (10-11a) ТЕЙК: ЗАПИС ДАТЧИКІВ, КАМЕР І ВІДГУКУ ГРИ · REC-УТРИМАННЯ · ОПЕРАТОР НА ДРУГОМУ ТЕЛЕФОНІ ═══
    Тейк — один рух чи звʼязка між натисканням і відпусканням ⏺. У нього йдуть: сирі події датчиків на рідній частоті
    (орієнтація ОС — відносна й компасна, кутова швидкість, лінійне прискорення, прискорення з гравітацією), стан гри
@@ -14838,7 +14959,7 @@ function climbCamPose(e, dt){ const C=CLIMB; if(!C.on||!C.R||!e) return null; co
 /* (10-09b) ПЕРША ОСОБА З ВІЛЬНИМИ РУКАМИ: тіло видно — руки виходять із плечей, а не висять у повітрі; тулуб, таз і ноги — напівпрозорі
    (VB_FPV.bodyA), щоб не затуляти те, що під руками (скриню, край колодязя). 0 — сховати, як у 10-09a. */
 function fpvBodyGhost(S, on){ const rig=S&&S.rig; if(!rig||!rig.parts) return; if(!rig._ghostParts) rig._ghostParts=rig.parts.filter(m=>/^(torso|pelvis|left_thigh|right_thigh|left_shin|right_shin|left_foot|right_foot)$/.test(m.name||''));
-  let a=clamp(VB_FPV.bodyA??0.45,0,1); try{ const fk=Math.max((typeof FOC!=='undefined')?FOC.k:0, FREE.mechBend||0); a*=1-clamp(VB_MFOCUS.ghost??0.85,0,1)*clamp(fk,0,1); a*=1-clamp(MVIEW.k*1.6,0,1); }catch(e){}   // (10-10b) присів до механізму — стегна й тулуб не затуляють його
+  let a=clamp(VB_FPV.bodyA??0.45,0,1); try{ const fk=Math.max((typeof FOC!=='undefined')?FOC.k:0, FREE.mechBend||0); a*=1-clamp(VB_MFOCUS.ghost??0.85,0,1)*clamp(fk,0,1); a*=1-clamp(Math.max(MVIEW.k*1.6,(typeof KD!=='undefined')?KD.k*1.3:0),0,1); }catch(e){}   // (10-10b) присів до механізму — стегна й тулуб не затуляють його
   for(const m of rig._ghostParts){ const ud=m.userData;
     if(on){ if(a<=0.02){ m.visible=false; continue; } if(!ud._mOrig) ud._mOrig=m.material; if(!ud._mGhost){ ud._mGhost=ud._mOrig.clone(); ud._mGhost.transparent=true; ud._mGhost.depthWrite=false; }
       const g=ud._mGhost; g.color.copy(ud._mOrig.color); g.opacity=Math.min(a, ud._mOrig.opacity); if(m.material!==g) m.material=g; }
