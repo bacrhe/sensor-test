@@ -2428,7 +2428,14 @@ function linPhys(e, ggRaw){ const la=e.acceleration; if(!la || la.x==null) retur
 const STEPV={ vx:0, vz:0, still:0, spin:0, armed:false, lowT:0, want:null, cool:0 };
 /* (10-07d) швидкість РУКИ (VB_ARM) — теж із частотою датчика, а не кадру: інтегрувати одне значення на кадр при повільних
    кадрах означало «перепрорахувати» поштовх у кілька разів (рука летіла до межі 1.15 м). */
-const LINV={ v:new THREE.Vector3(), vB:new THREE.Vector3(), off:new THREE.Vector3(), still:0, stillA:0, gate:0, armed:false };
+const LINV={ v:new THREE.Vector3(), vB:new THREE.Vector3(), off:new THREE.Vector3(), still:0, stillA:0, gate:0, armed:false, aF:new THREE.Vector3(), gk:0 };
+/* ═══ (10-20a) ЛІНІЙНИЙ РУХ РУКИ 3.0 — без смикання. Раніше: швидкість руки обнулялась ЖОРСТКО щоразу, коли прискорення на 0.08 с
+   падало під мертву зону (повільне ведення руки = серія «пішла — стала — пішла»), мах (>450°/с) обрізав швидкість у нуль миттєво,
+   межа досяжності зупиняла руку об стіну, а вихід згладжувався лише lerp 70 мс. Тепер: прискорення — через НЧ-фільтр (lpf Гц),
+   швидкість у спокої ЗГАСАЄ з короткою сталою (zuptTau), а не стрибає в нуль; мах приглушує інтеграл плавно (spinFade с);
+   біля межі досяжності рука гальмує (soft м); вихід — критично демпфована пружина (posW рад/с) замість lerp. VB_LIN3.on=0 — як було. */
+const VB_LIN3={ on:1, lpf:12, stillAcc:0.35, stillT:0.12, zuptTau:0.10, moveTau:1.6, spinGate:450, spinFade:0.18, posW:18, posZeta:1.0, soft:0.12 };
+window.VB_LIN3=VB_LIN3;
 window.STEPV=STEPV;
 const _lwV=new THREE.Vector3(), _lwQ=new THREE.Quaternion(), _lwZ=new THREE.Vector3(0,0,1), _lwY=new THREE.Vector3(0,1,0);
 function linWorldFeed(a, dtE, e){
@@ -2438,20 +2445,33 @@ function linWorldFeed(a, dtE, e){
   _lwV.applyQuaternion(_lwQ.set(q.x,q.y,q.z,q.w)); sensor.lawX=_lwV.x; sensor.lawY=_lwV.y; sensor.lawZ=_lwV.z;
   const g=sensor.gyroMag||0, am=Math.hypot(a.x,a.y,a.z);
   { const spinA=Math.abs(sensor.yawRate||0)+Math.abs(sensor.pitchRate||0)+Math.abs(sensor.rollRate||0);   // рука: ворота обертання й обнулення в спокої
+    const L3=(typeof VB_LIN3!=='undefined' && VB_LIN3.on>0)?VB_LIN3:null;
+    if(L3){   // (10-20a) плавно: НЧ-фільтр прискорення, згасання замість обнулення, мʼякі ворота маху
+      LINV.aF.lerp(_lwV, clamp(dt*2*Math.PI*(L3.lpf||12),0,1));
+      const gT=spinA>(L3.spinGate||450)?1:0; LINV.gk+=(gT-LINV.gk)*clamp(dt/(L3.spinFade||0.18),0,1);
+      const amF=LINV.aF.length(); if(amF<(L3.stillAcc||0.35) && spinA<40) LINV.still+=dt; else LINV.still=0;
+      const stillK=clamp(LINV.still/(L3.stillT||0.12),0,1);
+      LINV.v.addScaledVector(LINV.aF, dt*(1-LINV.gk));
+      const tau=lerp(L3.moveTau||1.6, L3.zuptTau||0.1, Math.max(stillK, LINV.gk)); LINV.v.multiplyScalar(Math.exp(-dt/Math.max(0.02,tau)));
+      LINV.gate=LINV.gk>0.5?0.1:0; LINV.armed=true; }
+    else {
     if(spinA>(VB_ARM.spinGate||450)){ LINV.gate=(VB_ARM.gateT||0.15); LINV.armed=false; } else LINV.gate=Math.max(0,LINV.gate-dt);   // (10-07e) мах глушить руку лише поки триває
     if(am<(VB_ARM.dead||0.35) && spinA<40) LINV.still+=dt; else LINV.still=0;
     if(LINV.still>0.08){ LINV.v.set(0,0,0); if(LINV.gate<=0) LINV.armed=true; }
     else if(LINV.gate>0){ LINV.v.set(0,0,0); }
     else if(!LINV.armed){ LINV.armed=true; LINV.v.set(0,0,0); }   // (10-07e) мах скінчився — рахуємо з нуля одразу, не чекаючи повного спокою
-    else { LINV.v.addScaledVector(_lwV, dt); LINV.v.multiplyScalar(1-clamp(dt/1.2,0,1)); }
+    else { LINV.v.addScaledVector(_lwV, dt); LINV.v.multiplyScalar(1-clamp(dt/1.2,0,1)); } }
     /* зсув руки — теж у часі датчика: швидкість у систему корпусу (вперед +Z, ліворуч +X), підсилення за напрямками, утримання й м'яке повернення */
     const S=(typeof VB_RIG!=='undefined')&&VB_RIG.player, yb=(S&&S.body&&S.body.visYaw!=null)?S.body.visYaw:(player.visYaw||0);
     const vB=LINV.vB.copy(LINV.v).applyAxisAngle(_lwY,(yb-180)*Math.PI/180);
     vB.z*= vB.z>0 ? VB_ARM.gFwd : VB_ARM.gBack; vB.x*= vB.x<0 ? VB_ARM.gRight : VB_ARM.gLeft; vB.y*= vB.y>0 ? VB_ARM.gUp : VB_ARM.gDown; vB.multiplyScalar((VB_ARM.gAll||1)*(VB_ARM.gain||1));
     LINV.stillA = LINV.v.length()>0.05 ? 0 : LINV.stillA+dt;
     const ret = LINV.stillA>VB_ARM.holdT ? clamp((LINV.stillA-VB_ARM.holdT)/0.6,0,1) : 0, kk=lerp(VB_ARM.kHold,VB_ARM.kReturn,ret);
+    const Lm=VB_ARM.lim;
+    if(L3){ const sl=L3.soft||0.12; const lim=(val,vel,lo,hi)=>{ if(vel>0 && val>hi-sl) return vel*clamp((hi-val)/sl,0,1); if(vel<0 && val<lo+sl) return vel*clamp((val-lo)/sl,0,1); return vel; };   // (10-20a) біля межі — гальмує, не бʼється об стіну
+      vB.x=lim(LINV.off.x,vB.x,-Lm.x,Lm.x); vB.y=lim(LINV.off.y,vB.y,Lm.yMin,Lm.yMax); vB.z=lim(LINV.off.z,vB.z,Lm.zMin,Lm.zMax); }
     LINV.off.addScaledVector(vB, dt).multiplyScalar(1-clamp(kk*dt,0,1));
-    const Lm=VB_ARM.lim; LINV.off.x=clamp(LINV.off.x,-Lm.x,Lm.x); LINV.off.y=clamp(LINV.off.y,Lm.yMin,Lm.yMax); LINV.off.z=clamp(LINV.off.z,Lm.zMin,Lm.zMax); }
+    LINV.off.x=clamp(LINV.off.x,-Lm.x,Lm.x); LINV.off.y=clamp(LINV.off.y,Lm.yMin,Lm.yMax); LINV.off.z=clamp(LINV.off.z,Lm.zMin,Lm.zMax); }
   if(g>(VB_STEP.gyroMax||150)){ STEPV.spin=VB_STEP.spinHold||0.3; STEPV.armed=false; }
   STEPV.spin=Math.max(0,STEPV.spin-dt); STEPV.cool=Math.max(0,STEPV.cool-dt);
   if(am<(VB_STEP.stillAcc||0.35) && g<(VB_STEP.stillGyro||35)) STEPV.still+=dt; else STEPV.still=0;
@@ -5562,6 +5582,7 @@ function addObstacle(gx,gy,type,taken,tint,tallMul,shape,rotY,alpha,baseY,fs){  
   const ECOL={base:0x11151c, fragile:0x7cc8ff, liquid:0x2f6fe0, gas:0x67f0c0, plasma:0xe879f9,
     H:0xdff4ff, C:0x3a3f47, O:0x9ad1ff, Na:0xe8d27a, Si:0x9aa6b6, Cl:0xa6e86a, Fe:0xb87c55,
     sand:0xe7d8a1, salt:0xf6e7ea, co2:0x8fa1ad, glass:0xbfe8ff, steel:0x93a3b8};
+  try{ if(ECOL[type]==null && typeof SCI_COL!=='undefined' && SCI_COL[type]!=null) ECOL[type]=SCI_COL[type]; }catch(e){}   // (10-20a) кольори елементів і сполук науки
   const wallCol = tint!=null ? tint : (ECOL[type]!=null?ECOL[type] : (crawl?0x31435f:0x28374f));
   let mat;
   if(type==='gas'||type==='plasma') mat=new THREE.MeshBasicMaterial({color:wallCol, transparent:true, opacity:type==='gas'?0.26:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -7464,7 +7485,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-11d · 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
+const BUILD_TAG='2026-10-20a · 🖐 ЛІНІЙНИЙ РУХ РУКИ 3.0: без смикання — НЧ-фільтр, мʼякий спокій без обнулень, мах глушить плавно, пружина на виході, гальмо біля межі (повзунки РУКА · ЛІНІЙНИЙ РУХ 3.0) · 🪜 ПЕРЕХОДИ МІЖ ПОВЕРХАМИ очима: камера лишається в голові, повільніший підхід, у темряві «вата» у вухах і кроки/щаблі, світло повертається без стрибка (VB_CUT.cam=side — бічна камера як було) · ⚗ НАУКА: 36 елементів Морзе, ХІМІЯ 2 з умовами (вода, нагрів, світло LUX, розряд ZAP, каталізатор Fe): луг, аміак (Габер), соляна кислота на світлі, іржа → терміт, домна, мідь і бронза, вапно → гашене → крейда, нейтралізація, електроліз · ☢ ЯДРО: ланцюг розпаду U→Th→Ra→Rn→Po→Pb, лічильник Гейгера, доза й захист (свинець ×10), Ra+Be → нейтрони → ртуть у золото, поділ урану: критичність без бору / реактор із бором, вода-сповільнювач, синтез H → He у плазмі · ⟨ψ| КВАНТИ: спектр-акорд елемента біля плазми, фотоефект (LUX/SUN за роботою виходу), лазер He–Ne, QUBIT — заплутана пара · 🧪 ЗАГАДКИ НАУКИ так/ні кивком (+2 душі, пояснення), самі після реакцій · 🎯 завдання: наукові продукти, нові елементи, загадки · 📜 11 нових сувоїв · ⚗ НАУКА довідник у меню · 10-11d: 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -9390,7 +9411,8 @@ const VB_FEEL={ on:1, dist:0.95, off:1.15, gap:0.45, snap:0.3, approach:0.6, say
 const VB_CLIMB={ on:1, camBack:0.5, camMin:0.62, camUp:0.1, camLookDown:0.14, reach:0.74, snap:0.24, aimD:0.55, pullV:0.7, dropV:1.0, sh:1.36, st2:0.006, st1:0.026, magnet:0.42, gain:1.3, xMax:0.62, step:1, stepDeg:32, stepBack:1.0, stepCd:0.7, recenter:1, stPull:0.06, stRegen:0.25, stFree:0.06, crouch:0.75,
   warn:0.25, fallSafe:1.4, fallHurt:3.5, fallDeath:7.5, slack:0.45, pitonT:1.4, pressT:0.6, rappelV:1.1, say:1, sonar:1 };
 window.VB_CLIMB=VB_CLIMB;   // (10-08c) нащупування стіни вільними руками
-const VB_CUT={ on:1, walk:0.7, act:1.15, fade:0.35, arrive:1.35, fadeIn:0.5 };   // (10-09a) сцени переходів між місцями
+const VB_CUT={ on:1, walk:1.4, act:1.15, fade:0.45, arrive:1.35, fadeIn:0.6, cam:'fp', side:0, muffle:0.5, blackSteps:1, pace:1.1 };
+const VB_SCI={ on:1, tick:0.7, geiger:1, dose:1, doseHP:0.6, nAct:0.35, fissK:0.45, crit:4, critWin:2.0, modK:1.6, fuseT:4, laserT:6, hl:1.0, qLife:120, say:1, riddle:1, riddleCool:45, riddleP:0.7 };   // (10-20a) наука: хімія 2, ядро, кванти, загадки — тут, щоб повзунки (SENS_ROOTS) бачили при завантаженні   // (10-09a) сцени переходів між місцями · (10-20a) cam:'fp' — очима, без монтажного стрибка на бічну камеру; у темряві — кроки/щаблі й «вата» у вухах, щоб перехід між поверхами був неперервним
 window.VB_CUT=VB_CUT;
 const VB_MECH={ resetHome:1 };   // (10-09b) заходиш у дім — двері тайника, люк і скриня як нові
 window.VB_MECH=VB_MECH;
@@ -10541,13 +10563,18 @@ const VB_ARM={ on:true, gAll:1.5, gain:1.0, gainY:1.0, gFwd:1.0, gBack:1.0, gRig
   moveDamp:2.6, stopDamp:9.0, holdT:3.0, kHold:0.5, kReturn:2.0, retDamp:3.0, outTau:0.07, tiltCouple:0.0,
   lim:{x:0.95, yMin:-1.10, yMax:1.00, zMin:-0.60, zMax:1.15}, bodyFollow:1.0, rollShift:0.55, rollDead:3, rollFull:40, rollDir:1 };   // (09-22l) ширше + тіло за рукою; (09-24d) крен → зсув рукояті вбік від малих нахилів
 window.VB_ARM=VB_ARM;
+const _laAcc=new THREE.Vector3();
 function labArmTick(I,N,bodyRel,dt){
   const A=LAB.arm||(LAB.arm={off:new THREE.Vector3(),vel:new THREE.Vector3(),still:0});
   if(!VB_ARM.on){ A.off.set(0,0,0); A.vel.set(0,0,0); return A.off; }
   /* (10-07d) ФІЗИЧНЕ прискорення в системі світу (живі дані — з onMotion, у природній системі пристрою); записи — старим шляхом */
   A.vI=A.vI||new THREE.Vector3();
   if(!I.rec && sensor.lawX!=null){ A.off.copy(LINV.off); A.vel.copy(LINV.vB); A.still=LINV.stillA;   // живі дані: зсув уже порахований у часі датчика (onMotion) — тут лише згладжування виходу
-    A.outS=A.outS||A.off.clone(); A.outS.lerp(A.off, clamp(dt/VB_ARM.outTau,0,1)); return A.outS; }
+    A.outS=A.outS||A.off.clone();
+    if(typeof VB_LIN3!=='undefined' && VB_LIN3.on>0){ A.outV=A.outV||new THREE.Vector3(); const w=VB_LIN3.posW||18, z=VB_LIN3.posZeta||1; let left=dt; while(left>1e-4){ const h=Math.min(left,0.012); left-=h;   // (10-20a) критично демпфована пружина, підкроки — стійко й без обгону
+        _laAcc.copy(A.off).sub(A.outS).multiplyScalar(w*w).addScaledVector(A.outV,-2*z*w); A.outV.addScaledVector(_laAcc,h); A.outS.addScaledVector(A.outV,h); } }
+    else A.outS.lerp(A.off, clamp(dt/VB_ARM.outTau,0,1));
+    return A.outS; }
   { const q=I.quat||sensor.quatFull||sensor.quat; const a=new THREE.Vector3(I.accel[0]||0,I.accel[1]||0,I.accel[2]||0); if(q) a.applyQuaternion(new THREE.Quaternion(q.x,q.y,q.z,q.w)); else a.set(0,0,0);   // запис — старим шляхом
     if(a.length()<VB_ARM.dead) A.vRec=(A.vRec||new THREE.Vector3()).set(0,0,0); else (A.vRec=A.vRec||new THREE.Vector3()).addScaledVector(a,dt).multiplyScalar(1-clamp(dt/1.2,0,1)); A.vI.copy(A.vRec); }
   A.vI.applyAxisAngle(new THREE.Vector3(0,1,0),((N.yaw||0)-180)*Math.PI/180);   // світ сенсора → LAB (вперед +Z)
@@ -12458,7 +12485,7 @@ const VB_POSE={ on:1, calT:1.2, still:40 }; window.VB_POSE=VB_POSE;   // (10-11b
 const VB_KD={ on:1, t1:1.3, t2:1.8, t3:1.9, minF:3.4, minF2:2.2, bossStr:2.4, foeStr:0.9, guard:0.3, up:35, minDown:1.5, regen:5, stam0:6, dmgIn:1.3, dmgOut:0.6, hitStam:3, parrySpd:2.5, parryAng:65, parryCost:5, rollRate:260, rollDeg:55, rollT:0.45, rollI:0.6, rollCost:8, crawl:0.35, immune:6, immune2:4, camUp:30, drop:0.78, loom:1.4, sweepPow:1.3, ghost:0.65 }; window.VB_KD=VB_KD;   // (10-11b) нокдаун · (10-11c) loom — пауза ворога після нокдауну, sweepPow — круговий замах боса важчий, ghost — як сильно ховати своє тіло лежачи
 const VB_TAKE={ on:1, cue:1, cam:'both', res:720, fps:30, audio:1, kbps:4000, maxSec:40, keep:40, sensHz:8, clap:1, clapA:16, hud:1, mirror:1, hfov:66 };   // (10-11a) тейки: тут, бо повзунки чутливості читають корені при старті
 window.VB_TAKE=VB_TAKE;
-const SENS_ROOTS={VB_CALMFX,VB_POSE,VB_KD,VB_TAKE,VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS,VB_FEEL,VB_CLIMB,VB_CUT,VB_MECH,VB_ARMCALM};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
+const SENS_ROOTS={VB_LIN3,VB_SCI,VB_CALMFX,VB_POSE,VB_KD,VB_TAKE,VB_ARM,VB_ANG,SENSCFG,VB_RESYNC,VB_WEAPON,VB_PRED,VB_YAW,VB_NORTH,VB_CAM,VB_ORI,VB_SONAR,VB_MUSIC,VB_RIG,VB_MOVE,VB_ROOMS,VB_CLASH,VB_WORLD,VB_SLOW,VB_RIBBON,VB_TRAIL,VB_HAND,VB_SHEATH,VB_NOISE,VB_FREE,VB_GEST,VB_RACC,VB_COL,VB_SPR,VB_KATA,VB_KATAQ,VB_SUPERHOT,VB_SRC,VB_BODY,VB_DUEL,VB_SPAR,VB_DRILL,VB_STEP,VB_NET,VB_REPLAY,VB_PROBE,VB_WPN,VB_WATCH,VB_COOP,VB_VIEW,VB_SELF,VB_FPV,VB_LAND,VB_SLIDE,VB_LINK2,VB_PRESS,VB_TWO,VB_HANDS,VB_FINGERS,VB_FEEL,VB_CLIMB,VB_CUT,VB_MECH,VB_ARMCALM};   // (10-07f) альбомна станом, лезо по лезу, друга рука   // (09-27g2) VB_KATAQ — інакше sensSnapshot() падає на старті
 const SENS_SLIDERS=[
   ['СТРІЧКА КЛИНКА · БІГ · ЯРІСТЬ (09-22p)'],
   ['VB_GEST.amp','Жест ТАК/НІ: мін. розмах одного руху, °',4,25,1],['VB_GEST.need','Жест: рухів поспіль (3–4 = «двічі»)',2,5,1],['VB_GEST.dom','Жест: перевага своєї осі',1,3,0.05],['VB_GEST.lookDeg','Хмарка наставника: видно, коли дивишся в межах, °',10,60,1],
@@ -12530,6 +12557,13 @@ const SENS_SLIDERS=[
   ['VB_WPN.up','Перевантаження росте ×',0.2,3,0.1],['VB_WPN.down','Перевантаження спадає ×',0.1,3,0.1],['VB_WPN.lagRef','Відставання клинка, від якого росте, °',10,90,5],
   ['VB_WPN.dropHeavy','Падає, якщо маса/сила ≥',0.8,3,0.1],['VB_WPN.fall','Падіння видно (1/0)',0,1,1],['VB_WPN.drain','Витривалість при перевантаженні ×',0,12,0.5],['VB_WPN.haptic','Вібро від перевантаження (1/0)',0,1,1],
   ['VB_WATCH.on','Спостерігач: за найактивнішим (1/0)',0,1,1],['VB_WATCH.dist','Спостерігач: відстань збоку, м',2,8,0.2],['VB_WATCH.h','Спостерігач: висота камери, м',0.8,4,0.1],['VB_WATCH.switchK','Перемикатись, коли активніший у ×',1,4,0.1],['VB_WATCH.hold','Не перемикатись частіше, с',1,10,0.5],['VB_WATCH.roomHold','Кімната: не перескакувати частіше, с',2,20,1],
+  ['РУКА · ЛІНІЙНИЙ РУХ 3.0 (10-20a)'],
+  ['VB_LIN3.on','Плавний лінійний рух руки (1/0; 0 — як було)',0,1,1],['VB_LIN3.lpf','НЧ-фільтр прискорення, Гц',3,30,1],['VB_LIN3.stillAcc','Спокій: прискорення нижче, м/с²',0.1,1,0.05],['VB_LIN3.stillT','Спокій: за скільки с — повний',0.04,0.5,0.02],['VB_LIN3.zuptTau','Спокій: згасання швидкості, с',0.03,0.5,0.01],['VB_LIN3.moveTau','Рух: витік швидкості, с',0.4,4,0.1],
+  ['VB_LIN3.spinGate','Мах глушить руку від, °/с',150,900,10],['VB_LIN3.spinFade','Мах: плавність воріт, с',0.03,0.5,0.01],['VB_LIN3.posW','Вихід: пружина, рад/с',6,40,1],['VB_LIN3.soft','Межа досяжності: гальмо від, м',0.02,0.4,0.01],
+  ['СЦЕНИ · ПЕРЕХОДИ МІЖ ПОВЕРХАМИ (10-20a)'],
+  ['VB_CUT.on','Сцени переходів (1/0)',0,1,1],['VB_CUT.walk','Підхід до драбини: не довше, с',0.5,3,0.1],['VB_CUT.pace','Крок у сцені, м/с',0.5,2,0.05],['VB_CUT.act','Дія (лізе/пірнає), с',0.4,2.5,0.05],['VB_CUT.fade','Затемнення, с',0.15,1.5,0.05],['VB_CUT.arrive','Темрява між поверхами, с',0.3,3,0.05],['VB_CUT.fadeIn','Світло повертається, с',0.15,1.5,0.05],['VB_CUT.muffle','«Вата» у вухах у темряві, 0–1',0,1,0.05],['VB_CUT.blackSteps','Кроки/щаблі в темряві (1/0)',0,1,1],['VB_CUT.side','Сцена збоку, як у 10-09a (1/0; 0 — очима)',0,1,1],
+  ['НАУКА · ХІМІЯ 2 · ЯДРО · КВАНТИ (10-20a)'],
+  ['VB_SCI.on','Наука (1/0)',0,1,1],['VB_SCI.geiger','Лічильник Гейгера (1/0)',0,1,1],['VB_SCI.dose','Доза шкодить (1/0)',0,1,1],['VB_SCI.doseHP','Доза: здоров’я −/с при дозі 1',0,3,0.1],['VB_SCI.hl','Періоди напіврозпаду ×',0.2,50,0.2],['VB_SCI.nAct','Нейтронне джерело Ra+Be: активність',0.05,1,0.05],['VB_SCI.fissK','Поділ урану: ймовірність ×',0.05,1,0.05],['VB_SCI.modK','Вода-сповільнювач ×',1,3,0.1],['VB_SCI.crit','Критичність: поділів за вікно',2,10,1],['VB_SCI.critWin','Критичність: вікно, с',1,5,0.25],['VB_SCI.fuseT','Синтез: водень у плазмі, с',1,10,0.5],['VB_SCI.laserT','Лазер He–Ne світить, с',2,15,0.5],['VB_SCI.qLife','Кубіт: декогеренція, с',20,300,10],['VB_SCI.say','Голос науки (1/0)',0,1,1],['VB_SCI.riddle','Загадки після реакцій (1/0)',0,1,1],['VB_SCI.riddleCool','Загадки: не частіше, с',10,180,5],['VB_SCI.riddleP','Загадки: ймовірність',0,1,0.05],
   ['СПОКІЙНО · АСМР (10-11d)'],
   ['VB_CALMFX.on','Спокійно (1/0)',0,1,1],['VB_CALMFX.haptic','Спокійно: вібро ×',0.1,1,0.05],['VB_CALMFX.hapMin','Спокійно: вібро не коротше, мс',4,40,1],['VB_CALMFX.comp','Спокійно: компресор, поріг дБ',-50,0,1],['VB_CALMFX.lp','Спокійно: зріз верху, Гц',3000,16000,500],
   ['VB_CALMFX.whisper','Шепіт клинка: гучність',0,0.3,0.01],['VB_CALMFX.whF','Шепіт: смуга, Гц',800,6000,100],['VB_CALMFX.shimmer','Дзвін (мурашки): гучність',0,0.1,0.005],['VB_CALMFX.shF','Дзвін: частота, Гц',2000,9000,100],['VB_CALMFX.knee','Шепіт: від швидкості вістря, м/с',0,2,0.1],['VB_CALMFX.span','Шепіт: повний за, м/с',0.5,8,0.25],
@@ -15377,7 +15411,7 @@ const CUT={ on:false, t0:0, sp:null, skip:false, fade:null, n:0 };
 window.CUT=CUT;
 function cutFadeSet(a){ let el=document.getElementById('cutFade');
   if(!el){ el=document.createElement('div'); el.id='cutFade'; el.style.cssText='position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:70;display:none'; document.body.appendChild(el); }
-  const v=clamp(a,0,1); el.style.opacity=String(v); el.style.display=(v>0.002)?'block':'none'; CUT.black=v; }
+  const v=clamp(a,0,1); el.style.opacity=String(v); el.style.display=(v>0.002)?'block':'none'; CUT.black=v; if(v>(CUT.peak||0)) CUT.peak=v; }   // (10-20a) peak — для стенда (кадри рідкі)
 function cutFadeTo(a1, dur, cb){ CUT.fade={t0:performance.now(), dur:Math.max(0.01,dur), a0:(CUT.black||0), a1, cb:cb||null}; }
 function cutCell(x,z){ const ax=worldX(1)-worldX(0), az=worldZ(1)-worldZ(0); return [(x-worldX(0))/ax, (z-worldZ(0))/az]; }
 function cutYawOf(fx,fz){ return wrap360(Math.atan2(fx,-fz)*180/Math.PI); }   // курс, щоб дивитися вздовж (fx,fz)
@@ -15403,10 +15437,11 @@ function cutCamPick(g){ const free=(x,z)=>{ const [cx,cy]=cutCell(x,z); if(cx<0.
   return best||{back:1.2, sd:0}; }
 function cutStart(sp){ if(!(VB_CUT.on>0)) return false; try{ if(handRole()) return false; }catch(e){} const S=VB_RIG.player; if(!S||!S.rig||!player||!player.mesh) return false;
   const P=player.mesh.position; sp.p0={x:P.x, z:P.z}; sp.h0=player.hover||0; sp.cam=cutCamPick(sp.g);
-  if(sp.kind==='leave'){ const g=sp.g, a=g.hole?0.62:0.42; sp.A={x:g.x+g.dx*a, z:g.z+g.dz*a}; sp.Tw=clamp(Math.hypot(sp.A.x-P.x, sp.A.z-P.z)/1.3, 0.25, VB_CUT.walk); sp.dur=sp.Tw+VB_CUT.act; }
+  if(sp.kind==='leave'){ const g=sp.g, a=g.hole?0.62:0.42; sp.A={x:g.x+g.dx*a, z:g.z+g.dz*a}; sp.Tw=clamp(Math.hypot(sp.A.x-P.x, sp.A.z-P.z)/(VB_CUT.pace||1.1), 0.3, VB_CUT.walk); /* (10-20a) іде, не біжить */ sp.dur=sp.Tw+VB_CUT.act; }
   else { const g=sp.g; sp.A={x:g.x+g.dx*(g.hole?0.62:0.42), z:g.z+g.dz*(g.hole?0.62:0.42)}; sp.O={x:worldX(player.gx), z:worldZ(player.gy)}; sp.dur=VB_CUT.arrive; }
-  CUT.on=true; CUT.t0=performance.now(); CUT.sp=sp; CUT.skip=false; CUT.n++;
-  player.fpSmooth=0; try{ FPVCAM.k=0; }catch(e){}
+  CUT.on=true; CUT.t0=performance.now(); CUT.sp=sp; CUT.skip=false; CUT.n++; sp.fp=(VB_CUT.cam==='fp') && !(VB_CUT.side|0);
+  if(!sp.fp){ player.fpSmooth=0; try{ FPVCAM.k=0; }catch(e){} }   // (10-20a) очима — камера лишається в голові: тіло йде до драбини, піднімається — і ти з ним
+  try{ if((VB_CUT.muffle||0)>0 && sp.kind==='leave') setWorldMuffle(0); }catch(e){}
   try{ for(const k of ['R','L']) if(FREE.grab[k]) mechRelease(k,'сцена'); }catch(e){} try{ feelOff('сцена'); }catch(e){}
   try{ if(!FREE.on) freeSet(true,'сцена'); }catch(e){}
   try{ S.lockYaw=(sp.kind==='leave')?cutYawOf(-sp.g.dx,-sp.g.dz):cutYawOf(sp.g.dx,sp.g.dz); S._lockBy='cut'; }catch(e){}
@@ -15445,15 +15480,17 @@ function cutTick(dt){ const now=performance.now();
       else { const a=cutSmooth((u-0.55)/0.45); x=lerp(sp.A.x, sp.O.x, a); z=lerp(sp.A.z, sp.O.z, a); h=0; yaw=wrap360(fIn+angDiff(fOut,fIn)*clamp(a*2.2,0,1)); st.walk=true; } } }
   cutPlace(x,z,h); try{ if(S){ S.lockYaw=yaw; S._lockBy='cut'; } }catch(e){} sp.st=st; sp.root={x,z,h};
   if(sp.kind==='leave'){ const fs=sp.dur-VB_CUT.fade; cutFadeSet(t>fs?(t-fs)/VB_CUT.fade:0); } else cutFadeSet(1-clamp(t/VB_CUT.fadeIn,0,1));
+  try{ if((VB_CUT.muffle||0)>0) setWorldMuffle((CUT.black||0)*(VB_CUT.muffle||0.5)); }catch(e){}   // (10-20a) темрява — «вата» у вухах, світ повертається разом зі світлом
   if(st.walk && now-(sp._stepT||0)>330){ sp._stepT=now; try{ spatialNoise(x,0.05,z,260,1.6,0.08,0.05); }catch(e){} }
   if(st.ladder && Math.floor((st.ph||0)/Math.PI)!==(sp._lp||0)){ sp._lp=Math.floor((st.ph||0)/Math.PI); try{ spatialBlip(g.x,1.2+h,g.z,g.style==='ropeLadder'?330:520,0.03,'triangle',0.05); }catch(e){} }
   if(t>=sp.dur) cutFinish(); }
 function cutFinish(){ const sp=CUT.sp; CUT.on=false; CUT.sp=null; try{ const S=VB_RIG.player; if(S&&S._lockBy==='cut'){ S.lockYaw=null; S._lockBy=null; } }catch(e){} player.hover=0;
   if(!sp) return;
-  if(sp.kind==='leave'){ cutFadeSet(1); try{ sp.onBlack&&sp.onBlack(); }catch(e){ logE('СЦЕНА: '+e.message); MECH.busy=false; } cutFadeTo(0, VB_CUT.fadeIn); }
+  if(sp.kind==='leave'){ cutFadeSet(1); try{ sp.onBlack&&sp.onBlack(); }catch(e){ logE('СЦЕНА: '+e.message); MECH.busy=false; } cutFadeTo(0, VB_CUT.fadeIn);
+    if((VB_CUT.blackSteps|0)>0){ const hole=!!(sp.g&&sp.g.hole), n=3; for(let i=0;i<n;i++) setTimeout(()=>{ try{ const p=player.mesh.position; if(hole) spatialNoise(p.x,0.1,p.z,220,1.4,0.1,0.05); else spatialBlip(p.x,1.0,p.z,(sp.g&&sp.g.style==='ropeLadder')?330:520,0.03,'triangle',0.045); }catch(e){} }, 120+i*300); } }   // (10-20a) у темряві чути, що лізеш далі — перехід неперервний
   else { cutFadeSet(0); player._cont=false; player.cx=null; player.cy=null; player.vgx=player.gx; player.vgy=player.gy; try{ sp.onEnd&&sp.onEnd(); }catch(e){ logE('СЦЕНА: '+e.message); } } }
 /* камера сцени (замість звичайної): збоку, стежить за тілом */
-function cutCamera(dt){ const sp=CUT.sp; if(!sp) return false; const g=sp.g, r=sp.root||{x:g.x,z:g.z,h:0};
+function cutCamera(dt){ const sp=CUT.sp; if(!sp) return false; if(sp.fp) return false; const g=sp.g, r=sp.root||{x:g.x,z:g.z,h:0};   // (10-20a) очима — звичайна камера (голова рига)
   { const now=performance.now(); if(sp.cam && now-(sp._camChk||0)>400){ sp._camChk=now; const c0=sp.cam, x0=g.x+g.dx*c0.back+g.sx*c0.sd, z0=g.z+g.dz*c0.back+g.sz*c0.sd;   // (10-09a) супутник підійшов до камери — інший ракурс
       if(cutCamScore(x0, z0, r.x, r.z, cutActors())<0.75){ const c1=cutCamPick(g); if(c1.back!==c0.back || c1.sd!==c0.sd){ sp.cam=c1; sp._camInit=false; } } } }
   const c=sp.cam||{back:2.3,sd:1.5};
@@ -15714,6 +15751,7 @@ function castWordSpell(w, n){ const S=WORD_SPELLS[w]; if(!S) return false; n=cla
   const pw=+(spellPower(w)*(VB_MAGIC.power||1)).toFixed(2); let r=null, k=0; MG.curPw=pw;
   for(let i=0;i<n;i++){ MG.yawOff=(n>1)?(i-(n-1)/2)*9:0; try{ const o=SPELLFX[S.fx](pw,{n:i}); if(o){ r=o; k++; } }catch(e){ logE('ЗАКЛЯТТЯ '+w+': '+e.message); } }
   MG.yawOff=0; MG.curPw=null;
+  if(k>0){ try{ sciSpellHook(w,pw); }catch(e){} }   // (10-20a) світло / розряд / нагрів — умови реакцій науки
   if(r){ logE('⚡ ЗАКЛЯТТЯ '+w+(n>1?'×'+n:'')+' ('+S.ua+', '+((SCHOOL[S.school]||{}).ua||'')+') · сила '+pw.toFixed(2)+' (Морзе '+morseWeight(w)+') → '+r); try{ showBanner('⚡ '+w+(n>1?' ×'+n:'')+' — '+S.ua.toUpperCase(),'#c4b5fd'); }catch(e){} try{ QST.progress('cast',S.fx,1); }catch(e){} }
   else if(!inWorkshop()){ player.score+=cost; try{ resHUD(); }catch(e){} }   // не спрацювало — душу назад
   return true; }
@@ -16250,7 +16288,8 @@ function touchTick(dt){ const F=FEEL; if(TOUCHM.cardT>0){ TOUCHM.cardT-=dt; if(T
   if(TOUCHM.t<(VB_MAGIC.touchHold||0.9)) return;
   const now=performance.now(); if(TOUCHM.sayT[key]!=null && now-TOUCHM.sayT[key]<20000){ return; } TOUCHM.sayT[key]=now; TOUCHM.t=0;   // (10-10c) перші 20 с сесії теж (раніше «0» вважався щойно сказаним)
   touchIdentify(hit.o, hit.gx, hit.gy, hit.inside, hit.p); }
-function touchIdentify(o, gx, gy, inside, at){ const R=touchMatOf(o); if(!R) return; const M=R.M, E=ELEM_DATA[M.el]; const thru=inside?'рука проходить крізь — ':'';
+function touchIdentify(o, gx, gy, inside, at){ try{ if(typeof sciTouchHook==='function' && sciTouchHook(o)) return; }catch(e){}   // (10-20a) дотик до кубіта — вимірювання
+  const R=touchMatOf(o); if(!R) return; const M=R.M, E=ELEM_DATA[M.el]; const thru=inside?'рука проходить крізь — ':'';
   const first=!TOUCHM.known[R.key]; TOUCHM.known[R.key]=1; try{ localStorage.setItem('vb3d_touch_v1', JSON.stringify(TOUCHM.known)); }catch(e){}
   const elTxt=E?(M.el+' — '+E.ua+', №'+E.z+', '+E.k):M.el;
   logE('✋ ДОТИК: ('+gx+','+gy+') — '+thru+M.n+' · '+M.f+' · '+elTxt+' · на дотик: '+M.feel+' · '+M.rec+(first?' · новий матеріал у гримуарі':''));
@@ -16265,6 +16304,282 @@ function touchRiddleNew(){ if(TOUCHM.riddle) return; const have={}; for(const o 
   const pool=keys.filter(k=>k!==cur); if(!pool.length) return; const k=pool[Math.floor(Math.random()*pool.length)]; TOUCHM.riddle={key:k, t:performance.now()};
   const M=TOUCH_MAT[k]; logE('🧩 ЗАГАДКА ДОТИКУ: знайди руками '+M.kid+' (у цій кімнаті є)'); b2Say('Загадка: знайди на дотик '+M.kid+'.'); try{ showBanner('🧩 ЗНАЙДИ НА ДОТИК: '+M.kid,'#fde68a'); }catch(e){} }
 window.touchIdentify=touchIdentify;
+
+/* ═══ (10-20a) НАУКА: ХІМІЯ 2 · ЯДЕРНА ФІЗИКА · КВАНТОВА МЕХАНІКА — головоломки, крафт і алхімія на справжніх законах ═══
+   Елементи кличуться Морзе (символ — 1–2 літери), як і раніше; відкрито 36 елементів із даними таблиці (№, вид, стан, кольори
+   спектра, робота виходу). ХІМІЯ 2: реакції з умовами — нагрів (плазма чи вогонь поруч), світло (LUX або спалах магнію),
+   електрика (ZAP або заряджений фотоелемент), каталізатор (Fe поруч — аміак), другий продукт у вільну сусідню клітинку
+   (натрій у воді виділяє водень), іржавіння, терміт (Al + іржа → залізо + плазма), благородні гази не реагують.
+   ЯДРО: радіоактивні блоки (U → Th → Ra → Rn → Po → Pb, спрощений ланцюг 238-го урану з тими самими частинками, періоди
+   у секундах гри зі збереженим порядком), ЛІЧИЛЬНИК ГЕЙГЕРА у вухах (частота клацань — доза в твоїй клітинці), захист:
+   α не проходить крізь жоден блок і далі 1.5 клітинки, β спиняє метал (Al, Fe…), γ послаблює свинець (×0.1) і камінь (×0.5);
+   джерело нейтронів Ra+Be: ртуть поруч стає золотом (Hg-196 + n → Au-197 — справжня алхімія), уран ділиться — ланцюгова
+   реакція: без бору поруч ≥ 4 поділів за 2 с — КРИТИЧНІСТЬ (вибух), з бором (стрижні) — РЕАКТОР: стале тепло (плазма) для
+   плавлення; вода поруч сповільнює нейтрони — поділ імовірніший. Синтез: водень у плазмі → гелій + енергія (зоря).
+   КВАНТИ: спектр — елемент поруч із плазмою співає акорд своїх ліній (656/486/434 нм водню → висоти), фотоефект — LUX
+   вибиває електрони лише з металів із малою роботою виходу (K, Na, Li ≤ 2.3 еВ; Zn, Fe, Cu — ні: потрібен ультрафіолет),
+   заряджений метал поруч із водою — фотоелектроліз (H + O); лазер He–Ne: гелій + неон + розряд ZAP → червоний промінь
+   632.8 нм уздовж пари; заплутана пара QUBIT — два блоки у суперпозиції H/O, дотик до одного миттєво визначає обидва
+   (протилежні стани). Усе — у журналі, голосом і звуком; картки дотику — для кожного елемента й продукту. */
+const SCI_EL={
+ H:{z:1,A:1,ua:'Водень',g:'водню',kind:'неметал, газ',st:'g',col:0xdff4ff,lines:[656,486,434,410],fact:'найлегший і найпоширеніший у Всесвіті; у зорях зливається в гелій'},
+ He:{z:2,A:4,ua:'Гелій',g:'гелію',kind:'благородний газ',st:'g',col:0xfff1b8,noble:1,lines:[587,668,502,447],fact:'не реагує ні з чим; з неоном і розрядом дає червоний лазер'},
+ Li:{z:3,A:7,ua:'Літій',g:'літію',kind:'лужний метал',st:'s',col:0xd8d8d8,metal:1,wf:2.9,lines:[671],fact:'найлегший метал; батареї телефонів; полумʼя малинове'},
+ Be:{z:4,A:9,ua:'Берилій',g:'берилію',kind:'лужноземельний метал',st:'s',col:0xb9c7c2,metal:1,fact:'легкий і твердий; поруч із радієм випромінює нейтрони (джерело Ra–Be)'},
+ B:{z:5,A:11,ua:'Бор',g:'бору',kind:'напівметал',st:'s',col:0x8c7a5a,fact:'жадібно поглинає нейтрони — з нього стрижні керування реакторів'},
+ C:{z:6,A:12,ua:'Вуглець',g:'вуглецю',kind:'неметал',st:'s',col:0x3a3f47,lines:[],fact:'основа життя; графіт і алмаз — той самий елемент'},
+ N:{z:7,A:14,ua:'Азот',g:'азоту',kind:'неметал, газ',st:'g',col:0xbcd4ff,lines:[500,575,654],fact:'78% повітря; з воднем на залізному каталізаторі дає аміак (процес Габера)'},
+ O:{z:8,A:16,ua:'Кисень',g:'кисню',kind:'неметал, газ',st:'g',col:0x9ad1ff,lines:[777,616],fact:'потрібен для дихання й горіння'},
+ F:{z:9,A:19,ua:'Фтор',g:'фтору',kind:'галоген, газ',st:'g',col:0xd9f99d,fact:'найактивніший елемент — реагує майже з усім'},
+ Ne:{z:10,A:20,ua:'Неон',g:'неону',kind:'благородний газ',st:'g',col:0xff6b6b,noble:1,lines:[640,633,585,540],fact:'світиться червоним у трубках; лінія 632.8 нм — HeNe-лазер'},
+ Na:{z:11,A:23,ua:'Натрій',g:'натрію',kind:'лужний метал',st:'s',col:0xe8d27a,metal:1,wf:2.3,lines:[589],fact:'ріжеться ножем; у воді шипить і виділяє водень; полумʼя жовте'},
+ Mg:{z:12,A:24,ua:'Магній',g:'магнію',kind:'лужноземельний метал',st:'s',col:0xe2e8f0,metal:1,wf:3.7,lines:[518,383],fact:'горить сліпучо-білим полумʼям — старі фотоспалахи'},
+ Al:{z:13,A:27,ua:'Алюміній',g:'алюмінію',kind:'метал',st:'s',col:0xcbd5e1,metal:1,wf:4.1,fact:'легкий, не іржавіє (плівка оксиду); спиняє бета-частинки; з іржею — терміт'},
+ Si:{z:14,A:28,ua:'Кремній',g:'кремнію',kind:'напівметал',st:'s',col:0x9aa6b6,fact:'мікросхеми й сонячні панелі; з киснем — пісок і скло'},
+ P:{z:15,A:31,ua:'Фосфор',g:'фосфору',kind:'неметал',st:'s',col:0xf5e6c8,fact:'білий фосфор світиться в темряві й спалахує на повітрі'},
+ S:{z:16,A:32,ua:'Сірка',g:'сірки',kind:'неметал',st:'s',col:0xfde047,fact:'жовта; із залізом дає сульфід, зі сріблом — чорний наліт'},
+ Cl:{z:17,A:35,ua:'Хлор',g:'хлору',kind:'галоген, газ',st:'g',col:0xa6e86a,fact:'жовто-зелений отруйний газ; з воднем на світлі — соляна кислота'},
+ Ar:{z:18,A:40,ua:'Аргон',g:'аргону',kind:'благородний газ',st:'g',col:0xc4b5fd,noble:1,lines:[811,763,750,697],fact:'1% повітря; захищає зварювання й лампи'},
+ K:{z:19,A:39,ua:'Калій',g:'калію',kind:'лужний метал',st:'s',col:0xe9d5ff,metal:1,wf:2.3,lines:[766,770,404],fact:'полумʼя фіолетове; у воді спалахує; фотоелемент від звичайного світла'},
+ Ca:{z:20,A:40,ua:'Кальцій',g:'кальцію',kind:'лужноземельний метал',st:'s',col:0xf1f5f9,metal:1,wf:2.9,lines:[622,616],fact:'кістки, крейда, мармур — його карбонат; полумʼя цегляно-червоне'},
+ Ti:{z:22,A:48,ua:'Титан',g:'титану',kind:'перехідний метал',st:'s',col:0xa3b1c2,metal:1,wf:4.3,fact:'міцний і легкий, не іржавіє — літаки, імпланти'},
+ Fe:{z:26,A:56,ua:'Залізо',g:'заліза',kind:'перехідний метал',st:'s',col:0xb87c55,metal:1,wf:4.5,lines:[527,438],fact:'магнітне; іржавіє; каталізатор синтезу аміаку; з вуглецем — сталь'},
+ Cu:{z:29,A:64,ua:'Мідь',g:'міді',kind:'перехідний метал',st:'s',col:0xf59e0b,metal:1,wf:4.7,lines:[522,515,510],fact:'провідник; полумʼя зелене; з киснем чорніє'},
+ Zn:{z:30,A:65,ua:'Цинк',g:'цинку',kind:'перехідний метал',st:'s',col:0xd4d4d8,metal:1,wf:4.3,fact:'захищає залізо від іржі; у кислоті виділяє водень; фотоефект лише від ультрафіолету'},
+ Ag:{z:47,A:108,ua:'Срібло',g:'срібла',kind:'перехідний метал',st:'s',col:0xf8fafc,metal:1,wf:4.3,fact:'найкращий провідник; темніє від сірки'},
+ Sn:{z:50,A:119,ua:'Олово',g:'олова',kind:'метал',st:'s',col:0xe5e7eb,metal:1,fact:'мʼякий метал припою; на морозі розсипається'},
+ I:{z:53,A:127,ua:'Йод',g:'йоду',kind:'галоген',st:'s',col:0x6d28d9,fact:'сірі кристали при нагріві стають фіолетовою парою (сублімація)'},
+ W:{z:74,A:184,ua:'Вольфрам',g:'вольфраму',kind:'перехідний метал',st:'s',col:0x9ca3af,metal:1,wf:4.5,fact:'найтугоплавкіший метал — нитки лампочок'},
+ Au:{z:79,A:197,ua:'Золото',g:'золота',kind:'перехідний метал',st:'s',col:0xfacc15,metal:1,wf:5.1,noble:1,fact:'не іржавіє й не тьмяніє; справжня алхімія — ртуть під нейтронами'},
+ Hg:{z:80,A:201,ua:'Ртуть',g:'ртуті',kind:'перехідний метал, рідина',st:'l',col:0xcbd5e1,metal:1,fact:'рідкий метал; Hg-196, захопивши нейтрон, стає золотом-197'},
+ Pb:{z:82,A:207,ua:'Свинець',g:'свинцю',kind:'метал',st:'s',col:0x64748b,metal:1,wf:4.2,fact:'важкий і мʼякий; спиняє гамма-промені; кінець ланцюга розпаду урану'},
+ Po:{z:84,A:218,ua:'Полоній',g:'полонію',kind:'метал, радіоактивний',st:'s',col:0xfb7185,metal:1,rad:{mode:'α',t:8,to:'Pb',g:0},fact:'відкрили Кюрі; дуже короткий вік — за три хвилини половини вже нема'},
+ Rn:{z:86,A:222,ua:'Радон',g:'радону',kind:'благородний газ, радіоактивний',st:'g',col:0xfca5a5,noble:1,rad:{mode:'α',t:20,to:'Po',g:0.3},fact:'радіоактивний газ із землі; половина розпадається за 3.8 доби'},
+ Ra:{z:88,A:226,ua:'Радій',g:'радію',kind:'лужноземельний метал, радіоактивний',st:'s',col:0xf0abfc,metal:1,rad:{mode:'α',t:40,to:'Rn',g:0.5},fact:'світиться в темряві; відкрила Марія Кюрі; з берилієм — джерело нейтронів'},
+ Th:{z:90,A:234,ua:'Торій',g:'торію',kind:'актиноїд, радіоактивний',st:'s',col:0xa78bfa,metal:1,rad:{mode:'β',t:30,to:'Ra',g:0.3},fact:'перша сходинка після урану в ланцюзі розпаду (далі — спрощено — радій)'},
+ U:{z:92,A:238,ua:'Уран',g:'урану',kind:'актиноїд, радіоактивний',st:'s',col:0x84cc16,metal:1,rad:{mode:'α',t:60,to:'Th',g:0.2},fiss:1,fact:'найважчий природний елемент; від нейтрона ділиться — ланцюгова реакція й реактори'} };
+/* продукти (сполуки) — теж блоки */
+const SCI_PROD={
+ lye:{ua:'луг (NaOH)',f:'NaOH',col:0xfef3c7,st:'s',feel:'слизький, їдкий',fact:'їдкий натр — мило й очищення; розчиняється у воді з виділенням тепла',rec:'2Na + 2H₂O → 2NaOH + H₂'},
+ MgO:{ua:'оксид магнію',f:'MgO',col:0xf8fafc,st:'s',feel:'сухий білий порошок',fact:'зола магнієвого спалаху; вогнетривкий',rec:'2Mg + O₂ → 2MgO + світло'},
+ FeS:{ua:'сульфід заліза',f:'FeS',col:0x44403c,st:'s',feel:'чорний, крихкий',fact:'із заліза й сірки при нагріві; з кислотою дає сірководень',rec:'Fe + S → FeS'},
+ CuO:{ua:'оксид міді',f:'CuO',col:0x1c1917,st:'s',feel:'чорний, матовий',fact:'мідь чорніє, нагріта на повітрі',rec:'2Cu + O₂ → 2CuO'},
+ Ag2S:{ua:'сульфід срібла',f:'Ag₂S',col:0x27272a,st:'s',feel:'темний наліт',fact:'чому срібло темніє — сірка з повітря',rec:'2Ag + S → Ag₂S'},
+ rust:{ua:'іржа',f:'Fe₂O₃',col:0x9a3412,st:'s',feel:'шорстка, сипка, руда',fact:'залізо, кисень і вода; алюміній забирає в неї кисень із величезним жаром (терміт)',rec:'4Fe + 3O₂ → 2Fe₂O₃'},
+ Al2O3:{ua:'оксид алюмінію',f:'Al₂O₃',col:0xe2e8f0,st:'s',feel:'твердий, як наждак',fact:'корунд; рубін і сапфір — він же з домішками',rec:'2Al + Fe₂O₃ → Al₂O₃ + 2Fe + жар'},
+ NH3:{ua:'аміак',f:'NH₃',col:0xbae6fd,st:'g',feel:'різкий запах, холодить',fact:'добрива для половини людства — азот з повітря й водень на залізі',rec:'N₂ + 3H₂ → 2NH₃ (Fe, нагрів)'},
+ HCl:{ua:'хлороводень (соляна кислота)',f:'HCl',col:0xd9f99d,st:'g',feel:'їдкий туман',fact:'водень і хлор на світлі зʼєднуються з вибухом; кислота розчиняє цинк',rec:'H₂ + Cl₂ → 2HCl (світло)'},
+ ZnCl2:{ua:'хлорид цинку',f:'ZnCl₂',col:0xe4e4e7,st:'s',feel:'білий, вологий',fact:'цинк у кислоті — і виходить водень',rec:'Zn + 2HCl → ZnCl₂ + H₂'},
+ lime:{ua:'вапно (CaO)',f:'CaO',col:0xf5f5f4,st:'s',feel:'сухе, пече вологу шкіру',fact:'з вапняку на жару; з водою — гашене вапно',rec:'CaCO₃ → CaO + CO₂'},
+ chalk:{ua:'крейда (вапняк)',f:'CaCO₃',col:0xfafaf9,st:'s',feel:'мʼяка, залишає слід',fact:'мармур, крейда, мушлі — усе карбонат кальцію',rec:'CaO + CO₂ → CaCO₃'},
+ ZnS:{ua:'сульфід цинку (люмінофор)',f:'ZnS',col:0xd9f99d,st:'s',feel:'холодний, ледь світиться',fact:'люмінофор старих екранів і стрілок годинників; з кислотою дає сірководень',rec:'Zn + S → ZnS'},
+ bronze:{ua:'бронза',f:'Cu·Sn',col:0xb45309,st:'s',feel:'тепла, дзвінка',fact:'сплав міді з оловом — твердіший за обидва; дзвони та мечі доби бронзи',rec:'Cu + Sn (жар) → бронза'},
+ slaked:{ua:'гашене вапно',f:'Ca(OH)₂',col:0xf1f5f9,st:'s',feel:'вологе, мильне',fact:'вапно з водою кипить від тепла; розчин вбирає CO₂ і твердне — штукатурка й фрески',rec:'CaO + H₂O → Ca(OH)₂'},
+ qbit:{ua:'кубіт (суперпозиція H|O)',f:'|ψ⟩ = (|H⟩ + |O⟩)/√2',col:0xc084fc,st:'g',feel:'рука ніби проходить і не проходить водночас',fact:'поки ніхто не дивиться — і водень, і кисень; дотик визначає. Пара заплутана: другий стане протилежним',rec:'вимірювання → H або O'} };
+const SCI_COL={}; for(const k in SCI_EL) SCI_COL[k]=SCI_EL[k].col; for(const k in SCI_PROD) SCI_COL[k]=SCI_PROD[k].col;
+window.SCI_EL=SCI_EL; window.SCI_PROD=SCI_PROD; window.SCI_COL=SCI_COL;
+window.VB_SCI=VB_SCI;
+const SCI={ t:0, lightT:0, lightAt:null, heatAt:null, zapAt:null, charged:{}, nsrc:[], fiss:[], lasers:[], qpairs:[], geiT:0, dose:0, doseLog:0, hpT:0, said:{}, stars:{}, n:0, last:'' };
+window.SCI=SCI;
+/* типи блоків: гази прохідні, тверді руйнівні (крім благородних металів — ті теж руйнівні, просто цінні) */
+(function sciRegister(){ try{ for(const k in SCI_EL){ const E=SCI_EL[k]; if(E.st==='g'){ if(!ELEM_GAS.includes(k)) ELEM_GAS.push(k); } else if(!ELEM_SOLID.includes(k)) ELEM_SOLID.push(k); }
+  for(const k in SCI_PROD){ const P=SCI_PROD[k]; if(P.st==='g'){ if(!ELEM_GAS.includes(k)) ELEM_GAS.push(k); } else if(!ELEM_SOLID.includes(k)) ELEM_SOLID.push(k); }
+  for(const k in SCI_EL){ const E=SCI_EL[k]; if(!TOUCH_MAT[k]) TOUCH_MAT[k]={n:E.ua.toLowerCase()+(E.st==='g'?' (у колбі)':''), el:k, f:k+(E.st==='g'&&!E.noble?'₂':''), feel:E.st==='g'?(E.noble?'колба, у якій нічого не відбувається':'прохолодна колба'):E.st==='l'?'важка холодна рідина, що не мочить':(E.metal?'холодний метал':'твердий, крихкий'), fact:E.fact+'.', rec:(E.rad?('розпад '+E.rad.mode+' → '+E.rad.to+' (період у грі '+E.rad.t+' с)'):'—'), kid:E.ua.toLowerCase()}; if(!ELEM_DATA[k]) ELEM_DATA[k]={z:E.z, ua:E.ua, k:E.kind}; }
+  for(const k in SCI_PROD){ const P=SCI_PROD[k]; if(!TOUCH_MAT[k]) TOUCH_MAT[k]={n:P.ua, el:(P.f.match(/^[A-Z][a-z]?/)||['—'])[0], f:P.f, feel:P.feel, fact:P.fact+'.', rec:P.rec, kid:P.ua}; }
+  setTimeout(()=>{ try{ for(const k in SCI_EL){ const W=k.toUpperCase(); if(!SPELL_WORDS[W]) SPELL_WORDS[W]=k; if(RESERVED_ELEM[W]) delete RESERVED_ELEM[W]; if(!SPELL_UA[k]) SPELL_UA[k]=SCI_EL[k].ua.toUpperCase(); }
+    SPELL_WORDS.QUBIT='qbit'; SPELL_UA.qbit='КУБІТ'; window.__sciWords=1; }catch(e){ console.warn('sciRegister words',e); } }, 0);   // слова Морзе визначені нижче у файлі — реєструємо після завантаження
+  }catch(e){ console.warn('sciRegister',e); } })();
+function sciEl(o){ return (o&&o.alive&&SCI_EL[o.mtype])?SCI_EL[o.mtype]:null; }
+function sciNeighbors(gx,gy){ const out=[]; for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive) out.push(o); } return out; }
+function sciFreeCell(gx,gy){ for(const [ox,oy] of [[0,1],[1,0],[0,-1],[-1,0],[1,1],[-1,1],[1,-1],[-1,-1]]){ const x=gx+ox, y=gy+oy; if(x<1||x>11||y<1||y>11) continue; if(obstacleAt(x,y)) continue; if(player.gx===x&&player.gy===y) continue; try{ if(phantomAtCell(x,y)) continue; }catch(e){} return [x,y]; } return null; }
+function sciMake(gx,gy,type,opts){ opts=opts||{}; const taken=new Set(obstacles.filter(q=>q.alive && !(q.gx===gx&&q.gy===gy)).map(q=>q.gx+','+q.gy)); try{ const old=obstacleAt(gx,gy); if(old) killBlock(old); }catch(e){} addObstacle(gx,gy,type,taken,opts.tint??null,1,opts.shape||null,0,opts.alpha??null,0); const o=obstacleAt(gx,gy); if(o){ o.noRes=true; if(opts.born) o.born=performance.now(); } return o; }
+function sciHeatNear(gx,gy){ try{ if(plasmaNear(gx,gy)) return true; }catch(e){} const H=SCI.heatAt; if(H && performance.now()-H.t<2500 && Math.abs(H.gx-gx)<=1 && Math.abs(H.gy-gy)<=1) return true; return false; }
+function sciLightNear(gx,gy){ const L=SCI.lightAt; return !!(L && performance.now()-L.t<3000 && Math.abs(L.gx-gx)<=(L.r||4) && Math.abs(L.gy-gy)<=(L.r||4)); }
+function sciZapNear(gx,gy){ const Z=SCI.zapAt; if(Z && performance.now()-Z.t<1500 && Math.abs(Z.gx-gx)<=1 && Math.abs(Z.gy-gy)<=1) return true; for(const k in SCI.charged){ const c=SCI.charged[k]; if(performance.now()-c.t>10000){ delete SCI.charged[k]; continue; } if(Math.abs(c.gx-gx)<=2 && Math.abs(c.gy-gy)<=2 && !(c.gx===gx&&c.gy===gy)) return true; } return false; }   // заряджений фотоелемент живить електроліз у радіусі 2 (дріт)
+function sciSay(key, txt, col){ try{ showBanner(txt, col||'#a7f3d0'); }catch(e){} if(!(VB_SCI.say>0)) return; const now=performance.now(); if(SCI.said[key] && now-SCI.said[key]<15000) return; SCI.said[key]=now; try{ ttsSpeak(txt.replace(/^[^A-Za-zА-Яа-яІіЇїЄєҐґ]+/,''),{}); }catch(e){} }
+function sciFx(gx,gy,col,kind){ try{ const x=worldX(gx), z=worldZ(gy); emitSparks(x,1.0,z,col||'#a7f3d0',kind==='boom'?40:14,kind==='boom'?6:2.6); if(kind==='boom'){ doFlash('#ffd166'); buzz([0,70]); blip(90,0.3,'sawtooth',0.22); spatialNoise(x,1,z,120,0.6,0.5,0.3); } else if(kind==='flash'){ doFlash('#ffffff'); spatialBlip(x,1,z,1800,0.25,'sine',0.2); } else { doFlash('#bfe8ff'); spatialBlip(x,1,z,660,0.12,'triangle',0.12); } }catch(e){} }
+/* ── ХІМІЯ 2: реакції з умовами. a поруч із b; heat/light/zap — умова; cat — третій сусід-каталізатор; out — замість b; out2 — у вільну клітинку; keepA — a лишається */
+const SCI_RX=[
+ {a:'Na', b:'liquid', both:true, out:'lye', out2:'H', boom:true, log:'2Na + 2H₂O → 2NaOH + H₂↑ (натрій шипить, водень вилітає)'},
+ {a:'K', b:'liquid', both:true, out:'lye', out2:'H', boom:true, heatOut:true, log:'2K + 2H₂O → 2KOH + H₂↑ — калій спалахує'},
+ {a:'Li', b:'liquid', both:true, out:'lye', out2:'H', log:'2Li + 2H₂O → 2LiOH + H₂↑'},
+ {a:'Mg', b:'O', heat:true, both:true, out:'MgO', flash:true, log:'2Mg + O₂ → 2MgO — СЛІПУЧИЙ СПАЛАХ (магнієвий спалах)'},
+ {a:'Fe', b:'S', heat:true, both:true, out:'FeS', log:'Fe + S → FeS (нагрів)'},
+ {a:'Cu', b:'O', heat:true, both:true, out:'CuO', log:'2Cu + O₂ → 2CuO — мідь чорніє'},
+ {a:'Ag', b:'S', both:true, out:'Ag2S', log:'2Ag + S → Ag₂S — срібло темніє'},
+ {a:'Fe', b:'O', wet:true, keepA:false, both:true, out:'rust', slow:0.35, log:'4Fe + 3O₂ (+ вода) → 2Fe₂O₃ — іржа'},
+ {a:'Al', b:'rust', heat:true, both:true, out:'Fe', out2:'plasma', boom:true, log:'2Al + Fe₂O₃ → Al₂O₃ + 2Fe — ТЕРМІТ: білий жар'},
+ {a:'N', b:'H', heat:true, cat:'Fe', both:true, out:'NH3', log:'N₂ + 3H₂ → 2NH₃ на залізі (процес Габера)'},
+ {a:'H', b:'Cl', light:true, both:true, out:'HCl', boom:true, log:'H₂ + Cl₂ → 2HCl — на світлі, з вибухом'},
+ {a:'Zn', b:'HCl', both:true, out:'ZnCl2', out2:'H', log:'Zn + 2HCl → ZnCl₂ + H₂↑'},
+ {a:'Ca', b:'O', heat:true, both:true, out:'lime', log:'2Ca + O₂ → 2CaO (вапно)'},
+ {a:'lime', b:'co2', both:true, out:'chalk', log:'CaO + CO₂ → CaCO₃ (крейда)'},
+ {a:'chalk', heat:true, out:'lime', out2:'co2', solo:true, log:'CaCO₃ → CaO + CO₂↑ (випал вапняку)'},
+ {a:'liquid', zap:true, solo:true, out:'H', out2:'O', log:'2H₂O → 2H₂↑ + O₂↑ — ЕЛЕКТРОЛІЗ'},
+ {a:'lye', b:'HCl', both:true, out:'salt', heatOut:true, log:'NaOH + HCl → NaCl + H₂O — НЕЙТРАЛІЗАЦІЯ: луг + кислота → сіль + вода (вода випарувалась від тепла реакції)'},
+ {a:'chalk', b:'HCl', both:true, out:'liquid', out2:'co2', log:'CaCO₃ + 2HCl → CaCl₂ + H₂O + CO₂↑ — крейда шипить у кислоті'},
+ {a:'CuO', b:'H', heat:true, both:true, out:'Cu', out2:'liquid', log:'CuO + H₂ → Cu + H₂O — відновлення міді воднем'},
+ {a:'CuO', b:'C', heat:true, both:true, out:'Cu', out2:'co2', log:'2CuO + C → 2Cu + CO₂↑ — виплавка міді вугіллям'},
+ {a:'rust', b:'C', heat:true, both:true, out:'Fe', out2:'co2', log:'2Fe₂O₃ + 3C → 4Fe + 3CO₂↑ — ДОМНА: з іржі знову залізо'},
+ {a:'Ag2S', b:'Al', wet:true, heat:true, both:true, out:'Ag', log:'3Ag₂S + 2Al → 6Ag + Al₂S₃ — срібло повертає блиск (алюміній у гарячій воді)'},
+ {a:'Zn', b:'S', heat:true, both:true, out:'ZnS', log:'Zn + S → ZnS (нагрів) — фосфор для екранів: світиться в темряві'},
+ {a:'Sn', b:'Cu', heat:true, both:true, out:'bronze', log:'Cu + Sn (сплав у жару) → БРОНЗА — доба бронзи'},
+ {a:'lime', b:'liquid', both:true, out:'slaked', heatOut:true, log:'CaO + H₂O → Ca(OH)₂ + тепло — гашене вапно (кипить і парує)'},
+ {a:'slaked', b:'co2', both:true, out:'chalk', out2:'liquid', log:'Ca(OH)₂ + CO₂ → CaCO₃ + H₂O — вапняний розчин твердне: так тужавіє штукатурка'},
+ {a:'I', heat:true, solo:true, out:'gas', tint:0x7c3aed, log:'йод сублімує — фіолетова пара'} ];
+function sciReactTick(){ const now=performance.now(); for(const o of obstacles.slice()){ if(!o.alive) continue;
+  for(const R of SCI_RX){ if(o.mtype!==R.a) continue;
+    if(R.solo){ if(R.heat && !sciHeatNear(o.gx,o.gy)) continue; if(R.zap && !sciZapNear(o.gx,o.gy)) continue; if(R.light && !sciLightNear(o.gx,o.gy)) continue;
+      const f=R.out2?sciFreeCell(o.gx,o.gy):null; const gx=o.gx, gy=o.gy; killBlock(o); if(R.out) sciMake(gx,gy,R.out,{tint:R.tint}); if(R.out2 && f) sciMake(f[0],f[1],R.out2);
+      logE('ХІМІЯ 2: '+R.log+' ('+gx+','+gy+')'); sciFx(gx,gy,'#a7f3d0',R.boom?'boom':'glow'); try{ QST.progress('alch', R.out||'none', 1); }catch(e){} try{ sciRiddleMaybe(R.out||R.a); }catch(e){} return true; }
+    for(const n of sciNeighbors(o.gx,o.gy)){ if(n.mtype!==R.b) continue;
+      if(R.heat && !sciHeatNear(n.gx,n.gy)) continue; if(R.light && !sciLightNear(n.gx,n.gy)) continue; if(R.zap && !sciZapNear(n.gx,n.gy)) continue;
+      if(R.cat && !sciNeighbors(n.gx,n.gy).concat(sciNeighbors(o.gx,o.gy)).some(c=>c.mtype===R.cat)) continue;
+      if(R.wet && !sciNeighbors(n.gx,n.gy).concat(sciNeighbors(o.gx,o.gy)).some(c=>c.mtype==='liquid')) continue;
+      if(R.slow && Math.random()>R.slow) continue;
+      const gx=n.gx, gy=n.gy, f=R.out2?sciFreeCell(gx,gy):null; if(R.both && !R.keepA) killBlock(o); killBlock(n); if(R.out) sciMake(gx,gy,R.out,{tint:R.tint}); if(R.out2 && f) sciMake(f[0],f[1],R.out2);
+      if(R.flash){ SCI.lightAt={gx,gy,t:now,r:5}; } if(R.heatOut){ SCI.heatAt={gx,gy,t:now}; }
+      logE('ХІМІЯ 2: '+R.log+' ('+gx+','+gy+')'); sciFx(gx,gy,R.flash?'#ffffff':'#a7f3d0',R.boom?'boom':R.flash?'flash':'glow'); SCI.last=R.log;
+      try{ QST.progress('alch', R.out||'none', 1); }catch(e){} try{ sciRiddleMaybe(R.out==='Fe'?'thermite':(R.out||R.a)); }catch(e){} return true; } }
+  const E=sciEl(o); if(E && E.noble){ for(const n of sciNeighbors(o.gx,o.gy)){ if(n.mtype==='plasma' || n.mtype==='O' || n.mtype==='Cl' || n.mtype==='F'){ const k='noble'+o.mtype; if(!SCI.said[k] || now-SCI.said[k]>30000){ SCI.said[k]=now; logE('ХІМІЯ 2: '+E.ua+' — благородний газ: повна зовнішня оболонка, не реагує навіть із '+(SPELL_UA[n.mtype]||n.mtype).toLowerCase()); } } } } }
+  return false; }
+/* ── ЯДРО ── */
+function sciRadBlocks(){ const out=[]; for(const o of obstacles){ const E=sciEl(o); if(E && E.rad) out.push({o,E}); } return out; }
+function sciLineBlocks(x0,y0,x1,y1){ const out=[]; let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0; let n=0;
+  while(!(x===x1&&y===y1) && n++<40){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dx; y+=sy; } if(x===x1&&y===y1) break; const o=obstacleAt(x,y); if(o&&o.alive) out.push(o); } return out; }
+function sciDoseAt(gx,gy){ let dose=0; const parts=[]; for(const {o,E} of sciRadBlocks()){ const d=Math.hypot(o.gx-gx,o.gy-gy); const A=(VB_SCI.nAct||0.35)*60/Math.max(4,E.rad.t); const between=sciLineBlocks(o.gx,o.gy,gx,gy); const solids=between.filter(b=>!b.pass);
+    let a=0, b=0, g=0; if(d<=1.5 && !solids.length) a=A*2; if(!solids.some(s=>!!(SCI_EL[s.mtype]&&SCI_EL[s.mtype].metal) || s.mtype==='steel' || s.mtype==='Fe')) b=A*(E.rad.mode==='β'?1.2:0.5); let gg=A*(E.rad.g||0.2); for(const s of solids){ gg*=(s.mtype==='Pb')?0.1:(s.mtype==='liquid'?0.8:0.5); } g=gg;
+    const r=(a+b+g)/Math.max(1,d*d); dose+=r; if(r>0.02) parts.push(E.ua+' '+r.toFixed(2)); } return {dose, parts}; }
+function sciNuclearTick(dt){ const now=performance.now();
+  // розпад
+  for(const {o,E} of sciRadBlocks()){ const T=E.rad.t*(VB_SCI.hl||1); const p=1-Math.pow(2,-dt/T); if(Math.random()<p){ const gx=o.gx, gy=o.gy, to=E.rad.to; killBlock(o); sciMake(gx,gy,to); logE('ЯДРО: '+E.ua+'-'+E.A+' → '+(SCI_EL[to]?SCI_EL[to].ua+'-'+SCI_EL[to].A:to)+' ('+E.rad.mode+'-розпад'+(E.rad.g?' + γ':'')+') ('+gx+','+gy+')');
+      try{ const x=worldX(gx), z=worldZ(gy); spatialBlip(x,1,z,E.rad.mode==='α'?240:E.rad.mode==='β'?1200:3000,0.06,'square',0.12); emitSparks(x,1,z,E.rad.mode==='α'?'#fca5a5':'#93c5fd',8,3); }catch(e){} } }
+  // нейтронні джерела: Ra + Be поруч; наслідки — ртуть → золото, уран → поділ
+  SCI.nsrc=[]; for(const o of obstacles){ if(!o.alive || o.mtype!=='Ra') continue; for(const n of sciNeighbors(o.gx,o.gy)) if(n.mtype==='Be'){ SCI.nsrc.push({gx:(o.gx+n.gx)/2, gy:(o.gy+n.gy)/2, cells:[o,n]}); } }
+  const nAt=(gx,gy)=>{ let k=0; for(const s of SCI.nsrc){ if(Math.abs(s.gx-gx)<=1.5 && Math.abs(s.gy-gy)<=1.5) k++; } for(const f of SCI.fiss){ if(now-f.t<1500 && Math.abs(f.gx-gx)<=1 && Math.abs(f.gy-gy)<=1) k++; } return k; };
+  if(SCI.nsrc.length && !SCI.said.nsrc){ SCI.said.nsrc=now; logE('ЯДРО: радій + берилій — джерело нейтронів (α-частинки радію вибивають нейтрони з берилію)'); sciSay('nsrc','☢ ДЖЕРЕЛО НЕЙТРОНІВ: радій + берилій','#f0abfc'); }
+  for(const o of obstacles.slice()){ if(!o.alive) continue; const k=nAt(o.gx,o.gy); if(!k) continue;
+    if(o.mtype==='Hg' && Math.random()<0.25*k){ const gx=o.gx, gy=o.gy; killBlock(o); sciMake(gx,gy,'Au'); logE('АЛХІМІЯ: ртуть-196 захопила нейтрон → ртуть-197 → (β-захоплення) ЗОЛОТО-197 ('+gx+','+gy+')'); sciFx(gx,gy,'#facc15','flash'); sciSay('au','✨ АЛХІМІЯ: ртуть стала золотом — під нейтронами','#facc15'); try{ RES.crystal=(RES.crystal||0)+1; saveRes(); resHUD(); }catch(e){} try{ QST.progress('alch','Au',1); }catch(e){} try{ sciRiddleMaybe('Au'); }catch(e){} continue; }
+    if(o.mtype==='U'){ const wet=sciNeighbors(o.gx,o.gy).some(n=>n.mtype==='liquid'); const boron=sciNeighbors(o.gx,o.gy).filter(n=>n.mtype==='B').length; const p=clamp((VB_SCI.fissK||0.45)*k*(wet?(VB_SCI.modK||1.6):1)*Math.pow(0.35,boron),0,0.95);
+      if(Math.random()<p){ SCI.fiss.push({gx:o.gx,gy:o.gy,t:now}); SCI.fiss=SCI.fiss.filter(f=>now-f.t<(VB_SCI.critWin||2)*1000); const n=SCI.fiss.length;
+        logE('ЯДРО: поділ U-235 ('+o.gx+','+o.gy+') → Ba + Kr + 3n + енергія'+(wet?' · вода сповільнює нейтрони':'')+(boron?' · бор поглинає ('+boron+')':'')+' · поділів за '+(VB_SCI.critWin||2)+' с: '+n);
+        try{ const x=worldX(o.gx), z=worldZ(o.gy); spatialBlip(x,1,z,180,0.08,'sawtooth',0.14); emitSparks(x,1.2,z,'#bef264',12,3.5); }catch(e){}
+        const anyB=obstacles.some(q=>q.alive && q.mtype==='B' && Math.abs(q.gx-o.gx)<=1 && Math.abs(q.gy-o.gy)<=1);
+        if(n>=(VB_SCI.crit||4) && !anyB){ sciCriticality(o); return; }
+        if(n>=1 && anyB){ const f=sciFreeCell(o.gx,o.gy); if(!SCI.reactorT || now-SCI.reactorT>4000){ SCI.reactorT=now; if(f){ sciMake(f[0],f[1],'plasma'); logE('РЕАКТОР: керована ланцюгова реакція — бор тримає k≈1, тепло → плазма ('+f[0]+','+f[1]+')'); sciSay('reactor','⚛ РЕАКТОР: бор тримає ланцюг — стале тепло','#bef264'); } } } } } }
+  // синтез: водень у плазмі
+  for(const o of obstacles.slice()){ if(!o.alive || o.mtype!=='H') continue; const pl=sciNeighbors(o.gx,o.gy).filter(n=>n.mtype==='plasma').length; if(pl<2) { o.fuseT=0; continue; } o.fuseT=(o.fuseT||0)+dt;
+    if(o.fuseT>=(VB_SCI.fuseT||4)){ const gx=o.gx, gy=o.gy; killBlock(o); sciMake(gx,gy,'He'); const f=sciFreeCell(gx,gy); if(f) sciMake(f[0],f[1],'plasma'); logE('ЗОРЯ: 4 ¹H → ⁴He + 2e⁺ + 2ν + енергія — термоядерний синтез у плазмі ('+gx+','+gy+')'); sciFx(gx,gy,'#fde68a','flash'); sciSay('fusion','☀ СИНТЕЗ: водень у плазмі став гелієм — так світять зорі','#fde68a'); try{ QST.progress('alch','He',1); }catch(e){} try{ sciRiddleMaybe('fusion'); }catch(e){} } }
+  // доза й Гейгер
+  const D=sciDoseAt(player.gx,player.gy); SCI.dose=D.dose; if(VB_SCI.geiger>0 && D.dose>0.01){ SCI.geiT-=dt; const per=clamp(1.2/Math.max(0.05,D.dose),0.03,1.5); if(SCI.geiT<=0){ SCI.geiT=per*(0.6+Math.random()*0.8); try{ blip(2200,0.012,'square',clamp(0.05+D.dose*0.1,0.05,0.25)); }catch(e){} } }
+  if(VB_SCI.dose>0 && D.dose>1.0 && !player.dead){ SCI.hpT+=dt; if(SCI.hpT>=1){ SCI.hpT=0; const hp=Math.max(1,Math.round((D.dose-1)*(VB_SCI.doseHP||0.6))); damageTier(player,1,hp); if(now-SCI.doseLog>4000){ SCI.doseLog=now; logE('☢ РАДІАЦІЯ: доза '+D.dose.toFixed(2)+' ('+D.parts.join(', ')+') → −'+hp+' HP/с · сховайся за свинець (γ), метал (β) або відійди (α — 1.5 клітинки, 1/d²)'); sciSay('rad','☢ РАДІАЦІЯ — відійди або сховайся за свинець','#fca5a5'); } } } else SCI.hpT=0; }
+function sciCriticality(o){ const gx=o.gx, gy=o.gy; logE('☢ КРИТИЧНІСТЬ: k > 1 без стрижнів бору — ланцюгова реакція пішла врозліт ('+gx+','+gy+')'); sciSay('crit','☢ КРИТИЧНІСТЬ — ВИБУХ','#ef4444');
+  try{ doFlash('#ffffff'); buzz([0,300,80,200]); blip(50,0.9,'sawtooth',0.35); const x=worldX(gx), z=worldZ(gy); spatialNoise(x,1,z,80,0.5,1.4,0.4); emitSparks(x,1.5,z,'#fef08a',80,9); }catch(e){}
+  for(const q of obstacles.slice()){ if(!q.alive) continue; const d=Math.hypot(q.gx-gx,q.gy-gy); if(d<=2.2 && !q.solid){ killBlock(q); } }
+  SCI.fiss=[]; sciMake(gx,gy,'plasma'); const f=sciFreeCell(gx,gy); if(f) sciMake(f[0],f[1],'plasma');
+  const dP=Math.hypot(player.gx-gx,player.gy-gy); if(dP<=3.5 && !player.dead){ const dmg=Math.round(60/(1+dP*dP)); damageTier(player,1,dmg); logE('☢ вибух зачепив тебе: −'+dmg+' HP (відстань '+dP.toFixed(1)+')'); }
+  for(const ph of phantoms){ if(ph.dead) continue; const d=Math.hypot(ph.gx-gx,ph.gy-gy); if(d<=3.5) damageTier(ph,1,Math.round(80/(1+d*d))); }
+  try{ snapshotRoom(); }catch(e){} }
+/* ── КВАНТИ ── */
+function sciPitchOf(nm){ return 220*Math.pow(2,(700-nm)/100); }
+function sciSpectrum(o,E){ if(!E.lines||!E.lines.length) return; try{ const x=worldX(o.gx), z=worldZ(o.gy); E.lines.slice(0,4).forEach((nm,i)=>{ setTimeout(()=>{ try{ spatialBlip(x,1.1,z,sciPitchOf(nm),0.5,'sine',0.11); }catch(e){} }, i*90); }); }catch(e){}
+  logE('СПЕКТР: '+E.ua+' у плазмі світиться лініями '+E.lines.join(', ')+' нм — '+(E.lines[0]>600?'червоне':E.lines[0]>570?'жовте':E.lines[0]>490?'зелене':'синє')+' (кванти: електрон падає між рівнями, кожна лінія — одна енергія)'); }
+function sciQuantumTick(dt){ const now=performance.now();
+  for(const o of obstacles){ const E=sciEl(o); if(!E) continue;
+    const pl=sciNeighbors(o.gx,o.gy).some(n=>n.mtype==='plasma'); if(pl && E.lines && E.lines.length && now-(o.specT||0)>8000){ o.specT=now; sciSpectrum(o,E); }
+    // фотоефект: LUX на метал із малою роботою виходу
+    if(E.metal && E.wf!=null && sciLightNear(o.gx,o.gy) && now-(o.peT||0)>6000){ o.peT=now; const hv=(SCI.lightAt&&SCI.lightAt.ev)||2.6;
+      if(E.wf<=hv){ SCI.charged[o.gx+','+o.gy]={gx:o.gx,gy:o.gy,t:now}; logE('ФОТОЕФЕКТ: світло '+hv.toFixed(1)+' еВ вибиває електрони з '+(E.g||E.ua.toLowerCase())+' (робота виходу '+E.wf+' еВ) — блок заряджений 10 с: вода поруч → електроліз'); sciFx(o.gx,o.gy,'#fde68a','glow'); sciSay('pe','⚡ ФОТОЕФЕКТ: '+E.ua+' дає струм від світла','#fde68a'); }
+      else if(now-(SCI.said['pe_'+o.mtype]||0)>20000){ SCI.said['pe_'+o.mtype]=now; logE('ФОТОЕФЕКТ: світло '+hv.toFixed(1)+' еВ НЕ вибиває електрони з '+(E.g||E.ua.toLowerCase())+' — робота виходу '+E.wf+' еВ, потрібен ультрафіолет (Ейнштейн, 1905: енергія кванта, а не яскравість)'); } } }
+  // лазер He–Ne: гелій поруч із неоном + розряд
+  for(const o of obstacles){ if(!o.alive || o.mtype!=='He') continue; for(const n of sciNeighbors(o.gx,o.gy)){ if(n.mtype!=='Ne') continue; if(!sciZapNear(o.gx,o.gy) && !sciZapNear(n.gx,n.gy)) continue; const key=o.gx+','+o.gy+'>'+n.gx+','+n.gy; if(SCI.lasers.some(L=>L.key===key && now-L.t<(VB_SCI.laserT||6)*1000)) continue;
+      const dx=Math.sign(n.gx-o.gx), dy=Math.sign(n.gy-o.gy); const L={key, t:now, gx:n.gx, gy:n.gy, dx, dy}; SCI.lasers.push(L); logE('ЛАЗЕР He–Ne: розряд накачує гелій → передає енергію неону → вимушене випромінювання 632.8 нм — червоний промінь з ('+n.gx+','+n.gy+') у напрямі ('+dx+','+dy+')'); sciSay('laser','🔴 ЛАЗЕР He–Ne 632.8 нм','#ff6b6b'); try{ QST.progress('alch','laser',1); }catch(e){} try{ sciRiddleMaybe('laser'); }catch(e){} } }
+  SCI.lasers=SCI.lasers.filter(L=>now-L.t<(VB_SCI.laserT||6)*1000);
+  for(const L of SCI.lasers){ let x=L.gx+L.dx, y=L.gy+L.dy, n=0; while(n++<10 && x>=0&&x<=12&&y>=0&&y<=12){ const o=obstacleAt(x,y); if(o&&o.alive){ if(o.mtype==='fragile'||o.mtype==='C'||o.mtype==='glass'){ if(Math.random()<dt*0.8){ logE('ЛАЗЕР: промінь прорізав '+(TOUCH_MAT[o.mtype]?TOUCH_MAT[o.mtype].n:o.mtype)+' ('+x+','+y+')'); killBlock(o); } } if(o.solid || !o.pass) break; }
+      try{ const ph=phantomAtCell(x,y); if(ph && !ph.dead && Math.random()<dt*2){ damageTier(ph,1,6); ph.hitGlow=0.3; } }catch(e){} if(player.gx===x && player.gy===y && !player.dead && Math.random()<dt){ damageTier(player,1,3); logE('ЛАЗЕР: промінь по тобі — не стій на лінії'); } x+=L.dx; y+=L.dy; }
+    if(now-(L.sndT||0)>400){ L.sndT=now; try{ const x=worldX(L.gx), z=worldZ(L.gy); spatialBlip(x,1,z,sciPitchOf(632.8),0.3,'sine',0.1); }catch(e){} } }
+  // кубіти: час життя суперпозиції
+  SCI.qpairs=SCI.qpairs.filter(P=>P.a.alive||P.b.alive); for(const P of SCI.qpairs){ if(now-P.t>(VB_SCI.qLife||120)*1000 && !P.done){ sciCollapse(P.a, 'декогеренція'); } } }
+function sciQubitSpawn(gx,gy){ const f1=[gx,gy]; const a=sciMake(gx,gy,'qbit',{alpha:0.45}); if(!a) return false; const f2=sciFreeCell(gx,gy); if(!f2){ return true; } const b=sciMake(f2[0],f2[1],'qbit',{alpha:0.45}); const P={a,b,t:performance.now(),done:false}; if(a) a.qpair=P; if(b) b.qpair=P; SCI.qpairs.push(P);
+  logE('КВАНТИ: заплутана пара кубітів ('+gx+','+gy+') і ('+f2[0]+','+f2[1]+') — кожен і водень, і кисень, поки не торкнешся; стани протилежні'); sciSay('qubit','⟨ψ| ЗАПЛУТАНА ПАРА — торкнись одного: визначаться обидва','#c084fc'); return true; }
+function sciCollapse(o, how){ if(!o || !o.alive || o.mtype!=='qbit') return false; const P=o.qpair; const first=(Math.random()<0.5)?'H':'O', second=first==='H'?'O':'H'; const gx=o.gx, gy=o.gy; killBlock(o); sciMake(gx,gy,first);
+  let line='КВАНТИ: вимірювання ('+how+') — кубіт ('+gx+','+gy+') став '+SPELL_UA[first]; if(P){ P.done=true; const other=(P.a===o)?P.b:P.a; if(other && other.alive && other.mtype==='qbit'){ const ox=other.gx, oy=other.gy; killBlock(other); sciMake(ox,oy,second); line+=', а заплутаний партнер ('+ox+','+oy+') миттєво — '+SPELL_UA[second]+' (протилежний стан; інформація так не передається — результат випадковий)'; } }
+  logE(line); sciFx(gx,gy,'#c084fc','glow'); try{ ttsSpeak('Вимірювання. '+SPELL_UA[first].toLowerCase()+(P?', партнер — '+SPELL_UA[second].toLowerCase():'')+'.',{}); }catch(e){} return true; }
+/* гачки: закляття (LUX — світло, ZAP — розряд, FIRE — нагрів), дотик до кубіта, матеріалізація QUBIT */
+function sciSpellHook(w, pw){ const now=performance.now(); try{ const v=dirXZ(aimYawEff()||0); const cx=Math.round(player.gx+v[0]*1.5), cy=Math.round(player.gy+v[1]*1.5);
+    if(w==='LUX'||w==='SUN'){ SCI.lightAt={gx:player.gx, gy:player.gy, t:now, r:4, ev:(w==='SUN')?4.6:2.6}; }
+    else if(w==='ZAP'||w==='BOLT'){ let gx=cx, gy=cy; for(let i=1;i<=4;i++){ const x=Math.round(player.gx+v[0]*i), y=Math.round(player.gy+v[1]*i); const o=obstacleAt(x,y); if(o&&o.alive){ gx=x; gy=y; break; } } SCI.zapAt={gx, gy, t:now}; }
+    else if(w==='FIRE'||w==='FLAME'){ SCI.heatAt={gx:cx, gy:cy, t:now}; } }catch(e){} }
+window.sciSpellHook=sciSpellHook;
+function sciTouchHook(o){ if(o && o.alive && o.mtype==='qbit'){ sciCollapse(o,'дотик'); return true; } return false; }
+window.sciTouchHook=sciTouchHook;
+let _sciLast=performance.now();
+function sciTick(){ if(!(VB_SCI.on>0)) return; const now=performance.now(); const dt=clamp((now-_sciLast)/1000,0.05,2); _sciLast=now; if(!obstacles.length) return; try{ if(mode!=='fighter') return; }catch(e){}
+  let changed=false; try{ changed=sciReactTick(); }catch(e){ logE('НАУКА хімія: '+e.message); } try{ sciNuclearTick(dt); }catch(e){ logE('НАУКА ядро: '+e.message); } try{ sciQuantumTick(dt); }catch(e){ logE('НАУКА кванти: '+e.message); }
+  if(changed){ try{ snapshotRoom(); }catch(e){} } }
+window.sciTick=sciTick; window.sciDoseAt=sciDoseAt; window.sciMake=sciMake; window.sciCollapse=sciCollapse; window.sciQubitSpawn=sciQubitSpawn;
+/* довідник: усі елементи з Морзе, реакції з умовами, ядро, кванти */
+function sciMorse(w){ try{ return String(w).toUpperCase().split('').map(ch=>(MORSE_OF[ch]||'?').replace(/\./g,'·').replace(/-/g,'−')).join(' / '); }catch(e){ return ''; } }
+function sciRefHtml(){ const els=Object.keys(SCI_EL).sort((a,b)=>SCI_EL[a].z-SCI_EL[b].z); const row=(k)=>{ const E=SCI_EL[k]; return '<div style="margin:2px 0"><b>'+k+'</b> <span style="color:#c4b5fd;letter-spacing:.12em">'+sciMorse(k)+'</span> · '+E.ua+' №'+E.z+' · '+E.kind+(E.rad?' · ☢ '+E.rad.mode+' → '+E.rad.to+' ('+E.rad.t+' с)':'')+(E.wf!=null?' · фотоефект '+E.wf+' еВ':'')+(E.lines&&E.lines.length?' · спектр '+E.lines.join('/')+' нм':'')+'<br><span style="color:#94a3b8">'+E.fact+'</span></div>'; };
+  const rx=SCI_RX.map(R=>'<div>· '+R.log.replace(/</g,'&lt;')+(R.heat?' <i>(нагрів)</i>':'')+(R.light?' <i>(світло: LUX або спалах магнію)</i>':'')+(R.zap?' <i>(розряд: ZAP або заряджений фотоелемент)</i>':'')+(R.cat?' <i>(каталізатор '+R.cat+' поруч)</i>':'')+(R.wet?' <i>(вода поруч)</i>':'')+'</div>').join('');
+  return '<div style="font-size:11px;line-height:1.4;max-height:60vh;overflow:auto"><div style="color:#fde68a">Елементи кличуться Морзе (1–2 літери), ставляться перед тобою після кивка «так». Торкнись блока рукою ~1 с — почуєш, що це.</div><div style="margin-top:6px;color:#7dd3fc"><b>ЕЛЕМЕНТИ (36)</b></div>'+els.map(row).join('')+
+    '<div style="margin-top:8px;color:#7dd3fc"><b>ХІМІЯ 2 — реакції з умовами</b> (старі: Si+O → пісок, плазма+пісок → скло, Fe+C → сталь, Na+Cl → сіль, C+O → CO₂, H+O → вода)</div>'+rx+
+    '<div style="margin-top:8px;color:#7dd3fc"><b>ЯДРО</b></div><div>· Ланцюг розпаду: U-238 →α Th-234 →β Ra-226 →α Rn-222 →α Po-218 →α Pb (стабільний); періоди в секундах гри зберігають порядок справжніх.</div><div>· Лічильник Гейгера клацає тим частіше, чим більша доза у твоїй клітинці; доза падає як 1/d². α не проходить крізь жоден блок і далі 1.5 клітинки; β спиняє метал; γ: свинець ×0.1, камінь ×0.5. Доза > 1 — втрата HP.</div><div>· Радій + берилій = джерело нейтронів: ртуть поруч → золото (Hg-196 + n → Au-197); уран поруч ділиться: ≥ 4 поділів за 2 с без бору — критичність (вибух), із бором — реактор (плазма-тепло); вода сповільнює нейтрони.</div><div>· Водень між двома плазмами → гелій + плазма (термоядерний синтез).</div>'+
+    '<div style="margin-top:8px;color:#7dd3fc"><b>КВАНТИ</b></div><div>· Спектр: елемент біля плазми співає акорд своїх ліній (висота ↔ довжина хвилі).</div><div>· Фотоефект: LUX (2.6 еВ) заряджає лише K, Na, Li (робота виходу ≤ 2.3–2.9 еВ); SUN (4.6 еВ) — і Zn, Fe, Cu. Заряджений блок живить електроліз води в радіусі 2.</div><div>· Лазер He–Ne: гелій + неон + ZAP → промінь 632.8 нм.</div><div>· QUBIT: заплутана пара в суперпозиції H|O; дотик до одного визначає обидва (протилежні).</div></div>'; }
+window.sciRefHtml=sciRefHtml;
+setInterval(()=>{ try{ sciTick(); }catch(e){} }, 700);
+/* ═══ (10-20a) ЗАГАДКИ НАУКИ: так/ні кивком — головоломки на справжній фізиці й хімії ═══
+   Майстер питає після реакції (повчальна мить) або з меню 🧪. Кивни — «так», похитай — «ні».
+   Правильно — +2 душі й пояснення; неправильно — пояснення (загадка повернеться). Завдання «sciq» рахує правильні. */
+const SCI_RIDDLES=[
+ {id:'pb',    tag:'Pb',      a:true,  q:'Свинець зупиняє гамма-промені краще, ніж вода?',                               why:'чим щільніший матеріал і важчі ядра, тим сильніше поглинання γ. У грі свинець гасить дозу в десять разів на блок, вода — ледь.'},
+ {id:'alpha', tag:'rad',     a:true,  q:'Альфа-частинку зупинить звичайний аркуш паперу?',                              why:'альфа — важке ядро гелію, пробіг у повітрі кілька сантиметрів. Небезпечна лише зсередини — якщо вдихнути чи проковтнути.'},
+ {id:'beta',  tag:'rad',     a:true,  q:'Бета-промені — це електрони, що вилітають з ядра?',                            why:'при бета-розпаді нейтрон стає протоном, а з ядра вилітає електрон і антинейтрино. Метал бету зупиняє.'},
+ {id:'half',  tag:'rad',     a:true,  q:'Період напіврозпаду — це час, за який розпадається половина ядер?',             why:'і байдуже, скільки їх було спочатку. Уран-238 — чотири з половиною мільярди років, полоній-218 — три хвилини.'},
+ {id:'mod',   tag:'reactor', a:true,  q:'Вода в реакторі сповільнює нейтрони, щоб уран ділився частіше?',                why:'сповільнювач — вода чи графіт — робить нейтрони повільними, тепловими, і уран-235 ловить їх значно охочіше.'},
+ {id:'boron', tag:'B',       a:false, q:'Бор у реакторі розганяє ланцюгову реакцію?',                                    why:'навпаки: бор жадібно поглинає нейтрони — це гальмо. З бору й кадмію роблять стрижні керування.'},
+ {id:'u238',  tag:'U',       a:true,  q:'Після альфа-розпаду урану-238 виходить торій-234?',                             why:'альфа забирає два протони і два нейтрони: дев’яносто два стає дев’яносто — торій, а двісті тридцять вісім — двісті тридцять чотири.'},
+ {id:'au',    tag:'Au',      a:false, q:'Ртуть можна перетворити на золото хімічно — кислотами чи вогнем?',               why:'хімія переставляє електрони, а не ядра. Лише ядерна реакція — нейтрон у ртуть-196 — дає золото-197. І це дорожче за саме золото.'},
+ {id:'na',    tag:'lye',     a:true,  q:'Натрій у воді виділяє водень і може спалахнути?',                                why:'два натрій плюс дві води дають луг і водень, а тепло реакції цей водень підпалює.'},
+ {id:'neut',  tag:'salt',    a:true,  q:'Луг і кислота разом дають сіль і воду?',                                        why:'це нейтралізація: їдкий натр і соляна кислота — і на столі звичайна кухонна сіль.'},
+ {id:'cu',    tag:'ZnCl2',   a:false, q:'Мідь розчиняється в соляній кислоті з виділенням водню?',                       why:'мідь стоїть у ряду активності після водню — соляна кислота її не бере. А цинк — так, шипить і дає водень.'},
+ {id:'mg',    tag:'MgO',     a:true,  q:'Магній горить сліпучим білим світлом?',                                         why:'полум’я магнію — близько трьох тисяч градусів. Так робили перші фотоспалахи.'},
+ {id:'rust',  tag:'rust',    a:true,  q:'Іржа — це залізо, що з’єдналося з киснем за участі води?',                      why:'без води залізо іржавіє дуже повільно. Волога — ключ, сіль лише прискорює.'},
+ {id:'therm', tag:'thermite',a:true,  q:'Терміт — це алюміній, що забирає кисень в іржі з величезним жаром?',            why:'алюміній плюс оксид заліза — оксид алюмінію і розплавлене залізо, близько двох з половиною тисяч градусів. Так зварюють рейки.'},
+ {id:'haber', tag:'NH3',     a:true,  q:'Аміак для добрив роблять з азоту повітря й водню на залізному каталізаторі?',   why:'процес Габера–Боша: азот і водень на залізі під тиском і нагрівом. Половина людства їсть хліб завдяки йому.'},
+ {id:'he',    tag:'He',      a:false, q:'Гелій легко вступає в реакції з іншими елементами?',                            why:'гелій — благородний газ, його електронна оболонка повна. Він майже ні з чим не реагує.'},
+ {id:'fus',   tag:'fusion',  a:true,  q:'Зорі світять тому, що в них водень перетворюється на гелій?',                   why:'термоядерний синтез: чотири ядра водню дають гелій і енергію. Сонце щосекунди втрачає чотири мільйони тонн маси на світло.'},
+ {id:'photo', tag:'photo',   a:false, q:'Тьмяний ультрафіолет вибиває електрони з металу, а яскраве червоне світло — ні. Це помилка?', why:'ні, саме так і є: фотоефект залежить від частоти, а не яскравості. Фотон має мати енергію більшу за роботу виходу — за це Ейнштейн отримав Нобелівську премію.'},
+ {id:'spec',  tag:'spectrum',a:true,  q:'Кожен елемент має свій набір спектральних ліній, як відбиток пальця?',           why:'електрони стрибають між своїми рівнями й випромінюють саме свої довжини хвиль. Так гелій знайшли на Сонці раніше, ніж на Землі.'},
+ {id:'laser', tag:'laser',   a:true,  q:'У гелій-неоновому лазері світить саме неон?',                                   why:'розряд збуджує гелій, гелій передає енергію неону, а неон випромінює червоні шістсот тридцять два нанометри.'},
+ {id:'qbit',  tag:'qbit',    a:true,  q:'Кубіт може бути і нулем, і одиницею водночас, доки його не виміряли?',          why:'це суперпозиція. Вимірювання дає лише один результат — і руйнує її.'},
+ {id:'ent',   tag:'qbit',    a:false, q:'Якщо виміряти один кубіт із заплутаної пари, другий лишиться невизначеним?',    why:'стани заплутаної пари узгоджені: щойно один визначився — другий теж, хоч би як далеко був. Передати цим повідомлення, щоправда, не можна.'},
+ {id:'chalk', tag:'chalk',   a:true,  q:'Крейда, мармур і мушлі — це один і той самий карбонат кальцію?',                why:'і всі вони шиплять у кислоті, виділяючи вуглекислий газ.'},
+ {id:'bronze',tag:'bronze',  a:false, q:'Бронза — це чисте залізо?',                                                     why:'бронза — сплав міді з оловом, твердіший за обидва. Залізо люди навчилися плавити пізніше.'},
+ {id:'iod',   tag:'I',       a:true,  q:'Йод при нагріванні переходить одразу з твердого у фіолетову пару?',             why:'це сублімація: без рідини. На холодному склі пара знову стає кристалами.'},
+ {id:'slak',  tag:'slaked',  a:true,  q:'Гашене вапно твердне, бо вбирає вуглекислий газ з повітря?',                    why:'гідроксид кальцію з вуглекислим газом знову стає карбонатом. Штукатурка і фрески твердіють роками.'},
+ {id:'elec',  tag:'H',       a:true,  q:'Електричний струм розкладає воду на водень і кисень?',                          why:'електроліз: на катоді водень, на аноді кисень — водню вдвічі більше за об’ємом.'},
+ {id:'cl',    tag:'HCl',     a:true,  q:'Суміш водню з хлором на яскравому світлі вибухає?',                              why:'світло розриває молекулу хлору на атоми — і починається ланцюгова реакція. У темряві суміш може стояти роками.'} ];
+const SCIQ={ done:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_sciq')||'{}'); }catch(e){ return {}; } })(), cool:0, cur:null, ok:0, asked:0 };
+function sciqSave(){ try{ localStorage.setItem('vb3d_sciq', JSON.stringify(SCIQ.done)); }catch(e){} }
+function sciRiddlePick(tag){ const fresh=SCI_RIDDLES.filter(r=>SCIQ.done[r.id]!==1); const byTag=tag?fresh.filter(r=>r.tag===tag):[];
+  if(byTag.length) return byTag[Math.floor(Math.random()*byTag.length)]; if(fresh.length) return fresh[Math.floor(Math.random()*fresh.length)]; return SCI_RIDDLES[Math.floor(Math.random()*SCI_RIDDLES.length)]; }
+function sciRiddleAsk(tag, opts){ opts=opts||{}; try{
+  if(typeof mentorAsk!=='function' || typeof DLG==='undefined') return false;
+  if(DLG.q && !opts.force) return false; if(typeof CUT!=='undefined' && CUT.on) return false;
+  const r=sciRiddlePick(tag); if(!r) return false; SCIQ.cur=r; SCIQ.asked++; SCIQ.cool=performance.now();
+  const q={ id:'SCIQ', text:'Загадка. '+r.q, hint:'Кивни — так. Похитай — ні.', minWait:0.8, onYes:()=>sciRiddleAnswer(r,true), onNo:()=>sciRiddleAnswer(r,false) };
+  mentorAsk(q); logE('ЗАГАДКА «'+r.id+'»: '+r.q);
+  let quietT=0, totT=0; const iv=setInterval(()=>{ try{ if(DLG.q!==q){ clearInterval(iv); return; } totT+=0.5; if(!dlgSpeaking()) quietT+=0.5;   // мовчиш riddleWait с — загадка відкладається (не перепитує вічно)
+    if(quietT>=(VB_SCI.riddleWait||30) || totT>=90){ clearInterval(iv); DLG.q=null; SCIQ.cur=null; logE('ЗАГАДКА «'+r.id+'»: без відповіді — відкладено'); try{ mentorLine('Подумай. Спитаю іншим разом.','curious'); }catch(e){} } }catch(e){ clearInterval(iv); } }, 500);
+  return true; }catch(e){ logE('ЗАГАДКА: '+e.message); return false; } }
+function sciRiddleAnswer(r,ans){ const ok=(ans===r.a); SCIQ.cur=null; SCIQ.done[r.id]=ok?1:0; sciqSave();
+  if(ok){ SCIQ.ok++; try{ player.score=(player.score||0)+2; }catch(e){} try{ showBanner('✅ ПРАВИЛЬНО — +2 душі','#86efac'); }catch(e){} try{ doFlash('#86efac'); buzz([0,40,40,40]); }catch(e){}
+    try{ mentorLine((r.a?'Так. ':'Ні — і ти це знаєш. ')+r.why,'joy'); }catch(e){} try{ QST.progress('sciq',null,1); }catch(e){} logE('ЗАГАДКА «'+r.id+'»: ПРАВИЛЬНО (+2 душі) — '+r.why); }
+  else { try{ showBanner('❌ НЕ ТАК — слухай пояснення','#fca5a5'); }catch(e){} try{ buzz([0,120]); }catch(e){} try{ mentorLine((r.a?'Насправді так: ':'Насправді ні: ')+r.why,'curious'); }catch(e){} logE('ЗАГАДКА «'+r.id+'»: неправильно — '+r.why); } }
+function sciRiddleMaybe(tag){ try{ if(!(VB_SCI.riddle??1)) return; const now=performance.now(); if(now-SCIQ.cool<(VB_SCI.riddleCool??45)*1000) return;
+  if(!SCI_RIDDLES.some(r=>r.tag===tag && SCIQ.done[r.id]!==1)) return; if(Math.random()>(VB_SCI.riddleP??0.7)) { SCIQ.cool=now-((VB_SCI.riddleCool??45)*1000)*0.5; return; } sciRiddleAsk(tag); }catch(e){} }
+window.SCI_RIDDLES=SCI_RIDDLES; window.SCIQ=SCIQ; window.sciRiddleAsk=sciRiddleAsk; window.sciRiddleAnswer=sciRiddleAnswer; window.sciRiddleMaybe=sciRiddleMaybe;
 
 /* ═══ ГРИМУАР: цифри Морзе й КНИГА ЗАКЛЯТЬ ═══ */
 const GRIM_DIGITS='0123456789'.split('');
@@ -16703,7 +17018,18 @@ const SCROLLS={
     '<b>PL</b> ·−−· / ·−·· ПЛАЗМА (палить істот!)<br><b>AQ</b> ·− / −−·− ВОДА · <b>G</b> −−· ГАЗ<br><br>'+
     '<b>H</b> ···· · <b>C</b> −·−· · <b>O</b> −−−<br><b>FE</b> ··−· / · ЗАЛІЗО · <b>SI</b> ··· / ·· КРЕМНІЙ<br><b>NA</b> −· / ·− НАТРІЙ · <b>CL</b> −·−· / ·−·· ХЛОР<br><br>'+
     'У МАЯКУ (боком) промов <b>PL</b> — <b>плазмовий клинок</b> на 25с (+30% шкоди).<br>'+
-    'Промовиш справжній елемент, якого ще нема (P, S, K…) — світ відповість, що він не відкритий.' },
+    '(10-20a) Відкрито <b>36 елементів</b> — будь-який символ Менделєєва 1–2 літерами: HE NE AR LI BE B N F MG AL P S K CA TI CU ZN AG SN I W AU HG PB PO RN RA TH U… Довідник: меню → <b>⚗ НАУКА</b>.' },
+  haber:{ t:'📜 РЕЦЕПТ: АМІАК (ГАБЕР) ⚗', d:'<b>АЗОТ (N −·)</b> поруч із <b>ВОДНЕМ (H ····)</b>, поруч <b>ЗАЛІЗО (FE)</b> як каталізатор і <b>ПЛАЗМА</b> (нагрів) → <b>АМІАК NH₃</b>. Без заліза — нічого: каталізатор не витрачається, а відкриває шлях.' },
+  thermite:{ t:'📜 РЕЦЕПТ: ТЕРМІТ 🔥', d:'Залізо поруч із <b>КИСНЕМ (O)</b> і <b>ВОДОЮ (AQ)</b> іржавіє → <b>ІРЖА Fe₂O₃</b>. <b>АЛЮМІНІЙ (AL ·− / ·−··)</b> поруч з іржею і нагрів → терміт: <b>білий жар (ПЛАЗМА)</b> і чисте залізо. Так зварюють рейки.' },
+  alchemy:{ t:'📜 АЛХІМІЯ: ЗОЛОТО З РТУТІ ✨', d:'Поклади <b>РАДІЙ (RA ·−· / ·−)</b> поруч із <b>БЕРИЛІЄМ (BE −··· / ·)</b> — α-частинки радію вибивають з берилію <b>нейтрони</b>. <b>РТУТЬ (HG ···· / −−·)</b> поруч ловить нейтрон: Hg-196 → Hg-197 → <b>ЗОЛОТО-197 (AU)</b>. Це єдина справжня трансмутація — не хімія, а ядро. Тримайся далі: радій світить γ, сховайся за <b>СВИНЕЦЬ (PB)</b>.' },
+  reactor:{ t:'📜 РЕАКТОР І КРИТИЧНІСТЬ ⚛', d:'<b>УРАН (U ··−)</b> ділиться від нейтрона (джерело — радій + берилій): Ba + Kr + 3 нейтрони + енергія. Чотири урани поруч без <b>БОРУ (B −···)</b> — <b>критичність: вибух</b>. Бор між уранами поглинає нейтрони — <b>реактор</b>: стале тепло (плазма) для плавлення без закляття. <b>ВОДА</b> поруч сповільнює нейтрони — поділ частіший.' },
+  laser:{ t:'📜 РЕЦЕПТ: ЛАЗЕР He–Ne 🔴', d:'<b>ГЕЛІЙ (HE ···· / ·)</b> поруч із <b>НЕОНОМ (NE −· / ·)</b> і закляття <b>ZAP</b> (розряд) → гелій накачується, віддає енергію неону, неон випромінює <b>червоний промінь 632.8 нм</b> у напрямі від гелію до неону: ріже крихке й скло, ранить ворогів на лінії.' },
+  photo:{ t:'📜 ФОТОЕФЕКТ: СТРУМ ЗІ СВІТЛА ☀', d:'Закляття <b>LUX</b> на <b>КАЛІЙ (K −·−)</b> чи <b>НАТРІЙ (NA)</b> вибиває електрони (робота виходу 2.3 еВ < квант 2.6 еВ) — блок заряджений 10 с, і <b>ВОДА</b> за 1–2 клітинки розкладається на водень і кисень. На <b>ЦИНК (ZN)</b> чи <b>ЗАЛІЗО</b> LUX не діє — потрібен ультрафіолет (<b>SUN</b>, 4.6 еВ). Енергія кванта, а не яскравість (Ейнштейн, 1905).' },
+  qubit:{ t:'📜 КУБІТИ: ЗАПЛУТАНА ПАРА ⟨ψ|', d:'Слово <b>QUBIT</b> (−−·− / ··− / −··· / ·· / −) ставить <b>два блоки у суперпозиції</b> водню й кисню. Поклади долоню на один (дотик ~1 с) — він стане H або O, а другий <b>миттєво</b> — протилежним, хоч би де стояв. Результат випадковий: так не передати повідомлення, але так роблять квантові ключі.' },
+  metal:{ t:'📜 МЕТАЛУРГІЯ: ДОМНА, МІДЬ, БРОНЗА ⚒', d:'<b>ІРЖА</b> поруч із <b>ВУГЛЕЦЕМ (C)</b> у плазмі → чисте <b>ЗАЛІЗО</b> і CO₂ — домна. <b>МІДЬ (CU)</b> у плазмі з киснем чорніє (CuO); CuO + <b>ВОДЕНЬ</b> чи <b>ВУГЛЕЦЬ</b> у жарі → знову мідь. <b>МІДЬ + ОЛОВО (SN)</b> у плазмі → <b>БРОНЗА</b>, твердіша за обидва. Срібло, що потемніло (Ag₂S), чистить <b>АЛЮМІНІЙ</b> у гарячій воді.' },
+  acid:{ t:'📜 КИСЛОТА І ЛУГ: НЕЙТРАЛІЗАЦІЯ ⚖', d:'<b>НАТРІЙ (NA)</b> у воді → <b>ЛУГ</b> + водень. <b>ВОДЕНЬ + ХЛОР</b> на світлі (LUX) → <b>СОЛЯНА КИСЛОТА</b>. Луг поруч із кислотою → <b>СІЛЬ</b> і вода (нейтралізація). Кислота розчиняє <b>ЦИНК (ZN)</b> з воднем, шипить на <b>КРЕЙДІ</b> (CO₂), а <b>МІДЬ</b> не бере — вона в ряду активності після водню.' },
+  lime:{ t:'📜 ВАПНО: КОЛО КАЛЬЦІЮ 🏛', d:'<b>КАЛЬЦІЙ (CA)</b> з киснем у плазмі → <b>ВАПНО CaO</b>. Вапно + <b>ВОДА</b> → <b>гашене вапно</b> (кипить від тепла). Гашене вапно + <b>CO₂</b> (C + O у плазмі) → <b>КРЕЙДА CaCO₃</b> — так твердне штукатурка. Крейда в плазмі → знову вапно + CO₂: коло замкнулось.' },
+  spectrum:{ t:'📜 СПЕКТР: ГОЛОС ЕЛЕМЕНТА 🎵', d:'Елемент поруч із <b>ПЛАЗМОЮ</b> світиться лініями своїх рівнів енергії і <b>співає акорд</b>: водень 656/486/434 нм, натрій 589 (жовте), неон 640/633 (червоне), калій 766/770, мідь 522/515 (зелене). Кожна лінія — один стрибок електрона: так упізнають речовину зір.' },
 };
 const CODEX={
   list(){ try{ return JSON.parse(localStorage.getItem('vb3d_codex')||'[]'); }catch(e){ return []; } },
@@ -16734,14 +17060,15 @@ const QST={
     const r0=rng(); let q;
     if(r0<0.28)      q={ t:'mine', kind:['wood','stone','iron','crystal'][Math.floor(rng()*4)], goal:4+deep*3 };
     else if(r0<0.46) q={ t:'hunt', kind:null, goal:3+deep*2 };
-    else if(r0<0.58) q={ t:'cast', kind:['plasma','plasma','Fe','H','O','Na','Cl','Si','C'][Math.floor(rng()*9)], goal:1+deep };
-    else if(r0<0.68) q={ t:'alch', kind:['steel','salt','sand','liquid','glass'][Math.floor(rng()*5)], goal:1 };
+    else if(r0<0.58) q={ t:'cast', kind:(deep>=2?['N','Mg','Ca','He','Ne','Cu','S','Al'][Math.floor(rng()*8)]:['plasma','plasma','Fe','H','O','Na','Cl','Si','C'][Math.floor(rng()*9)]), goal:1+deep };   // (10-20a) глибше — нові елементи
+    else if(r0<0.68 && deep>=1 && rng()<0.3) q={ t:'sciq', kind:null, goal:2 };   // (10-20a) загадки науки
+    else if(r0<0.68) q={ t:'alch', kind:(deep>=1?['steel','salt','sand','liquid','glass','lye','NH3','MgO','HCl','chalk','He','Au','laser'][Math.floor(rng()*13)]:['steel','salt','sand','liquid','glass'][Math.floor(rng()*5)]), goal:1 };   // (10-20a) глибше — наука
     else if(r0<0.82) q={ t:'kata', kind:(typeof KATA_ATTACKS!=='undefined'?KATA_ATTACKS:['MEN','KESA','YOKO'])[Math.floor(rng()*6)%6], goal:2+deep, pct:(typeof VB_KATAQ!=='undefined'?VB_KATAQ.solo:60) };
     else if(r0<0.92) q={ t:'stance', kind:['CHUDAN','JODAN','GEDAN','HASSO','WAKI'][Math.floor(rng()*5)], goal:1, hold:2 };
     else             q={ t:'serp', kind:null, goal:1 };
     if(!q.kind && q.t==='kata') q.kind='KESA';
     q.prog=0;
-    q.reward = (q.t==='serp'||q.t==='kata') ? (rng()<0.5?{crystal:2}:{steel:1}) : (rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2}));
+    q.reward = (q.t==='serp'||q.t==='kata') ? (rng()<0.5?{crystal:2}:{steel:1}) : (q.t==='alch' && /^(Au|He|laser|NH3)$/.test(q.kind||'')) ? {crystal:3} : (rng()<0.5 ? {glass:1} : (rng()<0.6 ? {steel:1} : {crystal:2}));   // (10-20a) наукові — щедріші
     return q;
   },
   offer(seed){
@@ -16754,8 +17081,9 @@ const QST={
   text(q){
     const K={MEN:'мен — згори вниз',KESA:'кеса — навскіс справа згори',GYAKU_KESA:'гяку-кеса — навскіс зліва згори',YOKO:'йоко — горизонтальний, клинок плазом',TSUKI:'цукі — укол уперед',KIRIAGE:'кіріаге — знизу вгору'};
     const ST={CHUDAN:'тюдан — вістря вперед, на рівні горла',JODAN:'дзьодан — меч над головою, вістря назад',GEDAN:'гедан — вістря вниз-уперед, до коліна',HASSO:'хассо — клинок вертикально біля правого плеча',WAKI:'вакі — клинок схований позаду справа, вістря вниз'};
-    const EL={plasma:'ПЛАЗМУ (PL)',Fe:'ЗАЛІЗО (FE)',H:'ВОДЕНЬ (H)',O:'КИСЕНЬ (O)',Na:'НАТРІЙ (NA)',Cl:'ХЛОР (CL)',Si:'КРЕМНІЙ (SI)',C:'ВУГЛЕЦЬ (C)'};
-    const AL={steel:'сталь: залізо і вугілля поруч, біля них плазма',salt:'сіль: натрій і хлор поруч',sand:'пісок: кремній і кисень, поруч плазма',liquid:'воду: водень і кисень, поруч плазма',glass:'скло: плазма поруч із піском'};
+    const EL={plasma:'ПЛАЗМУ (PL)',Fe:'ЗАЛІЗО (FE)',H:'ВОДЕНЬ (H)',O:'КИСЕНЬ (O)',Na:'НАТРІЙ (NA)',Cl:'ХЛОР (CL)',Si:'КРЕМНІЙ (SI)',C:'ВУГЛЕЦЬ (C)',N:'АЗОТ (N)',Mg:'МАГНІЙ (MG)',Ca:'КАЛЬЦІЙ (CA)',He:'ГЕЛІЙ (HE)',Ne:'НЕОН (NE)',Cu:'МІДЬ (CU)',S:'СІРКУ (S)',Al:'АЛЮМІНІЙ (AL)'};
+    const AL={steel:'сталь: залізо і вугілля поруч, біля них плазма',salt:'сіль: натрій і хлор поруч',sand:'пісок: кремній і кисень, поруч плазма',liquid:'воду: водень і кисень, поруч плазма',glass:'скло: плазма поруч із піском',
+      lye:'луг: натрій (NA) поруч із водою (AQ) — обережно, виділиться водень',NH3:'аміак: азот (N) і водень (H) поруч, залізо (FE) як каталізатор і плазма',MgO:'оксид магнію: магній (MG) і кисень (O) у плазмі — буде спалах',HCl:'соляну кислоту: водень і хлор (CL) поруч і світло (LUX)',chalk:'крейду: кальцій (CA) + кисень у плазмі → вапно, вапно + вуглекислий газ (C + O у плазмі)',He:'гелій: водень між двома плазмами (термоядерний синтез)',Au:'золото: радій (RA) + берилій (BE) — нейтрони, ртуть (HG) поруч стане золотом; сховайся за свинець (PB)',laser:'лазер: гелій (HE) поруч із неоном (NE) і закляття ZAP'};
     switch(q.t){
       case 'mine': return 'Видобудь <b>'+q.goal+' '+RES_ICON[q.kind]+' '+RES_NAME[q.kind]+'</b> (зрубай блоки вщент)';
       case 'hunt': return 'Розвтіли <b>'+q.goal+' фантомів</b>';
@@ -16764,6 +17092,7 @@ const QST={
       case 'kata': return 'Виконай удар <b>'+(K[q.kind]||q.kind)+'</b> '+q.goal+' '+(q.goal>1?'рази':'раз')+' зі схожістю не менше '+(q.pct||60)+' відсотків — кожен мах оцінюється';
       case 'stance': return 'Стань у стійку <b>'+(ST[q.kind]||q.kind)+'</b> і завмри на '+(q.hold||2)+' секунди';
       case 'serp': return 'Пройди <b>Серпантин</b> (кнопка в меню) і торкнись манекена в центрі';
+      case 'sciq': return 'Розгадай <b>'+q.goal+' загадки науки</b> — кнопка 🧪 у меню або після реакції; кивни «так», похитай «ні»';
     }
     return '…'; },
   progress(t,kind,amt){
@@ -16782,7 +17111,7 @@ const QST={
   hud(){
     const q=this.a, ICO=window.RES_ICON||{};          // (07-16j) дзеркало — жодних TDZ
     qstHudEl.style.display=q?'block':'none';
-    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?(ICO[q.kind]||q.kind):({hunt:'☠',cast:'⚡',alch:'⚗',kata:'⚔',stance:'🧍',serp:'🌀'}[q.t]||'•'))+(q.t==='kata'||q.t==='stance'?' '+q.kind:'')+' '+q.prog+' / '+q.goal;
+    if(q) qstHudEl.innerHTML='🎯 '+(q.t==='mine'?(ICO[q.kind]||q.kind):({hunt:'☠',cast:'⚡',alch:'⚗',kata:'⚔',stance:'🧍',serp:'🌀',sciq:'🧪'}[q.t]||'•'))+(q.t==='kata'||q.t==='stance'?' '+q.kind:'')+' '+q.prog+' / '+q.goal;
   }
 };
 const qstHudEl=document.createElement('div');
@@ -18843,6 +19172,7 @@ function castSpell(word, opts){ opts=opts||{};
     // вільна клітинка: МАТЕРІАЛІЗАЦІЯ
     if(!opts.confirmed && (VB_MAGIC.elemAsk??1)>0){ elemAsk(word, mt, cx, cy); return; }   // (10-10c) блок-елемент — лише після кивка «так» (випадковий символ не ставить блок)
     if(!soulPay(1,'матеріалізація')) return;   // (10-09b) у майстерні — безкоштовно
+    if(mt==='qbit'){ try{ sciQubitSpawn(cx,cy); }catch(e){ logE('КУБІТ: '+e.message); } snapshotRoom(); showBanner('⟨ψ| КУБІТИ → ('+cx+','+cy+') і поруч (−1 душа)','#c084fc'); doFlash('#7c3aed'); buzz([0,40,30,60]); return; }   // (10-20a) заплутана пара
     addObstacle(cx,cy,mt,new Set());
     const o=obstacles[obstacles.length-1];
     if(o && o.gx===cx && o.gy===cy) o.noRes=true;      // сотворене — не фармиться
@@ -18867,6 +19197,12 @@ setTimeout(()=>{ try{
   const b=document.createElement('button'); b.id='mMorse'; b.textContent='⚡ МОРЗЕ-ЗАКЛЯТТЯ (довідник)';
   $('mNew').parentNode.insertBefore(b, $('mNew'));
   b.onclick=()=>{ closeMenu(); tutModal(SCROLLS.morse.t, SCROLLS.morse.d, [{t:'ЗРОЗУМІЛО ▷'}]); };
+  const s=document.createElement('button'); s.id='mSci'; s.textContent='⚗ НАУКА — елементи, реакції, ядро, кванти (довідник)';   // (10-20a)
+  $('mNew').parentNode.insertBefore(s, $('mNew'));
+  s.onclick=()=>{ closeMenu(); try{ tutModal('⚗ НАУКА · ДОВІДНИК', sciRefHtml(), [{t:'ЗАКРИТИ'}]); }catch(e){ logE('НАУКА довідник: '+e.message); } };
+  const r=document.createElement('button'); r.id='mSciQ'; r.textContent='🧪 ЗАГАДКА НАУКИ — кивни «так» або похитай «ні»';   // (10-20a)
+  $('mNew').parentNode.insertBefore(r, $('mNew'));
+  r.onclick=()=>{ closeMenu(); setTimeout(()=>{ try{ if(!sciRiddleAsk(null,{force:true})) showBanner('🧪 зараз не можна — триває сцена','#94a3b8'); }catch(e){ logE('ЗАГАДКА: '+e.message); } }, 300); };
 }catch(e){} }, 700);
 /* ═══════════════ (10-08a) ГРИМУАР МОРЗЕ — міні-гра пошуку літер ═══════════════
    Відкрий гримуар (📖 вгорі або меню паузи). Набери ПЕРШУ літеру елемента крапками й тире:
