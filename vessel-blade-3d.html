@@ -2428,13 +2428,13 @@ function linPhys(e, ggRaw){ const la=e.acceleration; if(!la || la.x==null) retur
 const STEPV={ vx:0, vz:0, still:0, spin:0, armed:false, lowT:0, want:null, cool:0 };
 /* (10-07d) швидкість РУКИ (VB_ARM) — теж із частотою датчика, а не кадру: інтегрувати одне значення на кадр при повільних
    кадрах означало «перепрорахувати» поштовх у кілька разів (рука летіла до межі 1.15 м). */
-const LINV={ v:new THREE.Vector3(), vB:new THREE.Vector3(), off:new THREE.Vector3(), still:0, stillA:0, gate:0, armed:false, aF:new THREE.Vector3(), gk:0 };
+const LINV={ v:new THREE.Vector3(), vB:new THREE.Vector3(), off:new THREE.Vector3(), still:0, stillA:0, gate:0, armed:false, aF:new THREE.Vector3(), gk:0, bias:new THREE.Vector3(), vr:0, quietT:0, aR:new THREE.Vector3() };   // (10-20b) bias — залишок гравітації, vr — дисперсія
 /* ═══ (10-20a) ЛІНІЙНИЙ РУХ РУКИ 3.0 — без смикання. Раніше: швидкість руки обнулялась ЖОРСТКО щоразу, коли прискорення на 0.08 с
    падало під мертву зону (повільне ведення руки = серія «пішла — стала — пішла»), мах (>450°/с) обрізав швидкість у нуль миттєво,
    межа досяжності зупиняла руку об стіну, а вихід згладжувався лише lerp 70 мс. Тепер: прискорення — через НЧ-фільтр (lpf Гц),
    швидкість у спокої ЗГАСАЄ з короткою сталою (zuptTau), а не стрибає в нуль; мах приглушує інтеграл плавно (spinFade с);
    біля межі досяжності рука гальмує (soft м); вихід — критично демпфована пружина (posW рад/с) замість lerp. VB_LIN3.on=0 — як було. */
-const VB_LIN3={ on:1, lpf:12, stillAcc:0.35, stillT:0.12, zuptTau:0.10, moveTau:1.6, spinGate:450, spinFade:0.18, posW:18, posZeta:1.0, soft:0.12 };
+const VB_LIN3={ on:1, lpf:12, stillAcc:0.35, stillT:0.12, zuptTau:0.10, moveTau:1.6, spinGate:450, spinFade:0.18, posW:18, posZeta:1.0, soft:0.12, bias:1, biasTau:0.8, biasMax:0.8, stillVar:0.3, quietT:0.25 };   // (10-20b) 3.1: оцінка залишку гравітації в тиші (дисперсія, не середнє) — рука не «повзе»
 window.VB_LIN3=VB_LIN3;
 window.STEPV=STEPV;
 const _lwV=new THREE.Vector3(), _lwQ=new THREE.Quaternion(), _lwZ=new THREE.Vector3(0,0,1), _lwY=new THREE.Vector3(0,1,0);
@@ -2448,10 +2448,16 @@ function linWorldFeed(a, dtE, e){
     const L3=(typeof VB_LIN3!=='undefined' && VB_LIN3.on>0)?VB_LIN3:null;
     if(L3){   // (10-20a) плавно: НЧ-фільтр прискорення, згасання замість обнулення, мʼякі ворота маху
       LINV.aF.lerp(_lwV, clamp(dt*2*Math.PI*(L3.lpf||12),0,1));
+      { const ex=_lwV.x-LINV.aF.x, ey=_lwV.y-LINV.aF.y, ez=_lwV.z-LINV.aF.z; LINV.vr+=((ex*ex+ey*ey+ez*ez)-LINV.vr)*clamp(dt/0.25,0,1); }   // (10-20b) дисперсія — високочастотна енергія
       const gT=spinA>(L3.spinGate||450)?1:0; LINV.gk+=(gT-LINV.gk)*clamp(dt/(L3.spinFade||0.18),0,1);
-      const amF=LINV.aF.length(); if(amF<(L3.stillAcc||0.35) && spinA<40) LINV.still+=dt; else LINV.still=0;
+      if(L3.bias>0){ const quiet=Math.sqrt(LINV.vr)<(L3.stillVar||0.3) && spinA<40 && LINV.aF.length()<(L3.biasMax||0.8);   // (10-20b) тиша за дисперсією: постійний залишок (гравітація, що просочилась) — у bias, а не в рух
+        if(quiet) LINV.quietT+=dt; else LINV.quietT=0;
+        if(LINV.quietT>(L3.quietT||0.4)){ LINV.bias.lerp(LINV.aF, clamp(dt/(L3.biasTau||1.5),0,1)); const bm=LINV.bias.length(), bx=(L3.biasMax||0.8); if(bm>bx) LINV.bias.multiplyScalar(bx/bm); } }
+      else LINV.bias.set(0,0,0);
+      LINV.aR.copy(LINV.aF).sub(LINV.bias);
+      const amF=LINV.aR.length(); if(amF<(L3.stillAcc||0.35) && spinA<40) LINV.still+=dt; else LINV.still=0;
       const stillK=clamp(LINV.still/(L3.stillT||0.12),0,1);
-      LINV.v.addScaledVector(LINV.aF, dt*(1-LINV.gk));
+      LINV.v.addScaledVector(LINV.aR, dt*(1-LINV.gk));
       const tau=lerp(L3.moveTau||1.6, L3.zuptTau||0.1, Math.max(stillK, LINV.gk)); LINV.v.multiplyScalar(Math.exp(-dt/Math.max(0.02,tau)));
       LINV.gate=LINV.gk>0.5?0.1:0; LINV.armed=true; }
     else {
@@ -3414,7 +3420,7 @@ function handInfo(av){
 let dt2=0.016;
 function updateAvatarMesh(av, t){
   const P=av.parts, g=av.mesh; if(!P) return;
-  const hpFrac=clamp(av.hp/100,0,1), aggr=1-hpFrac, hue=aggressionHue(aggr);
+  const hpFrac=clamp(av.hp/100,0,1), aggr=1-hpFrac, hue=(av.vhue!=null)?av.vhue:aggressionHue(aggr);   // (10-20b) варіант ворога — свій відтінок
   if(av.hitGlow>0) av.hitGlow-=0.016;
   const glow=clamp(av.hitGlow,0,0.3);
   const pain=av.painT>0?(Math.sin(t*0.05)*0.5+0.5)*0.4:0;
@@ -5485,6 +5491,7 @@ function applyAdvRoom(rx,ry){
   try{ neighborGhostsBuild(rx,ry); }catch(e){ logE('сусіди: '+e.message); }   // (09-22i) тіні сусідніх кімнат   // вернуть сохранённые постройки/скан этой комнаты (если были)
   const kinds = coopKinds(composeRoomEnemies(rx,ry));   // (10-06v) лише моя частка спільної цілі
   phantomCount=kinds.length; spawnPhantoms(kinds.length, kinds);
+  try{ labVariants(rx,ry); labArrive(rx,ry); }catch(e){ logE('ЛАБОРАТОРІЯ: '+e.message); }   // (10-20b)
   const bossPh=phantoms.find(p=>p.kind==='boss');
   if(bossPh && st.weight>0.7){ bossPh.size=3; bossPh.hp=520;   // глубокий босс — 3×3
     try{ bossPh.mesh.scale.setScalar(2.8); }catch(e){} }
@@ -5520,6 +5527,7 @@ function composeRoomEnemies(rx,ry){
   const st=roomStyle(rx,ry), dist=Math.abs(rx-6)+Math.abs(ry-6);
   if(rx===6&&ry===6) return [];
   if(rx===19&&ry===6) return [];   // (10-07g) підвал — тихо
+  { const L=(typeof labRoomOf==='function')?labRoomOf(rx,ry):null; if(L) return labEnemyKinds(L.lab); }   // (10-20b) лабораторія — вороги за місцевістю
   if((rx>12||ry>12) && specialRoomOf(rx,ry)) return [];   // (10-08d) горище, печера, ліхтарня, катакомби, шахти — тихо
   if(chessWhite(rx,ry)) return [];                  // ⬜ біла клітинка — коридор: НУЛЬ ворогів (лут/торговці — advRoomExtras)
   const AD=(window.ADV_DIFF??1);                    // обрана складність пригоди (0/1/2) масштабує щільність
@@ -5864,6 +5872,7 @@ function buildStructuredRoomCore(rx,ry,rng,st){
   if(type==='cellar'){ for(const [x,y] of [[2,2],[3,2],[2,3],[10,2],[10,3],[2,9],[2,10],[3,10],[10,10],[9,10],[10,9]]) put(x,y,'C',0x6b4423,'cube',0.7);   // (10-07g) ящики — дерево, ламаються
     for(const [x,y] of [[4,8],[8,4]]) put(x,y,'C',0x5b3a1d,'post',0.9); put(11,6,'Fe',null,'cube',0.8); }
   else if(type==='home'){ /* (09-29k) дім порожній — місце для тренувань; зразки матеріалів прибрано */ }
+  else if(type==='lab'){ try{ labInterior(rx,ry,taken,rng); }catch(e){ logE('ЛАБОРАТОРІЯ план: '+e.message); } }   // (10-20b)
   else if(type==='attic'||type==='cave'||type==='lamp'||type==='catacomb'||type==='shaft'){ specialRoomInterior(type, put, (x,y)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)) return; taken.add(k); plantRock(x,y,rng); }); }   // (10-08d)   // (09-22h) зразки: кристал, залізо, камінь, дерево; (09-27b) по кутках — підлога під карту
   else if(type==='hall'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,inMat,inTint,'post',1.1);
     if(w>0.35) for(const [x,y] of [[6,3],[3,6],[9,6],[6,9]]) put(x,y,inMat,inTint,'post',1.0); }
@@ -7485,7 +7494,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-20a · 🖐 ЛІНІЙНИЙ РУХ РУКИ 3.0: без смикання — НЧ-фільтр, мʼякий спокій без обнулень, мах глушить плавно, пружина на виході, гальмо біля межі (повзунки РУКА · ЛІНІЙНИЙ РУХ 3.0) · 🪜 ПЕРЕХОДИ МІЖ ПОВЕРХАМИ очима: камера лишається в голові, повільніший підхід, у темряві «вата» у вухах і кроки/щаблі, світло повертається без стрибка (VB_CUT.cam=side — бічна камера як було) · ⚗ НАУКА: 36 елементів Морзе, ХІМІЯ 2 з умовами (вода, нагрів, світло LUX, розряд ZAP, каталізатор Fe): луг, аміак (Габер), соляна кислота на світлі, іржа → терміт, домна, мідь і бронза, вапно → гашене → крейда, нейтралізація, електроліз · ☢ ЯДРО: ланцюг розпаду U→Th→Ra→Rn→Po→Pb, лічильник Гейгера, доза й захист (свинець ×10), Ra+Be → нейтрони → ртуть у золото, поділ урану: критичність без бору / реактор із бором, вода-сповільнювач, синтез H → He у плазмі · ⟨ψ| КВАНТИ: спектр-акорд елемента біля плазми, фотоефект (LUX/SUN за роботою виходу), лазер He–Ne, QUBIT — заплутана пара · 🧪 ЗАГАДКИ НАУКИ так/ні кивком (+2 душі, пояснення), самі після реакцій · 🎯 завдання: наукові продукти, нові елементи, загадки · 📜 11 нових сувоїв · ⚗ НАУКА довідник у меню · 10-11d: 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
+const BUILD_TAG='2026-10-20b · ⚗ ЛАБОРАТОРІЯ НАУКИ під майстернею: колодязь у підвалі (3,5) → передпокій (зразки, кафедра загадок) → драбина → коридор реактивів (кислотні слимаки; ІРЖАВІ ДВЕРІ — терміт/домна) → мотузка → хімлаб (ВАПНЯКОВА ПРОБКА — кислота) → скеля → галерея балок і перегородок (дрони; СКЛЯНА ПЕРЕГОРОДКА — лазер He–Ne) → балки → квантова камера (СПІВОЧІ ДВЕРІ — спектр, ФОТОСЕЙФ — LUX, КВАНТОВИЙ СЕЙФ — заплутана пара) → шахта → вентиляція (кажани; ШЛЮЗ — доза, свинець) → колодязь → ядерний бункер (радіаційні привиди; РЕАКТОРНІ ДВЕРІ — керований реактор → сховище); усе безкоштовно; скрині з сувоями; кнопка меню ⚗ ЛАБОРАТОРІЯ · 🖐 ЛІНІЙНИЙ РУХ 3.1: залишок гравітації вчиться в тиші за дисперсією — рука не повзе · 🪜 переходи: вібро на щаблі в темряві, тупіт приземлення, VB_CUT.side · 🔋 БАТАРЕЯ ВОЛЬТИ (Zn + Cu у HCl → струм), ☢ дозиметр, стіни кімнат не реагують, жар навскіс · 10-20a: 🖐 ЛІНІЙНИЙ РУХ РУКИ 3.0: без смикання — НЧ-фільтр, мʼякий спокій без обнулень, мах глушить плавно, пружина на виході, гальмо біля межі (повзунки РУКА · ЛІНІЙНИЙ РУХ 3.0) · 🪜 ПЕРЕХОДИ МІЖ ПОВЕРХАМИ очима: камера лишається в голові, повільніший підхід, у темряві «вата» у вухах і кроки/щаблі, світло повертається без стрибка (VB_CUT.cam=side — бічна камера як було) · ⚗ НАУКА: 36 елементів Морзе, ХІМІЯ 2 з умовами (вода, нагрів, світло LUX, розряд ZAP, каталізатор Fe): луг, аміак (Габер), соляна кислота на світлі, іржа → терміт, домна, мідь і бронза, вапно → гашене → крейда, нейтралізація, електроліз · ☢ ЯДРО: ланцюг розпаду U→Th→Ra→Rn→Po→Pb, лічильник Гейгера, доза й захист (свинець ×10), Ra+Be → нейтрони → ртуть у золото, поділ урану: критичність без бору / реактор із бором, вода-сповільнювач, синтез H → He у плазмі · ⟨ψ| КВАНТИ: спектр-акорд елемента біля плазми, фотоефект (LUX/SUN за роботою виходу), лазер He–Ne, QUBIT — заплутана пара · 🧪 ЗАГАДКИ НАУКИ так/ні кивком (+2 душі, пояснення), самі після реакцій · 🎯 завдання: наукові продукти, нові елементи, загадки · 📜 11 нових сувоїв · ⚗ НАУКА довідник у меню · 10-11d: 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -11880,6 +11889,7 @@ function rigNpcTick(av, dt, opts){
   if(av.mentorCloak) av.mentorCloak.visible=false; if(av.mentorCrest) av.mentorCrest.visible=false;
   if(av.blade) av.blade.visible=false; if(av.blade2) av.blade2.visible=false;   // (09-22k) з ригом старого променя немає зовсім
   if(av.ally){ const hue={wise:0.74,weak:0.16,dumb:0.09,mad:0.02}[av.mode]; if(hue!=null) rigRecolor(S.rig,hue); }
+  if(av.vhue!=null && av._vhueDone!==av.vhue){ try{ rigRecolor(S.rig,av.vhue); }catch(e){} av._vhueDone=av.vhue; }   // (10-20b)
   let P;
   const K=(VB_KATA.on && !opts.remote) ? (av.kata||kataAssign(av)) : null;       // (09-27c) свій набір стійок і ударів
   if(av.dead) P=labResolve({p:'DEATH'});
@@ -12559,9 +12569,9 @@ const SENS_SLIDERS=[
   ['VB_WATCH.on','Спостерігач: за найактивнішим (1/0)',0,1,1],['VB_WATCH.dist','Спостерігач: відстань збоку, м',2,8,0.2],['VB_WATCH.h','Спостерігач: висота камери, м',0.8,4,0.1],['VB_WATCH.switchK','Перемикатись, коли активніший у ×',1,4,0.1],['VB_WATCH.hold','Не перемикатись частіше, с',1,10,0.5],['VB_WATCH.roomHold','Кімната: не перескакувати частіше, с',2,20,1],
   ['РУКА · ЛІНІЙНИЙ РУХ 3.0 (10-20a)'],
   ['VB_LIN3.on','Плавний лінійний рух руки (1/0; 0 — як було)',0,1,1],['VB_LIN3.lpf','НЧ-фільтр прискорення, Гц',3,30,1],['VB_LIN3.stillAcc','Спокій: прискорення нижче, м/с²',0.1,1,0.05],['VB_LIN3.stillT','Спокій: за скільки с — повний',0.04,0.5,0.02],['VB_LIN3.zuptTau','Спокій: згасання швидкості, с',0.03,0.5,0.01],['VB_LIN3.moveTau','Рух: витік швидкості, с',0.4,4,0.1],
-  ['VB_LIN3.spinGate','Мах глушить руку від, °/с',150,900,10],['VB_LIN3.spinFade','Мах: плавність воріт, с',0.03,0.5,0.01],['VB_LIN3.posW','Вихід: пружина, рад/с',6,40,1],['VB_LIN3.soft','Межа досяжності: гальмо від, м',0.02,0.4,0.01],
+  ['VB_LIN3.spinGate','Мах глушить руку від, °/с',150,900,10],['VB_LIN3.spinFade','Мах: плавність воріт, с',0.03,0.5,0.01],['VB_LIN3.posW','Вихід: пружина, рад/с',6,40,1],['VB_LIN3.soft','Межа досяжності: гальмо від, м',0.02,0.4,0.01],['VB_LIN3.bias','3.1: залишок гравітації — вчити в тиші (1/0)',0,1,1],['VB_LIN3.biasTau','3.1: залишок — час навчання, с',0.5,5,0.1],['VB_LIN3.biasMax','3.1: залишок — не більше, м/с²',0.2,1.5,0.05],['VB_LIN3.stillVar','3.1: тиша — дисперсія нижче, м/с²',0.1,1,0.05],['VB_LIN3.quietT','3.1: тиша — не коротше, с',0.1,1.5,0.05],
   ['СЦЕНИ · ПЕРЕХОДИ МІЖ ПОВЕРХАМИ (10-20a)'],
-  ['VB_CUT.on','Сцени переходів (1/0)',0,1,1],['VB_CUT.walk','Підхід до драбини: не довше, с',0.5,3,0.1],['VB_CUT.pace','Крок у сцені, м/с',0.5,2,0.05],['VB_CUT.act','Дія (лізе/пірнає), с',0.4,2.5,0.05],['VB_CUT.fade','Затемнення, с',0.15,1.5,0.05],['VB_CUT.arrive','Темрява між поверхами, с',0.3,3,0.05],['VB_CUT.fadeIn','Світло повертається, с',0.15,1.5,0.05],['VB_CUT.muffle','«Вата» у вухах у темряві, 0–1',0,1,0.05],['VB_CUT.blackSteps','Кроки/щаблі в темряві (1/0)',0,1,1],['VB_CUT.side','Сцена збоку, як у 10-09a (1/0; 0 — очима)',0,1,1],
+  ['VB_CUT.on','Сцени переходів (1/0)',0,1,1],['VB_CUT.walk','Підхід до драбини: не довше, с',0.5,3,0.1],['VB_CUT.pace','Крок у сцені, м/с',0.5,2,0.05],['VB_CUT.act','Дія (лізе/пірнає), с',0.4,2.5,0.05],['VB_CUT.fade','Затемнення, с',0.15,1.5,0.05],['VB_CUT.arrive','Темрява між поверхами, с',0.3,3,0.05],['VB_CUT.fadeIn','Світло повертається, с',0.15,1.5,0.05],['VB_CUT.muffle','«Вата» у вухах у темряві, 0–1',0,1,0.05],['VB_CUT.blackSteps','Кроки/щаблі в темряві (1/0)',0,1,1],['VB_CUT.side','Сцена збоку, як у 10-09a (1/0; 0 — очима)',0,1,1],['VB_CUT.blackHap','Вібро на щаблі в темряві (1/0)',0,1,1],['VB_CUT.land','Тупіт і поштовх при приземленні (1/0)',0,1,1],
   ['НАУКА · ХІМІЯ 2 · ЯДРО · КВАНТИ (10-20a)'],
   ['VB_SCI.on','Наука (1/0)',0,1,1],['VB_SCI.geiger','Лічильник Гейгера (1/0)',0,1,1],['VB_SCI.dose','Доза шкодить (1/0)',0,1,1],['VB_SCI.doseHP','Доза: здоров’я −/с при дозі 1',0,3,0.1],['VB_SCI.hl','Періоди напіврозпаду ×',0.2,50,0.2],['VB_SCI.nAct','Нейтронне джерело Ra+Be: активність',0.05,1,0.05],['VB_SCI.fissK','Поділ урану: ймовірність ×',0.05,1,0.05],['VB_SCI.modK','Вода-сповільнювач ×',1,3,0.1],['VB_SCI.crit','Критичність: поділів за вікно',2,10,1],['VB_SCI.critWin','Критичність: вікно, с',1,5,0.25],['VB_SCI.fuseT','Синтез: водень у плазмі, с',1,10,0.5],['VB_SCI.laserT','Лазер He–Ne світить, с',2,15,0.5],['VB_SCI.qLife','Кубіт: декогеренція, с',20,300,10],['VB_SCI.say','Голос науки (1/0)',0,1,1],['VB_SCI.riddle','Загадки після реакцій (1/0)',0,1,1],['VB_SCI.riddleCool','Загадки: не частіше, с',10,180,5],['VB_SCI.riddleP','Загадки: ймовірність',0,1,0.05],
   ['СПОКІЙНО · АСМР (10-11d)'],
@@ -15291,14 +15301,15 @@ function mechClimbEntry(o){ const g=new THREE.Group(); g.frustumCulled=false; co
   MECH.list.push(m); return m; }
 /* ── спеціальні кімнати (поза мапою 13×13): шахти й місця, куди вони ведуть ── */
 function specialRoomOf(rx,ry){
+  { const L=(typeof labRoomOf==='function')?labRoomOf(rx,ry):null; if(L) return L; }   // (10-20b) лабораторія
   if(rx===20 && ry===6) return {type:'attic', name:'Горище', sym:'△', bg:0x0d0a07, accent:'#e2c08d', ring:'C', tint:0x5b3a1d};
   if(rx===19 && ry===7) return {type:'cave', name:'Печера під колодязем', sym:'◒', bg:0x04070a, accent:'#7dd3fc', ring:'Si', tint:0x2f3540};
   if(rx===20 && ry===4) return {type:'lamp', name:'Ліхтарня маяка', sym:'✺', bg:0x050816, accent:'#fde047', ring:'glass', tint:0x9fd8ff};
   if(rx===19 && ry===5) return {type:'catacomb', name:'Катакомби', sym:'☗', bg:0x080706, accent:'#d6d3d1', ring:'Si', tint:0x44403c};
-  if(ry===30 && rx>=30 && rx<=35){ const R=climbRouteOfShaft(rx,ry); return {type:'shaft', name:'Шахта — '+(R?R.name.toLowerCase():'?'), sym:'⇕', bg:0x05060a, accent:'#94a3b8', ring:'Si', tint:0x2b2f38, route:R?R.id:null}; }
+  if(ry===30 && rx>=30 && rx<=42){ const R=climbRouteOfShaft(rx,ry); return {type:'shaft', name:'Шахта — '+(R?R.name.toLowerCase():'?'), sym:'⇕', bg:0x05060a, accent:'#94a3b8', ring:'Si', tint:0x2b2f38, route:R?R.id:null}; }
   return null; }
 window.specialRoomOf=specialRoomOf;
-const ROOMTYPE_NAME2={attic:'Горище',cave:'Печера',lamp:'Ліхтарня',catacomb:'Катакомби',shaft:'Шахта'};
+const ROOMTYPE_NAME2={attic:'Горище',cave:'Печера',lamp:'Ліхтарня',catacomb:'Катакомби',shaft:'Шахта',lab:'Лабораторія'};
 function specialRoomInterior(type, put, rock){
   if(type==='attic'){ for(const [x,y] of [[2,2],[3,2],[2,3],[10,2],[10,3],[9,2],[2,10],[3,10],[10,10],[10,9],[9,10]]) put(x,y,'C',0x6b4423,'cube',0.7);
     for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,'C',0x4a2f17,'post',1.0); }
@@ -15313,6 +15324,7 @@ function climbMechBuild(rx,ry){
       if(rx===8 && ry===6 && id==='lighthouse') lighthouseTowerEnsure();
       mechClimbEntry({id:'climb.'+id+'.'+end, gx:e.gx, gy:e.gy, face:e.face, style:e.style, label:e.label, route:id, from:end, out:e.out}); } }
   const sp=specialRoomOf(rx,ry); if(!sp) return;
+  if(sp.type==='lab'){ try{ labMechBuild(rx,ry); }catch(e){ logE('ЛАБОРАТОРІЯ механізми: '+e.message); } return; }   // (10-20b)
   if(sp.type==='attic') mechChest({id:'attic.chest', gx:6, gy:3, yaw:0, label:'скриня на горищі', done:mechGet('attic.chest'), onDone:atticChestReward});
   else if(sp.type==='cave') mechChest({id:'cave.chest', gx:3, gy:3, yaw:Math.PI/2, label:'скриня в печері', done:mechGet('cave.chest'), onDone:caveChestReward});
   else if(sp.type==='lamp'){ if(mechGet('lamp.lit')) mechSet('lamp.rew',1); lampBuild(); mechValve({id:'lamp.valve', gx:6, gy:0, face:'N', h:1.25, R:0.26, need:360, label:'колесо ліхтаря маяка', done:mechGet('lamp.lit'), onDone:lampLit, onUndo:lampOff}); }
@@ -15487,8 +15499,10 @@ function cutTick(dt){ const now=performance.now();
 function cutFinish(){ const sp=CUT.sp; CUT.on=false; CUT.sp=null; try{ const S=VB_RIG.player; if(S&&S._lockBy==='cut'){ S.lockYaw=null; S._lockBy=null; } }catch(e){} player.hover=0;
   if(!sp) return;
   if(sp.kind==='leave'){ cutFadeSet(1); try{ sp.onBlack&&sp.onBlack(); }catch(e){ logE('СЦЕНА: '+e.message); MECH.busy=false; } cutFadeTo(0, VB_CUT.fadeIn);
-    if((VB_CUT.blackSteps|0)>0){ const hole=!!(sp.g&&sp.g.hole), n=3; for(let i=0;i<n;i++) setTimeout(()=>{ try{ const p=player.mesh.position; if(hole) spatialNoise(p.x,0.1,p.z,220,1.4,0.1,0.05); else spatialBlip(p.x,1.0,p.z,(sp.g&&sp.g.style==='ropeLadder')?330:520,0.03,'triangle',0.045); }catch(e){} }, 120+i*300); } }   // (10-20a) у темряві чути, що лізеш далі — перехід неперервний
-  else { cutFadeSet(0); player._cont=false; player.cx=null; player.cy=null; player.vgx=player.gx; player.vgy=player.gy; try{ sp.onEnd&&sp.onEnd(); }catch(e){ logE('СЦЕНА: '+e.message); } } }
+    if((VB_CUT.blackSteps|0)>0){ const hole=!!(sp.g&&sp.g.hole), n=3; for(let i=0;i<n;i++) setTimeout(()=>{ try{ const p=player.mesh.position; if(hole) spatialNoise(p.x,0.1,p.z,220,1.4,0.1,0.05); else spatialBlip(p.x,1.0,p.z,(sp.g&&sp.g.style==='ropeLadder')?330:520,0.03,'triangle',0.045); if((VB_CUT.blackHap??1)>0) buzz([0,10]); }catch(e){} }, 120+i*300); } }   /* (10-20a) у темряві чути, що лізеш далі — перехід неперервний · (10-20b) і відчутно: легкий поштовх на кожен щабель */
+  else { cutFadeSet(0); player._cont=false; player.cx=null; player.cy=null; player.vgx=player.gx; player.vgy=player.gy;
+    if((VB_CUT.land??1)>0){ try{ const p=player.mesh.position; const hole=!!(sp.g&&sp.g.hole); spatialNoise(p.x,0.05,p.z,hole?140:260,hole?1.2:0.8,0.12,hole?0.14:0.08); buzz(hole?[0,28]:[0,14]); }catch(e){} }   // (10-20b) приземлення: глухий тупіт і поштовх — тіло стало на підлогу
+    try{ sp.onEnd&&sp.onEnd(); }catch(e){ logE('СЦЕНА: '+e.message); } } }
 /* камера сцени (замість звичайної): збоку, стежить за тілом */
 function cutCamera(dt){ const sp=CUT.sp; if(!sp) return false; if(sp.fp) return false; const g=sp.g, r=sp.root||{x:g.x,z:g.z,h:0};   // (10-20a) очима — звичайна камера (голова рига)
   { const now=performance.now(); if(sp.cam && now-(sp._camChk||0)>400){ sp._camChk=now; const c0=sp.cam, x0=g.x+g.dx*c0.back+g.sx*c0.sd, z0=g.z+g.dz*c0.back+g.sz*c0.sd;   // (10-09a) супутник підійшов до камери — інший ракурс
@@ -15539,7 +15553,7 @@ const B2={ visit:{souls:0, room:'', capSaid:false}, dummies:[], meshes:[], fire:
 window.B2=B2;
 function b2Get(k,def){ try{ return Object.assign({},def||{}, JSON.parse(localStorage.getItem(k)||'{}')||{}); }catch(e){ return Object.assign({},def||{}); } }
 function b2Put(k,o){ try{ localStorage.setItem(k, JSON.stringify(o)); }catch(e){} }
-function inWorkshop(){ try{ return !!(ADV.on && cellarIs(ADV.rx,ADV.ry)); }catch(e){ return false; } }
+function inWorkshop(){ try{ return !!(ADV.on && (cellarIs(ADV.rx,ADV.ry) || (typeof labRoomOf==='function' && labRoomOf(ADV.rx,ADV.ry)))); }catch(e){ return false; } }   // (10-20b) і лабораторія — безкоштовно
 function soulAdd(n, why){ player.score=(player.score||0)+n; logE('✦ ДУШІ +'+n+' ('+why+') → '+player.score); try{ showBanner('✦ +'+n+' '+(n===1?'душа':(n<5?'душі':'душ'))+' · '+why,'#c4b5fd'); }catch(e){} try{ resHUD(); }catch(e){} try{ blip(990,0.09,'triangle',0.1); setTimeout(()=>{ try{ blip(1320,0.1,'triangle',0.1); }catch(e){} },90); }catch(e){} }
 /* за практику — не більше visitCap душ за один захід у кімнату (вийди й повернись — знову) */
 function soulPractice(n, why){ const cap=VB_B2.visitCap||15; if(B2.visit.souls>=cap){ if(!B2.visit.capSaid){ B2.visit.capSaid=true; logE('✦ ДУШІ: на цей захід досить ('+cap+') — вийди з кімнати й повернись'); try{ freeSay('На цей раз досить душ. Вийди й повернись — і знову.'); }catch(e){} } return false; }
@@ -16393,7 +16407,7 @@ function sciEl(o){ return (o&&o.alive&&SCI_EL[o.mtype])?SCI_EL[o.mtype]:null; }
 function sciNeighbors(gx,gy){ const out=[]; for(const [ox,oy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive) out.push(o); } return out; }
 function sciFreeCell(gx,gy){ for(const [ox,oy] of [[0,1],[1,0],[0,-1],[-1,0],[1,1],[-1,1],[1,-1],[-1,-1]]){ const x=gx+ox, y=gy+oy; if(x<1||x>11||y<1||y>11) continue; if(obstacleAt(x,y)) continue; if(player.gx===x&&player.gy===y) continue; try{ if(phantomAtCell(x,y)) continue; }catch(e){} return [x,y]; } return null; }
 function sciMake(gx,gy,type,opts){ opts=opts||{}; const taken=new Set(obstacles.filter(q=>q.alive && !(q.gx===gx&&q.gy===gy)).map(q=>q.gx+','+q.gy)); try{ const old=obstacleAt(gx,gy); if(old) killBlock(old); }catch(e){} addObstacle(gx,gy,type,taken,opts.tint??null,1,opts.shape||null,0,opts.alpha??null,0); const o=obstacleAt(gx,gy); if(o){ o.noRes=true; if(opts.born) o.born=performance.now(); } return o; }
-function sciHeatNear(gx,gy){ try{ if(plasmaNear(gx,gy)) return true; }catch(e){} const H=SCI.heatAt; if(H && performance.now()-H.t<2500 && Math.abs(H.gx-gx)<=1 && Math.abs(H.gy-gy)<=1) return true; return false; }
+function sciHeatNear(gx,gy){ try{ if(plasmaNear(gx,gy)) return true; for(const [ox,oy] of [[1,1],[-1,1],[1,-1],[-1,-1]]){ const o=obstacleAt(gx+ox,gy+oy); if(o&&o.alive&&o.mtype==='plasma') return true; } }catch(e){}   /* (10-20b) жар і навскіс */ const H=SCI.heatAt; if(H && performance.now()-H.t<2500 && Math.abs(H.gx-gx)<=1 && Math.abs(H.gy-gy)<=1) return true; return false; }
 function sciLightNear(gx,gy){ const L=SCI.lightAt; return !!(L && performance.now()-L.t<3000 && Math.abs(L.gx-gx)<=(L.r||4) && Math.abs(L.gy-gy)<=(L.r||4)); }
 function sciZapNear(gx,gy){ const Z=SCI.zapAt; if(Z && performance.now()-Z.t<1500 && Math.abs(Z.gx-gx)<=1 && Math.abs(Z.gy-gy)<=1) return true; for(const k in SCI.charged){ const c=SCI.charged[k]; if(performance.now()-c.t>10000){ delete SCI.charged[k]; continue; } if(Math.abs(c.gx-gx)<=2 && Math.abs(c.gy-gy)<=2 && !(c.gx===gx&&c.gy===gy)) return true; } return false; }   // заряджений фотоелемент живить електроліз у радіусі 2 (дріт)
 function sciSay(key, txt, col){ try{ showBanner(txt, col||'#a7f3d0'); }catch(e){} if(!(VB_SCI.say>0)) return; const now=performance.now(); if(SCI.said[key] && now-SCI.said[key]<15000) return; SCI.said[key]=now; try{ ttsSpeak(txt.replace(/^[^A-Za-zА-Яа-яІіЇїЄєҐґ]+/,''),{}); }catch(e){} }
@@ -16427,16 +16441,17 @@ const SCI_RX=[
  {a:'lime', b:'liquid', both:true, out:'slaked', heatOut:true, log:'CaO + H₂O → Ca(OH)₂ + тепло — гашене вапно (кипить і парує)'},
  {a:'slaked', b:'co2', both:true, out:'chalk', out2:'liquid', log:'Ca(OH)₂ + CO₂ → CaCO₃ + H₂O — вапняний розчин твердне: так тужавіє штукатурка'},
  {a:'I', heat:true, solo:true, out:'gas', tint:0x7c3aed, log:'йод сублімує — фіолетова пара'} ];
-function sciReactTick(){ const now=performance.now(); for(const o of obstacles.slice()){ if(!o.alive) continue;
+function sciReactTick(){ const now=performance.now(); const edge=(q)=>(q.gx===0||q.gx===12||q.gy===0||q.gy===12); for(const o of obstacles.slice()){ if(!o.alive || edge(o)) continue;   // (10-20b) стіни кімнати не реагують
   for(const R of SCI_RX){ if(o.mtype!==R.a) continue;
     if(R.solo){ if(R.heat && !sciHeatNear(o.gx,o.gy)) continue; if(R.zap && !sciZapNear(o.gx,o.gy)) continue; if(R.light && !sciLightNear(o.gx,o.gy)) continue;
       const f=R.out2?sciFreeCell(o.gx,o.gy):null; const gx=o.gx, gy=o.gy; killBlock(o); if(R.out) sciMake(gx,gy,R.out,{tint:R.tint}); if(R.out2 && f) sciMake(f[0],f[1],R.out2);
       logE('ХІМІЯ 2: '+R.log+' ('+gx+','+gy+')'); sciFx(gx,gy,'#a7f3d0',R.boom?'boom':'glow'); try{ QST.progress('alch', R.out||'none', 1); }catch(e){} try{ sciRiddleMaybe(R.out||R.a); }catch(e){} return true; }
-    for(const n of sciNeighbors(o.gx,o.gy)){ if(n.mtype!==R.b) continue;
+    for(const n of sciNeighbors(o.gx,o.gy)){ if(n.mtype!==R.b || edge(n)) continue;
       if(R.heat && !sciHeatNear(n.gx,n.gy)) continue; if(R.light && !sciLightNear(n.gx,n.gy)) continue; if(R.zap && !sciZapNear(n.gx,n.gy)) continue;
       if(R.cat && !sciNeighbors(n.gx,n.gy).concat(sciNeighbors(o.gx,o.gy)).some(c=>c.mtype===R.cat)) continue;
       if(R.wet && !sciNeighbors(n.gx,n.gy).concat(sciNeighbors(o.gx,o.gy)).some(c=>c.mtype==='liquid')) continue;
       if(R.slow && Math.random()>R.slow) continue;
+      if(R.a==='Zn' && R.b==='HCl' && sciNeighbors(n.gx,n.gy).some(c=>c.mtype==='Cu') && Math.random()>0.04) continue;   // (10-20b) гальванічний елемент: цинк розчиняється повільно, поки віддає струм
       const gx=n.gx, gy=n.gy, f=R.out2?sciFreeCell(gx,gy):null; if(R.both && !R.keepA) killBlock(o); killBlock(n); if(R.out) sciMake(gx,gy,R.out,{tint:R.tint}); if(R.out2 && f) sciMake(f[0],f[1],R.out2);
       if(R.flash){ SCI.lightAt={gx,gy,t:now,r:5}; } if(R.heatOut){ SCI.heatAt={gx,gy,t:now}; }
       logE('ХІМІЯ 2: '+R.log+' ('+gx+','+gy+')'); sciFx(gx,gy,R.flash?'#ffffff':'#a7f3d0',R.boom?'boom':R.flash?'flash':'glow'); SCI.last=R.log;
@@ -16449,7 +16464,9 @@ function sciLineBlocks(x0,y0,x1,y1){ const out=[]; let dx=Math.abs(x1-x0), dy=Ma
   while(!(x===x1&&y===y1) && n++<40){ const e2=2*err; if(e2>-dy){ err-=dy; x+=sx; } if(e2<dx){ err+=dx; y+=sy; } if(x===x1&&y===y1) break; const o=obstacleAt(x,y); if(o&&o.alive) out.push(o); } return out; }
 function sciDoseAt(gx,gy){ let dose=0; const parts=[]; for(const {o,E} of sciRadBlocks()){ const d=Math.hypot(o.gx-gx,o.gy-gy); const A=(VB_SCI.nAct||0.35)*60/Math.max(4,E.rad.t); const between=sciLineBlocks(o.gx,o.gy,gx,gy); const solids=between.filter(b=>!b.pass);
     let a=0, b=0, g=0; if(d<=1.5 && !solids.length) a=A*2; if(!solids.some(s=>!!(SCI_EL[s.mtype]&&SCI_EL[s.mtype].metal) || s.mtype==='steel' || s.mtype==='Fe')) b=A*(E.rad.mode==='β'?1.2:0.5); let gg=A*(E.rad.g||0.2); for(const s of solids){ gg*=(s.mtype==='Pb')?0.1:(s.mtype==='liquid'?0.8:0.5); } g=gg;
-    const r=(a+b+g)/Math.max(1,d*d); dose+=r; if(r>0.02) parts.push(E.ua+' '+r.toFixed(2)); } return {dose, parts}; }
+    const r=(a+b+g)/Math.max(1,d*d); dose+=r; if(r>0.02) parts.push(E.ua+' '+r.toFixed(2)); }
+  try{ for(const ph of phantoms){ if(!ph || ph.dead || ph.variant!=='ghost') continue; const d=Math.hypot(ph.gx-gx,ph.gy-gy); let gg=(LAB_VARIANTS.ghost.rad||0.45); for(const s of sciLineBlocks(ph.gx,ph.gy,gx,gy).filter(b=>!b.pass)){ gg*=(s.mtype==='Pb')?0.1:0.5; } const r=gg/Math.max(1,d*d); dose+=r; if(r>0.02) parts.push('привид '+r.toFixed(2)); } }catch(e){}   // (10-20b) радіаційні привиди — γ
+  return {dose, parts}; }
 function sciNuclearTick(dt){ const now=performance.now();
   // розпад
   for(const {o,E} of sciRadBlocks()){ const T=E.rad.t*(VB_SCI.hl||1); const p=1-Math.pow(2,-dt/T); if(Math.random()<p){ const gx=o.gx, gy=o.gy, to=E.rad.to; killBlock(o); sciMake(gx,gy,to); logE('ЯДРО: '+E.ua+'-'+E.A+' → '+(SCI_EL[to]?SCI_EL[to].ua+'-'+SCI_EL[to].A:to)+' ('+E.rad.mode+'-розпад'+(E.rad.g?' + γ':'')+') ('+gx+','+gy+')');
@@ -16466,13 +16483,15 @@ function sciNuclearTick(dt){ const now=performance.now();
         try{ const x=worldX(o.gx), z=worldZ(o.gy); spatialBlip(x,1,z,180,0.08,'sawtooth',0.14); emitSparks(x,1.2,z,'#bef264',12,3.5); }catch(e){}
         const anyB=obstacles.some(q=>q.alive && q.mtype==='B' && Math.abs(q.gx-o.gx)<=1 && Math.abs(q.gy-o.gy)<=1);
         if(n>=(VB_SCI.crit||4) && !anyB){ sciCriticality(o); return; }
-        if(n>=1 && anyB){ const f=sciFreeCell(o.gx,o.gy); if(!SCI.reactorT || now-SCI.reactorT>4000){ SCI.reactorT=now; if(f){ sciMake(f[0],f[1],'plasma'); logE('РЕАКТОР: керована ланцюгова реакція — бор тримає k≈1, тепло → плазма ('+f[0]+','+f[1]+')'); sciSay('reactor','⚛ РЕАКТОР: бор тримає ланцюг — стале тепло','#bef264'); } } } } } }
+        if(n>=1 && anyB){ const f=sciFreeCell(o.gx,o.gy); if(!SCI.reactorT || now-SCI.reactorT>4000){ SCI.reactorT=now; try{ SCI.reactorAt=ADV.rx+','+ADV.ry; }catch(e){} if(f){ sciMake(f[0],f[1],'plasma'); logE('РЕАКТОР: керована ланцюгова реакція — бор тримає k≈1, тепло → плазма ('+f[0]+','+f[1]+')'); sciSay('reactor','⚛ РЕАКТОР: бор тримає ланцюг — стале тепло','#bef264'); } } } } } }
   // синтез: водень у плазмі
   for(const o of obstacles.slice()){ if(!o.alive || o.mtype!=='H') continue; const pl=sciNeighbors(o.gx,o.gy).filter(n=>n.mtype==='plasma').length; if(pl<2) { o.fuseT=0; continue; } o.fuseT=(o.fuseT||0)+dt;
     if(o.fuseT>=(VB_SCI.fuseT||4)){ const gx=o.gx, gy=o.gy; killBlock(o); sciMake(gx,gy,'He'); const f=sciFreeCell(gx,gy); if(f) sciMake(f[0],f[1],'plasma'); logE('ЗОРЯ: 4 ¹H → ⁴He + 2e⁺ + 2ν + енергія — термоядерний синтез у плазмі ('+gx+','+gy+')'); sciFx(gx,gy,'#fde68a','flash'); sciSay('fusion','☀ СИНТЕЗ: водень у плазмі став гелієм — так світять зорі','#fde68a'); try{ QST.progress('alch','He',1); }catch(e){} try{ sciRiddleMaybe('fusion'); }catch(e){} } }
   // доза й Гейгер
-  const D=sciDoseAt(player.gx,player.gy); SCI.dose=D.dose; if(VB_SCI.geiger>0 && D.dose>0.01){ SCI.geiT-=dt; const per=clamp(1.2/Math.max(0.05,D.dose),0.03,1.5); if(SCI.geiT<=0){ SCI.geiT=per*(0.6+Math.random()*0.8); try{ blip(2200,0.012,'square',clamp(0.05+D.dose*0.1,0.05,0.25)); }catch(e){} } }
+  const D=sciDoseAt(player.gx,player.gy); SCI.dose=D.dose; try{ sciDoseHud(D.dose); }catch(e){} if(VB_SCI.geiger>0 && D.dose>0.01){ SCI.geiT-=dt; const per=clamp(1.2/Math.max(0.05,D.dose),0.03,1.5); if(SCI.geiT<=0){ SCI.geiT=per*(0.6+Math.random()*0.8); try{ blip(2200,0.012,'square',clamp(0.05+D.dose*0.1,0.05,0.25)); }catch(e){} } }
   if(VB_SCI.dose>0 && D.dose>1.0 && !player.dead){ SCI.hpT+=dt; if(SCI.hpT>=1){ SCI.hpT=0; const hp=Math.max(1,Math.round((D.dose-1)*(VB_SCI.doseHP||0.6))); damageTier(player,1,hp); if(now-SCI.doseLog>4000){ SCI.doseLog=now; logE('☢ РАДІАЦІЯ: доза '+D.dose.toFixed(2)+' ('+D.parts.join(', ')+') → −'+hp+' HP/с · сховайся за свинець (γ), метал (β) або відійди (α — 1.5 клітинки, 1/d²)'); sciSay('rad','☢ РАДІАЦІЯ — відійди або сховайся за свинець','#fca5a5'); } } } else SCI.hpT=0; }
+function sciDoseHud(d){ let el=SCI.doseEl; if(!el){ el=document.createElement('div'); el.id='sciDose'; el.style.cssText='position:fixed;right:10px;top:118px;z-index:21;padding:3px 8px;border-radius:8px;background:rgba(2,8,20,.78);border:1px solid #84cc16;color:#bef264;font:inherit;font-size:12px;letter-spacing:.06em;pointer-events:none;display:none'; document.body.appendChild(el); SCI.doseEl=el; }
+  const on=(VB_SCI.doseHud??1)>0 && d>=0.02; el.style.display=on?'block':'none'; if(on){ el.textContent='☢ '+d.toFixed(2)+(d>1?' · ШКОДА':''); el.style.borderColor=d>1?'#ef4444':(d>0.3?'#f59e0b':'#84cc16'); el.style.color=d>1?'#fca5a5':(d>0.3?'#fde68a':'#bef264'); } }   // (10-20b) дозиметр: цифра поруч із тріском Гейгера
 function sciCriticality(o){ const gx=o.gx, gy=o.gy; logE('☢ КРИТИЧНІСТЬ: k > 1 без стрижнів бору — ланцюгова реакція пішла врозліт ('+gx+','+gy+')'); sciSay('crit','☢ КРИТИЧНІСТЬ — ВИБУХ','#ef4444');
   try{ doFlash('#ffffff'); buzz([0,300,80,200]); blip(50,0.9,'sawtooth',0.35); const x=worldX(gx), z=worldZ(gy); spatialNoise(x,1,z,80,0.5,1.4,0.4); emitSparks(x,1.5,z,'#fef08a',80,9); }catch(e){}
   for(const q of obstacles.slice()){ if(!q.alive) continue; const d=Math.hypot(q.gx-gx,q.gy-gy); if(d<=2.2 && !q.solid){ killBlock(q); } }
@@ -16485,6 +16504,10 @@ function sciPitchOf(nm){ return 220*Math.pow(2,(700-nm)/100); }
 function sciSpectrum(o,E){ if(!E.lines||!E.lines.length) return; try{ const x=worldX(o.gx), z=worldZ(o.gy); E.lines.slice(0,4).forEach((nm,i)=>{ setTimeout(()=>{ try{ spatialBlip(x,1.1,z,sciPitchOf(nm),0.5,'sine',0.11); }catch(e){} }, i*90); }); }catch(e){}
   logE('СПЕКТР: '+E.ua+' у плазмі світиться лініями '+E.lines.join(', ')+' нм — '+(E.lines[0]>600?'червоне':E.lines[0]>570?'жовте':E.lines[0]>490?'зелене':'синє')+' (кванти: електрон падає між рівнями, кожна лінія — одна енергія)'); }
 function sciQuantumTick(dt){ const now=performance.now();
+  // (10-20b) ГАЛЬВАНІЧНИЙ ЕЛЕМЕНТ: цинк і мідь, обидва в кислоті (HCl) — струм: заряджена клітинка (розряд у радіусі 2), цинк потроху розчиняється
+  for(const o of obstacles){ if(!o.alive || o.mtype!=='HCl') continue; const nb=sciNeighbors(o.gx,o.gy); if(!(nb.some(c=>c.mtype==='Zn') && nb.some(c=>c.mtype==='Cu'))) continue;
+    const key=o.gx+','+o.gy; const was=SCI.charged[key]; SCI.charged[key]={gx:o.gx,gy:o.gy,t:now,batt:true};
+    if(!was || !was.batt){ logE('ГАЛЬВАНІЧНИЙ ЕЛЕМЕНТ: цинк + мідь у кислоті → струм (Вольта, 1800): цинк віддає електрони, мідь їх приймає — розряд у радіусі 2 клітинок ('+o.gx+','+o.gy+')'); sciFx(o.gx,o.gy,'#fde68a','glow'); sciSay('batt','🔋 БАТАРЕЯ: цинк і мідь у кислоті дають струм','#fde68a'); try{ sciRiddleMaybe('batt'); }catch(e){} } }
   for(const o of obstacles){ const E=sciEl(o); if(!E) continue;
     const pl=sciNeighbors(o.gx,o.gy).some(n=>n.mtype==='plasma'); if(pl && E.lines && E.lines.length && now-(o.specT||0)>8000){ o.specT=now; sciSpectrum(o,E); }
     // фотоефект: LUX на метал із малою роботою виходу
@@ -16502,8 +16525,8 @@ function sciQuantumTick(dt){ const now=performance.now();
   SCI.qpairs=SCI.qpairs.filter(P=>P.a.alive||P.b.alive); for(const P of SCI.qpairs){ if(now-P.t>(VB_SCI.qLife||120)*1000 && !P.done){ sciCollapse(P.a, 'декогеренція'); } } }
 function sciQubitSpawn(gx,gy){ const f1=[gx,gy]; const a=sciMake(gx,gy,'qbit',{alpha:0.45}); if(!a) return false; const f2=sciFreeCell(gx,gy); if(!f2){ return true; } const b=sciMake(f2[0],f2[1],'qbit',{alpha:0.45}); const P={a,b,t:performance.now(),done:false}; if(a) a.qpair=P; if(b) b.qpair=P; SCI.qpairs.push(P);
   logE('КВАНТИ: заплутана пара кубітів ('+gx+','+gy+') і ('+f2[0]+','+f2[1]+') — кожен і водень, і кисень, поки не торкнешся; стани протилежні'); sciSay('qubit','⟨ψ| ЗАПЛУТАНА ПАРА — торкнись одного: визначаться обидва','#c084fc'); return true; }
-function sciCollapse(o, how){ if(!o || !o.alive || o.mtype!=='qbit') return false; const P=o.qpair; const first=(Math.random()<0.5)?'H':'O', second=first==='H'?'O':'H'; const gx=o.gx, gy=o.gy; killBlock(o); sciMake(gx,gy,first);
-  let line='КВАНТИ: вимірювання ('+how+') — кубіт ('+gx+','+gy+') став '+SPELL_UA[first]; if(P){ P.done=true; const other=(P.a===o)?P.b:P.a; if(other && other.alive && other.mtype==='qbit'){ const ox=other.gx, oy=other.gy; killBlock(other); sciMake(ox,oy,second); line+=', а заплутаний партнер ('+ox+','+oy+') миттєво — '+SPELL_UA[second]+' (протилежний стан; інформація так не передається — результат випадковий)'; } }
+function sciCollapse(o, how){ if(!o || !o.alive || o.mtype!=='qbit') return false; const P=o.qpair; const first=(Math.random()<0.5)?'H':'O', second=first==='H'?'O':'H'; const gx=o.gx, gy=o.gy; killBlock(o); { const nb=sciMake(gx,gy,first); if(nb) nb.fromQ=true; }
+  let line='КВАНТИ: вимірювання ('+how+') — кубіт ('+gx+','+gy+') став '+SPELL_UA[first]; if(P){ P.done=true; const other=(P.a===o)?P.b:P.a; if(other && other.alive && other.mtype==='qbit'){ const ox=other.gx, oy=other.gy; killBlock(other); { const nb=sciMake(ox,oy,second); if(nb) nb.fromQ=true; } line+=', а заплутаний партнер ('+ox+','+oy+') миттєво — '+SPELL_UA[second]+' (протилежний стан; інформація так не передається — результат випадковий)'; } }
   logE(line); sciFx(gx,gy,'#c084fc','glow'); try{ ttsSpeak('Вимірювання. '+SPELL_UA[first].toLowerCase()+(P?', партнер — '+SPELL_UA[second].toLowerCase():'')+'.',{}); }catch(e){} return true; }
 /* гачки: закляття (LUX — світло, ZAP — розряд, FIRE — нагрів), дотик до кубіта, матеріалізація QUBIT */
 function sciSpellHook(w, pw){ const now=performance.now(); try{ const v=dirXZ(aimYawEff()||0); const cx=Math.round(player.gx+v[0]*1.5), cy=Math.round(player.gy+v[1]*1.5);
@@ -16515,7 +16538,7 @@ function sciTouchHook(o){ if(o && o.alive && o.mtype==='qbit'){ sciCollapse(o,'�
 window.sciTouchHook=sciTouchHook;
 let _sciLast=performance.now();
 function sciTick(){ if(!(VB_SCI.on>0)) return; const now=performance.now(); const dt=clamp((now-_sciLast)/1000,0.05,2); _sciLast=now; if(!obstacles.length) return; try{ if(mode!=='fighter') return; }catch(e){}
-  let changed=false; try{ changed=sciReactTick(); }catch(e){ logE('НАУКА хімія: '+e.message); } try{ sciNuclearTick(dt); }catch(e){ logE('НАУКА ядро: '+e.message); } try{ sciQuantumTick(dt); }catch(e){ logE('НАУКА кванти: '+e.message); }
+  let changed=false; try{ changed=sciReactTick(); }catch(e){ logE('НАУКА хімія: '+e.message); } try{ sciNuclearTick(dt); }catch(e){ logE('НАУКА ядро: '+e.message); } try{ sciQuantumTick(dt); }catch(e){ logE('НАУКА кванти: '+e.message); } try{ labTick(dt); }catch(e){ logE('ЛАБОРАТОРІЯ: '+e.message); }
   if(changed){ try{ snapshotRoom(); }catch(e){} } }
 window.sciTick=sciTick; window.sciDoseAt=sciDoseAt; window.sciMake=sciMake; window.sciCollapse=sciCollapse; window.sciQubitSpawn=sciQubitSpawn;
 /* довідник: усі елементи з Морзе, реакції з умовами, ядро, кванти */
@@ -16524,6 +16547,8 @@ function sciRefHtml(){ const els=Object.keys(SCI_EL).sort((a,b)=>SCI_EL[a].z-SCI
   const rx=SCI_RX.map(R=>'<div>· '+R.log.replace(/</g,'&lt;')+(R.heat?' <i>(нагрів)</i>':'')+(R.light?' <i>(світло: LUX або спалах магнію)</i>':'')+(R.zap?' <i>(розряд: ZAP або заряджений фотоелемент)</i>':'')+(R.cat?' <i>(каталізатор '+R.cat+' поруч)</i>':'')+(R.wet?' <i>(вода поруч)</i>':'')+'</div>').join('');
   return '<div style="font-size:11px;line-height:1.4;max-height:60vh;overflow:auto"><div style="color:#fde68a">Елементи кличуться Морзе (1–2 літери), ставляться перед тобою після кивка «так». Торкнись блока рукою ~1 с — почуєш, що це.</div><div style="margin-top:6px;color:#7dd3fc"><b>ЕЛЕМЕНТИ (36)</b></div>'+els.map(row).join('')+
     '<div style="margin-top:8px;color:#7dd3fc"><b>ХІМІЯ 2 — реакції з умовами</b> (старі: Si+O → пісок, плазма+пісок → скло, Fe+C → сталь, Na+Cl → сіль, C+O → CO₂, H+O → вода)</div>'+rx+
+    '<div style="margin-top:8px;color:#7dd3fc"><b>⚗ ЛАБОРАТОРІЯ</b> — колодязь у підвалі (3,5); усе безкоштовно. Замки на дверях:</div>'+(typeof LAB_LOCKS!=='undefined'?Object.keys(LAB_LOCKS).map(k=>'<div>· <b>'+LAB_LOCKS[k].ua+'</b>'+(mechGet(LAB_LOCKS[k].key)?' ✓':'')+' — '+LAB_LOCKS[k].hint+'</div>').join(''):'')+
+    '<div style="margin-top:4px;color:#94a3b8">Батарея: цинк і мідь обидва в соляній кислоті → струм (розряд у радіусі 2) — третій спосіб дати розряд, окрім ZAP і фотоелемента.</div>'+
     '<div style="margin-top:8px;color:#7dd3fc"><b>ЯДРО</b></div><div>· Ланцюг розпаду: U-238 →α Th-234 →β Ra-226 →α Rn-222 →α Po-218 →α Pb (стабільний); періоди в секундах гри зберігають порядок справжніх.</div><div>· Лічильник Гейгера клацає тим частіше, чим більша доза у твоїй клітинці; доза падає як 1/d². α не проходить крізь жоден блок і далі 1.5 клітинки; β спиняє метал; γ: свинець ×0.1, камінь ×0.5. Доза > 1 — втрата HP.</div><div>· Радій + берилій = джерело нейтронів: ртуть поруч → золото (Hg-196 + n → Au-197); уран поруч ділиться: ≥ 4 поділів за 2 с без бору — критичність (вибух), із бором — реактор (плазма-тепло); вода сповільнює нейтрони.</div><div>· Водень між двома плазмами → гелій + плазма (термоядерний синтез).</div>'+
     '<div style="margin-top:8px;color:#7dd3fc"><b>КВАНТИ</b></div><div>· Спектр: елемент біля плазми співає акорд своїх ліній (висота ↔ довжина хвилі).</div><div>· Фотоефект: LUX (2.6 еВ) заряджає лише K, Na, Li (робота виходу ≤ 2.3–2.9 еВ); SUN (4.6 еВ) — і Zn, Fe, Cu. Заряджений блок живить електроліз води в радіусі 2.</div><div>· Лазер He–Ne: гелій + неон + ZAP → промінь 632.8 нм.</div><div>· QUBIT: заплутана пара в суперпозиції H|O; дотик до одного визначає обидва (протилежні).</div></div>'; }
 window.sciRefHtml=sciRefHtml;
@@ -16559,6 +16584,7 @@ const SCI_RIDDLES=[
  {id:'iod',   tag:'I',       a:true,  q:'Йод при нагріванні переходить одразу з твердого у фіолетову пару?',             why:'це сублімація: без рідини. На холодному склі пара знову стає кристалами.'},
  {id:'slak',  tag:'slaked',  a:true,  q:'Гашене вапно твердне, бо вбирає вуглекислий газ з повітря?',                    why:'гідроксид кальцію з вуглекислим газом знову стає карбонатом. Штукатурка і фрески твердіють роками.'},
  {id:'elec',  tag:'H',       a:true,  q:'Електричний струм розкладає воду на водень і кисень?',                          why:'електроліз: на катоді водень, на аноді кисень — водню вдвічі більше за об’ємом.'},
+ {id:'volta', tag:'batt',    a:true,  q:'Цинк і мідь у кислоті дають електричний струм?',                                 why:'так зробив Вольта у 1800 році: цинк віддає електрони, мідь їх приймає — це перша батарея. Цинк при цьому потроху розчиняється.'},
  {id:'cl',    tag:'HCl',     a:true,  q:'Суміш водню з хлором на яскравому світлі вибухає?',                              why:'світло розриває молекулу хлору на атоми — і починається ланцюгова реакція. У темряві суміш може стояти роками.'} ];
 const SCIQ={ done:(()=>{ try{ return JSON.parse(localStorage.getItem('vb3d_sciq')||'{}'); }catch(e){ return {}; } })(), cool:0, cur:null, ok:0, asked:0 };
 function sciqSave(){ try{ localStorage.setItem('vb3d_sciq', JSON.stringify(SCIQ.done)); }catch(e){} }
@@ -16580,6 +16606,179 @@ function sciRiddleAnswer(r,ans){ const ok=(ans===r.a); SCIQ.cur=null; SCIQ.done[
 function sciRiddleMaybe(tag){ try{ if(!(VB_SCI.riddle??1)) return; const now=performance.now(); if(now-SCIQ.cool<(VB_SCI.riddleCool??45)*1000) return;
   if(!SCI_RIDDLES.some(r=>r.tag===tag && SCIQ.done[r.id]!==1)) return; if(Math.random()>(VB_SCI.riddleP??0.7)) { SCIQ.cool=now-((VB_SCI.riddleCool??45)*1000)*0.5; return; } sciRiddleAsk(tag); }catch(e){} }
 window.SCI_RIDDLES=SCI_RIDDLES; window.SCIQ=SCIQ; window.sciRiddleAsk=sciRiddleAsk; window.sciRiddleAnswer=sciRiddleAnswer; window.sciRiddleMaybe=sciRiddleMaybe;
+
+/* ═══ (10-20b) ЛАБОРАТОРІЯ НАУКИ — вертикальний комплекс під майстернею ═══════════════════════════════════════
+   Колодязь у підвалі (3,5) → передпокій → драбина вниз → коридор реактивів (іржаві двері) → мотузка вниз → хімічна
+   лабораторія (вапнякова пробка) → скеля вгору → галерея балок (скляна перегородка, лазер) → балки вгору → квантова
+   камера (співочі двері, фотосейф, квантовий сейф) → шахта вниз → вентиляційна шахта (шлюз за дозою) → колодязь униз →
+   ядерний бункер (реакторні двері → сховище). Усе тут безкоштовне, як у майстерні. Кожна кімната — своя місцевість і свої
+   вороги: кислотні слимаки, дрони-охоронці, шахтні кажани, радіаційні привиди. Замки — на справжній хімії й фізиці. */
+const LAB_RY=40;
+const LAB_ROOMS={
+  40:{ id:'hall',  name:'Передпокій лабораторії', sym:'⚗', bg:0x060a12, accent:'#a7f3d0', ring:'Si', tint:0x3a4150, wall:'Si', wtint:0x6b7280, enemies:[],
+       say:'Передпокій лабораторії. Тут усе безкоштовно, як у майстерні. Уздовж північної стіни — зразки елементів, на південному сході — вода, на південному заході — жаровня з плазмою. Посередині — кафедра: стань на неї, і я загадаю загадку. Люк із драбиною вниз — на сході.' },
+  41:{ id:'corr',  name:'Коридор реактивів', sym:'⇆', bg:0x080c0a, accent:'#86efac', ring:'Fe', tint:0x3d4a44, wall:'Fe', wtint:0x4b5563, enemies:['slug','slug'],
+       say:'Коридор реактивів: змійка з залізних перегородок. Тут повзають кислотні слимаки — з убитого лишається калюжа соляної кислоти. У кінці — двері з суцільної іржі, за ними люк із мотузкою вниз.' },
+  42:{ id:'chem',  name:'Хімічна лабораторія', sym:'⚗', bg:0x0a0810, accent:'#fde68a', ring:'Si', tint:0x4b4458, wall:'Si', wtint:0x7c6f8e, enemies:[],
+       say:'Хімічна лабораторія. Зразки — уздовж північної стіни, жолоб із водою — на заході, дві жаровні з плазмою, залізо — каталізатор. Вихід на схід замуровано вапняком; за ним — скеля нагору.' },
+  43:{ id:'gall',  name:'Галерея балок', sym:'⌗', bg:0x0a0906, accent:'#fbbf24', ring:'C', tint:0x5b3a1d, wall:'C', wtint:0x7c4a1f, enemies:['drone','drone'],
+       say:'Галерея балок і перегородок: низькі перегородки не переступиш — обходь. Тут літають дрони-охоронці, стріляють повільно — їх кулі відбиваються клинком. На північному сході — скляна перегородка, за нею балки нагору. Неон уже стоїть перед склом.' },
+  44:{ id:'quant', name:'Квантова камера', sym:'ψ', bg:0x070414, accent:'#c084fc', ring:'glass', tint:0x9fd8ff, wall:'Si', wtint:0x8b7fb0, enemies:[],
+       say:'Квантова камера. На північному сході — співочі двері: вони гудуть акордом одного елемента; постав той самий елемент на вівтар біля жаровні, і він заспіває у відповідь. На північному заході — фотосейф, на півдні — квантовий сейф із двома воротами.' },
+  45:{ id:'vent',  name:'Вентиляційна шахта', sym:'≋', bg:0x05070a, accent:'#94a3b8', ring:'Fe', tint:0x2b2f38, wall:'Fe', wtint:0x4b5563, enemies:['bat','bat','bat'],
+       say:'Вентиляційна шахта: темно, пищать кажани — вони летять на звук. На південному сході — шлюз: він відчиняється, лише коли лічильник біля нього майже мовчить. Два бруски радію світять на двері навскіс.' },
+  46:{ id:'core',  name:'Ядерний бункер', sym:'☢', bg:0x0a0c04, accent:'#bef264', ring:'Pb', tint:0x3f3f46, wall:'Si', wtint:0x6b7280, enemies:['ghost','ghost'],
+       say:'Ядерний бункер, стіни зі свинцю. Тут блукають радіаційні привиди — лічильник тріщить, коли вони поруч. Зразки: уран на південному заході, радій і берилій — нарізно, бор — на заході. Реакторні двері на сході відчиняться, коли в кімнаті запрацює керований реактор.' } };
+const LAB_PLANS={
+  hall:{ blocks:[[4,1,'Na'],[5,1,'Mg'],[7,1,'Fe'],[8,1,'Cu'],[9,1,'Zn'],[10,1,'Al'],[9,9,'liquid'],[10,9,'liquid'],[9,10,'liquid'],[10,10,'liquid'],[1,10,'plasma']],
+         plate:[6,8], chest:{id:'lab.chest.hall', gx:8, gy:7, yaw:Math.PI, label:'скриня передпокою', scroll:'metal', res:{crystal:1}} },
+  corr:{ walls:[['x',3,1,8],['x',5,4,11],['x',9,1,8],['c',11,5]], blocks:[[6,11,'Al'],[7,11,'C']], locks:['rust'], spawn:[[7,4],[7,9]],
+         chest:{id:'lab.chest.corr', gx:7, gy:2, yaw:0, label:'скриня в коридорі', scroll:'thermite', res:{crystal:1}} },
+  chem:{ walls:[['x',9,1,2],['x',9,4,5],['y',6,10,11]], blocks:[[2,1,'H'],[4,1,'O'],[5,1,'Mg'],[7,1,'Ca'],[8,1,'Na'],[2,4,'Cl'],[7,8,'Fe'],[2,8,'liquid'],[3,8,'liquid'],[4,8,'liquid'],[2,10,'plasma'],[6,10,'plasma']], locks:['acid'],
+         chest:{id:'lab.chest.chem', gx:8, gy:10, yaw:Math.PI, label:'скриня лабораторії', scroll:'acid', res:{crystal:1}} },
+  gall:{ walls:[['x',8,1,1],['x',8,3,4],['y',5,9,11]], crawl:[[2,7],[3,7],[4,7],[5,7],[7,7],[8,7],[9,7],[10,7]], posts:[[4,4],[4,10],[8,9]], blocks:[[7,2,'Ne'],[3,5,'He']], locks:['laser'], spawn:[[6,9],[10,10]],
+         chest:{id:'lab.chest.gall', gx:2, gy:2, yaw:0, label:'скриня в галереї', scroll:'laser', res:{crystal:1}} },
+  quant:{ walls:[['x',8,1,2],['x',8,4,5],['y',6,9,11]], blocks:[[6,2,'plasma'],[2,6,'K'],[4,6,'Zn']], locks:['spectral','photo','qubit'], chest:null },
+  vent:{ walls:[['x',8,8,8],['x',8,10,11],['y',7,9,11]], blocks:[[2,2,'Pb'],[6,7,'Ra',true],[6,11,'Ra',true]], locks:['dose'], spawn:[[4,3],[7,4],[4,10]],
+         chest:{id:'lab.chest.vent', gx:2, gy:10, yaw:0, label:'скриня в шахті', scroll:'spectrum', res:{crystal:1}} },
+  core:{ walls:[['x',8,4,5],['x',8,7,8],['y',4,9,11],['y',8,9,11]], blocks:[[3,8,'U'],[4,8,'U'],[2,10,'Ra'],[6,10,'Be'],[2,6,'B'],[3,6,'B'],[6,8,'liquid']], locks:['reactor'], spawn:[[6,5],[5,3]],
+         chest:{id:'lab.chest.core', gx:10, gy:6, yaw:-Math.PI/2, label:'сховище реактора', scroll:'reactor', res:{crystal:5, steel:2}, final:true} } };
+/* замки: двері — одна клітинка; test(o) — чи відчинено; hint — голос, коли стоїш поруч */
+const LAB_LOCKS={
+  rust:{ key:'lab.lock.rust', door:[10,5], type:'rust', ua:'іржаві двері', hum:[150,0.22],
+    hint:'Двері з суцільної іржі. Іржа — залізо з киснем. Хто забере в неї кисень? Алюміній у жару — терміт, або вугілля в жару — домна. Постав реагент упритул до дверей, а жар — плазму навскіс від дверей або вогонь FIRE.',
+    test:(o)=>!o || o.mtype!=='rust', open:'Іржу прожито: з дверей потекло чисте залізо. Прохід вільний.' },
+  acid:{ key:'lab.lock.acid', door:[9,3], type:'chalk', ua:'вапнякова пробка', hum:[240,0.2],
+    hint:'Прохід замуровано вапняком — карбонатом кальцію. Кислота розчинить його з шипінням. Водень і хлор: хлор упритул до пробки, водень поруч, і світло LUX — соляна кислота зробить решту.',
+    test:(o)=>!o || o.mtype!=='chalk', open:'Вапняк зашипів і розчинився: кислота з’їла пробку. Прохід вільний.' },
+  laser:{ key:'lab.lock.laser', door:[8,2], type:'glass', ua:'скляна перегородка', hum:[420,0.18],
+    hint:'Скло не розбити клинком. Але червоний промінь лазера ріже скло. Неон уже стоїть перед склом. Постав гелій із заходу від неону — промінь іде від гелію до неону — і дай розряд: ZAP.',
+    test:(o)=>!o || o.mtype!=='glass', open:'Промінь прорізав скло. Прохід вільний.' },
+  spectral:{ key:'lab.lock.spec', door:[8,3], type:'Fe', ua:'співочі двері', altar:[6,3], hum:null,
+    hint:'Двері гудуть акордом одного елемента — кожен елемент співає своїми лініями. Постав той самий елемент на вівтар на два кроки на захід від дверей, біля жаровні з плазмою: якщо акорди збігаються, двері відчиняться. Довідник НАУКА каже, хто як співає.',
+    test:(o,lk)=>{ const a=obstacleAt(lk.altar[0],lk.altar[1]); return !!(a && a.alive && a.mtype===lk.want && plasmaNear(lk.altar[0],lk.altar[1])); }, open:'Акорди зійшлися. Двері заспівали у відповідь і відчинились.' },
+  photo:{ key:'lab.lock.photo', door:[2,2], type:'Fe', ua:'фотосейф', hum:[880,0.12], chest:{id:'lab.chest.photo', label:'фотосейф', scroll:'photo', res:{crystal:2}},
+    hint:'Фотосейф відчиняє струм зі світла. Постав калій або натрій за крок від сейфа і освіти його заклинанням LUX: фотоелектрони дадуть струм. На цинк звичайне світло не подіє — йому потрібен ультрафіолет SUN.',
+    test:(o,lk)=>{ const now=performance.now(); for(const k in SCI.charged){ const c=SCI.charged[k]; if(now-c.t<10000 && Math.abs(c.gx-lk.door[0])<=2 && Math.abs(c.gy-lk.door[1])<=2) return true; } return false; }, open:'Фотострум пішов — замок сейфа клацнув.' },
+  qubit:{ key:'lab.lock.qubit', door:[6,10], type:'Fe', ua:'квантовий сейф', gates:[[6,8],[6,9]], hum:[1320,0.1], chest:{id:'lab.chest.qubit', label:'квантовий сейф', scroll:'qubit', res:{crystal:2}},
+    hint:'Квантовий сейф із двома воротами на північ від нього. Йому потрібна заплутана пара: слово QUBIT ставить два кубіти — один на ближні ворота, другий поруч. Торкнись одного: обидва визначаться, і протилежні стани відчинять сейф. Звичайні водень і кисень не підійдуть.',
+    test:(o,lk)=>{ const a=obstacleAt(lk.gates[0][0],lk.gates[0][1]), b=obstacleAt(lk.gates[1][0],lk.gates[1][1]); return !!(a&&b&&a.alive&&b.alive&&a.fromQ&&b.fromQ&&/^(H|O)$/.test(a.mtype)&&/^(H|O)$/.test(b.mtype)&&a.mtype!==b.mtype); }, open:'Пара визначилась: протилежні стани у воротах — сейф відчинено.' },
+  dose:{ key:'lab.lock.dose', door:[8,9], type:'Fe', ua:'шлюз', hum:[110,0.3],
+    hint:'Шлюз відчиняється, лише коли доза біля дверей падає нижче порога. Два бруски радію світять на двері навскіс: гамма проходить крізь камінь, її зупиняє свинець; бету зупиняє будь-який метал. Постав свинець між радієм і дверима — на обох лініях. Або зачекай: радій розпадається.',
+    test:(o,lk)=>{ const D=sciDoseAt(lk.door[0],lk.door[1]).dose; lk.now=D; return D<(lk.thr||0.03); }, open:'Лічильник замовк — шлюз відчинено.' },
+  reactor:{ key:'lab.lock.reactor', door:[8,6], type:'steel', ua:'реакторні двері', hum:[70,0.35],
+    hint:'Реакторні двері живить реактор. Збери його в кімнаті: уран біля джерела нейтронів — радій поруч із берилієм — і бор довкола урану, щоб ланцюг не пішов урозліт. Без бору буде вибух. Вода поруч із ураном сповільнює нейтрони.',
+    test:(o,lk)=>{ const now=performance.now(); return !!(SCI.reactorT && now-SCI.reactorT<12000 && SCI.reactorAt===(ADV.rx+','+ADV.ry)); }, open:'Реактор дав струм — двері сховища відчинились.' } };
+const LAB_VARIANTS={
+  slug:{ kind:'crawler', ua:'кислотний слимак', hp:30, tint:0x65a30d, hue:null, say:'слимак' },
+  drone:{ kind:'gunner', ua:'дрон-охоронець', hp:45, tint:0x94a3b8, hue:null },
+  bat:{ kind:'flyer', ua:'шахтний кажан', hp:18, tint:0x1f2937, hue:null, chirp:1 },
+  ghost:{ kind:'fighter', ua:'радіаційний привид', hp:70, tint:null, hue:0.33, rad:0.45 } };
+const SLAB={ cur:null, intro:{}, plateT:0, chirpT:0, visited:{} };
+function labRoomOf(rx,ry){ if(ry!==LAB_RY || typeof LAB_ROOMS==='undefined') return null; const L=LAB_ROOMS[rx]; if(!L) return null;
+  return {type:'lab', lab:L, name:L.name, sym:L.sym, bg:L.bg, accent:L.accent, ring:L.ring, tint:L.tint}; }
+function labCur(){ try{ if(!ADV.on) return null; const sp=labRoomOf(ADV.rx,ADV.ry); return sp?sp.lab:null; }catch(e){ return null; } }
+function inLab(){ return !!labCur(); }
+window.labRoomOf=labRoomOf; window.inLab=inLab; window.SLAB=SLAB; window.LAB_ROOMS=LAB_ROOMS; window.LAB_LOCKS=LAB_LOCKS; window.LAB_PLANS=LAB_PLANS;
+/* маршрути лазіння між кімнатами лабораторії (шахти 36..42) */
+Object.assign(CLIMB_ROUTES, {
+  labwell:{ id:'labwell', name:'Колодязь лабораторії', what:'круглий колодязь у лабораторію', H:6.0, shaft:[36,30],
+    top:{rx:19,ry:6, gx:3,gy:5, out:[4,5], style:'well', label:'колодязь у лабораторію — униз'},
+    bot:{rx:40,ry:40, gx:2,gy:2, out:[3,2], style:'wellBottom', label:'дно колодязя — нагору, в підвал'},
+    segs:[{y0:0,y1:3.0,mat:'brick',holds:'ledges'},{y0:3.0,y1:6.0,mat:'rough',holds:'sparse'}], lines:[{kind:'chain',x:-0.4,y0:0.2,y1:5.6}], ledges:[3.0], bolts:[1.8,4.2] },
+  lablad:{ id:'lablad', name:'Драбина в коридор', what:'дерев’яна драбина вниз', H:3.6, shaft:[37,30],
+    top:{rx:40,ry:40, gx:10,gy:5, out:[9,5], style:'hatch', label:'люк — драбина вниз, у коридор реактивів'},
+    bot:{rx:41,ry:40, gx:0,gy:6, face:'W', out:[1,6], style:'ladderUp', label:'драбина нагору — у передпокій'},
+    segs:[{y0:0,y1:3.6,mat:'wood',holds:'rungs',dy:0.3}], lines:[], ledges:[], bolts:[] },
+  labrope:{ id:'labrope', name:'Мотузка в лабораторію', what:'мотузка вниз (5 м)', H:5.0, shaft:[38,30],
+    top:{rx:41,ry:40, gx:10,gy:2, out:[10,3], style:'hatch', label:'люк — мотузка вниз, у хімічну лабораторію'},
+    bot:{rx:42,ry:40, gx:6,gy:0, face:'N', out:[6,1], style:'tunnel', label:'мотузка нагору — у коридор реактивів'},
+    segs:[{y0:0,y1:5.0,mat:'rough',holds:'sparse'}], lines:[{kind:'rope',x:0,y0:0,y1:5.0}], ledges:[], bolts:[1.6,3.4] },
+  labwall:{ id:'labwall', name:'Скеля лабораторії', what:'скеля нагору (6.5 м)', H:6.5, shaft:[39,30],
+    bot:{rx:42,ry:40, gx:12,gy:3, face:'E', out:[11,3], style:'tunnel', label:'скеля нагору — у галерею балок'},
+    top:{rx:43,ry:40, gx:2,gy:9, out:[3,9], style:'stoneHatch', label:'кам’яний люк — скеля вниз, у лабораторію'},
+    segs:[{y0:0,y1:3.2,mat:'rough',holds:'sparse'},{y0:3.2,y1:6.5,mat:'stone',holds:'ledges'}], lines:[], ledges:[3.2], bolts:[1.4,2.8,4.6,5.8] },
+  labbeams:{ id:'labbeams', name:'Балки лабораторії', what:'балки нагору (5 м)', H:5.0, shaft:[40,30],
+    bot:{rx:43,ry:40, gx:10,gy:0, face:'N', out:[10,1], style:'tunnel', label:'балки нагору — у квантову камеру'},
+    top:{rx:44,ry:40, gx:2,gy:10, out:[3,10], style:'hatch', label:'люк — балки вниз, у галерею'},
+    segs:[{y0:0,y1:5.0,mat:'wood',holds:'beams'}], lines:[{kind:'rope',x:0.4,y0:0,y1:5.0}], ledges:[], bolts:[] },
+  labshaft:{ id:'labshaft', name:'Шахта лабораторії', what:'шахта вниз (8 м)', H:8.0, shaft:[41,30],
+    top:{rx:44,ry:40, gx:10,gy:2, out:[10,3], style:'stoneHatch', label:'кам’яний люк — шахта вниз, у вентиляцію'},
+    bot:{rx:45,ry:40, gx:0,gy:6, face:'W', out:[1,6], style:'ladderUp', label:'щаблі нагору — у квантову камеру'},
+    segs:[{y0:0,y1:8.0,mat:'metal',holds:'rungs',dy:0.32}], lines:[], ledges:[4.0], bolts:[] },
+  labwell2:{ id:'labwell2', name:'Колодязь бункера', what:'колодязь у бункер (6 м)', H:6.0, shaft:[42,30],
+    top:{rx:45,ry:40, gx:10,gy:9, out:[9,9], style:'well', label:'колодязь — униз, у ядерний бункер'},
+    bot:{rx:46,ry:40, gx:2,gy:2, out:[3,2], style:'wellBottom', label:'дно колодязя — нагору, у вентиляцію'},
+    segs:[{y0:0,y1:6.0,mat:'brick',holds:'ledges'}], lines:[{kind:'chain',x:0.42,y0:0.3,y1:5.6}], ledges:[], bolts:[2.0,4.0] } });
+/* ── побудова кімнати: стіни-перегородки, зразки, двері замків ── */
+function labInterior(rx,ry,taken,rng){ const sp=labRoomOf(rx,ry); if(!sp) return; const L=sp.lab, P=LAB_PLANS[L.id]; if(!P) return;
+  const W=(x,y)=>{ addObstacle(x,y,L.wall,taken,L.wtint,1.0,'cube',0,null,0,true); };
+  for(const w of (P.walls||[])){ if(w[0]==='x'){ for(let y=w[2];y<=w[3];y++) W(w[1],y); } else if(w[0]==='y'){ for(let x=w[2];x<=w[3];x++) W(x,w[1]); } else if(w[0]==='c'){ W(w[1],w[2]); } }
+  for(const [x,y] of (P.crawl||[])) addObstacle(x,y,'crawl',taken,L.wtint,1.0,'cube',0,null,0,true);
+  for(const [x,y] of (P.posts||[])) addObstacle(x,y,'C',taken,0x7c4a1f,1.0,'post',0,null,0,true);
+  for(const b of (P.blocks||[])){ addObstacle(b[0],b[1],b[2],taken,null,1,'cube',0,null,0,b[3]===true?true:undefined); const o=obstacleAt(b[0],b[1]); if(o && b[3]===true){ o.labFixed=true; } }
+  for(const id of (P.locks||[])){ const lk=LAB_LOCKS[id]; if(!lk) continue; lk.want=(id==='spectral')?labSpectralWant():lk.want;
+    if(mechGet(lk.key)) continue;   // відчинено раніше — дверей немає
+    addObstacle(lk.door[0],lk.door[1],lk.type,taken,(lk.type==='Fe'||lk.type==='steel')?0x8c93a3:null,1.0,'cube',0,null,0,true); const o=obstacleAt(lk.door[0],lk.door[1]); if(o){ o.labLock=id; o.noRes=true; } }
+  if(P.locks && P.locks.includes('dose')){ const lk=LAB_LOCKS.dose; try{ const D=sciDoseAt(lk.door[0],lk.door[1]).dose; lk.thr=Math.max(0.01, 0.2*D); lk.d0=D; }catch(e){ lk.thr=0.03; } }
+  logE('ЛАБОРАТОРІЯ: '+L.name+' — '+(P.locks||[]).map(k=>LAB_LOCKS[k].ua+(mechGet(LAB_LOCKS[k].key)?' ✓':'')).join(', ')); }
+function labSpectralWant(){ const pool=['Na','Ne','Cu','K','H']; const day=Math.floor(Date.now()/86400000); return pool[day%pool.length]; }
+/* механізми: скрині, кафедра, вивіски замків */
+function labMechBuild(rx,ry){ const sp=labRoomOf(rx,ry); if(!sp) return; const L=sp.lab, P=LAB_PLANS[L.id]; if(!P) return;
+  if(P.chest){ const c=P.chest; if(!(c.final && !mechGet('lab.lock.reactor'))) mechChest({id:c.id, gx:c.gx, gy:c.gy, yaw:c.yaw||0, label:c.label, done:mechGet(c.id), onDone:()=>labChestReward(c)}); }
+  for(const id of (P.locks||[])){ const lk=LAB_LOCKS[id]; if(lk.chest && mechGet(lk.key)) mechChest({id:lk.chest.id, gx:lk.door[0], gy:lk.door[1], yaw:0, label:lk.chest.label, done:mechGet(lk.chest.id), onDone:()=>labChestReward(lk.chest)}); }
+  if(P.plate){ const g=new THREE.Group(); g.frustumCulled=false; const m=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.46,0.06,18), new THREE.MeshBasicMaterial({color:0x7dd3fc, transparent:true, opacity:0.55})); m.position.set(worldX(P.plate[0]),0.03,worldZ(P.plate[1])); g.add(m);
+    const r=new THREE.Mesh(new THREE.TorusGeometry(0.44,0.02,6,24), new THREE.MeshBasicMaterial({color:0xbae6fd})); r.rotation.x=Math.PI/2; r.position.copy(m.position); r.position.y=0.07; g.add(r); g.traverse(o=>{ o.frustumCulled=false; }); scene.add(g);
+    MECH.list.push({id:'lab.plate', kind:'decor', label:'кафедра загадок', g, done:true, pos:m.position.clone()}); }
+  for(const id of (P.locks||[])){ const lk=LAB_LOCKS[id]; if(mechGet(lk.key)) continue; const g=new THREE.Group(); g.frustumCulled=false;
+    const m=new THREE.Mesh(new THREE.TorusGeometry(0.2,0.025,6,20), new THREE.MeshBasicMaterial({color:0xfbbf24, transparent:true, opacity:0.8})); m.position.set(worldX(lk.door[0]),1.55,worldZ(lk.door[1])); g.add(m); g.traverse(o=>{ o.frustumCulled=false; }); scene.add(g);
+    MECH.list.push({id:'lab.sign.'+id, kind:'decor', label:'вивіска: '+lk.ua, g, done:true, pos:m.position.clone()}); lk._nearT=0; lk._hintT=0; } }
+function labChestReward(c){ const first=!mechGet(c.id); mechSet(c.id,1);
+  if(!first){ logE('ЛАБОРАТОРІЯ: '+c.label+' — порожня, уже брав'); try{ showBanner('🧰 '+c.label+' — порожня','#94a3b8'); }catch(e){} return; }
+  let txt=[]; try{ if(c.res){ for(const k in c.res){ RES[k]=(RES[k]||0)+c.res[k]; txt.push('+'+c.res[k]+' '+(RES_NAME[k]||k)); } saveRes(); resHUD(); } }catch(e){}
+  if(c.scroll && SCROLLS[c.scroll]){ const n=CODEX.add(c.scroll); txt.push('сувій «'+SCROLLS[c.scroll].t.replace(/^📜\s*/,'')+'»'); try{ tutModal(SCROLLS[c.scroll].t, SCROLLS[c.scroll].d+'<br><br><i>Збережено у КОДЕКС.</i>', [{t:'ЗБЕРЕГТИ ▷'}]); }catch(e){} }
+  try{ soulAdd(c.final?5:2, c.label); }catch(e){}
+  if(c.final){ mechSet('lab.done',1); logE('ЛАБОРАТОРІЯ ПРОЙДЕНА: сховище реактора відчинено'); try{ showBanner('⚗ ЛАБОРАТОРІЮ ПРОЙДЕНО · '+txt.join(' · '),'#bef264'); doFlash('#bef264'); }catch(e){} freeSay('Сховище відчинено. Лабораторію пройдено: усі замки науки відчинено твоїми руками.'); return; }
+  logE('ЛАБОРАТОРІЯ: '+c.label+' — '+txt.join(', ')); try{ showBanner('🧰 '+c.label.toUpperCase()+' · '+txt.join(' · '),'#fde68a'); doFlash('#fde68a'); }catch(e){} }
+/* ── вороги за місцевістю ── */
+function labEnemyKinds(L){ return (L.enemies||[]).map(v=>LAB_VARIANTS[v]?LAB_VARIANTS[v].kind:'fighter'); }
+function labVariants(rx,ry){ const sp=labRoomOf(rx,ry); if(!sp) return; const L=sp.lab; const vs=(L.enemies||[]).slice(); const P=LAB_PLANS[L.id]||{}; let i=0;
+  for(const ph of phantoms){ if(!ph || ph.dead || ph.ally) continue; const v=vs[i]; const sc=(P.spawn||[])[i]; i++; const V=v&&LAB_VARIANTS[v]; if(!V) continue; ph.variant=v; ph.hp=V.hp; ph.vua=V.ua;
+    if(sc){ try{ const c=freeSpawnCell(sc[0],sc[1],ph); ph.gx=c[0]; ph.gy=c[1]; ph.vgx=c[0]; ph.vgy=c[1]; ph._cont=false; }catch(e){} }   // своє місце за планом кімнати (не за стіною замка)
+    if(V.hue!=null) ph.vhue=V.hue; if(V.tint!=null && ph.kmodel){ try{ ph.kmodel.traverse(o=>{ if(o.material && o.material.color){ o.material=o.material.clone(); o.material.color.lerp(new THREE.Color(V.tint),0.75); } }); }catch(e){} }
+    if(V.rad){ try{ const gl=new THREE.Mesh(new THREE.SphereGeometry(0.5,10,8), new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.18, blending:THREE.AdditiveBlending, depthWrite:false})); gl.position.y=1.0; gl.frustumCulled=false; ph.mesh.add(gl); ph.vglow=gl; }catch(e){} } }
+  if(i) logE('ЛАБОРАТОРІЯ: вороги за місцевістю — '+phantoms.filter(p=>p.variant).map(p=>p.vua).join(', ')); }
+function labEnemyTick(dt){ const now=performance.now();
+  for(const ph of phantoms){ if(!ph || !ph.variant) continue;
+    if(ph.dead){ if(ph.variant==='slug' && !ph._acid){ ph._acid=true; try{ if(!obstacleAt(ph.gx,ph.gy) && ph.gx>=1&&ph.gx<=11&&ph.gy>=1&&ph.gy<=11){ sciMake(ph.gx,ph.gy,'HCl'); logE('СЛИМАК: з убитого слимака лишилась калюжа соляної кислоти ('+ph.gx+','+ph.gy+')'); } }catch(e){} } continue; }
+    if(ph.variant==='bat' && now-(ph._chirpT||0)>1400+Math.random()*900){ ph._chirpT=now; try{ const p=ph.mesh.position; spatialBlip(p.x,p.y+1.2,p.z,5200+Math.random()*800,0.04,'square',0.07); setTimeout(()=>{ try{ spatialBlip(p.x,p.y+1.2,p.z,6400,0.03,'square',0.05); }catch(e){} },70); }catch(e){} }
+    if(ph.vglow){ try{ ph.vglow.material.opacity=0.12+0.1*Math.sin(now*0.004); }catch(e){} } } }
+/* ── замки: перевірка, гудіння дверей, підказка ── */
+function labLocksOf(L){ const P=LAB_PLANS[L.id]; return (P&&P.locks||[]).map(k=>LAB_LOCKS[k]).filter(Boolean); }
+function labHum(lk){ try{ const x=worldX(lk.door[0]), z=worldZ(lk.door[1]);
+  if(lk.hum){ spatialBlip(x,1.2,z,lk.hum[0],lk.hum[1],'triangle',0.09); return; }
+  if(lk.want && SCI_EL[lk.want] && SCI_EL[lk.want].lines){ SCI_EL[lk.want].lines.slice(0,4).forEach((nm,i)=>setTimeout(()=>{ try{ spatialBlip(x,1.3,z,sciPitchOf(nm),0.45,'sine',0.1); }catch(e){} }, i*90)); } }catch(e){} }
+function labLockOpen(lk,L){ mechSet(lk.key,1); const o=obstacleAt(lk.door[0],lk.door[1]); if(o){ try{ killBlock(o); }catch(e){} }
+  for(const q of obstacles.slice()){ if(q.alive && q.mtype==='plasma' && Math.abs(q.gx-lk.door[0])<=1 && Math.abs(q.gy-lk.door[1])<=1) killBlock(q); }   // жар біля дверей згас
+  try{ const i=MECH.list.findIndex(m=>m.id==='lab.sign.'+Object.keys(LAB_LOCKS).find(k=>LAB_LOCKS[k]===lk)); if(i>=0){ const m=MECH.list[i]; scene.remove(m.g); MECH.list.splice(i,1); } }catch(e){}
+  logE('ЗАМОК: '+lk.ua+' — ВІДЧИНЕНО ('+lk.door[0]+','+lk.door[1]+')'); try{ showBanner('🔓 '+lk.ua.toUpperCase()+' — ВІДЧИНЕНО','#86efac'); doFlash('#86efac'); buzz([0,60,40,60,40,120]); const x=worldX(lk.door[0]), z=worldZ(lk.door[1]); spatialNoise(x,1,z,900,1.0,0.6,0.2); emitSparks(x,1.2,z,'#86efac',24,4); }catch(e){}
+  try{ soulAdd(3,'замок: '+lk.ua); }catch(e){} try{ freeSay(lk.open); }catch(e){}
+  if(lk.chest){ try{ mechChest({id:lk.chest.id, gx:lk.door[0], gy:lk.door[1], yaw:0, label:lk.chest.label, done:mechGet(lk.chest.id), onDone:()=>labChestReward(lk.chest)}); }catch(e){} }
+  if(lk.key==='lab.lock.reactor'){ try{ const c=LAB_PLANS.core.chest; if(!MECH.list.some(m=>m.id===c.id)) mechChest({id:c.id, gx:c.gx, gy:c.gy, yaw:c.yaw||0, label:c.label, done:mechGet(c.id), onDone:()=>labChestReward(c)}); }catch(e){} }
+  try{ snapshotRoom(); }catch(e){} }
+function labTick(dt){ const L=labCur(); if(!L) { SLAB.cur=null; return; } const now=performance.now(); SLAB.cur=L.id;
+  for(const lk of labLocksOf(L)){ if(mechGet(lk.key)) continue; const o=obstacleAt(lk.door[0],lk.door[1]); let ok=false; try{ ok=!!lk.test(o,lk,L); }catch(e){ logE('ЗАМОК '+lk.ua+': '+e.message); }
+    if(ok){ labLockOpen(lk,L); continue; }
+    if(now-(lk._humT||0)>(lk.hum?2400:7000)){ lk._humT=now; labHum(lk); }
+    const d=Math.hypot(player.gx-lk.door[0], player.gy-lk.door[1]); if(d<=1.8){ lk._nearT=(lk._nearT||0)+dt; if(lk._nearT>=1.0 && now-(lk._hintT||0)>40000){ lk._hintT=now; logE('ЗАМОК '+lk.ua+': '+lk.hint+(lk.key==='lab.lock.dose'?(' (доза '+(lk.now||0).toFixed(3)+', поріг '+(lk.thr||0).toFixed(3)+')'):'')+(lk.want?' [шукає '+lk.want+']':'')); try{ freeSay(lk.hint+(lk.key==='lab.lock.dose'?(' Зараз доза '+((lk.now||0)*100).toFixed(0)+' сотих, поріг '+((lk.thr||0)*100).toFixed(0)+'.'):'')); }catch(e){} } } else lk._nearT=0; }
+  try{ labEnemyTick(dt); }catch(e){}
+  const P=LAB_PLANS[L.id]; if(P && P.plate){ if(player.gx===P.plate[0] && player.gy===P.plate[1]){ SLAB.plateT+=dt; if(SLAB.plateT>=1.2 && !DLG.q && now-(SCIQ.cool||0)>15000){ SLAB.plateT=-30; try{ sciRiddleAsk(null,{force:false}); }catch(e){} } } else SLAB.plateT=Math.max(0,SLAB.plateT-dt*4); } }
+function labArrive(rx,ry){ const sp=labRoomOf(rx,ry); if(!sp) return; const L=sp.lab; SLAB.visited[L.id]=(SLAB.visited[L.id]||0)+1;
+  setTimeout(()=>{ try{ if(ADV.rx!==rx||ADV.ry!==ry) return; if(SLAB.intro[L.id]) return; SLAB.intro[L.id]=1; freeSay(L.say); logE('ЛАБОРАТОРІЯ: '+L.say); }catch(e){} }, 3800); }
+/* перейти в лабораторію (меню — для перевірок; чесний шлях — колодязь у підвалі) */
+function labGo(){ try{ if(!ADV.on){ ADV.on=true; try{ $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): УВІМК'; }catch(e){} player.mods={dmg:1,charge:1,reach:0}; }
+  if(MECH.busy){ showBanner('⏳ зачекай — триває перехід','#94a3b8'); return false; } logE('ЛАБОРАТОРІЯ: перехід у передпокій (колодязь у підвалі — клітинка (3,5), стань у (4,5) лицем на захід)'); mechGoRoom(40,LAB_RY,[3,2],'лабораторія'); return true; }catch(e){ logE('ЛАБОРАТОРІЯ: '+e.message); return false; } }
+window.labGo=labGo; window.labTick=labTick; window.labLockOpen=labLockOpen; window.labVariants=labVariants;
 
 /* ═══ ГРИМУАР: цифри Морзе й КНИГА ЗАКЛЯТЬ ═══ */
 const GRIM_DIGITS='0123456789'.split('');
@@ -18472,7 +18671,7 @@ function roomGuide(rx,ry){
     L.push('Це дім. Підлога під ногами — карта світу: кожна плита — кімната, тринадцять на тринадцять.');
     L.push('Світлі плити — безпечні кімнати, темні — з ворогами, червонуваті по краю — боси. Де ти вже був — плити яскравіші, з позначкою. Золоті риски між плитами — двері лабіринту. Ми — на синій, посередині. Глянь під ноги.');
     L.push('Зброя — у північній стіні. Підійди й вдар по кристалу тричі — і візьмеш. Кузня — на південній стіні: стань під ковадлом і зачекай. Дошка тренувань — на східній: постій під нею, і я покажу удари.');
-  } else if((rx>12||ry>12) && specialRoomOf(rx,ry)){ const sp=specialRoomOf(rx,ry);   // (10-08d)
+  } else if((rx>12||ry>12) && specialRoomOf(rx,ry)){ const sp=specialRoomOf(rx,ry); if(sp.type==='lab') return true;   // (10-08d) · (10-20b) лабораторія говорить сама
     L.push(({attic:'Горище. Скриня на півночі, люк униз — посередині.',cave:'Печера під колодязем. Дно колодязя — посередині, тунель угору — у північній стіні, скриня — на північному заході.',lamp:'Ліхтарня маяка. Колесо ліхтаря — на північній стіні, люк униз — посередині.',catacomb:'Катакомби. Важіль «Серпантин» — на східній стіні, «Забіг» — на західній, драбина нагору — на північній.',shaft:'Шахта. Стіна для лазіння — перед тобою.'})[sp.type]||sp.name);
   } else if(chessWhite(rx,ry)){
     const type=(typeof roomTypeOf==='function')?roomTypeOf(rx,ry):null, inv=roomInventory();
@@ -19203,6 +19402,9 @@ setTimeout(()=>{ try{
   const r=document.createElement('button'); r.id='mSciQ'; r.textContent='🧪 ЗАГАДКА НАУКИ — кивни «так» або похитай «ні»';   // (10-20a)
   $('mNew').parentNode.insertBefore(r, $('mNew'));
   r.onclick=()=>{ closeMenu(); setTimeout(()=>{ try{ if(!sciRiddleAsk(null,{force:true})) showBanner('🧪 зараз не можна — триває сцена','#94a3b8'); }catch(e){ logE('ЗАГАДКА: '+e.message); } }, 300); };
+  const l=document.createElement('button'); l.id='mSciLab'; l.textContent='⚗ ЛАБОРАТОРІЯ — колодязь у підвалі (3,5) · перейти зараз';   // (10-20b)
+  $('mNew').parentNode.insertBefore(l, $('mNew'));
+  l.onclick=()=>{ closeMenu(); setTimeout(()=>{ try{ labGo(); }catch(e){ logE('ЛАБОРАТОРІЯ: '+e.message); } }, 250); };
 }catch(e){} }, 700);
 /* ═══════════════ (10-08a) ГРИМУАР МОРЗЕ — міні-гра пошуку літер ═══════════════
    Відкрий гримуар (📖 вгорі або меню паузи). Набери ПЕРШУ літеру елемента крапками й тире:
