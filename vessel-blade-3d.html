@@ -1651,6 +1651,7 @@ export { OutputShader };
   <button id="mLore">🜁 ВСЕСВІТ (лор → Алго-крат)</button>
   <button id="mForge">⚒ КУЗНЯ СУТНОСТЕЙ</button>
   <button id="mSerp">🏁 СЕРПАНТИН — спідран і полігон</button>
+  <button id="mProto">🧪 ПЕРЕВІРКА ЗБІРКИ — наставник веде протокол з підказками</button>
   <button id="mDojo">🥋 ТРЕНУВАННЯ УДАРІВ — наставник показує, ти повторюєш</button>
   <button id="mDrill">🎯 ВІДПРАЦЮВАННЯ — контур, тінь, сотні повторів, журнал</button>
   <button id="mTake">⏺ ЗАПИС ТЕЙКІВ (камери + датчики): ВИМК</button>
@@ -4775,6 +4776,7 @@ function damageTier(av, tier, amount){
   }
   if(av.dead) return;
   if(av===player && mode==='creator') return;   // творец бессмертен (Раздел 4)
+  try{ if(av!==player && av._protoRegen>0) amount=Math.max(0, Math.min(amount, av.hp-av._protoRegen)); }catch(e){}   // (10-27a) опудало протоколу перевірки: нижче порога не падає
   try{ amount=magicDmgIn(av, amount); }catch(e){}   // (10-10a) залізна шкіра, ослаблені вороги, удар будить сплячого
   try{ if(av!==player && typeof KD!=='undefined' && KD.on) amount=Math.max(1,Math.round(amount*(VB_KD.dmgOut||0.6))); }catch(e){}   // (10-11b) з землі бʼєш слабше
   try{ if(av===player && B2.shieldT>0){ amount=Math.round(amount*0.5); try{ spatialBlip(player.mesh.position.x,1.3,player.mesh.position.z,880,0.06,'sine',0.1); }catch(e){} } }catch(e){}   // (10-09b) щит (SOS, коло палички) — удари вдвічі слабші
@@ -4795,7 +4797,7 @@ function damageTier(av, tier, amount){
   av.painT = 0.28;
   // звук удара (вибрацию НЕ трогаем — она зарезервирована под рассинхрон)
   blip(av===player?220:300, 0.08, 'square', 0.1);
-  if(av===player){ try{ dismPlayerHurt(tier,amount); }catch(e){} }   // (10-26d) рани на власному тілі
+  if(av===player){ try{ dismPlayerHurt(tier,amount); }catch(e){} try{ protoEvent('phurt',{tier,amount}); }catch(e){} }   // (10-26d) рани на власному тілі
 }
 
 /* ── ПРОЖИГАНИЕ: клинок жив → касание тела фантома наносит урон ─
@@ -5945,7 +5947,7 @@ function buildStructuredRoomCore(rx,ry,rng,st){
     for(const [x,y] of [[4,8],[8,4]]) put(x,y,'C',0x5b3a1d,'post',0.9); put(11,6,'Fe',null,'cube',0.8); }
   else if(type==='home'){ /* (09-29k) дім порожній — місце для тренувань; зразки матеріалів прибрано */ }
   else if(type==='lab'){ try{ labInterior(rx,ry,taken,rng); }catch(e){ logE('ЛАБОРАТОРІЯ план: '+e.message); } }   // (10-20b)
-  else if(type==='attic'||type==='cave'||type==='lamp'||type==='catacomb'||type==='shaft'){ specialRoomInterior(type, put, (x,y)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)) return; taken.add(k); plantRock(x,y,rng); }); }   // (10-08d)   // (09-22h) зразки: кристал, залізо, камінь, дерево; (09-27b) по кутках — підлога під карту
+  else if(type==='attic'||type==='cave'||type==='lamp'||type==='catacomb'||type==='shaft'||type==='range'){ specialRoomInterior(type, put, (x,y)=>{ const k=x+','+y; if(x<1||x>11||y<1||y>11||R.has(k)||taken.has(k)) return; taken.add(k); plantRock(x,y,rng); }); }   // (10-08d)   // (09-22h) зразки: кристал, залізо, камінь, дерево; (09-27b) по кутках — підлога під карту
   else if(type==='hall'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,inMat,inTint,'post',1.1);
     if(w>0.35) for(const [x,y] of [[6,3],[3,6],[9,6],[6,9]]) put(x,y,inMat,inTint,'post',1.0); }
   else if(type==='cross'){ for(const [ax,ay] of [[2,2],[8,2],[2,8],[8,8]]) for(let dx=0;dx<3;dx++) for(let dy=0;dy<3;dy++) put(ax+dx,ay+dy,inMat,inTint,'cube',1.0); }
@@ -6177,6 +6179,7 @@ function handleDeath(av, dt){
   if(av.hp<=0){
     av.dead=true; av.respawnT=2.2; av.hitActive=false; av.blade.count=0;
     clearClinch();
+    try{ protoEvent(av===player?'pdeath':'kill',{kind:av.kind||'?',ally:!!av.ally}); }catch(e){}
     try{ dismOnDeath(av); }catch(e){}   // (10-26d) тіло розсипається
     if(av!==player){
       rollMobLoot(av);                          // 50% его оружие / 50% апгрейд
@@ -6229,7 +6232,8 @@ function respawn(av){
     const c=freeSpawnCell(CX,CY,player); av.gx=c[0]; av.gy=c[1];
     if(droppedBlade){ scene.remove(droppedBlade); droppedBlade=null; } try{ weaponFallClear(); }catch(e){}
     // (07-16) ПРИГОДА пер-гравцева: загибель ЗАВЖДИ повертає додому — і крапка.
-    if(ADV.on && !advHome()){
+    try{ protoEvent('respawn',{}); }catch(e){}
+    if(ADV.on && !advHome() && !(typeof PROTO!=='undefined' && PROTO.on)){   /* (10-27a) на полігоні перевірки лишаємось */
       applyAdvRoom(6,6); NET.advPub();
       showBanner('▼ СВІДОМІСТЬ ПОВЕРНУЛАСЬ ДОДОМУ','#cbd5e1');
     }
@@ -7620,7 +7624,7 @@ $('mFF').onclick=()=>{ friendlyFire=!friendlyFire;
 $('mInvert').onclick=()=>{ invertPitch=!invertPitch;
   $('mInvert').textContent='↕ ІНВЕРСІЯ НАХИЛУ: '+(invertPitch?'УВІМК':'ВИМК'); logE('invertPitch='+invertPitch); };
 $('mCopy').onclick=()=>copyLog($('mCopy'));
-const BUILD_TAG='2026-10-26d · 🗡 РУЙНУВАННЯ ТІЛ: кожне влучання вибиває воксели, вогонь і бластер обпалюють, кінцівки відсікаються (голова, руки, ноги, крила, ствол, плече бос-сокири), повзун і тулуб розсікаються навпіл, убитий розсипається на воксели; те саме з тілом наставника (відростає), власним тілом (рани гояться) і тілами живих гравців у мережі · меню: 🗡 РУЙНУВАННЯ ТІЛ — ПОВНЕ / ЛИШЕ РАНИ / ВИМК · ' + '2026-10-26c · 🤺 НАСТАВНИК БЬЄТЬСЯ ПО-СПРАВЖНЬОМУ: мечників розум — дистанція, стійка, фінт, різні удари в відкриту лінію, корпус на ворога, парирування й рипост, ворог б\'є у відповідь, поранений відступає й лікується; повзун і літун теж цілі · ' + '2026-10-26b · 🔫 стрільба: пістолет і гвинтівка (куля з трасером), бластер (заряд, перегрів, випалює воксели) · 🪓 своя модель кожної зброї: сокира, молот, спис, посох, паличка, кинджал · ✋ свій хват і положення руки · ' + '2026-10-26a · 👻 червоний «привид» старої сокири перед камерою прибрано (зброю малює лише риг) · 🎓 навчальний ворог м\'якший: короткий меч, без нокдаунів і вибивання зброї, розсинхрон лише кисті · 🧭 вартовий осі клинка: у спокої клинок не лишається «руків\'ям уперед» — автоматична переприв\'язка + діагностика в логу · 🧱 осипи (воксельні рештки) — ходиш по них як по нерівній землі: висота купи = висоті блока, сповільнення за нерівністю, спотикання (розсинхрон кисті), хрускіт під ногами; осип не блокує більше, ніж цілий блок · ' + '2026-10-25b · ⚔ РОЗУМ МЕЧНИКІВ: тримають дистанцію, б\'ють у відкриту лінію (де немає твого клинка), не лізуть на вістря — збивають клинок чи сходять з лінії, парирують твій замах і рипостують, після удару відступають; ранить лише справжнє анімоване лезо · 🗡 зброя з арсеналу у мечників (довгий/короткий/дворучний меч, сокира, молот, кинджал), частина — зі щитом: удар спереду у щит не ранить · 🛡 твоя зброя «меч і щит»: телефон набік — щит піднято, удари спереду приймає щит (−сили) · 🔩 у майстерні стержень/панель можна ставити зі зсувом від центру (кнопка ⇔) — кілька в одній клітинці · ' + '2026-10-25a · 🎥 камера за головою під час маневрів (і у вільних руках) · 🧱 рештки розбитих блоків — переступаєш чи стаєш на них · 🤫 тихий наставник: кнопки ТАК/НІ, без перепитувань, 🗣 при підході — меню · 🧭 курс із компаса веде гіроскоп, повернення на гіроскоп ОС без стрибка · ✋ долоні й корпус без ривків · ' + '2026-10-23b · 🧗 ПОДОЛАННЯ ПЕРЕШКОД: низька перемичка — присідаю сам, нижче — лягаю й повзу; блок до 60 см — ступаю, до ~1.2 м — перелізаю, до ~1.9 м — підтягуюсь (штовхни ще раз або потримай); меч на цей час у піхвах, камера йде за головою; стіни від 2 м, колони, замки й дім не лізуться · (10-23a) 🛏 ПОЗА: лежачи грається як стоячи — телефон догори = клинок уперед, курс і поворот по 90° без перекручувань (меч більше не йде крізь тіло), альбомна лежачи з допуском · 🎒 КИШЕНЯ ЕЛЕМЕНТІВ: газ, рідину й елементи можна забрати (долоню підняти над блоком чи кнопка) і поставити: куб · плита · стержень · панель, зверху · під · на висоті; газ і рідина в стеку самі розшаровуються за густиною · 🔥 ГОРІННЯ ГАЗІВ: вогняна куля, слово FIRE, молотов, бомба, ZAP чи плазма впритул запалюють H/O: 2H + O → блок води, зайве згоряє, поруч — спалах і дрібна шкода · 💧 AQ лише з водою в кишені або після хімічних синтезів · ⚗ ПЛАЗМУ БІЛЯ H/O ТЕПЕР МОЖНА ПОСТАВИТИ: блок з’являється перед тим, на який дивишся; питання «створити?» має кнопки й 10 с після голосу · (10-21a) 🧯 ЖУРНАЛ НЕ ТЕЧЕ: ловець помилок стояв усередині logE і з кожним рядком лога плодив слухачів і таймери (витік пам’яті, лавина при першій помилці) — тепер один раз · 🧹 ПАМʼЯТЬ НЕ ТЕЧЕ ПРИ ПЕРЕХОДАХ: блоки кімнат, прилавки жителів, мітки-текстури й другий клинок ворогів тепер звільняються (раніше ~175 геометрій на кімнату) · ☢ РЕАКТОР ЗАПУСКАЄТЬСЯ СТАБІЛЬНО: потік нейтронів накопичується біля джерела (≈6 с) — поділ більше не залежить від везіння; ⏸ МЕНЮ І ФОНОВА ВКЛАДКА = ПАУЗА для хімії/науки (радіація не вбиває, поки меню відкрите); у підказці реакторних дверей — скільки чекати · 10-20c: 💧 МОКРЕ ≠ ПІД СТРУМОМ: чиста вода — ізолятор (розряд біля неї — нічого, підказка), проводять іони: сіль/кислота/луг у воді → РОЗСІЛ; вода, що стоїть на камені чи піску, сама мінералізується; електроліз лише розсолу (H₂ + Cl₂ + NaOH), батарея Вольти і в розсолі; у чистій воді під розрядом гравець цілий, у розсолі — б’є; сувій «Вода і струм», загадка · 10-20b: ⚗ ЛАБОРАТОРІЯ НАУКИ під майстернею: колодязь у підвалі (3,5) → передпокій (зразки, кафедра загадок) → драбина → коридор реактивів (кислотні слимаки; ІРЖАВІ ДВЕРІ — терміт/домна) → мотузка → хімлаб (ВАПНЯКОВА ПРОБКА — кислота) → скеля → галерея балок і перегородок (дрони; СКЛЯНА ПЕРЕГОРОДКА — лазер He–Ne) → балки → квантова камера (СПІВОЧІ ДВЕРІ — спектр, ФОТОСЕЙФ — LUX, КВАНТОВИЙ СЕЙФ — заплутана пара) → шахта → вентиляція (кажани; ШЛЮЗ — доза, свинець) → колодязь → ядерний бункер (радіаційні привиди; РЕАКТОРНІ ДВЕРІ — керований реактор → сховище); усе безкоштовно; скрині з сувоями; кнопка меню ⚗ ЛАБОРАТОРІЯ · 🖐 ЛІНІЙНИЙ РУХ 3.1: залишок гравітації вчиться в тиші за дисперсією — рука не повзе · 🪜 переходи: вібро на щаблі в темряві, тупіт приземлення, VB_CUT.side · 🔋 БАТАРЕЯ ВОЛЬТИ (Zn + Cu у HCl → струм), ☢ дозиметр, стіни кімнат не реагують, жар навскіс · 10-20a: 🖐 ЛІНІЙНИЙ РУХ РУКИ 3.0: без смикання — НЧ-фільтр, мʼякий спокій без обнулень, мах глушить плавно, пружина на виході, гальмо біля межі (повзунки РУКА · ЛІНІЙНИЙ РУХ 3.0) · 🪜 ПЕРЕХОДИ МІЖ ПОВЕРХАМИ очима: камера лишається в голові, повільніший підхід, у темряві «вата» у вухах і кроки/щаблі, світло повертається без стрибка (VB_CUT.cam=side — бічна камера як було) · ⚗ НАУКА: 36 елементів Морзе, ХІМІЯ 2 з умовами (вода, нагрів, світло LUX, розряд ZAP, каталізатор Fe): луг, аміак (Габер), соляна кислота на світлі, іржа → терміт, домна, мідь і бронза, вапно → гашене → крейда, нейтралізація, електроліз · ☢ ЯДРО: ланцюг розпаду U→Th→Ra→Rn→Po→Pb, лічильник Гейгера, доза й захист (свинець ×10), Ra+Be → нейтрони → ртуть у золото, поділ урану: критичність без бору / реактор із бором, вода-сповільнювач, синтез H → He у плазмі · ⟨ψ| КВАНТИ: спектр-акорд елемента біля плазми, фотоефект (LUX/SUN за роботою виходу), лазер He–Ne, QUBIT — заплутана пара · 🧪 ЗАГАДКИ НАУКИ так/ні кивком (+2 душі, пояснення), самі після реакцій · 🎯 завдання: наукові продукти, нові елементи, загадки · 📜 11 нових сувоїв · ⚗ НАУКА довідник у меню · 10-11d: 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
+const BUILD_TAG='2026-10-27a · 🧪 ПЕРЕВІРКА ЗБІРКИ В ГРІ: ⏸ меню або 🗣 наставник → «ПЕРЕВІРКА ЗБІРКИ» — наставник веде протокол крок за кроком на полігоні (кімната 21,21): каже, що зробити, сам ставить ворогів і зброю, сам зараховує пункт (події бою й руйнування), питання «чутно? плавно?» — ТАК/НІ або кивок; прогрес зберігається, наприкінці звіт — у журнал і в буфер (⧉ КОПІЮВАТИ ЗВІТ). Сценарії: 10-26d (27 кроків, ≈20 хв) і швидкий (7 кроків). ' + '2026-10-26d · 🗡 РУЙНУВАННЯ ТІЛ: кожне влучання вибиває воксели, вогонь і бластер обпалюють, кінцівки відсікаються (голова, руки, ноги, крила, ствол, плече бос-сокири), повзун і тулуб розсікаються навпіл, убитий розсипається на воксели; те саме з тілом наставника (відростає), власним тілом (рани гояться) і тілами живих гравців у мережі · меню: 🗡 РУЙНУВАННЯ ТІЛ — ПОВНЕ / ЛИШЕ РАНИ / ВИМК · ' + '2026-10-26c · 🤺 НАСТАВНИК БЬЄТЬСЯ ПО-СПРАВЖНЬОМУ: мечників розум — дистанція, стійка, фінт, різні удари в відкриту лінію, корпус на ворога, парирування й рипост, ворог б\'є у відповідь, поранений відступає й лікується; повзун і літун теж цілі · ' + '2026-10-26b · 🔫 стрільба: пістолет і гвинтівка (куля з трасером), бластер (заряд, перегрів, випалює воксели) · 🪓 своя модель кожної зброї: сокира, молот, спис, посох, паличка, кинджал · ✋ свій хват і положення руки · ' + '2026-10-26a · 👻 червоний «привид» старої сокири перед камерою прибрано (зброю малює лише риг) · 🎓 навчальний ворог м\'якший: короткий меч, без нокдаунів і вибивання зброї, розсинхрон лише кисті · 🧭 вартовий осі клинка: у спокої клинок не лишається «руків\'ям уперед» — автоматична переприв\'язка + діагностика в логу · 🧱 осипи (воксельні рештки) — ходиш по них як по нерівній землі: висота купи = висоті блока, сповільнення за нерівністю, спотикання (розсинхрон кисті), хрускіт під ногами; осип не блокує більше, ніж цілий блок · ' + '2026-10-25b · ⚔ РОЗУМ МЕЧНИКІВ: тримають дистанцію, б\'ють у відкриту лінію (де немає твого клинка), не лізуть на вістря — збивають клинок чи сходять з лінії, парирують твій замах і рипостують, після удару відступають; ранить лише справжнє анімоване лезо · 🗡 зброя з арсеналу у мечників (довгий/короткий/дворучний меч, сокира, молот, кинджал), частина — зі щитом: удар спереду у щит не ранить · 🛡 твоя зброя «меч і щит»: телефон набік — щит піднято, удари спереду приймає щит (−сили) · 🔩 у майстерні стержень/панель можна ставити зі зсувом від центру (кнопка ⇔) — кілька в одній клітинці · ' + '2026-10-25a · 🎥 камера за головою під час маневрів (і у вільних руках) · 🧱 рештки розбитих блоків — переступаєш чи стаєш на них · 🤫 тихий наставник: кнопки ТАК/НІ, без перепитувань, 🗣 при підході — меню · 🧭 курс із компаса веде гіроскоп, повернення на гіроскоп ОС без стрибка · ✋ долоні й корпус без ривків · ' + '2026-10-23b · 🧗 ПОДОЛАННЯ ПЕРЕШКОД: низька перемичка — присідаю сам, нижче — лягаю й повзу; блок до 60 см — ступаю, до ~1.2 м — перелізаю, до ~1.9 м — підтягуюсь (штовхни ще раз або потримай); меч на цей час у піхвах, камера йде за головою; стіни від 2 м, колони, замки й дім не лізуться · (10-23a) 🛏 ПОЗА: лежачи грається як стоячи — телефон догори = клинок уперед, курс і поворот по 90° без перекручувань (меч більше не йде крізь тіло), альбомна лежачи з допуском · 🎒 КИШЕНЯ ЕЛЕМЕНТІВ: газ, рідину й елементи можна забрати (долоню підняти над блоком чи кнопка) і поставити: куб · плита · стержень · панель, зверху · під · на висоті; газ і рідина в стеку самі розшаровуються за густиною · 🔥 ГОРІННЯ ГАЗІВ: вогняна куля, слово FIRE, молотов, бомба, ZAP чи плазма впритул запалюють H/O: 2H + O → блок води, зайве згоряє, поруч — спалах і дрібна шкода · 💧 AQ лише з водою в кишені або після хімічних синтезів · ⚗ ПЛАЗМУ БІЛЯ H/O ТЕПЕР МОЖНА ПОСТАВИТИ: блок з’являється перед тим, на який дивишся; питання «створити?» має кнопки й 10 с після голосу · (10-21a) 🧯 ЖУРНАЛ НЕ ТЕЧЕ: ловець помилок стояв усередині logE і з кожним рядком лога плодив слухачів і таймери (витік пам’яті, лавина при першій помилці) — тепер один раз · 🧹 ПАМʼЯТЬ НЕ ТЕЧЕ ПРИ ПЕРЕХОДАХ: блоки кімнат, прилавки жителів, мітки-текстури й другий клинок ворогів тепер звільняються (раніше ~175 геометрій на кімнату) · ☢ РЕАКТОР ЗАПУСКАЄТЬСЯ СТАБІЛЬНО: потік нейтронів накопичується біля джерела (≈6 с) — поділ більше не залежить від везіння; ⏸ МЕНЮ І ФОНОВА ВКЛАДКА = ПАУЗА для хімії/науки (радіація не вбиває, поки меню відкрите); у підказці реакторних дверей — скільки чекати · 10-20c: 💧 МОКРЕ ≠ ПІД СТРУМОМ: чиста вода — ізолятор (розряд біля неї — нічого, підказка), проводять іони: сіль/кислота/луг у воді → РОЗСІЛ; вода, що стоїть на камені чи піску, сама мінералізується; електроліз лише розсолу (H₂ + Cl₂ + NaOH), батарея Вольти і в розсолі; у чистій воді під розрядом гравець цілий, у розсолі — б’є; сувій «Вода і струм», загадка · 10-20b: ⚗ ЛАБОРАТОРІЯ НАУКИ під майстернею: колодязь у підвалі (3,5) → передпокій (зразки, кафедра загадок) → драбина → коридор реактивів (кислотні слимаки; ІРЖАВІ ДВЕРІ — терміт/домна) → мотузка → хімлаб (ВАПНЯКОВА ПРОБКА — кислота) → скеля → галерея балок і перегородок (дрони; СКЛЯНА ПЕРЕГОРОДКА — лазер He–Ne) → балки → квантова камера (СПІВОЧІ ДВЕРІ — спектр, ФОТОСЕЙФ — LUX, КВАНТОВИЙ СЕЙФ — заплутана пара) → шахта → вентиляція (кажани; ШЛЮЗ — доза, свинець) → колодязь → ядерний бункер (радіаційні привиди; РЕАКТОРНІ ДВЕРІ — керований реактор → сховище); усе безкоштовно; скрині з сувоями; кнопка меню ⚗ ЛАБОРАТОРІЯ · 🖐 ЛІНІЙНИЙ РУХ 3.1: залишок гравітації вчиться в тиші за дисперсією — рука не повзе · 🪜 переходи: вібро на щаблі в темряві, тупіт приземлення, VB_CUT.side · 🔋 БАТАРЕЯ ВОЛЬТИ (Zn + Cu у HCl → струм), ☢ дозиметр, стіни кімнат не реагують, жар навскіс · 10-20a: 🖐 ЛІНІЙНИЙ РУХ РУКИ 3.0: без смикання — НЧ-фільтр, мʼякий спокій без обнулень, мах глушить плавно, пружина на виході, гальмо біля межі (повзунки РУКА · ЛІНІЙНИЙ РУХ 3.0) · 🪜 ПЕРЕХОДИ МІЖ ПОВЕРХАМИ очима: камера лишається в голові, повільніший підхід, у темряві «вата» у вухах і кроки/щаблі, світло повертається без стрибка (VB_CUT.cam=side — бічна камера як було) · ⚗ НАУКА: 36 елементів Морзе, ХІМІЯ 2 з умовами (вода, нагрів, світло LUX, розряд ZAP, каталізатор Fe): луг, аміак (Габер), соляна кислота на світлі, іржа → терміт, домна, мідь і бронза, вапно → гашене → крейда, нейтралізація, електроліз · ☢ ЯДРО: ланцюг розпаду U→Th→Ra→Rn→Po→Pb, лічильник Гейгера, доза й захист (свинець ×10), Ra+Be → нейтрони → ртуть у золото, поділ урану: критичність без бору / реактор із бором, вода-сповільнювач, синтез H → He у плазмі · ⟨ψ| КВАНТИ: спектр-акорд елемента біля плазми, фотоефект (LUX/SUN за роботою виходу), лазер He–Ne, QUBIT — заплутана пара · 🧪 ЗАГАДКИ НАУКИ так/ні кивком (+2 душі, пояснення), самі після реакцій · 🎯 завдання: наукові продукти, нові елементи, загадки · 📜 11 нових сувоїв · ⚗ НАУКА довідник у меню · 10-11d: 🫧 СПОКІЙНО (АСМР) з меню: вібро коротше, удари через компресор, клинок шепоче за швидкістю вістря · 📋 ПРОТОКОЛ ТЕЙКІВ: 13 кроків голосом (нейтраль сама, кисть/лікоть/плече повільно й швидко, замах, присід, розвороти, крок, звʼязка), підписи самі, ЕРГОНОМІКА нейтралі → поза «стоячи · своя нейтраль» · 🎬 НАКЛАДКА: відео + датчики в одному файлі, рух ніг/рук з відео, дрейф курсу за тиловою камерою · 📊 ЗВЕДЕННЯ корпусу за підписами · 10-11c: ревізія без тестів гравця: ✶ НОКДАУН і від кругового замаху боса (×1.3 сили) і від ударів гравців по мережі (сила удару — у пакеті); після нокдауну ворог нависає 1.4 с; лежачи в першій особі тулуб і ноги прозорі; перекат — крен по колу (через ±180); ⏺ з нокдауну без зброї — не відмахнешся · 🧍 ПОЗА: меню → вікно вибору стоячи/сидячи/лежачи, кнопка «перекалібрувати», поза пишеться в тейк і застосовується при прогоні · ⏺ ТЕЙКИ: режим збережено → камери відкриваються самі, перший тейк до відкриття камер має відео, камери на весь екран — 3D не малюється; додзьо без ⏺: за 8 с нагадує, за 20 с — відлік як було · 💡 екран не гасне (Wake Lock) · 10-11b: 🧍 ПОЗА ГРАВЦЯ, ✶ НОКДАУН · 10-11a: ⏺ ТЕЙКИ, 🎥 ОПЕРАТОР';
 $('mWipe').onclick=()=>{
   if(!confirm('Стерти ВСІ збереження гри (квест, ресурси, крафт, кодекс)? Світ і налаштування лишаться.')) return;
   try{ ['vb3d_quest','vb3d_res','vb3d_unlocked','vb3d_codex','vb3d_tut_done'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -7684,6 +7688,7 @@ function fgPreviewInit(){                                   // живой 3D-п�
 $('mForge').onclick=()=>{ closeMenu(); $('forgePanel').style.display='flex'; fgPreviewInit(); };
 $('mSerp').onclick=()=>{ closeMenu(); if(SPR.active&&SPR.state!=='done'){ sprExit(); } else sprStart(); };   // (09-24b)
 try{ $('mDrill').onclick=()=>{ closeMenu(); if(DRILL.on) drillStop('меню'); else drillStart(); }; }catch(e){}   // (09-30p)
+try{ $('mProto').onclick=()=>{ closeMenu(); protoMenu(true); }; }catch(e){}   // (10-27a) протокол перевірки
 try{ $('mDojo').onclick=()=>{ closeMenu(); if(DOJO.on){ dojoPause('меню'); } else { const sv=dojoLoad(); dojoStart(null,{resume:!!(sv&&sv.i>0&&sv.i<=6)}); } }; }catch(e){}   // (09-27f/29j) пауза з меню, продовження з того ж удару
 $('fgClose').onclick=()=>{ $('forgePanel').style.display='none'; };
 $('fgKind').onclick=()=>{ FG.k=(FG.k+1)%FG.kinds.length; $('fgKind').textContent='ВИД: '+FG.kinds[FG.k][1]; };
@@ -8583,6 +8588,7 @@ function frame(now){
   try{ gestTick(dt); if(!(typeof TUT2!=='undefined' && TUT2.on)){ lessonTick(dt); dlgTick(dt); tourTick(dt); calTipTick(dt); guideTick(dt); } try{ mentorTalkTick(dt); }catch(e){ if(!window.__mtErr){ window.__mtErr=1; logE('НАСТАВНИК 🗣: '+e.message); } } mentorFaceTick(); if(typeof tut2Tick==='function') tut2Tick(dt); }catch(e){ if(!window.__dlgErr){ window.__dlgErr=1; logE('ДІАЛОГ: '+e.message); } }   // (09-24a) діалог рухом; (09-27b) провідник
   try{ civTick(dt); }catch(e){ if(!window.__civErr){ window.__civErr=1; logE('ЖИТЕЛІ: '+e.message); } }   // (09-27d) жителі білих кімнат
   try{ sprTick(dt); raccHudTick(); }catch(e){ if(!window.__sprErr){ window.__sprErr=1; logE('СЕРПАНТИН: '+e.message); } }   // (09-24b)
+  try{ protoTick(dt); }catch(e){ if(!window.__protoErr){ window.__protoErr=1; logE('ПЕРЕВІРКА: '+e.message+' @ '+String(e.stack||'').split('\n')[1]); } }   // (10-27a) протокол перевірки збірки
   try{ playerNoiseTick(dt); clingTick(dt); }catch(e){}   // (09-22b) шум гравця + повзуни на клинку
   try{ swordClashTick(dt); }catch(e){ if(!window.__clashErr){ window.__clashErr=1; logE('ЗІТКНЕННЯ: '+e.message); } }   // (09-22d) клинок об клинок
   try{ npcClashTick(dtW); }catch(e){}                                                                   // (09-22i) наставник × ворог
@@ -16174,6 +16180,7 @@ function mechClimbEntry(o){ const g=new THREE.Group(); g.frustumCulled=false; co
 /* ── спеціальні кімнати (поза мапою 13×13): шахти й місця, куди вони ведуть ── */
 function specialRoomOf(rx,ry){
   { const L=(typeof labRoomOf==='function')?labRoomOf(rx,ry):null; if(L) return L; }   // (10-20b) лабораторія
+  if(rx===21 && ry===21) return {type:'range', name:'Полігон перевірки', sym:'🧪', bg:0x07111c, accent:'#fbbf24', ring:'Si', tint:0x3b4452};   // (10-27a) протокол перевірки
   if(rx===20 && ry===6) return {type:'attic', name:'Горище', sym:'△', bg:0x0d0a07, accent:'#e2c08d', ring:'C', tint:0x5b3a1d};
   if(rx===19 && ry===7) return {type:'cave', name:'Печера під колодязем', sym:'◒', bg:0x04070a, accent:'#7dd3fc', ring:'Si', tint:0x2f3540};
   if(rx===20 && ry===4) return {type:'lamp', name:'Ліхтарня маяка', sym:'✺', bg:0x050816, accent:'#fde047', ring:'glass', tint:0x9fd8ff};
@@ -16181,13 +16188,14 @@ function specialRoomOf(rx,ry){
   if(ry===30 && rx>=30 && rx<=42){ const R=climbRouteOfShaft(rx,ry); return {type:'shaft', name:'Шахта — '+(R?R.name.toLowerCase():'?'), sym:'⇕', bg:0x05060a, accent:'#94a3b8', ring:'Si', tint:0x2b2f38, route:R?R.id:null}; }
   return null; }
 window.specialRoomOf=specialRoomOf;
-const ROOMTYPE_NAME2={attic:'Горище',cave:'Печера',lamp:'Ліхтарня',catacomb:'Катакомби',shaft:'Шахта',lab:'Лабораторія'};
+const ROOMTYPE_NAME2={attic:'Горище',cave:'Печера',lamp:'Ліхтарня',catacomb:'Катакомби',shaft:'Шахта',lab:'Лабораторія',range:'Полігон'};
 function specialRoomInterior(type, put, rock){
   if(type==='attic'){ for(const [x,y] of [[2,2],[3,2],[2,3],[10,2],[10,3],[9,2],[2,10],[3,10],[10,10],[10,9],[9,10]]) put(x,y,'C',0x6b4423,'cube',0.7);
     for(const [x,y] of [[4,4],[8,4],[4,8],[8,8]]) put(x,y,'C',0x4a2f17,'post',1.0); }
   else if(type==='cave'){ for(const [x,y] of [[2,2],[3,5],[2,8],[4,10],[8,10],[10,8],[10,4],[8,2],[5,3]]) rock(x,y); }
   else if(type==='catacomb'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9],[4,6],[8,6]]) put(x,y,'Si',0x57534e,'post',1.1); }
-  else if(type==='lamp'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,'Fe',0x4b5563,'post',1.0); } }
+  else if(type==='lamp'){ for(const [x,y] of [[3,3],[9,3],[3,9],[9,9]]) put(x,y,'Fe',0x4b5563,'post',1.0); }
+  else if(type==='range'){ for(const [x,y] of [[8,9],[8,10],[8,11],[4,9],[4,10],[4,11]]) put(x,y,'Si',0x4b5563,'cube',1.1); for(const [x,y] of [[3,3],[9,3]]) put(x,y,'Fe',0x4b5563,'post',1.0); } }   /* (10-27a) полігон: дві колони-кишені біля південної стіни, два стовпи на півночі, вільний центр */
 /* ── механізми спеціальних кімнат і входів на мапі ── */
 function climbMechBuild(rx,ry){
   for(const id in CLIMB_ROUTES){ const R=CLIMB_ROUTES[id];
@@ -16788,7 +16796,7 @@ function fenceThreat(ph, PB){ if(!PB || !PB.drawn) return {on:false};
 function fenceOpenLine(ph, PB, O){ if(!PB){ const k=O&&O.av&&O.av.kind; if(k==='crawler') return 'low'; if(k==='flyer') return 'high'; return 'mid'; } const y=PB.t.y; if(y>1.4) return 'low'; if(y<0.85) return 'high'; return 'mid'; }
 function fenceLog(ph, F, txt, lvl){ if(!(VB_FENCE.say>0)) return; if((lvl||1)>VB_FENCE.say) return; const now=performance.now()/1000; if(now-(F.logT||0)<(VB_FENCE.say>=2?0.5:1.2)) return; F.logT=now; try{ logE((ph.ally?'НАСТАВНИК ':'МЕЧНИК ')+(ph.fwpn?ph.fwpn.ua:'')+(ph.shield?'+щит':'')+': '+txt); }catch(e){} }   /* say=1 — лише рішення (парирує, збиває, обходить, відступає); say=2 — і кожен удар */
 function fenceMove(ph, nx, ny){ nx=clamp(nx,0,12); ny=clamp(ny,0,12); if(nx===ph.gx && ny===ph.gy) return false; if(isCellOccupied(nx,ny,ph)) return false; ph.gx=nx; ph.gy=ny; return true; }
-function fenceStrikeStart(ph, F, name, feint, beat){ const W=ph.fwpn||FENCE_WPN[0]; const A=LAB_ANIMS[name]; const T=A?A.keys[A.keys.length-1].t:1.1;
+function fenceStrikeStart(ph, F, name, feint, beat){ try{ protoEvent('strike',{ally:!!ph.ally,name,feint:!!feint,beat:!!beat,kind:ph.kind||'fighter',st:(F&&F.st)||''}); }catch(e){} const W=ph.fwpn||FENCE_WPN[0]; const A=LAB_ANIMS[name]; const T=A?A.keys[A.keys.length-1].t:1.1;
   let uc=0.45; try{ const k=A.keys.find(k=>k.mark==='CONTACT'); if(k) uc=k.t/T; }catch(e){}
   const dur=(VB_FENCE.strikeDur||0.72)/W.speed/(ph.swingSpeed||1);
   const d2=beat?dur*(VB_FENCE.beatDur||0.6):(feint?dur*0.35:dur);
@@ -16850,7 +16858,7 @@ function fenceOppNpc(av){ return av._fopp||(av._fopp={ local:false, av,
   hit(ph,hp,name){ return fenceHitNpc(ph,av,hp,name); } }); }
 /* зіткнення клинків істот: дзенькіт, нападника оглушено, захисник — у рипост */
 function fenceClashNpc(att, def, hp){
-  const now=performance.now(); def._clashT=now; att._clashT=now;
+  const now=performance.now(); def._clashT=now; att._clashT=now; try{ protoEvent('clash',{attAlly:!!att.ally,defAlly:!!def.ally}); }catch(e){}
   try{ if(def.ai && def.ai.F) def.ai.F.parryMet=true; }catch(e){}
   att.ai=att.ai||{}; att.ai.stunT=Math.max(att.ai.stunT||0,0.45); att.strikeT=0; if(att.ai.windT) att.ai.windT=0;
   try{ if(att.ai.F){ att.ai.F.st='recover'; att.ai.F.t=0; att.ai.F.wait=0.4; att.ai.F.missed=(att.ai.F.missed||0)+1; } }catch(e){}
@@ -16873,6 +16881,7 @@ function fenceShieldNpc(att, def, hp){
 /* наставника влучили: HP падає, але не нижче 1 (його не здолати, поки живий хоч один ворог); поріг — відступ */
 function allyHurt(a, dmg, hp, att, name){
   if(!a || a.dead || (typeof MENTOR!=='undefined' && MENTOR.tatamiMode)) return;
+  try{ protoEvent('allyhurt',{dmg,name,att:att&&att.kind||'?'}); }catch(e){}   // (10-27a)
   a.hp=Math.max(1,(a.hp||a.maxHp||100)-dmg); MENTOR.hpPct=clamp(a.hp/(a.maxHp||a.hp||1),0,1);
   a.painT=0.35; a.hitGlow=0.3; a._showT=0.6; a.ai=a.ai||{}; a.ai.stunT=Math.max(a.ai.stunT||0,0.28); a.strikeT=0;
   try{ if(a._rigS) a._rigS.recoil=1; }catch(e){}
@@ -16885,6 +16894,7 @@ function allyHurt(a, dmg, hp, att, name){
 }
 /* ефекти удару по істоті (так само, як ribDamage для гравця): іскри, уламки, звук, оглушення, ціль запам'ятовує, хто б'є */
 function npcHitFx(att, def, hp, dmg, name, tier){
+  try{ protoEvent('allyhit',{def:def.kind||'fighter',dmg,tier,name}); }catch(e){}   // (10-27a)
   def.hitGlow=0.3; def._showT=0.6; def.aware=true; def.painT=Math.max(def.painT||0,0.3);
   def.ai=def.ai||{}; def.ai.stunT=Math.max(def.ai.stunT||0,dmg>0?0.3:0.5);
   if(att.ally) def._foeAllyT=performance.now()+4500;
@@ -19457,7 +19467,7 @@ function dismLost(dm, limb, how, info, hp){
   const av=dm.av, L=dm.limbs[limb]; if(L) L.lost=true; dm.lost[limb]=how;
   const names={ head:'голову знесено', neck:'голову знесено', torso:'розрубано навпіл', pelvis:'розрубано навпіл', armR:'відсічено руку з клинком', armL:'відсічено руку зі щитом', legL:'відсічено ногу', legR:'відсічено ногу',
     wingL:'відсічено крило', wingR:'відсічено крило', jaw:'відсічено щелепу', barrel:'відсічено ствол', shL:'відсічено плече', shR:'відсічено плече із сокирою' };
-  const say=names[limb]||('відсічено: '+limb); dismLog((av.kind||'істота')+' — '+say+' ('+how+')'); DISM.last={limb,how,t:performance.now(),kind:av.kind||'fighter',ally:!!av.ally};
+  const say=names[limb]||('відсічено: '+limb); dismLog((av.kind||'істота')+' — '+say+' ('+how+')'); DISM.last={limb,how,t:performance.now(),kind:av.kind||'fighter',ally:!!av.ally}; try{ protoEvent('sever',{limb,how,kind:av.kind||'fighter',ally:!!av.ally,player:av===player,by:(info&&info.by)||null}); }catch(e){}
   if(!dm.slow0) dm.slow0={ slow:av.slow, hover:av.hover, shootT:av.shootT };
   const ally=!!av.ally||av===player, pos=hp||av.mesh.position;
   try{ dismSnd('cut',pos,1); if(info&&info.by==='player'||!info||info.by==null){ buzz([0,45,25,80]); showBanner('🗡 '+say.toUpperCase(),'#fbbf24'); } }catch(e){}
@@ -19498,6 +19508,7 @@ function dismHit(av, hp, info){
   try{ av.mesh.updateMatrixWorld(true); }catch(e){}
   const nr=dismNearest(dm,hp), P=nr.P; if(!P) return false;
   dm.hits++; const dmg=info.dmg||10;
+  try{ protoEvent('dhit',{kind,by:info.by||null,who:(av===player?'player':(av.ally?'ally':(av.kind||'?'))),dmg,limb:P.limb||null,lethal:!!info.lethal}); }catch(e){}   // (10-27a)
   const sharp={blade:1,pierce:0.55,bullet:0.5,burn:0.6,crush:1.4,area:0.8}[kind]??1;
   const nChip=Math.max(2,Math.round(clamp(dmg*0.9,6,70)*VB_DISM.chip*sharp));   // вм'ятина: ≈ шкода×0.9 вокселів (22 → 20, 40 → 36, 75 → 67)
   const out=info.out||hp, bias=info.v?info.v.clone().multiplyScalar(0.4):null;
@@ -19550,7 +19561,7 @@ function dismMeltStart(dm, cW, style){
     for(let id=0;id<V.n;id++){ if(!V.alive[id]) continue; dismCenter(V,id,_dsV1).applyMatrix4(M); list.push({d:_dsV1.distanceTo(cW)+Math.random()*0.2,P,id}); } }
   list.sort((a,b)=>a.d-b.d);
   dm.melt={ list, i:0, t:-VB_DISM.meltDelay, dur:VB_DISM.meltT, c:cW.clone(), style:style||'burst', burnSet:false };
-  DISM.melt.add(dm); DISM.n.melt++; dismSnd('melt',cW,1); }
+  DISM.melt.add(dm); DISM.n.melt++; dismSnd('melt',cW,1); try{ protoEvent('melt',{kind:dm.av.kind||'?',ally:!!dm.av.ally,player:dm.av===player}); }catch(e){} }
 function dismMeltTick(dm, dt){
   const M=dm.melt; if(!M){ DISM.melt.delete(dm); return; } M.t+=dt; if(M.t<0) return;
   if(M.style==='burn' && !M.burnSet){ M.burnSet=true; dm.burnT=Math.max(dm.burnT||0,3); for(const P of dm.parts){ if(P.vx){ for(let id=0;id<P.vx.n;id++){ if(P.vx.alive[id] && P.vx.chr[id]<0.3) P.vx.chr[id]=0.3; } P.vx.dirty=true; DISM.act.add(P); } } }
@@ -19594,7 +19605,7 @@ function dismHealTick(dm, dt, tm){
   for(let tries=0;tries<2;tries++){ const P=hurt[Math.floor(Math.random()*hurt.length)]; const V=P&&P.vx; if(!V||P.gone) continue;
     let id=Math.floor(Math.random()*V.n), ok=false; for(let s=0;s<V.n;s++){ const k=(id+s)%V.n; if(V.alive0[k] && !V.alive[k]){ id=k; ok=true; break; } } if(!ok) continue;
     V.alive[id]=1; V.na++; dm.nDead=Math.max(0,dm.nDead-1); V.heat[id]=0.55; V.dirty=true; DISM.act.add(P); if(V.inst&&!V.inst.visible&&V.na>0){ V.inst.visible=true; P.gone=false; } } }
-function dismRegrow(dm){ const av=dm.av; dismLog('наставник відновлює тіло'); dismRestore(av,true); try{ dismSnd('melt',av.mesh.position,0.6); }catch(e){} }
+function dismRegrow(dm){ const av=dm.av; dismLog('наставник відновлює тіло'); try{ protoEvent('regrow',{}); }catch(e){} dismRestore(av,true); try{ dismSnd('melt',av.mesh.position,0.6); }catch(e){} }
 
 /* ── ЩОКАДРОВЕ ── */
 function dismClearAll(){
@@ -19655,7 +19666,7 @@ function dismBurnArea(p, R, amt){
 /* ── МЕНЮ: 🗡 РУЙНУВАННЯ ТІЛ — ПОВНЕ / ЛИШЕ РАНИ / ВИМК (зберігається; страховка для слабких телефонів і для порівняння) ── */
 var DISM_MODES=[ ['ПОВНЕ',{on:1,sever:1}], ['ЛИШЕ РАНИ',{on:1,sever:0}], ['ВИМК',{on:0,sever:0}] ];
 function dismModeSet(i, quiet){
-  i=((i%3)+3)%3; DISM.mode=i; const m=DISM_MODES[i][1]; VB_DISM.on=m.on; VB_DISM.sever=m.sever;
+  i=((i%3)+3)%3; DISM.mode=i; try{ protoEvent('dmode',{i}); }catch(e){} const m=DISM_MODES[i][1]; VB_DISM.on=m.on; VB_DISM.sever=m.sever;
   if(!m.on){ try{ for(const dm of Array.from(DISM.ents)){ try{ if(dm.av && !dm.av.dead) dismRestore(dm.av); }catch(e){} dismDrop(dm); } dismClearAll(); }catch(e){ dismErr('вимкнення',e); } }
   try{ localStorage.setItem('vb_dism_mode',String(i)); }catch(e){}
   try{ const b=document.getElementById('mDism'); if(b) b.textContent='🗡 РУЙНУВАННЯ ТІЛ: '+DISM_MODES[i][0]; }catch(e){}
@@ -19688,6 +19699,394 @@ function dismRemoteTick(step){
       if(dm && dm.remote){ const broken=!!(dm.melt||dm.melted||dm.lethalDone||Object.keys(dm.lost).length);
         if(broken){ if(!r._dsAlive) r._dsAlive=now; if(now-r._dsAlive>600){ r._dsAlive=0; dismRestore(r.av,true); } }
         else { r._dsAlive=0; dismHealTick(dm,step,clamp((1-hp/100)*0.5,0,0.5)); } } } } }
+
+
+/* ═══ (10-27a) ПЕРЕВІРКА ЗБІРКИ — протокол усередині гри ════════════════════════════════════════════════════
+   Що це: сценарій перевірки збірки, який веде наставник. Кожен крок — коротка інструкція голосом і на панелі;
+   полігон — окрема кімната (21,21) з колонами-кишенями й вільним центром, ворогів і зброю кожен крок ставить сам;
+   гра сама бачить, коли пункт виконано (події бою та руйнування — protoEvent), каже «зараховано» й за кілька секунд
+   переходить далі. Крок із питанням (чутно? плавно?) — відповідь ТАК/НІ кнопками або кивком/похитуванням.
+   Запуск: меню ⏸ → «🧪 ПЕРЕВІРКА ЗБІРКИ» або 🗣 наставник → «🧪 ПЕРЕВІРКА ЗБІРКИ». Прогрес зберігається
+   (можна продовжити з того ж кроку); наприкінці — звіт: у журнал, у буфер обміну, на панель.
+   Сценарії — PROTO_SCEN (на кожну збірку свій; «швидка» — найважливіше за 5 хвилин). */
+var VB_PROTO={ on:1, autoNext:3.0, limit:90, hintAt:35, keepHp:30, room:[21,21], say:1, park:[2,2] };
+var PROTO={ on:false, sc:null, i:0, step:null, S:null, st:'idle', ev:[], res:[], ui:null, hold:false, prev:null, saveK:'vb_proto_v1', tick:0, nextT:0, fps:null, wpn0:3, view0:null, dismMode0:0, dmg0:null, startedAt:0, menu:null };
+window.VB_PROTO=VB_PROTO; window.PROTO=PROTO;
+function protoEvent(k,d){ try{ if(!PROTO.on) return; const e=Object.assign({k,t:performance.now()/1000},d||{}); PROTO.ev.push(e); if(PROTO.ev.length>900) PROTO.ev.splice(0,300); }catch(e){} }
+window.protoEvent=protoEvent;
+function protoEv(S,k,f){ const out=[], ev=PROTO.ev; for(let i=S.ev0;i<ev.length;i++){ const e=ev[i]; if(e.k===k && (!f||f(e))) out.push(e); } return out; }
+function protoLog(t){ try{ logE('ПЕРЕВІРКА: '+t); }catch(e){} }
+function protoSay(t, now){ if(!(VB_PROTO.say>0) || !t) return;
+  try{ const a=ALLY.ph; if(now){ SAY.queue.length=0; SAY.cur=null; SAY.t=0; try{ ttsFlush(); }catch(e){} }
+    if(a && !a.dead && !a.allyMad && typeof mentorLine==='function'){ MDQ.mute=0; mentorLine(t,'neutral'); } else ttsSpeak(t,{}); }catch(e){} }
+function protoFoes(){ return phantoms.filter(p=>p && !p.ally); }
+function protoClearFoes(){
+  for(const p of phantoms.slice()){ if(!p || p.ally) continue; try{ disposeAvatar(p); }catch(e){} const i=phantoms.indexOf(p); if(i>=0) phantoms.splice(i,1); }
+  try{ if(typeof CLING!=='undefined'){ for(const p of CLING.list) p.clinging=false; CLING.list.length=0; VB_WEAPON.clingMass=0; VB_WEAPON.sag=0; } }catch(e){}
+  try{ WAVES.left=0; WAVES.total=0; }catch(e){} }
+/* ворог для кроку: вид, клітинка, HP, зброя, навички; regen — нижче цього HP не падає (опудало не вмирає, поки крок не виконано) */
+function protoSpawn(kind, gx, gy, o){ o=o||{}; const ph=makePhantom(0,kind||'fighter');
+  ph.gx=gx; ph.gy=gy; ph.px=gx; ph.pz=gy; ph.dead=false; ph.respawnT=1e9; ph.aware=true; ph.kata=null; ph._protoTag=o.tag||kind;
+  if(o.hp!=null){ ph.hp=o.hp; ph.maxHp=o.hp; }
+  if(ph.kind==='fighter'){ try{ if(o.wpn){ const w=FENCE_WPN.find(w=>w.id===o.wpn); if(w){ ph.fwpn=w; ph._fwLook=null; } } if(o.shield!=null) ph.shield=!!o.shield; if(o.sk && ph.fskill) Object.assign(ph.fskill,o.sk); }catch(e){} }
+  if(o.regen) ph._protoRegen=o.regen;
+  if(o.target==='mentor'){ ph._foeAllyT=performance.now()+9e7; }   /* мечник обирає ціллю наставника */
+  phantoms.push(ph); return ph; }
+function protoPlacePlayer(gx,gy,dir){ try{ player.gx=gx; player.gy=gy; player._cont=false; player.cx=gx; player.cy=gy; player.vgx=gx; player.vgy=gy; if(dir!=null){ player.dirIdx=dir; player.visYaw=0; } player.dead=false; player.hp=100; player.stamina=100; }catch(e){} }
+function protoMentor(){ try{ const a=ALLY.ph; if(a && !a.dead && phantoms.indexOf(a)>=0 && !a.allyMad) return a; }catch(e){} return null; }
+function protoMentorEnsure(){ let a=protoMentor(); if(a) return a;
+  try{ DLG.openedOnce=true; MENTOR._metOnce=true; MENTOR.tatamiMode=false; }catch(e){}
+  try{ allySpawn(1); }catch(e){} try{ SAY.queue.length=0; }catch(e){}
+  a=protoMentor(); if(a){ try{ a.hp=a.maxHp; MENTOR.hpPct=1; mentorSetState('FOLLOW','перевірка'); }catch(e){} } return a; }
+function protoMentorPlace(gx,gy){ const a=protoMentor(); if(!a) return; a.gx=gx; a.gy=gy; a.px=gx; a.pz=gy; a.strikeT=0; if(a.ai){ a.ai.stunT=0; a.ai.moveT=0; } }
+function protoParkMentor(force){ const a=protoMentor(); if(!a) return; const [px,py]=VB_PROTO.park; if(force || a.gx!==px || a.gy!==py) protoMentorPlace(px,py);
+  a.strikeT=0; try{ if(MENTOR.state==='COMBAT') mentorSetState('FOLLOW','перевірка: наставник чекає'); }catch(e){} }
+function protoMentorHeal(){ const a=protoMentor(); if(!a) return; try{ a.hp=a.maxHp||220; MENTOR.hpPct=1; a._hpBand=0; if(MENTOR.state==='RETREAT'||MENTOR.state==='INJURED') mentorSetState('FOLLOW','перевірка: здоровий'); if(a._dm) dismRestore(a,false); a._noArmR=false; a.disarmed=false; }catch(e){} }
+function protoDm(av){ try{ return av&&av._dm||null; }catch(e){ return null; } }
+function protoInRoom(){ try{ return ADV.on && ADV.rx===VB_PROTO.room[0] && ADV.ry===VB_PROTO.room[1]; }catch(e){ return false; } }
+function protoEnterRoom(){ const [rx,ry]=VB_PROTO.room;
+  try{ if(typeof PROLOGUE!=='undefined') PROLOGUE.done=true; }catch(e){}
+  try{ if(MENTOR.tatamiMode && typeof TAT!=='undefined' && TAT.stage && TAT.stage!=='idle' && TAT.stage!=='FREE_PLAY'){ tatClearTimers(); tutorialComplete(); protoLog('навчання завершено достроково'); } }catch(e){}
+  try{ MENTOR.tatamiMode=false; }catch(e){}
+  try{ if(typeof TUT!=='undefined' && TUT){ TUT.active=false; TUT.requested=false; } }catch(e){}
+  try{ if(typeof SPR!=='undefined' && SPR.active) sprExit(); }catch(e){}
+  try{ if(typeof DOJO!=='undefined' && DOJO.on) dojoPause('перевірка'); }catch(e){}
+  try{ if(typeof DRILL!=='undefined' && DRILL.on) drillStop('перевірка'); }catch(e){}
+  try{ if(typeof FREE!=='undefined' && FREE.on) freeSet(false,'перевірка'); }catch(e){}
+  if(!ADV.on){ ADV.on=true; try{ $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): УВІМК'; player.mods={dmg:1,charge:1,reach:0}; }catch(e){} }
+  try{ roomEdits.delete(rx+','+ry); }catch(e){}   /* полігон щоразу за планом, а не зі знімка з розбитими колонами */
+  applyAdvRoom(rx,ry); try{ NET.advPub(); }catch(e){}
+  protoRoomFix();
+  try{ GUIDE.pending=null; }catch(e){}
+  protoClearFoes(); protoPlacePlayer(6,8,0);
+  try{ SHEATH.drawn=true; SHEATH.lastDrawT=performance.now(); SHEATH.stillT=0; }catch(e){}
+  protoMentorEnsure(); protoMentorPlace(7,8); }
+function protoRoomFix(){ try{ const need=[[8,9],[8,10],[8,11],[4,9],[4,10],[4,11]]; let n=0; window.__structBuild=true; try{ for(const [x,y] of need){ if(!obstacleAt(x,y)){ addObstacle(x,y,'Si',new Set(),0x4b5563,1.1,'cube',0,null,0,true); n++; } } } finally{ window.__structBuild=false; } if(n) protoLog('полігон: відновлено колон '+n); }catch(e){ protoLog('полігон: '+e.message); } }
+function protoLeaveRoom(){ const p=PROTO.prev; protoClearFoes();
+  try{ if(p){ if(!p.adv){ ADV.on=false; try{ $('mAdv').textContent='🚪 ПРИГОДА (13×13 мета): ВИМК'; clearRacks(); clearShots(); spawnObstacles(); spawnPhantoms(phantomCount=1); }catch(e){} }
+      else { applyAdvRoom(p.rx,p.ry); try{ NET.advPub(); }catch(e){} protoPlacePlayer(6,6,0); } } }catch(e){ protoLog('повернення: '+e.message); } }
+/* ── запуск / кроки / завершення ── */
+function protoScen(id){ return PROTO_SCEN.find(s=>s.id===id)||null; }
+function protoStart(id, from){ const sc=protoScen(id); if(!sc){ protoLog('сценарію «'+id+'» немає'); return; }
+  if(PROTO.on) protoExit(true);
+  try{ if(typeof started!=='undefined' && !started){ showBanner('Спершу увійди в гру','#f59e0b'); return; } }catch(e){}
+  try{ if(mode!=='fighter'){ showBanner('Перевірка — лише в режимі бійця','#f59e0b'); return; } }catch(e){}
+  PROTO.prev={ adv:!!ADV.on, rx:ADV.rx, ry:ADV.ry }; PROTO.wpn0=VB_WPN.kind; PROTO.view0=null; PROTO.dismMode0=DISM.mode; PROTO.dmg0=JSON.stringify(VB_ALLYF.dmg);
+  PROTO.sc=sc; PROTO.i=clamp(from|0,0,sc.steps.length-1); PROTO.res=(from>0 && PROTO._saved && PROTO._saved.sc===id)?(PROTO._saved.res||[]):[]; PROTO.ev.length=0; PROTO.on=true; PROTO.startedAt=performance.now();
+  try{ dismModeSet(0,true); }catch(e){}
+  protoEnterRoom();
+  try{ if(VB_PROTO.say>0) ttsFlush(); }catch(e){}
+  protoLog('старт «'+sc.title+'» · кроків '+sc.steps.length+(PROTO.i?' · з кроку '+(PROTO.i+1):'')+' · '+BUILD_TAG.slice(0,11));
+  protoUi(true);
+  protoSay((PROTO.i?'Продовжуємо перевірку. ':'Починаємо перевірку збірки. ')+'Я кажу, що зробити, і скажу, коли зараховано. Кнопки на панелі: ще раз, повторити, пропустити, вийти.', true);
+  setTimeout(()=>{ if(PROTO.on && PROTO.sc===sc) protoStepBegin(1); }, 900); }
+function protoStepBegin(tries){ const sc=PROTO.sc, st=sc.steps[PROTO.i]; if(!st){ protoFinish(); return; }
+  PROTO.step=st; const S=PROTO.S={ t:0, t0:performance.now()/1000, ev0:PROTO.ev.length, data:{}, note:'', prog:'', hinted:0, tries:tries||1 };
+  PROTO.st='run'; try{ if(DLG.q && /^PROTO_/.test(DLG.q.id||'')) DLG.q=null; mentorAskUi(false); }catch(e){}
+  if(!protoInRoom()) protoEnterRoom();
+  protoClearFoes(); try{ player.hp=100; player.stamina=100; player.dead=false; player.disarmed=false; }catch(e){}
+  try{ VB_ALLYF.dmg=JSON.parse(PROTO.dmg0||'null')||VB_ALLYF.dmg; }catch(e){}
+  protoMentorEnsure(); protoMentorHeal();
+  PROTO.hold=!!st.hold; if(st.hold) protoParkMentor(true); else { const a=protoMentor(); if(a && st.mentorAt) protoMentorPlace(st.mentorAt[0],st.mentorAt[1]); }
+  if(st.playerAt) protoPlacePlayer(st.playerAt[0],st.playerAt[1],st.playerDir);
+  try{ const w=(st.wpn!=null)?st.wpn:3; if(VB_WPN.kind!==w) weaponKindSet(w,false); SHEATH.drawn=true; }catch(e){}
+  try{ if(st.view){ if(PROTO.view0==null) PROTO.view0=CAM.view; CAM.view=st.view; } else if(PROTO.view0!=null){ CAM.view=PROTO.view0; PROTO.view0=null; } }catch(e){}
+  try{ if(st.setup) st.setup(S); }catch(e){ protoLog('крок '+st.id+': підготовка — '+e.message); }
+  const n=PROTO.i+1, N=sc.steps.length; const say=(typeof st.say==='function')?st.say(S):st.say;
+  if(S.skipNow){ protoSay('Крок '+n+' з '+N+'. '+st.title+'. '+(S.note||'')+' — пропускаю.', true); protoUiRefresh(); protoDone('skip', S.note, true); return; }
+  protoSay('Крок '+n+' з '+N+'. '+st.title+'. '+(say||''), true);
+  if(st.manual){ PROTO.st='ask'; setTimeout(()=>{ if(PROTO.on && PROTO.step===st && PROTO.st==='ask') protoAsk(st); }, 400); }
+  protoLog('крок '+n+'/'+N+' «'+st.title+'»'+(S.tries>1?' · спроба '+S.tries:''));
+  protoUiRefresh(); }
+function protoAsk(st){ try{ mentorAsk({ id:'PROTO_'+st.id, text:st.manual, hint:'Кивни — так, похитай — ні. Або кнопки ТАК і НІ на панелі.', reaskT:30,
+    onYes:()=>{ if(PROTO.on && PROTO.step===st) protoDone('yes'); }, onNo:()=>{ if(PROTO.on && PROTO.step===st) protoDone('no'); } }); }catch(e){ protoLog('питання: '+e.message); } }
+function protoCapture(S){ try{ const out=[]; for(const l of LOG){ const t=parseFloat(l.slice(1)); if(!(t>=S.t0-0.05)) continue; if(/РУЙНУВАННЯ|НАСТАВНИК |наставника влучили|ПАРИРУВАВ|ФАНТОМ убито|ПОСТРІЛ|БЛАСТЕР|ПРОГРИЗ|наставник: /.test(l) && !/ПЕРЕВІРКА/.test(l)) out.push(l.slice(0,120)); if(out.length>=10) break; } return out; }catch(e){ return []; } }
+function protoDone(status, note, noSay){ const st=PROTO.step, S=PROTO.S; if(!st || !S) return; if(PROTO.st==='done' || PROTO.st==='end') return;
+  try{ if(st.teardown) st.teardown(S); }catch(e){}
+  try{ if(DLG.q && /^PROTO_/.test(DLG.q.id||'')) DLG.q=null; mentorAskUi(false); }catch(e){}
+  const r={ id:st.id, title:st.title, st:status, t:+S.t.toFixed(1), note:(note||S.note||''), tries:S.tries||1, log:protoCapture(S) };
+  PROTO.res[PROTO.i]=r; protoSave();
+  const txt={ok:'✓ зараховано',skip:'⏭ пропущено',yes:'✓ так',no:'✗ ні',fail:'✗ не вийшло'}[status]||status;
+  protoLog((PROTO.i+1)+'/'+PROTO.sc.steps.length+' '+st.title+' — '+txt+' · '+r.t+' с'+(r.note?' · '+r.note:''));
+  PROTO.st='done'; PROTO.nextT=(status==='ok'||status==='yes')?VB_PROTO.autoNext:1.8;
+  try{ if(status==='ok'||status==='yes'){ blip(880,0.08,'sine',0.12); setTimeout(()=>{ try{ blip(1320,0.12,'sine',0.12); }catch(e){} },110); buzz([0,30,30,30]); } else blip(240,0.15,'square',0.1); }catch(e){}
+  const last=(PROTO.i+1>=PROTO.sc.steps.length);
+  if(!noSay) protoSay((status==='ok'?'Зараховано.':status==='yes'?'Добре, записав: так.':status==='no'?'Записав: ні.':status==='skip'?'Пропускаємо.':'Записав: не вийшло.')+(last?'':' Далі.'), true);
+  protoUiRefresh(); }
+function protoFail(why){ const st=PROTO.step, S=PROTO.S; if(!st||!S) return; if(PROTO.st!=='run') return;
+  PROTO.st='fail'; S.note=why; protoLog('крок «'+st.title+'»: '+why);
+  try{ blip(240,0.15,'square',0.1); }catch(e){}
+  protoSay('Не вийшло: '+why+'. '+(st.hint?st.hint+' ':''), true);
+  try{ mentorAsk({ id:'PROTO_RETRY_'+st.id, text:'Повторити цей крок?', hint:'Кивни — так. Похитай — ні, пропустимо.', reaskT:30,
+    onYes:()=>{ if(PROTO.on && PROTO.step===st && PROTO.st==='fail') protoRetry(); }, onNo:()=>{ if(PROTO.on && PROTO.step===st && PROTO.st==='fail') protoDone('fail',why); } }); }catch(e){}
+  protoUiRefresh(); }
+function protoRetry(){ const S=PROTO.S; const tries=(S&&S.tries||1)+1; try{ if(DLG.q && /^PROTO_/.test(DLG.q.id||'')) DLG.q=null; mentorAskUi(false); }catch(e){} protoStepBegin(tries); }
+function protoSkip(){ if(!PROTO.on || !PROTO.step) return; if(PROTO.st==='done') return; PROTO.st='run'; protoDone('skip'); }
+function protoNext(){ if(!PROTO.on) return; PROTO.i++; if(PROTO.i>=PROTO.sc.steps.length) protoFinish(); else protoStepBegin(1); }
+function protoRepeatSay(){ const st=PROTO.step; if(!st) return; const say=(typeof st.say==='function')?st.say(PROTO.S):st.say; protoSay('Крок '+(PROTO.i+1)+'. '+st.title+'. '+(say||'')+(st.hint?' '+st.hint:''), true); if(PROTO.st==='ask') setTimeout(()=>{ if(PROTO.st==='ask' && !DLG.q) protoAsk(st); },500); }
+function protoSave(){ try{ localStorage.setItem(PROTO.saveK, JSON.stringify({ sc:PROTO.sc.id, i:PROTO.i, res:PROTO.res, t:Date.now(), build:BUILD_TAG.slice(0,11) })); }catch(e){} }
+function protoLoad(){ try{ const o=JSON.parse(localStorage.getItem(PROTO.saveK)||'null'); PROTO._saved=o; return o; }catch(e){ return null; } }
+function protoClearSave(){ try{ localStorage.removeItem(PROTO.saveK); }catch(e){} PROTO._saved=null; }
+function protoFinish(){ if(!PROTO.on) return; PROTO.st='end'; PROTO.step=null; PROTO.hold=false; protoClearFoes();
+  const rep=protoReport(); PROTO.lastReport=rep;
+  for(const l of rep.split('\n')) { try{ logE(l); }catch(e){} }
+  try{ localStorage.setItem(PROTO.saveK+'_report', rep); }catch(e){}
+  protoClearSave();
+  const c=protoCounts(); protoSay('Перевірку завершено. Зараховано '+c.ok+' з '+c.n+(c.fail?', не вийшло '+c.fail:'')+(c.skip?', пропущено '+c.skip:'')+(c.no?', відповідей «ні» '+c.no:'')+'. Звіт — у журналі, кнопка «копіювати звіт» на панелі.', true);
+  try{ showBanner('🧪 ПЕРЕВІРКУ ЗАВЕРШЕНО: ✓ '+c.ok+' / '+c.n,'#fbbf24'); }catch(e){}
+  protoUiRefresh(); }
+function protoExit(silent){ if(!PROTO.on) return; const was=PROTO.st;
+  try{ if(PROTO.step && PROTO.step.teardown && PROTO.S) PROTO.step.teardown(PROTO.S); }catch(e){}
+  try{ if(DLG.q && /^PROTO_/.test(DLG.q.id||'')) DLG.q=null; mentorAskUi(false); }catch(e){}
+  if(was!=='end' && PROTO.step) protoSave();
+  PROTO.on=false; PROTO.st='idle'; PROTO.step=null; PROTO.S=null; PROTO.hold=false; PROTO.fps=null;
+  try{ VB_ALLYF.dmg=JSON.parse(PROTO.dmg0||'null')||VB_ALLYF.dmg; }catch(e){}
+  try{ if(PROTO.view0!=null){ CAM.view=PROTO.view0; PROTO.view0=null; } }catch(e){}
+  try{ if(VB_WPN.kind!==PROTO.wpn0) weaponKindSet(PROTO.wpn0,false); }catch(e){}
+  try{ dismModeSet(PROTO.dismMode0,true); }catch(e){}
+  protoMentorHeal(); protoLeaveRoom(); protoUi(false);
+  if(!silent){ protoLog('вихід'+(was!=='end'?' (прогрес збережено — можна продовжити з меню)':'')); protoSay(was==='end'?'Повертаємось.':'Перевірку призупинено. Продовжити можна з меню.', true); } }
+function protoCounts(){ const c={n:PROTO.sc?PROTO.sc.steps.length:0, ok:0, fail:0, skip:0, no:0, yes:0, left:0}; for(let i=0;i<c.n;i++){ const r=PROTO.res[i]; if(!r){ c.left++; continue; } if(r.st==='ok'||r.st==='yes') c.ok++; if(r.st==='yes') c.yes++; if(r.st==='fail') c.fail++; if(r.st==='skip') c.skip++; if(r.st==='no') c.no++; } return c; }
+function protoReport(){ const sc=PROTO.sc; if(!sc) return ''; const c=protoCounts(); const L=[];
+  let perf=''; try{ perf=(PERF.tier||'?')+(PERF.fps?' '+PERF.fps:''); const sv=JSON.parse(localStorage.getItem('vb_perf_v1')||'null'); if(sv&&sv.fps) perf=(sv.tier||'?')+' '+sv.fps+' к/с'; }catch(e){}
+  let ua=''; try{ ua=navigator.userAgent.replace(/Mozilla\/5\.0 \(/,'').slice(0,70); }catch(e){}
+  L.push('═ ЗВІТ ПЕРЕВІРКИ «'+sc.title+'» · '+BUILD_TAG.slice(0,11)+' · '+new Date().toLocaleString('uk-UA')+' · '+Math.round((performance.now()-PROTO.startedAt)/1000)+' с');
+  L.push('  пристрій: '+ua+' · '+innerWidth+'×'+innerHeight+' · PERF '+perf);
+  for(let i=0;i<sc.steps.length;i++){ const st=sc.steps[i], r=PROTO.res[i];
+    const m=r?({ok:'✓',yes:'✓ так',no:'✗ ні',fail:'✗',skip:'⏭'}[r.st]||r.st):'—';
+    L.push('  '+(i+1)+'. '+m+' '+st.title+(r?(' · '+r.t+' с'+(r.tries>1?' · спроб '+r.tries:'')+(r.note?' · '+r.note:'')):' · не дійшли'));
+    if(r && r.log && r.log.length) for(const l of r.log.slice(0,4)) L.push('       '+l); }
+  L.push('  ПІДСУМОК: ✓ '+c.ok+' · ✗ '+c.fail+' · «ні» '+c.no+' · пропущено '+c.skip+(c.left?' · не дійшли '+c.left:'')+' · з '+c.n);
+  return L.join('\n'); }
+function protoCopyReport(btn){ const txt=PROTO.lastReport||protoReport(); const ok=()=>{ if(btn) btn.textContent='✓ СКОПІЙОВАНО'; setTimeout(()=>{ try{ protoUiRefresh(); }catch(e){} },1400); };
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(ok,()=>fb()); } else fb(); }catch(e){ fb(); }
+  function fb(){ try{ const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); }catch(_){ } ta.remove(); ok(); }catch(e){} } }
+/* ── щокадровий крок: захист гравця й опудал, перевірка умови, підказка, ліміт часу, відлік до наступного ── */
+function protoTick(dt){ if(!PROTO.on) return; const st=PROTO.step, S=PROTO.S;
+  try{ const k=(st && st.keepHp!=null)?st.keepHp:VB_PROTO.keepHp; if(k>0 && !player.dead && player.hp<k) player.hp=k; }catch(e){}
+  try{ for(const p of phantoms){ if(p && !p.ally && !p.dead && p._protoRegen && p.hp<p._protoRegen) p.hp=p._protoRegen; } }catch(e){}
+  if(PROTO.hold) protoParkMentor(false);
+  try{ const F=PROTO.fps; if(F){ F.n++; F.sum+=dt; if(dt>F.maxDt) F.maxDt=dt; if(DISM.melt.size>=2){ F.mn++; F.msum+=dt; if(dt>F.mMax) F.mMax=dt; } } }catch(e){}
+  if(!st || !S) return;
+  if(PROTO.st==='run'){ S.t+=dt; PROTO.tick+=dt; if(PROTO.tick>=0.12){ PROTO.tick=0; let r=false; try{ r=st.check?st.check(S):false; }catch(e){ if(!S._err){ S._err=1; protoLog('крок '+st.id+': '+e.message); } r=false; }
+      if(r===true) protoDone('ok'); else if(r==='fail') protoFail(S.why||'умову порушено'); else if(r==='skip') protoDone('skip', S.note); else if(typeof r==='string' && r!==S.prog){ S.prog=r; protoUiRefresh(); }
+      if(PROTO.st==='run'){ const lim=st.limit||VB_PROTO.limit; if(!S.hinted && st.hint && S.t>=(st.hintAt||VB_PROTO.hintAt)){ S.hinted=1; protoSay('Підказка. '+st.hint); } if(S.t>=lim) protoFail('час вийшов ('+Math.round(lim)+' с)'); } } }
+  else if(PROTO.st==='done'){ PROTO.nextT-=dt; if(PROTO.nextT<=0) protoNext(); else { PROTO.tick+=dt; if(PROTO.tick>=0.25){ PROTO.tick=0; protoUiRefresh(); } } }
+  else if(PROTO.st==='ask' || PROTO.st==='fail'){ S.t+=dt; } }
+/* ── панель ── */
+function protoUi(on){ let w=PROTO.ui;
+  if(!w){ w=document.createElement('div'); w.id='protoUi'; w.style.cssText='position:fixed;left:8px;right:8px;top:168px;z-index:62;display:none;padding:8px 10px;background:rgba(4,10,22,.90);border:1px solid #fbbf24;border-radius:12px;color:#fde68a;font:inherit;font-size:12px;line-height:1.35;max-height:34vh;overflow:auto;pointer-events:auto';
+    w.innerHTML='<div id="protoHead" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span id="protoHeadT" style="letter-spacing:.06em">🧪 ПЕРЕВІРКА</span><button id="protoFold" style="padding:4px 10px;border-radius:8px;border:1px solid #fbbf24;background:transparent;color:#fbbf24;font:inherit;font-size:12px;touch-action:manipulation" aria-label="згорнути">▾</button></div>'
+      +'<div id="protoBody"><div id="protoTitle" style="font-size:14px;color:#fff;margin-top:4px"></div><div id="protoText" style="color:#e2e8f0;margin-top:2px"></div><div id="protoProg" style="color:#86efac;margin-top:3px;min-height:14px"></div><div id="protoBtns" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div></div>';
+    try{ for(const ev of ['touchstart','touchend','touchmove']) w.addEventListener(ev,e=>{ e.stopPropagation(); },{passive:true}); }catch(e){}
+    document.body.appendChild(w); PROTO.ui=w;
+    w.querySelector('#protoFold').onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); const b=w.querySelector('#protoBody'); const hid=b.style.display==='none'; b.style.display=hid?'block':'none'; w.querySelector('#protoFold').textContent=hid?'▾':'▸'; }; }
+  w.style.display=on?'block':'none'; if(on) protoUiRefresh(); }
+function protoBtn(txt, col, fn, big){ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='flex:1 1 auto;min-width:'+(big?'96px':'64px')+';padding:'+(big?'12px 10px':'9px 8px')+';border-radius:9px;border:1px solid '+col+';background:rgba(15,23,42,.9);color:'+col+';font:inherit;font-size:'+(big?'14px':'12px')+';touch-action:manipulation'; b.setAttribute('aria-label',txt);
+  b.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); try{ buzz([0,20]); }catch(e){} try{ fn(b); }catch(e){ protoLog('кнопка: '+e.message); } }; return b; }
+function protoUiRefresh(){ const w=PROTO.ui; if(!w || w.style.display==='none') return; const sc=PROTO.sc, st=PROTO.step, S=PROTO.S; const q=(id)=>w.querySelector('#'+id);
+  const n=PROTO.i+1, N=sc?sc.steps.length:0;
+  if(PROTO.st==='end'){ q('protoHeadT').textContent='🧪 ПЕРЕВІРКУ ЗАВЕРШЕНО · '+(sc?sc.title:''); const c=protoCounts(); q('protoTitle').textContent='✓ '+c.ok+' · ✗ '+c.fail+' · «ні» '+c.no+' · пропущено '+c.skip+' · з '+c.n;
+    q('protoText').textContent=(PROTO.lastReport||'').split('\n').slice(2,2+N).join('\n'); q('protoText').style.whiteSpace='pre-wrap'; q('protoProg').textContent='Звіт записано в журнал. Надішли його розробнику.';
+    const B=q('protoBtns'); B.innerHTML=''; B.appendChild(protoBtn('⧉ КОПІЮВАТИ ЗВІТ','#fbbf24',(b)=>protoCopyReport(b),true)); B.appendChild(protoBtn('⧉ КОПІЮВАТИ ЛОГ','#94a3b8',(b)=>copyLog(b),true)); B.appendChild(protoBtn('✕ ПОВЕРНУТИСЬ','#fca5a5',()=>protoExit(false),true)); return; }
+  q('protoText').style.whiteSpace='normal';
+  q('protoHeadT').textContent='🧪 ПЕРЕВІРКА · крок '+n+' / '+N+(S&&S.tries>1?' · спроба '+S.tries:'');
+  q('protoTitle').textContent=st?((st.opt?'(необов’язково) ':'')+st.title):'';
+  q('protoText').textContent=st?((typeof st.say==='function')?st.say(S):st.say):'';
+  let p='';
+  if(PROTO.st==='run') p=(S&&S.prog?S.prog+' · ':'')+'⏱ '+Math.round(S?S.t:0)+' с';
+  else if(PROTO.st==='done'){ const r=PROTO.res[PROTO.i]; p=(r?({ok:'✓ ЗАРАХОВАНО',yes:'✓ ТАК',no:'✗ НІ',skip:'⏭ ПРОПУЩЕНО',fail:'✗ НЕ ВИЙШЛО'}[r.st]||r.st):'')+(PROTO.i+1<N?' · наступний крок за '+Math.max(0,Math.ceil(PROTO.nextT))+' с':''); }
+  else if(PROTO.st==='ask') p='❓ '+(st.manual||'')+' — відповідай ТАК або НІ';
+  else if(PROTO.st==='fail') p='✗ '+(S&&S.note||'не вийшло')+' — повторити чи пропустити?';
+  q('protoProg').textContent=p;
+  const B=q('protoBtns'); B.innerHTML='';
+  if(PROTO.st==='ask'){ B.appendChild(protoBtn('✓ ТАК','#86efac',()=>{ try{ if(DLG.q){ DLG.q.minWait=0; DLG.quiet=99; dlgOnGesture('YES'); } else protoDone('yes'); }catch(e){ protoDone('yes'); } },true)); B.appendChild(protoBtn('✗ НІ','#fca5a5',()=>{ try{ if(DLG.q){ DLG.q.minWait=0; DLG.quiet=99; dlgOnGesture('NO'); } else protoDone('no'); }catch(e){ protoDone('no'); } },true)); }
+  else if(PROTO.st==='fail'){ B.appendChild(protoBtn('↻ ПОВТОРИТИ','#86efac',()=>protoRetry(),true)); B.appendChild(protoBtn('⏭ ПРОПУСТИТИ','#fbbf24',()=>{ const S=PROTO.S; protoDone('fail', S&&S.note||'не вийшло'); },true)); }
+  else if(PROTO.st==='done'){ B.appendChild(protoBtn('▶ ДАЛІ ЗАРАЗ','#86efac',()=>protoNext(),true)); B.appendChild(protoBtn('↻ ЩЕ РАЗ ЦЕЙ','#94a3b8',()=>protoRetry())); }
+  else { B.appendChild(protoBtn('🔊 ЩЕ РАЗ','#93c5fd',()=>protoRepeatSay())); B.appendChild(protoBtn('↻ ПОВТОРИТИ','#94a3b8',()=>protoRetry())); B.appendChild(protoBtn('⏭ ПРОПУСТИТИ','#fbbf24',()=>protoSkip())); }
+  B.appendChild(protoBtn('✕ ВИЙТИ','#fca5a5',()=>protoExit(false))); }
+/* ── меню вибору сценарію (з паузи або від наставника) ── */
+function protoMenu(on){ let w=PROTO.menu;
+  if(!w){ w=document.createElement('div'); w.id='protoMenu'; w.style.cssText='position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:81;display:none;width:min(92vw,380px);max-height:80vh;overflow:auto;padding:12px;background:rgba(4,10,22,.96);border:1px solid #fbbf24;border-radius:14px;color:#fde68a;font:inherit;font-size:14px;line-height:1.35';
+    try{ for(const ev of ['touchstart','touchend']) w.addEventListener(ev,e=>{ e.stopPropagation(); },{passive:true}); }catch(e){} document.body.appendChild(w); PROTO.menu=w; }
+  if(on===false){ w.style.display='none'; return w; }
+  const sv=protoLoad(); w.innerHTML='<div style="color:#fbbf24;font-size:15px;letter-spacing:.08em;margin-bottom:6px">🧪 ПЕРЕВІРКА ЗБІРКИ</div><div style="color:#94a3b8;font-size:12px;margin-bottom:8px">Наставник веде протокол крок за кроком на полігоні: каже, що зробити, і сам зараховує. Наприкінці — звіт для розробника.</div>';
+  const items=[];
+  if(sv && sv.sc && protoScen(sv.sc) && sv.i>0 && sv.i<protoScen(sv.sc).steps.length) items.push({t:'▶ ПРОДОВЖИТИ «'+protoScen(sv.sc).title+'» з кроку '+(sv.i+1), c:'#86efac', f:()=>protoStart(sv.sc, sv.i)});
+  for(const sc of PROTO_SCEN) items.push({t:'🧪 '+sc.title+' — '+sc.steps.length+' кроків, ≈'+sc.mins+' хв', f:()=>protoStart(sc.id,0)});
+  let rep=null; try{ rep=localStorage.getItem(PROTO.saveK+'_report'); }catch(e){} if(rep) items.push({t:'⧉ СКОПІЮВАТИ ОСТАННІЙ ЗВІТ', c:'#94a3b8', f:(b)=>{ PROTO.lastReport=rep; protoCopyReport(b); return 'keep'; }});
+  items.push({t:'✕ ЗАКРИТИ', c:'#64748b', f:null});
+  for(const it of items){ const b=document.createElement('button'); b.textContent=it.t; b.style.cssText='display:block;width:100%;margin-top:6px;padding:12px;font:inherit;font-size:13px;letter-spacing:.03em;border-radius:9px;background:#0a1a30;border:1px solid '+(it.c||'#fbbf24')+';color:'+(it.c||'#fde68a')+';touch-action:manipulation;text-align:left';
+    b.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); try{ buzz([0,25]); }catch(e){} let keep=null; if(it.f){ try{ keep=it.f(b); }catch(e){ protoLog(e.message); } } if(keep!=='keep') protoMenu(false); }; w.appendChild(b); }
+  w.style.display='block'; try{ if(VB_PROTO.say>0) freeSay('Перевірка збірки. Обери сценарій: кнопки на екрані.'); }catch(e){} return w; }
+window.protoStart=protoStart; window.protoExit=protoExit; window.protoMenu=protoMenu; window.protoReport=protoReport; window.protoSkip=protoSkip; window.protoNext=protoNext;
+
+/* ── сценарії перевірки: кожен крок — підготовка (setup), умова (check: true · 'fail' · 'skip' · рядок прогресу), підказка ── */
+function protoFreeze(ph, gx, gy){ if(!ph||ph.dead) return; ph.ai=ph.ai||{}; ph.ai.stunT=Math.max(ph.ai.stunT||0,0.6); ph.strikeT=0; ph.hitActive=false; if(gx!=null){ ph.gx=gx; ph.gy=gy; ph.px=gx; ph.pz=gy; } }
+function protoDist(a,b){ try{ const pa=entPos(a), pb=entPos(b); return Math.hypot(pa[0]-pb[0],pa[1]-pb[1]); }catch(e){ return 99; } }
+function protoAllyStrikes(S){ return protoEv(S,'strike',e=>e.ally&&!e.beat); }
+function protoAllyHits(S,kind){ return protoEv(S,'allyhit',e=>!kind||e.def===kind); }
+function protoSevers(S,f){ return protoEv(S,'sever',e=>!e.ally&&!e.player&&(!f||f(e))); }
+function protoPHits(S,kind){ return protoEv(S,'dhit',e=>e.by==='player'&&(!kind||e.kind===kind)); }
+const PROTO_DUMMY={hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}};
+function protoDummy(S, gx, gy, o){ let f=S.data.foe; if(!f || f.dead || (f._dm && (f._dm.melt||f._dm.melted))){ if(f){ S.data.replaced=(S.data.replaced||0)+1; protoLog('опудало загинуло — ставлю нове'); } f=S.data.foe=protoSpawn('fighter',gx,gy,o||PROTO_DUMMY); } protoFreeze(f,gx,gy); return f; }
+function protoMentorDm(){ const a=protoMentor(); return a?protoDm(a):null; }
+function protoRemotes(){ try{ return Object.keys(NET.remotes||{}).filter(id=>NET.remotes[id]&&!NET.remotes[id].spec).length; }catch(e){ return 0; } }
+const PROTO_LIMB={ armR:'руку з клинком', armL:'ліву руку', legL:'ліву ногу', legR:'праву ногу', head:'голову', neck:'голову', torso:'навпіл', pelvis:'навпіл', wingL:'крило', wingR:'крило', barrel:'ствол', shR:'праве плече', shL:'ліве плече', jaw:'щелепу' };
+function protoLimbName(l){ return PROTO_LIMB[l]||(/^leg\d$/.test(l)?'лапу':l); }
+const PROTO_STEPS_26D={
+  m_fight:{ id:'m_fight', title:'Бій наставника', mentorAt:[5,7], playerAt:[2,6], limit:75,
+    say:'Стій і спостерігай, не втручайся. Я йду на мечника сам: підхід, стійка, різні удари, парирування.',
+    hint:'Наставник має сам підійти й ударити мечника. Якщо він стоїть на місці або махає повз — натисни «пропустити», я запишу це.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',9,4,{hp:100,wpn:'longsword',shield:false,sk:{aggr:0.7,react:0.25,parry:0.4}}); },
+    check:(S)=>{ const st=protoAllyStrikes(S), names=new Set(st.map(e=>e.name)), hits=protoAllyHits(S); const foe=S.data.foe; const dead=!!(foe&&foe.dead);
+      S.note='ударів '+st.length+' ('+[...names].join(',')+') · влучань '+hits.length+(dead?' · мечника повалено':'');
+      if(st.length>=3 && names.size>=2 && (hits.length>=1||dead)) return true;
+      if(dead && hits.length>=1) return true;
+      return 'удари '+st.length+'/3 · види '+names.size+'/2 · влучання '+hits.length+'/1'; } },
+  m_counter:{ id:'m_counter', title:'Ворог б’є у відповідь', mentorAt:[6,7], playerAt:[2,6], limit:60,
+    say:'Я лише притримую ворога, не вбиваю. Дивись, чи він б’є мене у відповідь: іскри, звук, мій відскок.',
+    hint:'Мечник має замахнутись на наставника. Якщо він лише ходить навколо — пропусти крок.',
+    setup:(S)=>{ VB_ALLYF.dmg={wise:0.1,weak:0.1,dumb:0.1}; S.data.foe=protoSpawn('fighter',8,3,{hp:100,regen:50,wpn:'longsword',shield:false,sk:{aggr:0.85,react:0.3,parry:0.3},target:'mentor'}); },
+    check:(S)=>{ const h=protoEv(S,'allyhurt'), c=protoEv(S,'clash',e=>e.defAlly), sw=protoEv(S,'strike',e=>!e.ally&&!e.beat);
+      S.note='ударів по наставнику '+h.length+' · парирувань '+c.length+' · замахів ворога '+sw.length;
+      if(h.length+c.length>=1) return true; return 'замахи ворога '+sw.length+' · влучань/парирувань '+(h.length+c.length)+'/1'; } },
+  m_retreat:{ id:'m_retreat', title:'Поранений наставник лише відбивається', mentorAt:[6,7], playerAt:[2,6], limit:25,
+    say:'Я поранений — чверть здоров’я. Десять секунд: я маю лише відбиватись і тримати дистанцію; після парирування можу відповісти, але сам не нападаю.',
+    setup:(S)=>{ VB_ALLYF.dmg={wise:0.1,weak:0.1,dumb:0.1}; const a=protoMentor(); if(a){ a.hp=Math.round((a.maxHp||220)*0.25); MENTOR.hpPct=0.25; a._hpBand=2; try{ mentorSetState('RETREAT','перевірка: поранений'); }catch(e){} }
+      S.data.foe=protoSpawn('fighter',8,3,{hp:100,regen:50,wpn:'longsword',shield:false,sk:{aggr:0.5,react:0.3,parry:0.3},target:'mentor'}); },
+    check:(S)=>{ const all=protoAllyStrikes(S), atk=all.filter(e=>e.st!=='riposte').length, rip=all.length-atk; if(S.t>=10){ S.note='за 10 с: нападів '+atk+', рипостів після парирування '+rip; if(atk<=2) return true; S.why='поранений наставник нападав ('+atk+' удари)'; return 'fail'; } return 'спостерігаю '+Math.round(S.t)+'/10 с · нападів '+atk+' · рипостів '+rip; },
+    teardown:(S)=>{ protoClearFoes(); } },
+  m_heal:{ id:'m_heal', title:'Лікується, коли нікого поруч', mentorAt:[6,6], playerAt:[4,6], limit:45,
+    say:'Ворогів нема — я повільно лікуюсь. Просто зачекай.',
+    setup:(S)=>{ const a=protoMentor(); if(a){ a.hp=Math.round((a.maxHp||220)*0.25); MENTOR.hpPct=0.25; a._hpBand=2; try{ mentorSetState('RETREAT','перевірка: поранений'); }catch(e){} S.data.hp0=a.hp; } },
+    check:(S)=>{ const a=protoMentor(); if(!a) return 'наставника нема'; const pct=Math.round(100*a.hp/(a.maxHp||220)); if(a.hp>=S.data.hp0+8){ S.note='HP '+Math.round(S.data.hp0)+' → '+Math.round(a.hp)+' за '+S.t.toFixed(1)+' с ('+((a.hp-S.data.hp0)/Math.max(0.1,S.t)).toFixed(1)+'/с)'; return true; } return 'здоров’я наставника '+pct+'%'; } },
+  m_pocket:{ id:'m_pocket', title:'Обхід колони', mentorAt:[9,10], playerAt:[6,6], limit:30,
+    say:'Я стою в кишені за колоною, ворог — по той бік. Я маю обійти колону й дістати його, а не крутитись на місці.',
+    hint:'Наставник має вийти з кишені за колоною в обхід. Якщо він тупцює — пропусти, я запишу.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',7,10,{hp:100,regen:80,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ const a=protoMentor(), f=S.data.foe; if(!a||!f) return 'нема учасників'; protoFreeze(f,7,10); const d=protoDist(a,f); const hits=protoAllyHits(S);
+      if(d<=1.6 || hits.length){ S.note='дійшов за '+S.t.toFixed(1)+' с'+(hits.length?' · влучив':''); return true; } return 'відстань до ворога '+d.toFixed(1)+' кл.'; } },
+  m_crawler:{ id:'m_crawler', title:'Повзун — низька ціль', mentorAt:[6,7], playerAt:[2,6], limit:60,
+    say:'Повзун. Стій подалі, щоб він не вчепився у твій клинок. Я маю влучити по ньому — він низько.',
+    hint:'Повзун повзе до тебе — наставник має перехопити його дорогою. Стій на місці.',
+    setup:(S)=>{ S.data.foe=protoSpawn('crawler',9,3,{}); },
+    check:(S)=>{ const h=protoAllyHits(S,'crawler'); if(h.length){ S.note='влучань по повзуну '+h.length; return true; } return 'влучань по повзуну '+h.length+'/1'; } },
+  m_flyer:{ id:'m_flyer', title:'Літун — висока ціль', mentorAt:[6,7], playerAt:[2,6], limit:60,
+    say:'Літун. Стій на місці. Я маю влучити по ньому — він високо.',
+    hint:'Літун летить до тебе — наставник має дістати його зверху.',
+    setup:(S)=>{ S.data.foe=protoSpawn('flyer',9,4,{}); },
+    check:(S)=>{ const h=protoAllyHits(S,'flyer'); if(h.length){ S.note='влучань по літуну '+h.length; return true; } return 'влучань по літуну '+h.length+'/1'; } },
+  p_chip:{ id:'p_chip', title:'Вм’ятина від твого різу', hold:true, playerAt:[6,6], limit:60,
+    say:'Перед тобою мечник-опудало, воно не вмирає. Удар мечем по ньому: де влучив — вм’ятина з вокселів, летять уламки. Що сильніший мах, то глибше.',
+    hint:'Замахнись телефоном різко, щоб лезо пройшло крізь тіло опудала перед тобою.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); S.data.chip0=DISM.n.chip; },
+    check:(S)=>{ protoDummy(S,6,5); const h=protoPHits(S,'blade'); if(h.length){ S.note='вибито вокселів '+(DISM.n.chip-S.data.chip0); return true; } return 'влучань '+h.length+'/1'; } },
+  p_sever:{ id:'p_sever', title:'Відсікти кінцівку', hold:true, playerAt:[6,6], limit:150, hintAt:45,
+    say:'Опудало не вмирає. Відсічи йому руку, ногу чи голову: кілька сильних махів по одному місцю.',
+    hint:'Бий по руці з клинком або по нозі — сильно й в одне місце. Запас руки сорок, ноги п’ятдесят; дуже сильний мах може відсікти одразу.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ protoDummy(S,6,5); const sv=protoSevers(S); const h=protoPHits(S);
+      if(sv.length){ S.note='відсічено '+protoLimbName(sv[0].limb)+' ('+sv[0].how+') після '+h.length+' влучань'+(S.data.replaced?' · опудал '+(S.data.replaced+1):''); return true; } return 'влучань '+h.length+' · кінцівку ще не відсічено'; } },
+  p_lethal:{ id:'p_lethal', title:'Смертельний удар', hold:true, playerAt:[6,6], limit:60,
+    say:'Цей мечник слабкий. Добий його: смертельний різ розсікає — голову, навпіл чи ногу — і тіло розсипається хвилею.',
+    hint:'Кілька різів по тулубу чи голові.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:30,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ const f=S.data.foe; if(!f) return 'нема опудала'; if(!f.dead) protoFreeze(f,6,5); const sv=protoSevers(S), melt=protoEv(S,'melt',e=>!e.ally);
+      if(f.dead){ if(!S.data.deadT) S.data.deadT=S.t; if(sv.length||melt.length||S.t-S.data.deadT>2){ S.note=(sv.length?'розсічено: '+sv.map(e=>protoLimbName(e.limb)).join(', '):'без розсікання')+(melt.length?' · розсипалось':''); return true; } return 'повалено — чекаю розсипання'; }
+      return 'HP опудала '+Math.max(0,Math.round(f.hp)); } },
+  p_crush:{ id:'p_crush', title:'Молот дробить', hold:true, playerAt:[6,6], wpn:6, limit:60,
+    say:'У руках молот. Удар молотом дробить: воксели розлітаються, кінцівку розтрощено, а не відрізано. Вдар опудало.',
+    hint:'Молот важкий — замахнись широко й сильно.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ protoDummy(S,6,5); const h=protoPHits(S,'crush'); if(h.length){ const p=protoSevers(S); S.note='ударів молотом '+h.length+(p.length?' · розтрощено '+protoLimbName(p[0].limb):''); return true; } return 'ударів молотом '+h.length+'/1'; } },
+  p_pierce:{ id:'p_pierce', title:'Спис колить', hold:true, playerAt:[6,6], wpn:9, limit:60,
+    say:'У руках спис. Коли вперед, у тулуб опудала — колота рана вужча за різану.',
+    hint:'Штовхни телефон уперед, вістрям на опудало.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ protoDummy(S,6,5); const h=protoPHits(S,'pierce'); if(h.length){ S.note='уколів '+h.length; return true; } return 'уколів '+h.length+'/1'; } },
+  p_bullet:{ id:'p_bullet', title:'Постріл', hold:true, playerAt:[6,6], wpn:11, limit:90,
+    say:'У руках пістолет; телефон — ствол. Наведи на опудало: тік «ціль на мушці», вищий — у голову. Постріл — кнопка, клавіша F або різкий поштовх уздовж ствола. Дуло вниз — перезарядка.',
+    hint:'Тримай телефон стволом на опудало й натисни кнопку пострілу.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,3,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ protoDummy(S,6,3); const h=protoPHits(S,'bullet'); if(h.length){ S.note='куль у тіло '+h.length; return true; } return 'влучань кулею '+h.length+'/1'; } },
+  p_burn:{ id:'p_burn', title:'Бластер обпікає', hold:true, playerAt:[6,6], wpn:13, limit:90,
+    say:'У руках бластер. Потримай кнопку — заряд, відпусти — згусток. Опік чорнить воксели, вони догоряють і іскрять угору.',
+    hint:'Наведи на опудало, потримай кнопку пострілу й відпусти.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,3,{hp:100,regen:60,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}}); },
+    check:(S)=>{ protoDummy(S,6,3); const h=protoPHits(S,'burn'); if(h.length){ S.note='опіків '+h.length; return true; } return 'опіків '+h.length+'/1'; } },
+  p_wing:{ id:'p_wing', title:'Крило літуна', opt:true, hold:true, playerAt:[6,6], limit:90,
+    say:'Необов’язково. Літун над тобою, він не вмирає від ран. Відсічи крило — він опуститься й стане повільнішим; без обох крил — кінець.',
+    hint:'Бий угору, де крила. Запас крила тридцять.',
+    setup:(S)=>{ S.data.foe=protoSpawn('flyer',6,5,{regen:15}); },
+    check:(S)=>{ const sv=protoSevers(S,e=>/^wing/.test(e.limb)); const h=protoPHits(S); if(sv.length){ S.note='крило відсічено після '+h.length+' влучань'; return true; } return 'влучань по літуну '+h.length+' · крило ціле'; } },
+  p_crawler:{ id:'p_crawler', title:'Повзун: лапа або навпіл', opt:true, hold:true, playerAt:[6,6], limit:90,
+    say:'Необов’язково. Повзун. Різ по лапі відсікає лапу, різ поперек тіла — навпіл. Якщо вчепився в клинок — струсни різким махом.',
+    hint:'Повзун низько — ріж униз. Запас лапи двадцять вісім.',
+    setup:(S)=>{ S.data.foe=protoSpawn('crawler',6,5,{regen:20}); },
+    check:(S)=>{ const sv=protoSevers(S,e=>/^leg\d$/.test(e.limb)||e.limb==='torso'||e.limb==='body'); const h=protoPHits(S); if(sv.length){ S.note='повзун: '+sv.map(e=>protoLimbName(e.limb)).join(', ')+' після '+h.length+' влучань'; return true; } return 'влучань по повзуну '+h.length; } },
+  p_gunner:{ id:'p_gunner', title:'Стрілець без ствола', opt:true, hold:true, playerAt:[6,6], limit:90,
+    say:'Необов’язково. Стрілець з бластером; він не вмирає від ран. Збий йому ствол — він перестане стріляти.',
+    hint:'Ствол — перед ним на рівні грудей. Запас ствола тридцять два.',
+    setup:(S)=>{ S.data.foe=protoSpawn('gunner',6,3,{regen:30}); },
+    check:(S)=>{ const sv=protoSevers(S,e=>e.limb==='barrel'); const h=protoPHits(S); if(sv.length){ S.note='ствол збито після '+h.length+' влучань'; return true; } return 'влучань по стрільцю '+h.length+' · ствол цілий'; } },
+  p_boss:{ id:'p_boss', title:'Бос: плече з сокирою', opt:true, hold:true, playerAt:[6,6], limit:150, hintAt:50,
+    say:'Необов’язково. Бос із сокирою. Його слабке місце — спина, утричі. Відсічи праве плече — сокира впаде, і змаху не буде. Нижче тридцяти здоров’я я тебе не пущу.',
+    hint:'Заходь за спину й бий по правому плечу. Запас плеча сто.',
+    setup:(S)=>{ S.data.foe=protoSpawn('boss',6,2,{}); },
+    check:(S)=>{ const f=S.data.foe; const sv=protoSevers(S,e=>e.limb==='shR'); const h=protoPHits(S); if(sv.length){ S.note='плече відсічено після '+h.length+' влучань'; return true; } if(f&&f.dead){ S.note='боса повалено без відсікання плеча ('+h.length+' влучань)'; return true; } return 'влучань по босу '+h.length+' · HP '+Math.max(0,Math.round(f?f.hp:0)); } },
+  b_self:{ id:'b_self', title:'Рани на власному тілі', hold:true, playerAt:[6,6], view:'third', limit:60,
+    say:'Дивись на себе збоку. Дай ворогу вдарити тебе: на твоєму тілі з’являться воксельні рани. Нижче тридцяти здоров’я я не дам упасти.',
+    hint:'Стій поруч із мечником і не відбивайся — хай влучить.',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:40,wpn:'longsword',shield:false,sk:{aggr:0.95,react:0.3,parry:0.2}}); },
+    check:(S)=>{ const h=protoEv(S,'phurt'); const dm=protoDm(player); const nd=dm?dm.nDead:0; if(h.length && nd>0){ S.note='ударів по тобі '+h.length+' · вибито вокселів '+nd; return true; } return 'ударів по тобі '+h.length+' · вокселів-ран '+nd; } },
+  b_self_heal:{ id:'b_self_heal', title:'Рани гояться зі здоров’ям', hold:true, playerAt:[6,6], view:'third', limit:45,
+    say:'Ворогів нема, здоров’я повне — рани на тілі гояться самі. Зачекай.',
+    setup:(S)=>{ player.hp=100; const dm=protoDm(player); S.data.n0=dm?dm.nDead:0; },
+    check:(S)=>{ player.hp=100; const dm=protoDm(player); const nd=dm?dm.nDead:0; if(nd<=0){ S.note='загоєно '+S.data.n0+' вокселів за '+Math.round(S.t)+' с'; return true; } return 'лишилось вокселів-ран '+nd; } },
+  b_self_death:{ id:'b_self_death', title:'Смерть розсипає тіло', opt:true, hold:true, playerAt:[6,6], view:'third', keepHp:0, limit:90,
+    say:'Необов’язково. Дай себе вбити: тіло розсиплеться на воксели, а після відродження буде цілим. Або пропусти.',
+    hint:'Стій і не відбивайся. Або натисни «пропустити».',
+    setup:(S)=>{ S.data.foe=protoSpawn('fighter',6,5,{hp:100,regen:40,wpn:'greatsword',shield:false,sk:{aggr:1,react:0.3,parry:0.2}}); },
+    check:(S)=>{ const d=protoEv(S,'pdeath'), r=protoEv(S,'respawn'), m=protoEv(S,'melt',e=>e.player); if(r.length){ S.note=(m.length?'тіло розсипалось':'без розсипання')+' · відродився'; return true; } if(d.length) return 'загинув — чекаю відродження'; return 'здоров’я '+Math.round(player.hp); } },
+  b_mentor:{ id:'b_mentor', title:'Рани наставника й відростання', mentorAt:[6,7], playerAt:[2,6], limit:120, hintAt:50,
+    say:'Тепер я. Ворог б’є мене — на моєму тілі лишаються рани. Потім я приберу його, і за кілька секунд тіло відросте.',
+    hint:'Мечник має влучити по наставнику. Стій подалі.',
+    setup:(S)=>{ VB_ALLYF.dmg={wise:0.1,weak:0.1,dumb:0.1}; S.data.foe=protoSpawn('fighter',8,3,{hp:100,regen:50,wpn:'longsword',shield:false,sk:{aggr:0.95,react:0.3,parry:0.2},target:'mentor'}); S.data.ph=1; },
+    check:(S)=>{ const dm=protoMentorDm(); const nd=dm?dm.nDead:0, lost=dm?Object.keys(dm.lost).length:0;
+      if(S.data.ph===1){ if(nd>0||lost>0){ S.data.ph=2; S.data.n1=nd; S.data.t2=S.t; protoClearFoes(); protoSay('Рани є: '+nd+' вокселів'+(lost?' і втрачена кінцівка':'')+'. Ворога прибрав — чекаємо, поки тіло відросте.', true); return 'рани є · чекаю відростання'; } return 'ударів по наставнику '+protoEv(S,'allyhurt').length+' · вокселів-ран '+nd; }
+      const rg=protoEv(S,'regrow'); if(rg.length || (nd<=0 && lost<=0)){ S.note='ран '+S.data.n1+' → відросло за '+Math.round(S.t-S.data.t2)+' с'; return true; } return 'відростання: вокселів-ран '+nd+(lost?' · втрачено кінцівок '+lost:''); } },
+  s_blind:{ id:'s_blind', title:'На слух: фрази й звуки', hold:true, playerAt:[6,6], manual:'Чи зрозумілі фрази й звуки без екрана?',
+    say:'Послухай. Фрази: Голову знесено. Руку відсічено. Ногу відсічено. Крило відсічено. Навпіл. Тепер звуки: вм’ятина, різ, падіння шматка, опік, розсипання.',
+    setup:(S)=>{ const p=()=>{ try{ const q=player.mesh.position; return new THREE.Vector3(q.x+0.6,1.2,q.z-0.6); }catch(e){ return new THREE.Vector3(0,1.2,0); } };
+      const seq=[['chip',11000],['cut',12300],['land',13800],['burn',15000],['melt',16400]]; S.data.tm=seq.map(([k,ms])=>setTimeout(()=>{ try{ if(PROTO.on && PROTO.step && PROTO.step.id==='s_blind'){ DISM.sndT[k]=0; dismSnd(k,p(),1.2); } }catch(e){} },ms)); },
+    teardown:(S)=>{ try{ for(const t of (S.data.tm||[])) clearTimeout(t); }catch(e){} } },
+  u_menu:{ id:'u_menu', title:'Перемикач у меню', hold:true, playerAt:[6,6], limit:150, hintAt:60,
+    say:'Відкрий паузу — кнопка вгорі праворуч — і натисни «руйнування тіл» тричі: лише рани, вимкнено, знову повне. Потім «продовжити».',
+    hint:'Кнопка паузи — вгорі праворуч. У меню — кнопка «руйнування тіл», натисни її тричі й закрий меню.',
+    check:(S)=>{ const m=protoEv(S,'dmode').map(e=>e.i); const has=(v)=>m.indexOf(v)>=0; if(has(1)&&has(2)&&m.length>=3&&m[m.length-1]===0){ S.note='режими перемкнуто: '+m.join('→'); return true; } return 'натиснуто '+m.length+'/3'+(m.length?' ('+m.map(i=>DISM_MODES[i][0]).join(' → ')+')':''); },
+    teardown:(S)=>{ try{ dismModeSet(0,true); }catch(e){} } },
+  f_perf:{ id:'f_perf', title:'Плавність при розсипанні', hold:true, playerAt:[6,6], limit:120, hintAt:45,
+    say:'Чотири слабкі мечники стоять навколо тебе. Убий усіх якнайшвидше — тіла розсипатимуться разом, а я зміряю плавність.',
+    hint:'Крутись і ріж усіх підряд — вони не відбиваються.',
+    setup:(S)=>{ S.data.foes=[[5,5],[7,5],[5,7],[7,7]].map(([x,y])=>protoSpawn('fighter',x,y,{hp:25,wpn:'longsword',shield:false,sk:{aggr:0,react:0.9,parry:0}})); PROTO.fps={n:0,sum:0,maxDt:0,mn:0,msum:0,mMax:0}; },
+    check:(S)=>{ const F=S.data.foes; let alive=0; for(const f of F){ if(!f.dead){ alive++; protoFreeze(f); } } const melting=DISM.melt.size;
+      if(alive===0 && melting===0 && S.t>2){ const P=PROTO.fps||{}; const avg=P.sum>0?P.n/P.sum:0, mavg=P.msum>0?P.mn/P.msum:0; S.note='кадрів/с: '+avg.toFixed(0)+(P.mn>3?' · під час розсипання '+mavg.toFixed(0)+' · найдовший кадр '+Math.round(P.mMax*1000)+' мс':''); return true; }
+      return 'живих '+alive+' · розсипаються '+melting; },
+    teardown:(S)=>{ PROTO.fps=null; } },
+  f_perf_q:{ id:'f_perf_q', title:'Чи було плавно', hold:true, playerAt:[6,6], manual:'Чи не смикались картинка й звук, коли тіла розсипались?',
+    say:'Скажи: коли тіла розсипались, картинка й звук ішли рівно чи смикались?' },
+  n_pvp:{ id:'n_pvp', title:'Живий гравець по мережі', hold:true, playerAt:[6,6], manual:'Рани на чужому тілі є, смерть розсипає, після відродження тіло ціле?',
+    say:'Якщо в кімнаті є другий гравець: удар по його тілу лишає рани, смертельний — розсипає, після відродження тіло ціле.',
+    setup:(S)=>{ if(protoRemotes()===0){ S.skipNow=true; S.note='немає другого гравця'; } } },
+};
+const PROTO_SCEN=[
+  { id:'10-26d', title:'10-26d · наставник б’ється, тіла руйнуються', mins:20,
+    steps:['m_fight','m_counter','m_retreat','m_heal','m_pocket','m_crawler','m_flyer','p_chip','p_sever','p_lethal','p_crush','p_pierce','p_bullet','p_burn','p_wing','p_crawler','p_gunner','p_boss','b_self','b_self_heal','b_self_death','b_mentor','s_blind','u_menu','f_perf','f_perf_q','n_pvp'].map(k=>PROTO_STEPS_26D[k]) },
+  { id:'quick', title:'Швидка · найважливіше', mins:5,
+    steps:['m_fight','m_pocket','p_chip','p_sever','p_lethal','b_self','u_menu'].map(k=>PROTO_STEPS_26D[k]) },
+];
+window.PROTO_SCEN=PROTO_SCEN;
 
 (function chunkLoop(ts){
   requestAnimationFrame(chunkLoop);
@@ -21237,7 +21636,7 @@ function roomGuide(rx,ry){
     L.push('Світлі плити — безпечні кімнати, темні — з ворогами, червонуваті по краю — боси. Де ти вже був — плити яскравіші, з позначкою. Золоті риски між плитами — двері лабіринту. Ми — на синій, посередині. Глянь під ноги.');
     L.push('Зброя — у північній стіні. Підійди й вдар по кристалу тричі — і візьмеш. Кузня — на південній стіні: стань під ковадлом і зачекай. Дошка тренувань — на східній: постій під нею, і я покажу удари.');
   } else if((rx>12||ry>12) && specialRoomOf(rx,ry)){ const sp=specialRoomOf(rx,ry); if(sp.type==='lab') return true;   // (10-08d) · (10-20b) лабораторія говорить сама
-    L.push(({attic:'Горище. Скриня на півночі, люк униз — посередині.',cave:'Печера під колодязем. Дно колодязя — посередині, тунель угору — у північній стіні, скриня — на північному заході.',lamp:'Ліхтарня маяка. Колесо ліхтаря — на північній стіні, люк униз — посередині.',catacomb:'Катакомби. Важіль «Серпантин» — на східній стіні, «Забіг» — на західній, драбина нагору — на північній.',shaft:'Шахта. Стіна для лазіння — перед тобою.'})[sp.type]||sp.name);
+    L.push(({attic:'Горище. Скриня на півночі, люк униз — посередині.',cave:'Печера під колодязем. Дно колодязя — посередині, тунель угору — у північній стіні, скриня — на північному заході.',lamp:'Ліхтарня маяка. Колесо ліхтаря — на північній стіні, люк униз — посередині.',catacomb:'Катакомби. Важіль «Серпантин» — на східній стіні, «Забіг» — на західній, драбина нагору — на північній.',shaft:'Шахта. Стіна для лазіння — перед тобою.',range:'Полігон перевірки. Тут наставник веде протокол: слухай крок, виконуй — він скаже, коли зараховано.'})[sp.type]||sp.name);
   } else if(chessWhite(rx,ry)){
     const type=(typeof roomTypeOf==='function')?roomTypeOf(rx,ry):null, inv=roomInventory();
     L.push('Це '+st.name+'. Біла кімната — ворогів тут немає.');
@@ -22968,7 +23367,7 @@ function dlgTick(dt){
   if(LESSON.on) return;                                       // (09-24c) іде урок — не перепитуємо
   if(dlgSpeaking()){ DLG.quiet=0; return; }                   // тиша рахується, коли він замовк
   DLG.quiet=(DLG.quiet||0)+dt; DLG.silent+=dt;
-  if(mentorQuiet() && !q.civ && !(typeof ELEMQ!=='undefined' && ELEMQ.q===q) && !(typeof SCIQ!=='undefined' && SCIQ.cur && SCIQ.cur.q===q) && !/^(DOJO_|SCI)/.test(q.id||'')){
+  if(mentorQuiet() && !q.civ && !(typeof ELEMQ!=='undefined' && ELEMQ.q===q) && !(typeof SCIQ!=='undefined' && SCIQ.cur && SCIQ.cur.q===q) && !/^(DOJO_|SCI|PROTO_)/.test(q.id||'')){
     if(DLG.quiet>(VB_MENTOR.askWait||12)) dlgQuietTimeout(q); return; }   /* (10-25a) тихий наставник: ні драбини тиші, ні перепитувань */
   if(q.ladder){
     const L=SILENCE_LADDER, nx=L[DLG.stage];
@@ -23297,6 +23696,7 @@ function mentorMenuUi(on){ let w=MTALK.ui;
     {t:'🧭 ЕКСКУРСІЯ: меч, хід, стійка', f:()=>{ try{ tourStart(null); }catch(e){} }},
     {t:'⚔ ШІСТЬ УДАРІВ (дожо)', f:()=>{ try{ dojoStart(); }catch(e){} }},
     {t:'🌀 СЕРПАНТИН — біг на час', f:()=>{ try{ sprStart(); }catch(e){} }},
+    {t:'🧪 ПЕРЕВІРКА ЗБІРКИ — протокол з підказками', f:()=>{ try{ protoMenu(true); }catch(e){} }},
     {t:'👂 ЩО ТУТ ПОРУЧ?', f:()=>mentorNearby()},
     {t:'🔊 ГОЛОС ГУЧНІШЕ', f:()=>{ try{ ttsLouder(); mentorLine('Так краще?','happy'); }catch(e){} }},
     {t:'🤝 ЗНАЙОМСТВО ЗАНОВО (слух, верх телефона)', f:()=>{ try{ mentorOpening(null,{force:true}); }catch(e){} }},
@@ -23331,7 +23731,7 @@ const MSTATES=['SPAWN','INTRO','FOLLOW','GUIDE','WAIT','DEMONSTRATE','ASSIST',
   'PROTECT','COMBAT','RETREAT','INJURED','DIALOGUE','PANIC','MAD','BOSS'];
 function mentorSetState(s, why){
   if(MSTATES.indexOf(s)<0 || MENTOR.state===s) return;
-  const prev=MENTOR.state; MENTOR.state=s;
+  const prev=MENTOR.state; MENTOR.state=s; try{ protoEvent('mstate',{s,prev}); }catch(e){}
   try{ logE('наставник: '+prev+' → '+s+(why?' ('+why+')':'')); }catch(e){}
 }
 /* Черга реплік (ТЗ п.9): один голос, кулдаун 3-5с; критичні йдуть повз чергу. */
@@ -23551,6 +23951,7 @@ function allyTick(dt){
     if(a.mentorCrest) a.mentorCrest.rotation.z=Math.sin(performance.now()/800)*0.06;
   } }catch(e){}
   if(trainingOn()){ a.strikeT=0; a.atkT=1; return; }   // (09-27f/30p) тренування: наставник стоїть, не ходить, не б'є
+  if(typeof PROTO!=='undefined' && PROTO.on && PROTO.hold){ a.strikeT=0; a.atkT=1; a.hitActive=false; return; }   // (10-27a) перевірка: наставник чекає осторонь
   a.atkT=(a.atkT||0)-dt;
   if(a.strikeT>0) a.strikeT-=dt;                                            // (09-22i) замах наставника згасає (у загальному циклі його пропускають)
   let foes = MENTOR.tatamiMode ? [] : phantoms.filter(p=>p!==a && !p.dead && !p.ally);   // (07-26)
